@@ -5,7 +5,7 @@ import { SummaryCards } from './SummaryCards';
 import { VendorList } from './VendorList';
 import { ClientTable } from './ClientTable';
 import { InterestControl } from './InterestControl';
-import { AnalyticsDashboard } from './AnalyticsDashboard';
+import { TopDebtorsAlert } from './TopDebtorsAlert';
 import { LayoutGrid, ListOrdered } from 'lucide-react';
 import './Dashboard.css';
 
@@ -22,6 +22,22 @@ export const Dashboard = () => {
     });
 
     const { data: rawData, loading, error } = useData(interestRate, clientThresholds);
+
+    // Set initially disabled vendors (Andrea and Sucursales) once data loads
+    useEffect(() => {
+        if (rawData && rawData.length > 0 && disabledVendorIds.size === 0) {
+            const initialDisabled = new Set<string>();
+            rawData.forEach(v => {
+                const name = v.vendorName.toLowerCase();
+                if (name.includes('andrea') || name.includes('sucursal')) {
+                    initialDisabled.add(v.vendorId);
+                }
+            });
+            if (initialDisabled.size > 0) {
+                setDisabledVendorIds(initialDisabled);
+            }
+        }
+    }, [rawData]);
 
     // Save client thresholds to localStorage when they change
     useEffect(() => {
@@ -157,9 +173,20 @@ export const Dashboard = () => {
     return (
         <div className="dashboard-layout">
             <header className="dashboard-header">
-                <div>
-                    <h1>Panel de Cobranzas</h1>
-                    <p style={{ color: 'var(--color-text-muted)' }}>Semillero El Manantial S.R.L.</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    <img 
+                        src="/logo.png" 
+                        alt="Logo Semillero El Manantial" 
+                        style={{ height: '60px', objectFit: 'contain', borderRadius: '8px' }}
+                        onError={(e) => {
+                            // Fallback if user hasn't uploaded logo.png yet
+                            (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                    />
+                    <div>
+                        <h1>Panel de Cobranzas</h1>
+                        <p style={{ color: 'var(--color-text-muted)' }}>Semillero El Manantial S.R.L.</p>
+                    </div>
                 </div>
 
                 <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
@@ -180,7 +207,7 @@ export const Dashboard = () => {
                 </div>
             </header>
 
-            <AnalyticsDashboard data={data} />
+            <TopDebtorsAlert data={data} />
             <SummaryCards data={data} />
 
             <div className="content-grid-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
