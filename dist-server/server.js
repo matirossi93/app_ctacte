@@ -176,10 +176,10 @@ app.get('/api/bot', async (req, res) => {
     }
 });
 // Serve frontend
-app.use(express.static(path.join(__dirname, 'dist')));
+app.use(express.static(path.join(__dirname, '..', 'dist')));
 // Fallback for React Router
 app.use((req, res) => {
-    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+    res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
 });
 app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
