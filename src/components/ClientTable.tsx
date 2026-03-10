@@ -124,19 +124,19 @@ export const ClientTable = ({ vendor, clientThresholds = {}, onUpdateThreshold, 
 
                                         return (
                                             <tr key={inv.id} className={rowClass}>
-                                                <td>{inv.date}</td>
-                                                <td>{inv.daysEmission}</td>
-                                                <td>
+                                                <td data-label="Fecha Emisión">{inv.date}</td>
+                                                <td data-label="Días Emitida">{inv.daysEmission}</td>
+                                                <td data-label="Días Deuda">
                                                     {inv.isOverdue ? (
                                                         <strong className="text-warning">{inv.daysOverdue}</strong>
                                                     ) : (
                                                         <span style={{ opacity: 0.5 }}>Al día</span>
                                                     )}
                                                 </td>
-                                                <td className="amount-column">
+                                                <td className="amount-column" data-label="Saldo Original">
                                                     {formatCurrency(inv.balance)}
                                                 </td>
-                                                <td style={{ textAlign: 'center' }}>
+                                                <td style={{ textAlign: 'center' }} data-label="Aplicar Int.">
                                                     <input 
                                                         type="checkbox" 
                                                         checked={invoiceInterestOverrides[inv.id] !== undefined ? invoiceInterestOverrides[inv.id] : inv.isOverdue}
@@ -145,13 +145,13 @@ export const ClientTable = ({ vendor, clientThresholds = {}, onUpdateThreshold, 
                                                         title="Activar/Desactivar recargo manual"
                                                     />
                                                 </td>
-                                                <td className="amount-column cell-interest">
+                                                <td className="amount-column cell-interest" data-label="Interés Calc.">
                                                     {inv.interestAmount > 0 ? formatCurrency(inv.interestAmount) : '-'}
                                                 </td>
-                                                <td className="amount-column cell-total">
+                                                <td className="amount-column cell-total" data-label="Total Cobrar">
                                                     {formatCurrency(inv.totalWithInterest)}
                                                 </td>
-                                                <td style={{ textAlign: 'right', fontSize: '0.8rem', opacity: 0.7 }}>
+                                                <td style={{ textAlign: 'right', fontSize: '0.8rem', opacity: 0.7 }} data-label="Factura">
                                                     {inv.type} {inv.invoiceNumber}
                                                 </td>
                                             </tr>
