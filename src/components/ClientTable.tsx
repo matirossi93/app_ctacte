@@ -102,12 +102,12 @@ export const ClientTable = ({ vendor, clientThresholds = {}, onUpdateThreshold, 
                             <table className="data-table">
                                 <thead>
                                     <tr>
-                                        <th style={{ cursor: 'pointer' }} onClick={() => handleSort('date')}>Fecha Emisión {sortIcon('date')}</th>
-                                        <th style={{ cursor: 'pointer' }} onClick={() => handleSort('daysEmission')}>Días Emitida {sortIcon('daysEmission')}</th>
-                                        <th style={{ cursor: 'pointer' }} onClick={() => handleSort('daysOverdue')}>Días Deuda {sortIcon('daysOverdue')}</th>
-                                        <th className="amount-column" style={{ cursor: 'pointer' }} onClick={() => handleSort('balance')}>Saldo Original {sortIcon('balance')}</th>
+                                        <th className="mobile-hide" style={{ cursor: 'pointer' }} onClick={() => handleSort('date')}>Fecha Emisión {sortIcon('date')}</th>
+                                        <th className="mobile-hide" style={{ cursor: 'pointer' }} onClick={() => handleSort('daysEmission')}>Días Emitida {sortIcon('daysEmission')}</th>
+                                        <th style={{ cursor: 'pointer' }} onClick={() => handleSort('daysOverdue')}>Demora {sortIcon('daysOverdue')}</th>
+                                        <th className="amount-column mobile-hide" style={{ cursor: 'pointer' }} onClick={() => handleSort('balance')}>Saldo Original {sortIcon('balance')}</th>
                                         <th style={{ textAlign: 'center' }}>Aplicar Int.</th>
-                                        <th className="amount-column">Interés Calculado</th>
+                                        <th className="amount-column mobile-hide">Interés Calculado</th>
                                         <th className="amount-column" style={{ cursor: 'pointer' }} onClick={() => handleSort('totalWithInterest')}>Total a Cobrar {sortIcon('totalWithInterest')}</th>
                                         <th>Factura</th>
                                     </tr>
@@ -124,34 +124,33 @@ export const ClientTable = ({ vendor, clientThresholds = {}, onUpdateThreshold, 
 
                                         return (
                                             <tr key={inv.id} className={rowClass}>
-                                                <td data-label="Fecha Emisión">{inv.date}</td>
-                                                <td data-label="Días Emitida">{inv.daysEmission}</td>
-                                                <td data-label="Días Deuda">
+                                                <td className="mobile-hide">{inv.date}</td>
+                                                <td className="mobile-hide">{inv.daysEmission}</td>
+                                                <td>
                                                     {inv.isOverdue ? (
-                                                        <strong className="text-warning">{inv.daysOverdue}</strong>
+                                                        <strong className="text-warning">{inv.daysOverdue} d.</strong>
                                                     ) : (
                                                         <span style={{ opacity: 0.5 }}>Al día</span>
                                                     )}
                                                 </td>
-                                                <td className="amount-column" data-label="Saldo Original">
+                                                <td className="amount-column mobile-hide">
                                                     {formatCurrency(inv.balance)}
                                                 </td>
-                                                <td style={{ textAlign: 'center' }} data-label="Aplicar Int.">
+                                                <td style={{ textAlign: 'center' }}>
                                                     <input 
                                                         type="checkbox" 
                                                         checked={invoiceInterestOverrides[inv.id] !== undefined ? invoiceInterestOverrides[inv.id] : inv.isOverdue}
                                                         onChange={(e) => onToggleInvoiceInterest?.(inv.id, e.target.checked)}
                                                         style={{ cursor: 'pointer', transform: 'scale(1.2)' }}
-                                                        title="Activar/Desactivar recargo manual"
                                                     />
                                                 </td>
-                                                <td className="amount-column cell-interest" data-label="Interés Calc.">
+                                                <td className="amount-column cell-interest mobile-hide">
                                                     {inv.interestAmount > 0 ? formatCurrency(inv.interestAmount) : '-'}
                                                 </td>
-                                                <td className="amount-column cell-total" data-label="Total Cobrar">
+                                                <td className="amount-column cell-total">
                                                     {formatCurrency(inv.totalWithInterest)}
                                                 </td>
-                                                <td style={{ textAlign: 'right', fontSize: '0.8rem', opacity: 0.7 }} data-label="Factura">
+                                                <td style={{ textAlign: 'right', fontSize: '0.8rem', opacity: 0.7 }}>
                                                     {inv.type} {inv.invoiceNumber}
                                                 </td>
                                             </tr>

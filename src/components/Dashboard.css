@@ -517,44 +517,19 @@
 }
 
 @media (max-width: 768px) {
-    .data-table, .data-table thead, .data-table tbody, .data-table th, .data-table td, .data-table tr {
-        display: block;
+    .data-table th {
+        padding: 0.25rem 0.15rem;
+        font-size: 0.65rem;
+        letter-spacing: 0;
     }
-    
-    .data-table thead {
-        display: none;
-    }
-    
-    .data-table tr {
-        margin-bottom: 1rem;
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-md);
-        background: var(--color-surface);
-    }
-    
     .data-table td {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 0.75rem 1rem;
-        border: none;
-        border-bottom: 1px solid var(--color-border);
-        text-align: right !important; /* Force right align data */
+        padding: 0.4rem 0.15rem;
+        font-size: 0.75rem;
     }
     
-    .data-table td:last-child {
-        border-bottom: none;
-    }
-    
-    .data-table td::before {
-        content: attr(data-label);
-        font-weight: 600;
-        text-transform: uppercase;
-        font-size: 0.7rem;
-        color: var(--color-text-muted);
-        text-align: left;
-        margin-right: 1rem;
-        opacity: 0.8;
+    /* Ultra-compact utility classes for mobile */
+    .mobile-hide {
+        display: none !important;
     }
 }
 
