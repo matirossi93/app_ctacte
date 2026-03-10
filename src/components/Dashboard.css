@@ -263,6 +263,27 @@
     align-items: start;
 }
 
+.content-grid > main {
+    max-height: 800px;
+    overflow-y: auto;
+    padding-right: 0.5rem; /* for custom scrollbar space */
+}
+
+/* Custom Webkit Scrollbar */
+.content-grid > main::-webkit-scrollbar,
+.vendor-list::-webkit-scrollbar {
+    width: 6px;
+}
+.content-grid > main::-webkit-scrollbar-track,
+.vendor-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+.content-grid > main::-webkit-scrollbar-thumb,
+.vendor-list::-webkit-scrollbar-thumb {
+    background-color: var(--color-border);
+    border-radius: 20px;
+}
+
 @media (max-width: 1024px) {
     .content-grid {
         grid-template-columns: 1fr;
@@ -281,7 +302,9 @@
     flex-direction: column;
     gap: 1px;
     background: var(--color-border);
-    overflow: hidden;
+    max-height: 800px;
+    overflow-y: auto;
+    border-radius: var(--radius-lg);
 }
 
 .vendor-list-header {
