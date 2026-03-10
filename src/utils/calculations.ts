@@ -5,12 +5,14 @@ export const processInvoices = (
     interestRate: number,
     clientThresholds: Record<string, number> = {}
 ): VendorSummary[] => {
-    // Basic sanity check to avoid parsing headers or empty rows incorrectly
-    const validInvoices = rawInvoices.filter(raw => raw.COD_CLIENT && raw.COD_VENDED && raw.SALDO !== undefined);
+    // Basic sanity check to avoid parsing headers or empty rows incorrectly.
+    // In the new CSV, COD_CLIENT is under column '12'
+    const validInvoices = rawInvoices.filter(raw => (raw['12'] || raw.COD_CLIENT) && raw.COD_VENDED && raw.SALDO !== undefined);
 
     // 1. Map raw to clean structured items
     const allMappedInvoices: Invoice[] = validInvoices.map(raw => {
-        const clientId = String(raw.COD_CLIENT);
+        const rawClientId = raw['12'] || raw.COD_CLIENT;
+        const clientId = String(rawClientId);
         const customThreshold = clientThresholds[clientId];
 
         // If 'DIAS DEUDA' is a number and > 0, it means the invoice is overdue based on the client's term
@@ -27,14 +29,23 @@ export const processInvoices = (
             daysOverdue = typeof raw['DIAS DEUDA'] === 'number' ? Math.max(0, raw['DIAS DEUDA']) : 0;
         }
 
-        const balance = Number(raw.SALDO) || 0;
+        // Parse Argentine currency format (e.g., "$1.415.035,00" or "4026125" strings/numbers)
+        const parseCurrency = (val: any): number => {
+            if (typeof val === 'number') return val;
+            if (!val) return 0;
+            const strVal = String(val).replace(/\$/g, '').replace(/\./g, '').replace(',', '.').trim();
+            const parsed = Number(strVal);
+            return isNaN(parsed) ? 0 : parsed;
+        };
+
+        const balance = parseCurrency(raw.SALDO);
 
         // The user rules: "10% interest on balance once the days of debt are reached"
         const appliedInterestRate = isOverdue ? interestRate : 0;
         const interestAmount = balance * appliedInterestRate;
 
         return {
-            clientId: String(raw.COD_CLIENT),
+            clientId: String(raw['12'] || raw.COD_CLIENT),
             clientName: String(raw.CLIENTES_N),
             vendorId: String(raw.COD_VENDED),
             vendorName: String(raw.VENDEDORES),

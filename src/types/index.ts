@@ -1,5 +1,6 @@
 export interface InvoiceRaw {
-    COD_CLIENT: string | number;
+    [key: string]: any; // Allow dynamic columns like '12' from the raw CSV
+    COD_CLIENT?: string | number;
     CLIENTES_N: string;
     COD_VENDED: string | number;
     VENDEDORES: string;
