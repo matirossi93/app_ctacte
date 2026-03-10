@@ -2,7 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { parse } from 'papaparse';
+import pkg from 'papaparse';
+const { parse } = pkg;
 import axios from 'axios';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -197,7 +198,7 @@ app.get('/api/bot', async (req, res) => {
 app.use(express.static(path.join(__dirname, 'dist')));
 
 // Fallback for React Router
-app.get('*', (req, res) => {
+app.use((req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
