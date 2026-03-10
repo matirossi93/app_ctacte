@@ -66,7 +66,7 @@ export const processInvoices = (
             vendorName: String(raw.VENDEDORES),
             invoiceNumber: String(raw.NUMERO),
             id: String(raw.ID),
-            date: String(raw.FECHA),
+            date: String(raw.FECHA || raw['']), // The CSV header for date is often empty
             totalStr: String(raw.TOTAL),
             balance,
             type: String(raw.TIPO_COMPR),
