@@ -1,7 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { DatabaseSync } from 'node:sqlite';
 import pkg from 'papaparse';
 const { parse } = pkg;
 import axios from 'axios';
@@ -10,6 +12,57 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 80;
 app.use(cors());
+app.use(express.json());
+// Initialize SQLite Database
+const dbDir = path.join(__dirname, '..', 'data');
+if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+}
+const db = new DatabaseSync(path.join(dbDir, 'database.sqlite'));
+db.exec(`
+    CREATE TABLE IF NOT EXISTS invoice_overrides (
+        invoice_id TEXT PRIMARY KEY,
+        apply_interest INTEGER
+    )
+`);
+// API Route to GET interest overrides
+app.get('/api/overrides', (req, res) => {
+    try {
+        const query = db.prepare('SELECT invoice_id, apply_interest FROM invoice_overrides');
+        const rows = query.all();
+        // Return as key-value map for the frontend context
+        const overridesMap = {};
+        rows.forEach((r) => {
+            overridesMap[r.invoice_id] = r.apply_interest === 1;
+        });
+        res.json(overridesMap);
+    }
+    catch (err) {
+        console.error("GET /api/overrides error:", err);
+        res.status(500).json({ status: "error", message: err.message });
+    }
+});
+// API Route to POST (upsert) an override
+app.post('/api/overrides', (req, res) => {
+    try {
+        const { invoiceId, apply } = req.body;
+        if (!invoiceId || typeof apply !== 'boolean') {
+            return res.status(400).json({ error: "Invalid request payload. Expected invoiceId (string) and apply (boolean)." });
+        }
+        const applyInt = apply ? 1 : 0;
+        const stmt = db.prepare(`
+            INSERT INTO invoice_overrides (invoice_id, apply_interest)
+            VALUES (?, ?)
+            ON CONFLICT(invoice_id) DO UPDATE SET apply_interest = excluded.apply_interest
+        `);
+        stmt.run(invoiceId, applyInt);
+        res.json({ status: "success" });
+    }
+    catch (err) {
+        console.error("POST /api/overrides error:", err);
+        res.status(500).json({ status: "error", message: err.message });
+    }
+});
 // Google Sheets URLs
 const INVOICES_URL = 'https://docs.google.com/spreadsheets/d/1UMtdGkn7GTAIAZ8De9nWxYQThM6YruzVf1-W757xYmQ/export?format=csv&id=1UMtdGkn7GTAIAZ8De9nWxYQThM6YruzVf1-W757xYmQ&gid=0';
 const CLIENTS_URL = 'https://docs.google.com/spreadsheets/d/1k7B8Phi5QDn_6mFWiAfYBcqqisEWT6nqUwgmhE54Zy8/export?format=csv&id=1k7B8Phi5QDn_6mFWiAfYBcqqisEWT6nqUwgmhE54Zy8&gid=0';

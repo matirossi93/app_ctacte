@@ -21,11 +21,20 @@ export const Dashboard = () => {
         return saved ? JSON.parse(saved) : {};
     });
 
-    // Load invoice manual overrides from localStorage
-    const [invoiceInterestOverrides, setInvoiceInterestOverrides] = useState<Record<string, boolean>>(() => {
-        const saved = localStorage.getItem('invoiceInterestOverrides');
-        return saved ? JSON.parse(saved) : {};
-    });
+    // Centralized invoice overrides state via API
+    const [invoiceInterestOverrides, setInvoiceInterestOverrides] = useState<Record<string, boolean>>({});
+
+    // Load initial overrides from the database API
+    useEffect(() => {
+        fetch('/api/overrides')
+            .then(res => res.json())
+            .then(data => {
+                if (data && !data.error) {
+                    setInvoiceInterestOverrides(data);
+                }
+            })
+            .catch(err => console.error('Error fetching overrides:', err));
+    }, []);
 
     const { data: rawData, loading, error } = useData(interestRate, clientThresholds, invoiceInterestOverrides);
 
@@ -50,10 +59,9 @@ export const Dashboard = () => {
         localStorage.setItem('clientInterestThresholds', JSON.stringify(clientThresholds));
     }, [clientThresholds]);
 
-    // Save invoice interest overrides to localStorage when they change
-    useEffect(() => {
-        localStorage.setItem('invoiceInterestOverrides', JSON.stringify(invoiceInterestOverrides));
-    }, [invoiceInterestOverrides]);
+    // Notice: We don't watch invoiceInterestOverrides to save to a database here.
+    // That is handled immediately at the point of action (onToggleInvoiceInterest) to avoid 
+    // sending bulk requests or reacting to the initial GET load.
 
     // Filter data based on disabled vendors
     const data = rawData.filter(v => !disabledVendorIds.has(v.vendorId));
@@ -265,10 +273,17 @@ export const Dashboard = () => {
                         }}
                         invoiceInterestOverrides={invoiceInterestOverrides}
                         onToggleInvoiceInterest={(invoiceId, apply) => {
+                            // Optimistic local UI update
                             setInvoiceInterestOverrides(prev => ({
                                 ...prev,
                                 [invoiceId]: apply
                             }));
+                            // Background API update to sync across devices
+                            fetch('/api/overrides', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ invoiceId, apply })
+                            }).catch(err => console.error('Error saving override:', err));
                         }}
                     />
                 </main>
