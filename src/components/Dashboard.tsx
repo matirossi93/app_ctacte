@@ -21,7 +21,13 @@ export const Dashboard = () => {
         return saved ? JSON.parse(saved) : {};
     });
 
-    const { data: rawData, loading, error } = useData(interestRate, clientThresholds);
+    // Load invoice manual overrides from localStorage
+    const [invoiceInterestOverrides, setInvoiceInterestOverrides] = useState<Record<string, boolean>>(() => {
+        const saved = localStorage.getItem('invoiceInterestOverrides');
+        return saved ? JSON.parse(saved) : {};
+    });
+
+    const { data: rawData, loading, error } = useData(interestRate, clientThresholds, invoiceInterestOverrides);
 
     // Set initially disabled vendors (Andrea and Sucursales) once data loads
     useEffect(() => {
@@ -43,6 +49,11 @@ export const Dashboard = () => {
     useEffect(() => {
         localStorage.setItem('clientInterestThresholds', JSON.stringify(clientThresholds));
     }, [clientThresholds]);
+
+    // Save invoice interest overrides to localStorage when they change
+    useEffect(() => {
+        localStorage.setItem('invoiceInterestOverrides', JSON.stringify(invoiceInterestOverrides));
+    }, [invoiceInterestOverrides]);
 
     // Filter data based on disabled vendors
     const data = rawData.filter(v => !disabledVendorIds.has(v.vendorId));
@@ -250,6 +261,13 @@ export const Dashboard = () => {
                             setClientThresholds(prev => ({
                                 ...prev,
                                 [clientId]: days
+                            }));
+                        }}
+                        invoiceInterestOverrides={invoiceInterestOverrides}
+                        onToggleInvoiceInterest={(invoiceId, apply) => {
+                            setInvoiceInterestOverrides(prev => ({
+                                ...prev,
+                                [invoiceId]: apply
                             }));
                         }}
                     />

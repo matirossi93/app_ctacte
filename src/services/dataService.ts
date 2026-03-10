@@ -17,7 +17,8 @@ const fetchCsv = async (url: string) => {
 
 export const fetchAndProcessData = async (
     interestRate: number = 0.10,
-    clientThresholds: Record<string, number> = {}
+    clientThresholds: Record<string, number> = {},
+    invoiceInterestOverrides: Record<string, boolean> = {}
 ): Promise<VendorSummary[]> => {
     try {
         // Obtenemos ambos CSVs en paralelo
@@ -52,7 +53,8 @@ export const fetchAndProcessData = async (
                                     invoicesResult.data, 
                                     interestRate, 
                                     clientThresholds,
-                                    clientDbMap
+                                    clientDbMap,
+                                    invoiceInterestOverrides
                                 );
                                 resolve(vendorsSummary);
                             } catch (error) {

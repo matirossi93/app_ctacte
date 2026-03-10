@@ -4,7 +4,8 @@ export const processInvoices = (
     rawInvoices: InvoiceRaw[],
     interestRate: number,
     clientThresholds: Record<string, number> = {},
-    clientDbMap: Map<string, ClientDBType> = new Map()
+    clientDbMap: Map<string, ClientDBType> = new Map(),
+    invoiceInterestOverrides: Record<string, boolean> = {}
 ): VendorSummary[] => {
     // Basic sanity check to avoid parsing headers or empty rows incorrectly.
     // In the new CSV, COD_CLIENT is under column '12'
@@ -55,8 +56,12 @@ export const processInvoices = (
 
         const balance = parseCurrency(raw.SALDO);
 
-        // The user rules: "10% interest on balance once the days of debt are reached"
-        const appliedInterestRate = isOverdue ? interestRate : 0;
+        // Apply override if it exists
+        const invoiceId = String(raw.ID);
+        const hasManualOverride = invoiceInterestOverrides[invoiceId] !== undefined;
+        const manuallyApplied = hasManualOverride ? invoiceInterestOverrides[invoiceId] : isOverdue;
+
+        const appliedInterestRate = manuallyApplied ? interestRate : 0;
         const interestAmount = balance * appliedInterestRate;
 
         return {

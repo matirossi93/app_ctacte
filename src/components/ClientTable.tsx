@@ -7,9 +7,11 @@ interface ClientTableProps {
     vendor: VendorSummary | null;
     clientThresholds?: Record<string, number>;
     onUpdateThreshold?: (clientId: string, days: number) => void;
+    invoiceInterestOverrides?: Record<string, boolean>;
+    onToggleInvoiceInterest?: (invoiceId: string, apply: boolean) => void;
 }
 
-export const ClientTable = ({ vendor, clientThresholds = {}, onUpdateThreshold }: ClientTableProps) => {
+export const ClientTable = ({ vendor, clientThresholds = {}, onUpdateThreshold, invoiceInterestOverrides = {}, onToggleInvoiceInterest }: ClientTableProps) => {
     const [sortCol, setSortCol] = useState<keyof Invoice>('daysOverdue');
     const [sortDesc, setSortDesc] = useState(true);
 
@@ -104,6 +106,7 @@ export const ClientTable = ({ vendor, clientThresholds = {}, onUpdateThreshold }
                                         <th style={{ cursor: 'pointer' }} onClick={() => handleSort('daysEmission')}>Días Emitida {sortIcon('daysEmission')}</th>
                                         <th style={{ cursor: 'pointer' }} onClick={() => handleSort('daysOverdue')}>Días Deuda {sortIcon('daysOverdue')}</th>
                                         <th className="amount-column" style={{ cursor: 'pointer' }} onClick={() => handleSort('balance')}>Saldo Original {sortIcon('balance')}</th>
+                                        <th style={{ textAlign: 'center' }}>Aplicar Int.</th>
                                         <th className="amount-column">Interés Calculado</th>
                                         <th className="amount-column" style={{ cursor: 'pointer' }} onClick={() => handleSort('totalWithInterest')}>Total a Cobrar {sortIcon('totalWithInterest')}</th>
                                         <th>Factura</th>
@@ -132,6 +135,15 @@ export const ClientTable = ({ vendor, clientThresholds = {}, onUpdateThreshold }
                                                 </td>
                                                 <td className="amount-column">
                                                     {formatCurrency(inv.balance)}
+                                                </td>
+                                                <td style={{ textAlign: 'center' }}>
+                                                    <input 
+                                                        type="checkbox" 
+                                                        checked={invoiceInterestOverrides[inv.id] !== undefined ? invoiceInterestOverrides[inv.id] : inv.isOverdue}
+                                                        onChange={(e) => onToggleInvoiceInterest?.(inv.id, e.target.checked)}
+                                                        style={{ cursor: 'pointer', transform: 'scale(1.2)' }}
+                                                        title="Activar/Desactivar recargo manual"
+                                                    />
                                                 </td>
                                                 <td className="amount-column cell-interest">
                                                     {inv.interestAmount > 0 ? formatCurrency(inv.interestAmount) : '-'}

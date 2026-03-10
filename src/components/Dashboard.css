@@ -509,6 +509,13 @@
     background: var(--color-bg);
 }
 
+@media (max-width: 768px) {
+    .data-table th, .data-table td {
+        padding: 0.5rem;
+        font-size: 0.75rem;
+    }
+}
+
 .data-table td {
     padding: 1rem;
     font-size: 0.875rem;
