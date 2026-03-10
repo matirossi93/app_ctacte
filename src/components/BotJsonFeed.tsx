@@ -1,8 +1,15 @@
 import { useData } from '../hooks/useData';
+import { processInvoices } from '../utils/calculations';
+import { useMemo } from 'react';
 
 export const BotJsonFeed = () => {
     // Using 10% interest as requested
-    const { data, loading, error } = useData(0.10);
+    const { rawInvoices, clientDbMap, loading, error } = useData();
+
+    const data = useMemo(() => {
+        if (!rawInvoices.length) return [];
+        return processInvoices(rawInvoices, 0.10, {}, clientDbMap, {});
+    }, [rawInvoices, clientDbMap]);
 
     if (loading) return <pre>{"{ \"status\": \"loading\" }"}</pre>;
     if (error) return <pre>{JSON.stringify({ status: "error", message: error.message }, null, 2)}</pre>;

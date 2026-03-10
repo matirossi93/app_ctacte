@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { fetchAndProcessData } from '../services/dataService';
-import type { VendorSummary } from '../types';
+import { fetchRawData } from '../services/dataService';
+import type { InvoiceRaw, ClientDBType } from '../types';
 
-export const useData = (interestRate: number, clientThresholds: Record<string, number> = {}, invoiceInterestOverrides: Record<string, boolean> = {}) => {
-    const [data, setData] = useState<VendorSummary[]>([]);
+export const useData = () => {
+    const [rawInvoices, setRawInvoices] = useState<InvoiceRaw[]>([]);
+    const [clientDbMap, setClientDbMap] = useState<Map<string, ClientDBType>>(new Map());
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<Error | null>(null);
 
@@ -14,9 +15,10 @@ export const useData = (interestRate: number, clientThresholds: Record<string, n
             setLoading(true);
             setError(null);
             try {
-                const result = await fetchAndProcessData(interestRate, clientThresholds, invoiceInterestOverrides);
+                const result = await fetchRawData();
                 if (active) {
-                    setData(result);
+                    setRawInvoices(result.invoices);
+                    setClientDbMap(result.clientDbMap);
                 }
             } catch (e: any) {
                 if (active) {
@@ -34,7 +36,7 @@ export const useData = (interestRate: number, clientThresholds: Record<string, n
         return () => {
             active = false;
         };
-    }, [interestRate, JSON.stringify(clientThresholds), JSON.stringify(invoiceInterestOverrides)]); // Stringify to detect deep changes
+    }, []); // Only run once on mount
 
-    return { data, loading, error };
+    return { rawInvoices, clientDbMap, loading, error };
 };

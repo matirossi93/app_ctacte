@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Search } from 'lucide-react';
 import { useData } from '../hooks/useData';
+import { processInvoices } from '../utils/calculations';
 import { SummaryCards } from './SummaryCards';
 import { VendorList } from './VendorList';
 import { ClientTable } from './ClientTable';
@@ -14,6 +15,11 @@ export const Dashboard = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [sortBy, setSortBy] = useState<'balance' | 'aging'>('balance');
     const [disabledVendorIds, setDisabledVendorIds] = useState<Set<string>>(new Set());
+    
+    // Check URL parameters for vendor isolation
+    const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
+    const isoVendor = urlParams.get('vendedor');
+    const [activeVendorId, setActiveVendorId] = useState<string | null>(isoVendor || 'GLOBAL_VIEW');
 
     // Load client thresholds from localStorage
     const [clientThresholds, setClientThresholds] = useState<Record<string, number>>(() => {
@@ -36,14 +42,21 @@ export const Dashboard = () => {
             .catch(err => console.error('Error fetching overrides:', err));
     }, []);
 
-    const { data: rawData, loading, error } = useData(interestRate, clientThresholds, invoiceInterestOverrides);
+    const { rawInvoices, clientDbMap, loading, error } = useData();
+
+    // Synchronously recalculate the mapped structure explicitly instead of fetching when variables change
+    const rawData = useMemo(() => {
+        if (!rawInvoices.length) return [];
+        return processInvoices(rawInvoices, interestRate, clientThresholds, clientDbMap, invoiceInterestOverrides);
+    }, [rawInvoices, interestRate, clientThresholds, clientDbMap, invoiceInterestOverrides]);
 
     // Set initially disabled vendors (Andrea and Sucursales) once data loads
     useEffect(() => {
-        if (rawData && rawData.length > 0 && disabledVendorIds.size === 0) {
+        if (rawData.length > 0 && disabledVendorIds.size === 0) {
             const initialDisabled = new Set<string>();
             rawData.forEach(v => {
                 const name = v.vendorName.toLowerCase();
+                // If there's an isolated vendor, we disable all OTHERS inherently by not showing the vendor list
                 if (name.includes('andrea') || name.includes('sucursal')) {
                     initialDisabled.add(v.vendorId);
                 }
@@ -66,7 +79,21 @@ export const Dashboard = () => {
     // Filter data based on disabled vendors
     const data = rawData.filter(v => !disabledVendorIds.has(v.vendorId));
 
-    const [activeVendorId, setActiveVendorId] = useState<string | null>('GLOBAL_VIEW');
+    // If an isolated vendor is specified in the URL, filter data purely locally to that vendor name
+    // (We match by vendorName instead of vendorId since ID might not be known to users sharing URLs)
+    const viewData = useMemo(() => {
+        if (!isoVendor) return data;
+        const normalizedIso = isoVendor.trim().toLowerCase();
+        return data.filter(v => v.vendorName.toLowerCase().includes(normalizedIso));
+    }, [data, isoVendor]);
+
+    // If isolated, try locking activeVendorId to the isolated vendor's ID once data processes
+    useEffect(() => {
+        if (isoVendor && viewData.length > 0 && activeVendorId === isoVendor) {
+            // We successfully filtered it, let's set the activeVendorId to its actual ID
+            setActiveVendorId(viewData[0].vendorId);
+        }
+    }, [viewData, isoVendor, activeVendorId]);
 
     if (loading) {
         return (
@@ -128,9 +155,9 @@ export const Dashboard = () => {
     const globalVendor = {
         vendorId: 'GLOBAL_VIEW',
         vendorName: '🌍 VISUALIZACIÓN GLOBAL',
-        totalBalance: data.reduce((acc, v) => acc + v.totalBalance, 0),
-        totalInterest: data.reduce((acc, v) => acc + v.totalInterest, 0),
-        totalWithInterest: data.reduce((acc, v) => acc + v.totalWithInterest, 0),
+        totalBalance: viewData.reduce((acc, v) => acc + v.totalBalance, 0),
+        totalInterest: viewData.reduce((acc, v) => acc + v.totalInterest, 0),
+        totalWithInterest: viewData.reduce((acc, v) => acc + v.totalWithInterest, 0),
         clients: globalClients
     };
 
@@ -143,10 +170,10 @@ export const Dashboard = () => {
         });
     };
 
-    const allVendors = [globalVendor, ...rawData]; // Keep all in list to allow toggling back on
+    const allVendors = [globalVendor, ...viewData]; 
     const activeVendor = activeVendorId === 'GLOBAL_VIEW'
         ? globalVendor
-        : data.find(v => v.vendorId === activeVendorId) || null;
+        : viewData.find(v => v.vendorId === activeVendorId) || null;
 
     // 1. Determine Source of Clients
     let baseClients = activeVendor?.clients || [];
@@ -227,8 +254,8 @@ export const Dashboard = () => {
                 </div>
             </header>
 
-            <TopDebtorsAlert data={data} />
-            <SummaryCards data={data} />
+            {!isoVendor && <TopDebtorsAlert data={viewData} />}
+            <SummaryCards data={viewData} />
 
             <div className="content-grid-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
                 <h2 style={{ fontSize: '1.25rem', color: 'var(--color-text)' }}>Detalle por Clientes</h2>
@@ -250,18 +277,20 @@ export const Dashboard = () => {
                 </div>
             </div>
 
-            <div className="content-grid">
-                <aside>
-                    <VendorList
-                        vendors={allVendors}
-                        activeVendorId={activeVendorId}
-                        onSelectVendor={setActiveVendorId}
-                        disabledVendorIds={disabledVendorIds}
-                        onToggleVendor={toggleVendor}
-                    />
-                </aside>
+            <div className={`content-grid ${isoVendor ? 'isolated-view' : ''}`}>
+                {!isoVendor && (
+                    <aside>
+                        <VendorList
+                            vendors={allVendors}
+                            activeVendorId={activeVendorId}
+                            onSelectVendor={setActiveVendorId}
+                            disabledVendorIds={disabledVendorIds}
+                            onToggleVendor={toggleVendor}
+                        />
+                    </aside>
+                )}
 
-                <main>
+                <main style={{ gridColumn: isoVendor ? '1 / -1' : undefined }}>
                     <ClientTable
                         vendor={displayedVendor}
                         clientThresholds={clientThresholds}
