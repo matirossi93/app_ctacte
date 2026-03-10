@@ -2,7 +2,8 @@ import { Dashboard } from './components/Dashboard';
 import { BotJsonFeed } from './components/BotJsonFeed';
 
 function App() {
-  const isBotRoute = window.location.pathname === '/api/bot';
+  const currentPath = window.location.pathname.toLowerCase();
+  const isBotRoute = currentPath.includes('/api/bot');
 
   if (isBotRoute) {
     return <BotJsonFeed />;
