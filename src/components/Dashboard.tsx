@@ -175,9 +175,9 @@ export const Dashboard = () => {
             <header className="dashboard-header">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                     <img 
-                        src="/logo.png" 
+                        src="/logo.jpg" 
                         alt="Logo Semillero El Manantial" 
-                        style={{ height: '60px', objectFit: 'contain', borderRadius: '8px' }}
+                        style={{ height: '60px', objectFit: 'contain', borderRadius: '8px', mixBlendMode: 'multiply' }}
                         onError={(e) => {
                             // Fallback if user hasn't uploaded logo.png yet
                             (e.target as HTMLImageElement).style.display = 'none';
