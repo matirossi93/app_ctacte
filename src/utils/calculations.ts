@@ -1,9 +1,10 @@
-import type { InvoiceRaw, Invoice, VendorSummary } from '../types';
+import type { InvoiceRaw, Invoice, VendorSummary, ClientDBType } from '../types';
 
 export const processInvoices = (
     rawInvoices: InvoiceRaw[],
     interestRate: number,
-    clientThresholds: Record<string, number> = {}
+    clientThresholds: Record<string, number> = {},
+    clientDbMap: Map<string, ClientDBType> = new Map()
 ): VendorSummary[] => {
     // Basic sanity check to avoid parsing headers or empty rows incorrectly.
     // In the new CSV, COD_CLIENT is under column '12'
@@ -13,7 +14,21 @@ export const processInvoices = (
     const allMappedInvoices: Invoice[] = validInvoices.map(raw => {
         const rawClientId = raw['12'] || raw.COD_CLIENT;
         const clientId = String(rawClientId);
-        const customThreshold = clientThresholds[clientId];
+        
+        // Get client from DB
+        const clientDbDetails = clientDbMap.get(clientId);
+        
+        // Determine system threshold based on Frecuencia
+        let defaultThreshold = 0;
+        if (clientDbDetails?.Frecuencia) {
+            const freq = clientDbDetails.Frecuencia.toUpperCase();
+            if (freq.includes('SEMANAL')) defaultThreshold = 7;
+            else if (freq.includes('QUINCENAL')) defaultThreshold = 15;
+            else if (freq.includes('MENSUAL')) defaultThreshold = 30;
+        }
+
+        // Custom threshold overrides the default system threshold
+        const customThreshold = clientThresholds[clientId] || defaultThreshold;
 
         // If 'DIAS DEUDA' is a number and > 0, it means the invoice is overdue based on the client's term
         // USER UPDATE: If customThreshold is set, use DIAS_EMISI vs customThreshold
@@ -87,6 +102,17 @@ export const processInvoices = (
         // Find client inside this vendor
         let clientSummary = vendorSummary.clients.find(c => c.clientId === inv.clientId);
         if (!clientSummary) {
+            const dbDetails = clientDbMap.get(inv.clientId);
+            
+            // Determine default threshold for reporting/UI
+            let defaultThreshold = 0;
+            if (dbDetails?.Frecuencia) {
+                const freq = dbDetails.Frecuencia.toUpperCase();
+                if (freq.includes('SEMANAL')) defaultThreshold = 7;
+                else if (freq.includes('QUINCENAL')) defaultThreshold = 15;
+                else if (freq.includes('MENSUAL')) defaultThreshold = 30;
+            }
+
             clientSummary = {
                 clientId: inv.clientId,
                 clientName: inv.clientName,
@@ -96,6 +122,8 @@ export const processInvoices = (
                 totalInterest: 0,
                 totalWithInterest: 0,
                 maxDaysOverdue: 0,
+                localidad: dbDetails?.Localidad || '',
+                defaultThreshold,
                 invoices: []
             };
             vendorSummary.clients.push(clientSummary);

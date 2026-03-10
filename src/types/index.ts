@@ -43,6 +43,14 @@ export interface Invoice {
     totalWithInterest: number;
 }
 
+export interface ClientDBType {
+    Cod: string | number;
+    'Razon Social'?: string;
+    Localidad?: string;
+    Frecuencia?: string; // e.g. 'SEMANAL', 'QUINCENAL', 'MENSUAL'
+    [key: string]: any;
+}
+
 export interface ClientSummary {
     clientId: string;
     clientName: string;
@@ -52,6 +60,8 @@ export interface ClientSummary {
     totalInterest: number;
     totalWithInterest: number;
     maxDaysOverdue: number;
+    localidad?: string;
+    defaultThreshold?: number; // threshold derived from DB (7, 15, 30)
     invoices: Invoice[];
 }
 

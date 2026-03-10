@@ -62,6 +62,11 @@ export const ClientTable = ({ vendor, clientThresholds = {}, onUpdateThreshold }
                                 <h3>{client.clientName}</h3>
                                 <div className="client-meta">
                                     <span>Cod: {client.clientId}</span>
+                                    {client.localidad && (
+                                        <span className="badge" style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}>
+                                            📍 {client.localidad}
+                                        </span>
+                                    )}
                                     <div className="threshold-selector">
                                         <label htmlFor={`threshold-${client.clientId}`} style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Mora tras:</label>
                                         <select
@@ -70,7 +75,7 @@ export const ClientTable = ({ vendor, clientThresholds = {}, onUpdateThreshold }
                                             onChange={(e) => onUpdateThreshold?.(client.clientId, Number(e.target.value))}
                                             className="interest-select"
                                         >
-                                            <option value={0}>Por defecto (Sist.)</option>
+                                            <option value={0}>Por defecto {client.defaultThreshold ? `(${client.defaultThreshold} días)` : '(Sist.)'}</option>
                                             <option value={7}>7 días</option>
                                             <option value={15}>15 días</option>
                                             <option value={30}>30 días</option>
