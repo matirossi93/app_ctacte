@@ -32,12 +32,25 @@
 @media (max-width: 768px) {
     .dashboard-header {
         flex-direction: column;
-        align-items: flex-start;
+        align-items: center;
         gap: 1rem;
+        text-align: center;
+    }
+
+    .dashboard-header > div:first-child {
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 100%;
     }
 
     .dashboard-header h1 {
         font-size: 1.5rem;
+    }
+
+    .mobile-brand-logo {
+        height: 100px !important;
+        margin-bottom: 0.5rem;
     }
 }
 
@@ -585,11 +598,20 @@
     }
 
     .client-total-box {
-        text-align: left;
+        width: 100%;
+        text-align: right;
+        margin-top: 0.25rem;
+        padding-top: 0.5rem;
+        border-top: 1px dotted var(--color-border);
     }
 
     .client-total-box strong {
         font-size: 1.1rem;
+        color: var(--color-primary);
+    }
+
+    [data-theme="dark"] .client-total-box strong {
+        color: var(--color-accent);
     }
 
     .client-meta {

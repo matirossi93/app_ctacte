@@ -279,7 +279,7 @@ export const Dashboard = () => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
                     <div style={{ display: 'flex', alignItems: 'center' }}>
                         <img 
-                            className="brand-logo"
+                            className="brand-logo mobile-brand-logo"
                             src="/logo_full.png" 
                             alt="Semillero El Manantial" 
                             style={{ 
