@@ -103,6 +103,7 @@ export const ClientTable = ({ vendor, clientThresholds = {}, onUpdateThreshold, 
                                 <thead>
                                     <tr>
                                         <th className="mobile-hide" style={{ cursor: 'pointer' }} onClick={() => handleSort('date')}>Fecha Emisión {sortIcon('date')}</th>
+                                        <th style={{ cursor: 'pointer' }}>Factura</th>
                                         <th className="mobile-hide" style={{ cursor: 'pointer' }} onClick={() => handleSort('daysEmission')}>Días Emitida {sortIcon('daysEmission')}</th>
                                         <th style={{ cursor: 'pointer' }} onClick={() => handleSort('daysOverdue')}>
                                             <span className="mobile-hide">Demora</span>
@@ -118,7 +119,6 @@ export const ClientTable = ({ vendor, clientThresholds = {}, onUpdateThreshold, 
                                             <span className="mobile-hide">Total a Cobrar</span>
                                             <span className="desktop-hide">Total</span> {sortIcon('totalWithInterest')}
                                         </th>
-                                        <th>Factura</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -172,9 +172,6 @@ export const ClientTable = ({ vendor, clientThresholds = {}, onUpdateThreshold, 
                                                 </td>
                                                 <td className="amount-column cell-total">
                                                     {formatCurrency(inv.totalWithInterest)}
-                                                </td>
-                                                <td style={{ textAlign: 'right', fontSize: '0.8rem', opacity: 0.7 }}>
-                                                    {inv.type} {inv.invoiceNumber}
                                                 </td>
                                             </tr>
                                         );

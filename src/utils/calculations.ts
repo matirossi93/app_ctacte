@@ -84,10 +84,10 @@ export const processInvoices = (
 
         if (customThreshold !== undefined && customThreshold > 0) {
             isOverdue = diffDays > customThreshold;
-            daysOverdue = isOverdue ? diffDays - customThreshold : 0;
+            daysOverdue = isOverdue ? diffDays : 0;
         } else {
             isOverdue = diffDays > defaultThreshold;
-            daysOverdue = isOverdue ? diffDays - defaultThreshold : 0;
+            daysOverdue = isOverdue ? diffDays : 0;
         }
         
         // Never apply interest to Credit Notes
