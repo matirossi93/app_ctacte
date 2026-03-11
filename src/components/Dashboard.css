@@ -32,15 +32,15 @@
 @media (max-width: 768px) {
     .dashboard-header {
         flex-direction: column;
-        align-items: center;
-        gap: 1rem;
-        text-align: center;
+        align-items: flex-start;
+        gap: 0.75rem;
+        text-align: left;
     }
 
     .dashboard-header > div:first-child {
         flex-direction: column !important;
-        align-items: center !important;
-        justify-content: center !important;
+        align-items: flex-start !important;
+        justify-content: flex-start !important;
         width: 100%;
     }
 
@@ -49,8 +49,8 @@
     }
 
     .mobile-brand-logo {
-        height: 100px !important;
-        margin-bottom: 0.5rem;
+        height: 60px !important;
+        margin-bottom: 0.25rem;
     }
 }
 
@@ -598,15 +598,25 @@
     }
 
     .client-total-box {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
         width: 100%;
-        text-align: right;
-        margin-top: 0.25rem;
-        padding-top: 0.5rem;
-        border-top: 1px dotted var(--color-border);
+        margin-top: 0.75rem;
+        padding: 0.75rem 1rem;
+        background: var(--color-surface);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md);
+        text-align: left;
+    }
+
+    .client-total-box span {
+        font-size: 0.8rem !important;
+        font-weight: 500;
     }
 
     .client-total-box strong {
-        font-size: 1.1rem;
+        font-size: 1.25rem;
         color: var(--color-primary);
     }
 
@@ -636,7 +646,19 @@
 
     .mobile-sort-row {
         width: 100%;
-        justify-content: space-between;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem !important;
+    }
+
+    .location-select {
+        flex: 1 1 100%;
+        width: 100%;
+    }
+
+    .mobile-sort-row .sort-btn:not(.location-select) {
+        flex: 1;
+        justify-content: center;
     }
 }
 

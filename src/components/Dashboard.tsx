@@ -374,7 +374,7 @@ export const Dashboard = () => {
                             onChange={(e) => setLocationFilter(e.target.value)}
                             className="sort-btn location-select"
                             title="Filtrar por Localidad"
-                            style={{ maxWidth: '140px', outline: 'none', cursor: 'pointer', appearance: 'auto' }}
+                            style={{ outline: 'none', cursor: 'pointer', appearance: 'auto' }}
                         >
                             {uniqueLocations.map(loc => (
                                 <option key={loc} value={loc}>
