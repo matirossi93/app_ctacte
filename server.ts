@@ -40,10 +40,11 @@ db.exec(`
 `);
 
 // ─── Google Sheets URLs (server-only) ─────────────────────────────────────────
+// Use the same simple format that worked when the browser fetched directly
 const INVOICES_URL = process.env.INVOICES_URL ||
-    'https://docs.google.com/spreadsheets/d/1UMtdGkn7GTAIAZ8De9nWxYQThM6YruzVf1-W757xYmQ/export?format=csv&id=1UMtdGkn7GTAIAZ8De9nWxYQThM6YruzVf1-W757xYmQ&gid=0';
+    'https://docs.google.com/spreadsheets/d/1UMtdGkn7GTAIAZ8De9nWxYQThM6YruzVf1-W757xYmQ/export?format=csv';
 const CLIENTS_URL = process.env.CLIENTS_URL ||
-    'https://docs.google.com/spreadsheets/d/1k7B8Phi5QDn_6mFWiAfYBcqqisEWT6nqUwgmhE54Zy8/export?format=csv&id=1k7B8Phi5QDn_6mFWiAfYBcqqisEWT6nqUwgmhE54Zy8&gid=0';
+    'https://docs.google.com/spreadsheets/d/1k7B8Phi5QDn_6mFWiAfYBcqqisEWT6nqUwgmhE54Zy8/export?format=csv';
 
 // ─── Auth ──────────────────────────────────────────────────────────────────────
 const APP_PASSWORD = process.env.APP_PASSWORD;
@@ -82,13 +83,9 @@ app.get('/api/auth/check', requireAuth, (_req: express.Request, res: express.Res
 // ─── Data Proxy (Google Sheets URLs remain server-side only) ──────────────────
 app.get('/api/data', requireAuth, async (_req: express.Request, res: express.Response) => {
     try {
-        const sheetHeaders = {
-            'User-Agent': 'Mozilla/5.0 (compatible; DataProxy/1.0)',
-            'Accept': 'text/csv,text/plain,*/*'
-        };
         const [invoicesRes, clientsRes] = await Promise.all([
-            axios.get(INVOICES_URL, { responseType: 'text', timeout: 30000, headers: sheetHeaders, maxRedirects: 10 }),
-            axios.get(CLIENTS_URL, { responseType: 'text', timeout: 30000, headers: sheetHeaders, maxRedirects: 10 })
+            axios.get(INVOICES_URL, { responseType: 'text', timeout: 30000, maxRedirects: 10 }),
+            axios.get(CLIENTS_URL, { responseType: 'text', timeout: 30000, maxRedirects: 10 })
         ]);
         res.json({ invoices: invoicesRes.data, clients: clientsRes.data });
     } catch (err: any) {
@@ -163,10 +160,9 @@ app.post('/api/client-thresholds', requireAuth, (req: express.Request, res: expr
 // ─── Bot API (public — used by external chatbots/automations) ────────────────
 app.get('/api/bot', async (_req: express.Request, res: express.Response) => {
     try {
-        const sheetHeaders = { 'User-Agent': 'Mozilla/5.0 (compatible; DataProxy/1.0)', 'Accept': 'text/csv,text/plain,*/*' };
         const [invoicesRes, clientsRes] = await Promise.all([
-            axios.get(INVOICES_URL, { responseType: 'text', timeout: 30000, headers: sheetHeaders, maxRedirects: 10 }),
-            axios.get(CLIENTS_URL, { responseType: 'text', timeout: 30000, headers: sheetHeaders, maxRedirects: 10 })
+            axios.get(INVOICES_URL, { responseType: 'text', timeout: 30000, maxRedirects: 10 }),
+            axios.get(CLIENTS_URL, { responseType: 'text', timeout: 30000, maxRedirects: 10 })
         ]);
 
         const clientsRaw = parse(clientsRes.data, { header: true, skipEmptyLines: true }).data as any[];
