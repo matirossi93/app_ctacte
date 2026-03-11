@@ -349,12 +349,12 @@ export const Dashboard = () => {
             </div>
 
             <div className={`dashboard-section content-wrapper ${activeTab === 'clientes' ? 'show-mobile' : 'hide-mobile'}`}>
-                <div className="content-grid-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', gap: '1rem', flexWrap: 'wrap' }}>
-                    <h2 style={{ fontSize: '1.25rem', color: 'var(--color-text)' }}>Detalle por Clientes</h2>
+                <div className="content-grid-header mobile-filters-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', gap: '1rem', flexWrap: 'wrap' }}>
+                    <h2 className="mobile-hide" style={{ fontSize: '1.25rem', color: 'var(--color-text)' }}>Detalle por Clientes</h2>
                     
                     {/* Mobile Vendor Select Dropdown */}
                     {!isoVendor && (
-                        <div className="mobile-vendor-select glass desktop-hide">
+                        <div className="mobile-vendor-select glass desktop-hide" style={{ width: '100%', marginBottom: 0 }}>
                             <select 
                                 value={activeVendorId || 'GLOBAL_VIEW'} 
                                 onChange={(e) => setActiveVendorId(e.target.value)}
@@ -368,7 +368,7 @@ export const Dashboard = () => {
                         </div>
                     )}
 
-                    <div className="sort-controls glass" style={{ display: 'flex', padding: '0.25rem', borderRadius: '0.5rem', flexWrap: 'wrap', gap: '0.25rem' }}>
+                    <div className="sort-controls glass mobile-sort-row" style={{ display: 'flex', padding: '0.25rem', borderRadius: '0.5rem', flexWrap: 'wrap', gap: '0.25rem' }}>
                         <select
                             value={locationFilter}
                             onChange={(e) => setLocationFilter(e.target.value)}
