@@ -133,8 +133,22 @@ export const ClientTable = ({ vendor, clientThresholds = {}, onUpdateThreshold, 
 
                                         return (
                                             <tr key={inv.id} className={rowClass}>
-                                                <td className="mobile-hide">{inv.date}</td>
-                                                <td className="mobile-hide">{inv.daysEmission}</td>
+                                                <td className="mobile-hide" style={{ color: 'var(--color-text-muted)' }}>{inv.date}</td>
+                                                <td>
+                                                    <span style={{ fontWeight: 600 }}>{inv.type} {inv.invoiceNumber}</span>
+                                                    {inv.type === 'ND' && (
+                                                        <span className="badge badge-danger" style={{ 
+                                                            marginLeft: '0.5rem', 
+                                                            fontSize: '0.65rem', 
+                                                            padding: '0.1rem 0.4rem',
+                                                            backgroundColor: 'var(--color-warning-bg)',
+                                                            color: 'var(--color-warning)'
+                                                        }}>
+                                                            INTERÉS
+                                                        </span>
+                                                    )}
+                                                </td>
+                                                <td className="mobile-hide">{inv.daysEmission} d.</td>
                                                 <td>
                                                     {inv.isOverdue ? (
                                                         <strong className="text-warning">{inv.daysOverdue} d.</strong>

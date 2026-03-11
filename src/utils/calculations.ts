@@ -31,20 +31,6 @@ export const processInvoices = (
         // Custom threshold overrides the default system threshold
         const customThreshold = clientThresholds[clientId] || defaultThreshold;
 
-        // If 'DIAS DEUDA' is a number and > 0, it means the invoice is overdue based on the client's term
-        // USER UPDATE: If customThreshold is set, use DIAS_EMISI vs customThreshold
-        let isOverdue = false;
-        let daysOverdue = 0;
-
-        if (customThreshold !== undefined && customThreshold > 0) {
-            const diasmEmi = Number(raw.DIAS_EMISI) || 0;
-            isOverdue = diasmEmi > customThreshold;
-            daysOverdue = isOverdue ? diasmEmi - customThreshold : 0;
-        } else {
-            isOverdue = typeof raw['DIAS DEUDA'] === 'number' ? raw['DIAS DEUDA'] > 0 : false;
-            daysOverdue = typeof raw['DIAS DEUDA'] === 'number' ? Math.max(0, raw['DIAS DEUDA']) : 0;
-        }
-
         // Parse Argentine currency format (e.g., "$1.415.035,00" or "4026125" strings/numbers)
         const parseCurrency = (val: any): number => {
             if (typeof val === 'number') return val;
@@ -54,7 +40,60 @@ export const processInvoices = (
             return isNaN(parsed) ? 0 : parsed;
         };
 
-        const balance = parseCurrency(raw.SALDO);
+        const type = String(raw.TIPO_COMPR).toUpperCase();
+        
+        // Fix for Notas de Crédito (NC): Their SALDO is 0 but TOTAL contains the negative value
+        let balance = 0;
+        if (type === 'NC') {
+            balance = parseCurrency(raw.TOTAL);
+        } else {
+            balance = parseCurrency(raw.SALDO);
+        }
+
+        // Exact Recalculation of Overdue Days based on [Today] - [Emission Date]
+        // The date appears in the unnamed first column raw[''] e.g. '9/2/2026' or '21/11/2025'
+        const emissionDateStr = String(raw.FECHA || raw[''] || '');
+        let diffDays = Number(raw.DIAS_EMISI) || 0; // Fallback
+        
+        if (emissionDateStr.includes('/')) {
+            const parts = emissionDateStr.split('/');
+            if (parts.length >= 3) {
+                // Ensure YYYY-MM-DD
+                const day = parseInt(parts[0], 10);
+                const month = parseInt(parts[1], 10) - 1; // JS months are 0-indexed
+                const year = parseInt(parts[2], 10);
+                
+                const emissionDate = new Date(year, month, day);
+                const today = new Date();
+                
+                // Clear times for pure day diff
+                emissionDate.setHours(0,0,0,0);
+                today.setHours(0,0,0,0);
+                
+                const diffTime = today.getTime() - emissionDate.getTime();
+                diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+            }
+        }
+        
+        // Prevent negative days if the invoice date is in the future somehow
+        diffDays = Math.max(0, diffDays);
+
+        // Calculate if it's overdue using pure elapsed days against the threshold
+        let isOverdue = false;
+        let daysOverdue = 0;
+
+        if (customThreshold !== undefined && customThreshold > 0) {
+            isOverdue = diffDays > customThreshold;
+            daysOverdue = isOverdue ? diffDays - customThreshold : 0;
+        } else {
+            isOverdue = diffDays > defaultThreshold;
+            daysOverdue = isOverdue ? diffDays - defaultThreshold : 0;
+        }
+        
+        // Never apply interest to Credit Notes
+        if (type === 'NC') {
+            isOverdue = false;
+        }
 
         // Apply override if it exists
         const invoiceId = String(raw.ID);
@@ -74,8 +113,8 @@ export const processInvoices = (
             date: String(raw.FECHA || raw['']), // The CSV header for date is often empty
             totalStr: String(raw.TOTAL),
             balance,
-            type: String(raw.TIPO_COMPR),
-            daysEmission: Number(raw.DIAS_EMISI) || 0,
+            type,
+            daysEmission: diffDays, 
             daysOverdue,
             isOverdue,
             interestRate: appliedInterestRate,
@@ -84,8 +123,8 @@ export const processInvoices = (
         };
     });
 
-    // Remove null or negligible balances to clean up the view (filters out $0, $0.01 etc.)
-    const invoices = allMappedInvoices.filter(inv => inv.balance > 1);
+    // Remove null or negligible balances but KEEP negative balances (Credit Notes)
+    const invoices = allMappedInvoices.filter(inv => Math.abs(inv.balance) > 1);
 
     // 2. Group by Vendor
     const vendorMap = new Map<string, VendorSummary>();
