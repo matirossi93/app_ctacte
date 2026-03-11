@@ -42,13 +42,8 @@ export const processInvoices = (
 
         const type = String(raw.TIPO_COMPR).toUpperCase();
         
-        // Fix for Notas de Crédito (NC): Their SALDO is 0 but TOTAL contains the negative value
-        let balance = 0;
-        if (type === 'NC') {
-            balance = parseCurrency(raw.TOTAL);
-        } else {
-            balance = parseCurrency(raw.SALDO);
-        }
+        // As requested, always read from raw.SALDO (even for NCs)
+        const balance = parseCurrency(raw.SALDO);
 
         // Exact Recalculation of Overdue Days based on [Today] - [Emission Date]
         // The date appears in the unnamed first column raw[''] e.g. '9/2/2026' or '21/11/2025'
