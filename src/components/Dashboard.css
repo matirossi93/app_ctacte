@@ -541,6 +541,7 @@
     color: var(--color-text-muted);
     border-bottom: 2px solid var(--color-border);
     background: var(--color-bg);
+    white-space: normal;
 }
 
 .data-table td {
@@ -586,7 +587,9 @@
 .amount-column {
     text-align: right;
     font-variant-numeric: tabular-nums;
-    white-space: nowrap;
+    /* Optional: keep nowrap on amounts only to avoid breaking numbers, 
+       but if it still overflows, let it wrap. */
+    white-space: nowrap; 
 }
 
 .row-overdue {
