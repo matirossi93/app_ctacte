@@ -189,7 +189,9 @@ export const Dashboard = () => {
         });
     };
 
-    const allVendors = [globalVendor, ...viewData]; 
+    // The sidebar needs to see ALL vendors to show them as "greyed out" instead of removing them.
+    // However, the "GLOBAL_VIEW" totals should only reflect the ACTIVE (viewData) ones.
+    const allVendorsSidebar = [globalVendor, ...rawData]; 
     const activeVendor = activeVendorId === 'GLOBAL_VIEW'
         ? globalVendor
         : viewData.find(v => v.vendorId === activeVendorId) || null;
@@ -313,7 +315,7 @@ export const Dashboard = () => {
                 {!isoVendor && (
                     <aside>
                         <VendorList
-                            vendors={allVendors}
+                            vendors={allVendorsSidebar}
                             activeVendorId={activeVendorId}
                             onSelectVendor={setActiveVendorId}
                             disabledVendorIds={disabledVendorIds}
