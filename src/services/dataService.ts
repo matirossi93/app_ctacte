@@ -6,7 +6,11 @@ export const fetchRawData = async (): Promise<{ invoices: InvoiceRaw[], clientDb
     const response = await fetch('/api/data', { headers: authHeaders() });
 
     if (response.status === 401) throw new UnauthorizedError();
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    if (!response.ok) {
+        let detail = '';
+        try { const body = await response.json() as { error?: string }; detail = body.error || ''; } catch {}
+        throw new Error(`Error al cargar datos (${response.status})${detail ? ': ' + detail : ''}`);
+    }
 
     const { invoices: invoicesCsvText, clients: clientsCsvText } = await response.json() as {
         invoices: string;

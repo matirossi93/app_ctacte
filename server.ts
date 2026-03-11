@@ -82,14 +82,19 @@ app.get('/api/auth/check', requireAuth, (_req: express.Request, res: express.Res
 // ─── Data Proxy (Google Sheets URLs remain server-side only) ──────────────────
 app.get('/api/data', requireAuth, async (_req: express.Request, res: express.Response) => {
     try {
+        const sheetHeaders = {
+            'User-Agent': 'Mozilla/5.0 (compatible; DataProxy/1.0)',
+            'Accept': 'text/csv,text/plain,*/*'
+        };
         const [invoicesRes, clientsRes] = await Promise.all([
-            axios.get(INVOICES_URL, { responseType: 'text', timeout: 15000 }),
-            axios.get(CLIENTS_URL, { responseType: 'text', timeout: 15000 })
+            axios.get(INVOICES_URL, { responseType: 'text', timeout: 30000, headers: sheetHeaders, maxRedirects: 10 }),
+            axios.get(CLIENTS_URL, { responseType: 'text', timeout: 30000, headers: sheetHeaders, maxRedirects: 10 })
         ]);
         res.json({ invoices: invoicesRes.data, clients: clientsRes.data });
     } catch (err: any) {
-        console.error('GET /api/data error:', err.message);
-        res.status(500).json({ error: err.message });
+        const detail = err.response ? ` (HTTP ${err.response.status})` : ` (${err.code || 'network error'})`;
+        console.error('GET /api/data error:', err.message + detail);
+        res.status(500).json({ error: err.message + detail });
     }
 });
 
@@ -158,9 +163,10 @@ app.post('/api/client-thresholds', requireAuth, (req: express.Request, res: expr
 // ─── Bot API (public — used by external chatbots/automations) ────────────────
 app.get('/api/bot', async (_req: express.Request, res: express.Response) => {
     try {
+        const sheetHeaders = { 'User-Agent': 'Mozilla/5.0 (compatible; DataProxy/1.0)', 'Accept': 'text/csv,text/plain,*/*' };
         const [invoicesRes, clientsRes] = await Promise.all([
-            axios.get(INVOICES_URL, { responseType: 'text', timeout: 15000 }),
-            axios.get(CLIENTS_URL, { responseType: 'text', timeout: 15000 })
+            axios.get(INVOICES_URL, { responseType: 'text', timeout: 30000, headers: sheetHeaders, maxRedirects: 10 }),
+            axios.get(CLIENTS_URL, { responseType: 'text', timeout: 30000, headers: sheetHeaders, maxRedirects: 10 })
         ]);
 
         const clientsRaw = parse(clientsRes.data, { header: true, skipEmptyLines: true }).data as any[];
