@@ -96,3 +96,127 @@ button {
   cursor: pointer;
   font-family: inherit;
 }
+
+/* ── Login Screen ───────────────────────────────────────────────────── */
+.login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+  padding: 1rem;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  padding: 2.5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.login-logo {
+  height: 80px;
+  object-fit: contain;
+}
+
+[data-theme="dark"] .login-logo {
+  background: rgba(255,255,255,0.92);
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-md);
+}
+
+.login-title-group {
+  text-align: center;
+}
+
+.login-title-group h1 {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--color-text);
+  margin-bottom: 0.25rem;
+}
+
+.login-title-group p {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.login-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.login-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.login-input-icon {
+  position: absolute;
+  left: 0.875rem;
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
+
+.login-input {
+  width: 100%;
+  padding: 0.75rem 2.5rem 0.75rem 2.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 0.95rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.login-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(45, 106, 79, 0.15);
+}
+
+.login-eye-btn {
+  position: absolute;
+  right: 0.75rem;
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  padding: 0.25rem;
+  display: flex;
+  align-items: center;
+}
+
+.login-eye-btn:hover {
+  color: var(--color-text);
+}
+
+.login-error {
+  font-size: 0.82rem;
+  color: var(--color-danger);
+  text-align: center;
+  padding: 0.5rem;
+  background: var(--color-danger-bg);
+  border-radius: var(--radius-sm);
+}
+
+.login-submit {
+  width: 100%;
+  padding: 0.85rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border-radius: var(--radius-md);
+  transition: background 0.2s, opacity 0.2s;
+}
+
+.login-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

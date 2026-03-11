@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { DatabaseSync } from 'node:sqlite';
+import { randomUUID } from 'node:crypto';
 import pkg from 'papaparse';
 const { parse } = pkg;
 import axios from 'axios';
@@ -17,7 +18,7 @@ const PORT = process.env.PORT || 80;
 app.use(cors());
 app.use(express.json());
 
-// Initialize SQLite Database
+// ─── SQLite Setup ─────────────────────────────────────────────────────────────
 const dbDir = path.join(__dirname, '..', 'data');
 if (!fs.existsSync(dbDir)) {
     fs.mkdirSync(dbDir, { recursive: true });
@@ -31,93 +32,163 @@ db.exec(`
     )
 `);
 
-// API Route to GET interest overrides
-app.get('/api/overrides', (req, res) => {
-    try {
-        const query = db.prepare('SELECT invoice_id, apply_interest FROM invoice_overrides');
-        const rows = query.all();
-        // Return as key-value map for the frontend context
-        const overridesMap: Record<string, boolean> = {};
-        rows.forEach((r: any) => {
-            overridesMap[r.invoice_id] = r.apply_interest === 1;
-        });
-        res.json(overridesMap);
-    } catch (err: any) {
-        console.error("GET /api/overrides error:", err);
-        res.status(500).json({ status: "error", message: err.message });
-    }
-});
+db.exec(`
+    CREATE TABLE IF NOT EXISTS client_thresholds (
+        client_id TEXT PRIMARY KEY,
+        days INTEGER NOT NULL
+    )
+`);
 
-// API Route to POST (upsert) an override
-app.post('/api/overrides', (req, res) => {
-    try {
-        const { invoiceId, apply } = req.body;
-        if (!invoiceId || typeof apply !== 'boolean') {
-            return res.status(400).json({ error: "Invalid request payload. Expected invoiceId (string) and apply (boolean)." });
+// ─── Google Sheets URLs (server-only) ─────────────────────────────────────────
+const INVOICES_URL = process.env.INVOICES_URL ||
+    'https://docs.google.com/spreadsheets/d/1UMtdGkn7GTAIAZ8De9nWxYQThM6YruzVf1-W757xYmQ/export?format=csv&id=1UMtdGkn7GTAIAZ8De9nWxYQThM6YruzVf1-W757xYmQ&gid=0';
+const CLIENTS_URL = process.env.CLIENTS_URL ||
+    'https://docs.google.com/spreadsheets/d/1k7B8Phi5QDn_6mFWiAfYBcqqisEWT6nqUwgmhE54Zy8/export?format=csv&id=1k7B8Phi5QDn_6mFWiAfYBcqqisEWT6nqUwgmhE54Zy8&gid=0';
+
+// ─── Auth ──────────────────────────────────────────────────────────────────────
+const APP_PASSWORD = process.env.APP_PASSWORD;
+const TOKEN_TTL = 8 * 60 * 60 * 1000; // 8 hours
+const validTokens = new Map<string, number>(); // token → expiry timestamp
+
+const requireAuth = (req: express.Request, res: express.Response, next: express.NextFunction): void => {
+    if (!APP_PASSWORD) { next(); return; } // Auth disabled when no password configured
+    const auth = req.headers.authorization;
+    if (!auth?.startsWith('Bearer ')) { res.status(401).json({ error: 'No autorizado' }); return; }
+    const token = auth.slice(7);
+    const expiry = validTokens.get(token);
+    if (!expiry || Date.now() > expiry) { res.status(401).json({ error: 'Sesión expirada' }); return; }
+    next();
+};
+
+app.post('/api/auth/login', (req: express.Request, res: express.Response) => {
+    const { password } = req.body as { password?: string };
+    if (!APP_PASSWORD || password === APP_PASSWORD) {
+        const token = randomUUID();
+        validTokens.set(token, Date.now() + TOKEN_TTL);
+        // Cleanup expired tokens
+        for (const [t, exp] of validTokens.entries()) {
+            if (Date.now() > exp) validTokens.delete(t);
         }
-        
-        const applyInt = apply ? 1 : 0;
-        const stmt = db.prepare(`
-            INSERT INTO invoice_overrides (invoice_id, apply_interest)
-            VALUES (?, ?)
-            ON CONFLICT(invoice_id) DO UPDATE SET apply_interest = excluded.apply_interest
-        `);
-        stmt.run(invoiceId, applyInt);
-        
-        res.json({ status: "success" });
-    } catch (err: any) {
-        console.error("POST /api/overrides error:", err);
-        res.status(500).json({ status: "error", message: err.message });
+        res.json({ success: true, token, authRequired: !!APP_PASSWORD });
+        return;
     }
+    res.status(401).json({ success: false, error: 'Contraseña incorrecta' });
 });
 
-// Google Sheets URLs
-const INVOICES_URL = 'https://docs.google.com/spreadsheets/d/1UMtdGkn7GTAIAZ8De9nWxYQThM6YruzVf1-W757xYmQ/export?format=csv&id=1UMtdGkn7GTAIAZ8De9nWxYQThM6YruzVf1-W757xYmQ&gid=0';
-const CLIENTS_URL = 'https://docs.google.com/spreadsheets/d/1k7B8Phi5QDn_6mFWiAfYBcqqisEWT6nqUwgmhE54Zy8/export?format=csv&id=1k7B8Phi5QDn_6mFWiAfYBcqqisEWT6nqUwgmhE54Zy8&gid=0';
+app.get('/api/auth/check', requireAuth, (_req: express.Request, res: express.Response) => {
+    res.json({ valid: true, authRequired: !!APP_PASSWORD });
+});
 
-// API Route for Bot
-app.get('/api/bot', async (req, res) => {
+// ─── Data Proxy (Google Sheets URLs remain server-side only) ──────────────────
+app.get('/api/data', requireAuth, async (_req: express.Request, res: express.Response) => {
     try {
         const [invoicesRes, clientsRes] = await Promise.all([
-            axios.get(INVOICES_URL, { responseType: 'text' }),
-            axios.get(CLIENTS_URL, { responseType: 'text' })
+            axios.get(INVOICES_URL, { responseType: 'text', timeout: 15000 }),
+            axios.get(CLIENTS_URL, { responseType: 'text', timeout: 15000 })
+        ]);
+        res.json({ invoices: invoicesRes.data, clients: clientsRes.data });
+    } catch (err: any) {
+        console.error('GET /api/data error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Overrides API ─────────────────────────────────────────────────────────────
+app.get('/api/overrides', requireAuth, (_req: express.Request, res: express.Response) => {
+    try {
+        const rows = db.prepare('SELECT invoice_id, apply_interest FROM invoice_overrides').all() as Array<{ invoice_id: string; apply_interest: number }>;
+        const map: Record<string, boolean> = {};
+        rows.forEach(r => { map[r.invoice_id] = r.apply_interest === 1; });
+        res.json(map);
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/overrides', requireAuth, (req: express.Request, res: express.Response) => {
+    try {
+        const { invoiceId, apply } = req.body as { invoiceId?: string; apply?: boolean };
+        if (!invoiceId || typeof apply !== 'boolean') {
+            res.status(400).json({ error: 'Payload inválido' });
+            return;
+        }
+        db.prepare(`
+            INSERT INTO invoice_overrides (invoice_id, apply_interest) VALUES (?, ?)
+            ON CONFLICT(invoice_id) DO UPDATE SET apply_interest = excluded.apply_interest
+        `).run(invoiceId, apply ? 1 : 0);
+        res.json({ status: 'success' });
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Client Thresholds API ────────────────────────────────────────────────────
+app.get('/api/client-thresholds', requireAuth, (_req: express.Request, res: express.Response) => {
+    try {
+        const rows = db.prepare('SELECT client_id, days FROM client_thresholds').all() as Array<{ client_id: string; days: number }>;
+        const map: Record<string, number> = {};
+        rows.forEach(r => { map[r.client_id] = r.days; });
+        res.json(map);
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/client-thresholds', requireAuth, (req: express.Request, res: express.Response) => {
+    try {
+        const { clientId, days } = req.body as { clientId?: string; days?: number };
+        if (!clientId || typeof days !== 'number') {
+            res.status(400).json({ error: 'Payload inválido' });
+            return;
+        }
+        if (days === 0) {
+            db.prepare('DELETE FROM client_thresholds WHERE client_id = ?').run(clientId);
+        } else {
+            db.prepare(`
+                INSERT INTO client_thresholds (client_id, days) VALUES (?, ?)
+                ON CONFLICT(client_id) DO UPDATE SET days = excluded.days
+            `).run(clientId, days);
+        }
+        res.json({ status: 'success' });
+    } catch (err: any) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ─── Bot API (public — used by external chatbots/automations) ────────────────
+app.get('/api/bot', async (_req: express.Request, res: express.Response) => {
+    try {
+        const [invoicesRes, clientsRes] = await Promise.all([
+            axios.get(INVOICES_URL, { responseType: 'text', timeout: 15000 }),
+            axios.get(CLIENTS_URL, { responseType: 'text', timeout: 15000 })
         ]);
 
-        const clientsRaw = parse(clientsRes.data, { header: true, skipEmptyLines: true }).data;
-        const invoicesRaw = parse(invoicesRes.data, { header: true, skipEmptyLines: true }).data;
+        const clientsRaw = parse(clientsRes.data, { header: true, skipEmptyLines: true }).data as any[];
+        const invoicesRaw = parse(invoicesRes.data, { header: true, skipEmptyLines: true }).data as any[];
 
-        // Build Client Map
-        const clientDbMap = new Map();
+        // Build client map — same field names as InvoiceRaw / calculations.ts
+        const clientDbMap = new Map<string, { localidad: string; frecuencia: string }>();
         clientsRaw.forEach((c: any) => {
-            if (c.COD_CLIENT) {
-                clientDbMap.set(c.COD_CLIENT.toString().trim(), {
-                    localidad: c.LOCALIDAD?.trim() || '',
+            const cod = c.Cod?.toString().trim() || c.COD_CLIENT?.toString().trim();
+            if (cod) {
+                clientDbMap.set(cod, {
+                    localidad: c.Localidad?.trim() || c.LOCALIDAD?.trim() || '',
                     frecuencia: c.Frecuencia?.trim() || 'MENSUAL'
                 });
             }
         });
 
-        // Variables for calculation
         const interestRate = 0.10;
-        const vendorsMap = new Map();
 
-        // Safe Number parser
-        const parseNum = (val: any) => {
+        const parseNum = (val: any): number => {
             if (!val) return 0;
             if (typeof val === 'number') return val;
-            let clean = val.toString().replace(/^\$/, '').trim();
-            if (clean.includes(',') && clean.includes('.')) {
-                clean = clean.replace(/\./g, '').replace(',', '.');
-            } else if (clean.includes(',')) {
-                clean = clean.replace(',', '.');
-            }
-            const parsed = Number(clean);
-            return isNaN(parsed) ? 0 : parsed;
+            const clean = val.toString().replace(/\$/g, '').replace(/\./g, '').replace(',', '.').trim();
+            const n = Number(clean);
+            return isNaN(n) ? 0 : n;
         };
 
-        // Date helper (similar to frontend)
-        const parseRefDate = (dateStr: string) => {
-            if (!dateStr) return new Date();
+        const parseDate = (dateStr: string): Date => {
             const parts = dateStr.split('/');
             if (parts.length === 3) {
                 return new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
@@ -125,140 +196,107 @@ app.get('/api/bot', async (req, res) => {
             return new Date(dateStr);
         };
 
-        const today = new Date();
-        const normalizeDate = (d: Date) => {
-            d.setHours(0, 0, 0, 0);
-            return d;
-        };
-
-        const clientsByVendor = new Map();
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const vendorsMap = new Map<string, Map<string, any>>();
 
         invoicesRaw.forEach((raw: any) => {
-            const dateStr = String(raw.FECHA || raw[''] || '');
-            if (!dateStr || dateStr.toLowerCase() === 'undefined') return;
+            // Use correct field names (same as InvoiceRaw type in calculations.ts)
+            const clientId = String(raw['12'] || raw.COD_CLIENT || '').trim();
+            const clientName = String(raw.CLIENTES_N || '').trim();
+            const vendorName = String(raw.VENDEDORES || '').trim();
+            const type = String(raw.TIPO_COMPR || '').toUpperCase();
+            if (!clientId || !clientName || !vendorName) return;
 
-            const invoiceDate = normalizeDate(parseRefDate(dateStr));
-            let daysOverdue = Math.floor((normalizeDate(new Date()).getTime() - invoiceDate.getTime()) / (1000 * 60 * 60 * 24));
-            
-            const clientId = String(raw.COD_CLIENT || raw['12'] || '');
-            const clientName = String(raw.NOMBRE || '');
-            const vendorName = String(raw.VENDEDOR || '');
-            if (!clientId || !clientName) return;
+            const emissionDateStr = String(raw.FECHA || raw[''] || '');
+            let diffDays = 0;
+            if (emissionDateStr.includes('/')) {
+                const d = parseDate(emissionDateStr); d.setHours(0, 0, 0, 0);
+                diffDays = Math.max(0, Math.floor((today.getTime() - d.getTime()) / 86400000));
+            }
 
             const clientDb = clientDbMap.get(clientId);
-            let defaultThreshold = 15;
-            if (clientDb?.frecuencia === 'SEMANAL') defaultThreshold = 7;
-            else if (clientDb?.frecuencia === 'MENSUAL') defaultThreshold = 30;
+            let threshold = 15;
+            if (clientDb?.frecuencia === 'SEMANAL') threshold = 7;
+            else if (clientDb?.frecuencia === 'MENSUAL') threshold = 30;
 
-            const applyInterest = daysOverdue > defaultThreshold;
-            const originalAmount = parseNum(raw.SALDO);
-            const interestAmount = applyInterest ? originalAmount * interestRate : 0;
-            const totalAmount = originalAmount + interestAmount;
+            const isOverdue = type !== 'NC' && diffDays > threshold;
+            const balance = parseNum(raw.SALDO);
+            const interest = isOverdue ? balance * interestRate : 0;
 
-            if (!vendorsMap.has(vendorName)) {
-                vendorsMap.set(vendorName, new Map());
-            }
-            
-            const vendorClients = vendorsMap.get(vendorName);
+            if (!vendorsMap.has(vendorName)) vendorsMap.set(vendorName, new Map());
+            const vendorClients = vendorsMap.get(vendorName)!;
             if (!vendorClients.has(clientId)) {
                 vendorClients.set(clientId, {
-                    clientName,
-                    clientId,
+                    clientName, clientId,
                     localidad: clientDb?.localidad || '',
-                    maxDaysOverdue: 0,
-                    totalBalance: 0,
-                    totalInterest: 0,
-                    totalWithInterest: 0,
+                    maxDaysOverdue: 0, totalBalance: 0, totalInterest: 0, totalWithInterest: 0,
                     invoices: []
                 });
             }
-
-            const clientAgg = vendorClients.get(clientId);
-            if (daysOverdue > clientAgg.maxDaysOverdue) clientAgg.maxDaysOverdue = daysOverdue;
-            clientAgg.totalBalance += originalAmount;
-            clientAgg.totalInterest += interestAmount;
-            clientAgg.totalWithInterest += totalAmount;
-            
-            clientAgg.invoices.push({
-                type: String(raw.TIPO || ''),
-                invoiceNumber: String(raw.NRO_COMP || ''),
-                date: dateStr,
-                daysOverdue,
-                originalAmount,
-                interestAmount,
-                totalWithInterest: totalAmount,
-                isOverdue: applyInterest
+            const c = vendorClients.get(clientId)!;
+            if (diffDays > c.maxDaysOverdue) c.maxDaysOverdue = diffDays;
+            c.totalBalance += balance;
+            c.totalInterest += interest;
+            c.totalWithInterest += balance + interest;
+            c.invoices.push({
+                numero: `${raw.TIPO_COMPR || ''} ${raw.NUMERO || ''}`.trim(),
+                fecha_emision: emissionDateStr,
+                dias_vencida: diffDays,
+                interes_aplicado: interest,
+                total_a_cobrar: balance + interest
             });
         });
 
-        // Format to JSON identical to frontend
-        const resultVendorsMap = new Map();
-        
-        vendorsMap.forEach((clientsMap, vendorName) => {
-            const locationsMap = new Map();
-            Array.from(clientsMap.values()).forEach((c: any) => {
-                if (c.totalBalance > 0 || c.totalWithInterest > 0) {
-                    const loc = c.localidad || 'Sin Localidad';
-                    if (!locationsMap.has(loc)) locationsMap.set(loc, []);
-                    
-                    locationsMap.get(loc).push({
-                        nombre: c.clientName,
-                        codigo_cliente: c.clientId,
-                        maximos_dias_atraso: c.maxDaysOverdue,
-                        saldo_original: c.totalBalance,
-                        saldo_con_intereses: c.totalWithInterest,
-                        cantidad_facturas: c.invoices.length,
-                        facturas: c.invoices.map((i: any) => ({
-                            numero: `${i.type} ${i.invoiceNumber}`,
-                            fecha_emision: i.date,
-                            dias_vencida: i.daysOverdue,
-                            interes_aplicado: i.interestAmount,
-                            total_a_cobrar: i.totalWithInterest
-                        }))
-                    });
-                }
-            });
-
-            const localidades: any[] = [];
-            locationsMap.forEach((clientes, nombre_localidad) => {
-                localidades.push({
-                    localidad: nombre_localidad,
+        const reporte_vendedores = Array.from(vendorsMap.entries())
+            .map(([vendedor, clientsMap]) => {
+                const locMap = new Map<string, any[]>();
+                Array.from(clientsMap.values()).forEach((c: any) => {
+                    if (c.totalBalance > 0) {
+                        const loc = c.localidad || 'Sin Localidad';
+                        if (!locMap.has(loc)) locMap.set(loc, []);
+                        locMap.get(loc)!.push({
+                            nombre: c.clientName,
+                            codigo_cliente: c.clientId,
+                            maximos_dias_atraso: c.maxDaysOverdue,
+                            saldo_original: c.totalBalance,
+                            saldo_con_intereses: c.totalWithInterest,
+                            cantidad_facturas: c.invoices.length,
+                            facturas: c.invoices
+                        });
+                    }
+                });
+                const localidades = Array.from(locMap.entries()).map(([localidad, clientes]) => ({
+                    localidad,
                     total_clientes_deudores: clientes.length,
                     clientes: clientes.sort((a: any, b: any) => b.saldo_con_intereses - a.saldo_con_intereses)
-                });
-            });
-
-            if (localidades.length > 0) {
-                resultVendorsMap.set(vendorName, localidades);
-            }
-        });
-
-        const reporteVendedores = Array.from(resultVendorsMap.entries()).map(([vendedor, localidades]) => ({
-            vendedor,
-            localidades
-        }));
+                }));
+                return localidades.length > 0 ? { vendedor, localidades } : null;
+            })
+            .filter(Boolean);
 
         res.json({
-            status: "success",
+            status: 'success',
             timestamp: new Date().toISOString(),
-            tasa_interes_aplicada: "10%",
-            reporte_vendedores: reporteVendedores
+            tasa_interes_aplicada: '10%',
+            reporte_vendedores
         });
-
     } catch (err: any) {
-        console.error(err);
-        res.status(500).json({ status: "error", message: err.message });
+        console.error('GET /api/bot error:', err.message);
+        res.status(500).json({ status: 'error', message: err.message });
     }
 });
 
-// Serve frontend
+// ─── Serve Frontend ────────────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, '..', 'dist')));
-
-// Fallback for React Router
-app.use((req, res) => {
+app.use((_req, res) => {
     res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
 });
 
 app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
+    if (APP_PASSWORD) {
+        console.log('Auth: ENABLED (APP_PASSWORD set)');
+    } else {
+        console.log('Auth: disabled — set APP_PASSWORD env var to enable');
+    }
 });
