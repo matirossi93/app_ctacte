@@ -330,6 +330,12 @@
     .content-grid {
         gap: 1.5rem;
     }
+    
+    .content-grid > main,
+    .vendor-list {
+        max-height: none;
+        overflow-y: visible;
+    }
 }
 
 /* Vendor List */

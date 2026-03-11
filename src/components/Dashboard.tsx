@@ -13,7 +13,7 @@ import './Dashboard.css';
 export const Dashboard = () => {
     const [interestRate, setInterestRate] = useState(0.10); // 10% default
     const [searchTerm, setSearchTerm] = useState('');
-    const [sortBy, setSortBy] = useState<'balance' | 'aging'>('balance');
+    const [sortBy, setSortBy] = useState<'balance' | 'aging'>('aging');
     const [disabledVendorIds, setDisabledVendorIds] = useState<Set<string>>(new Set());
     
     // Check URL parameters for vendor isolation
@@ -245,7 +245,7 @@ export const Dashboard = () => {
                             src="/logo_full.png" 
                             alt="Semillero El Manantial" 
                             style={{ 
-                                height: '100px', 
+                                height: '160px', 
                                 objectFit: 'contain'
                             }}
                             onError={(e) => {

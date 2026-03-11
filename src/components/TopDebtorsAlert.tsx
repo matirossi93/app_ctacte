@@ -19,8 +19,8 @@ export const TopDebtorsAlert = ({ data }: TopDebtorsAlertProps) => {
     // Filter only those with actual overdue invoices
     const overdueClients = allClients.filter(c => c.maxDaysOverdue > 0);
 
-    // Sort by largest debt first
-    overdueClients.sort((a, b) => b.totalWithInterest - a.totalWithInterest);
+    // Sort by largest overdue days first
+    overdueClients.sort((a, b) => b.maxDaysOverdue - a.maxDaysOverdue);
 
     // Take top 5
     const topDebtors = overdueClients.slice(0, 5);
