@@ -218,21 +218,27 @@ export const Dashboard = () => {
 
     return (
         <div className="dashboard-layout">
-            <header className="dashboard-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                    <div style={{ background: 'white', padding: '0.25rem', borderRadius: '8px', display: 'flex' }}>
+            <header className="dashboard-header" style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: '1.5rem', marginBottom: '2rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
                         <img 
-                            src="/logo.png" 
-                            alt="Logo Semillero El Manantial" 
-                            style={{ height: '55px', objectFit: 'contain' }}
+                            src="/logo_full.png" 
+                            alt="Semillero El Manantial" 
+                            style={{ 
+                                height: '100px', 
+                                objectFit: 'contain',
+                                mixBlendMode: 'multiply',
+                                margin: '-10px 0' // Compensate for the image's internal whitespace padding
+                            }}
                             onError={(e) => {
-                                (e.target as HTMLImageElement).style.display = 'none';
+                                (e.target as HTMLImageElement).src = '/logo.png';
                             }}
                         />
                     </div>
-                    <div>
-                        <h1>Panel de Cobranzas</h1>
-                        <p style={{ color: 'var(--color-text-muted)' }}>Semillero El Manantial S.R.L.</p>
+                    <div className="mobile-hide" style={{ height: '50px', width: '2px', background: 'var(--color-border)' }}></div>
+                    <div style={{ paddingLeft: '0.5rem' }}>
+                        <h1 style={{ fontSize: '1.75rem', margin: '0 0 0.2rem 0', fontWeight: 800, color: 'var(--color-text)', letterSpacing: '-0.02em', lineHeight: 1.1 }}>Panel de Cobranzas</h1>
+                        <span style={{ color: 'var(--color-primary)', fontSize: '0.9rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', opacity: 0.9 }}>Gestión de Vendedores</span>
                     </div>
                 </div>
 
