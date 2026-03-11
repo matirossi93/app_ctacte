@@ -15,6 +15,7 @@ export const Dashboard = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [sortBy, setSortBy] = useState<'balance' | 'aging'>('aging');
     const [disabledVendorIds, setDisabledVendorIds] = useState<Set<string>>(new Set());
+    const [activeTab, setActiveTab] = useState<'resumen' | 'clientes'>('resumen');
     
     // Check URL parameters for vendor isolation
     const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
@@ -288,12 +289,50 @@ export const Dashboard = () => {
                 </div>
             </header>
 
-            {!isoVendor && <TopDebtorsAlert data={viewData} />}
-            <SummaryCards data={viewData} />
+            {/* Mobile Navigation Tabs */}
+            <div className="mobile-tabs glass desktop-hide">
+                <button 
+                    className={`tab-btn ${activeTab === 'resumen' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('resumen')}
+                >
+                    <LayoutGrid size={18} />
+                    Resumen
+                </button>
+                <button 
+                    className={`tab-btn ${activeTab === 'clientes' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('clientes')}
+                >
+                    <ListOrdered size={18} />
+                    Mis Clientes
+                </button>
+            </div>
 
-            <div className="content-grid-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', gap: '1rem', flexWrap: 'wrap' }}>
-                <h2 style={{ fontSize: '1.25rem', color: 'var(--color-text)' }}>Detalle por Clientes</h2>
-                <div className="sort-controls glass" style={{ display: 'flex', padding: '0.25rem', borderRadius: '0.5rem' }}>
+            <div className={`dashboard-section ${activeTab === 'resumen' ? 'show-mobile' : 'hide-mobile'}`}>
+                {!isoVendor && <TopDebtorsAlert data={viewData} />}
+                <SummaryCards data={viewData} />
+            </div>
+
+            <div className={`dashboard-section content-wrapper ${activeTab === 'clientes' ? 'show-mobile' : 'hide-mobile'}`}>
+                <div className="content-grid-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', gap: '1rem', flexWrap: 'wrap' }}>
+                    <h2 style={{ fontSize: '1.25rem', color: 'var(--color-text)' }}>Detalle por Clientes</h2>
+                    
+                    {/* Mobile Vendor Select Dropdown */}
+                    {!isoVendor && (
+                        <div className="mobile-vendor-select glass desktop-hide">
+                            <select 
+                                value={activeVendorId || 'GLOBAL_VIEW'} 
+                                onChange={(e) => setActiveVendorId(e.target.value)}
+                            >
+                                {allVendorsSidebar.filter(v => !disabledVendorIds.has(v.vendorId)).map(v => (
+                                    <option key={v.vendorId} value={v.vendorId}>
+                                        {v.vendorName} {v.vendorId !== 'GLOBAL_VIEW' && `(${v.clients.length})`}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+
+                    <div className="sort-controls glass" style={{ display: 'flex', padding: '0.25rem', borderRadius: '0.5rem' }}>
                     <button
                         onClick={() => setSortBy('balance')}
                         className={`sort-btn ${sortBy === 'balance' ? 'active' : ''}`}
@@ -313,7 +352,7 @@ export const Dashboard = () => {
 
             <div className={`content-grid ${isoVendor ? 'isolated-view' : ''}`}>
                 {!isoVendor && (
-                    <aside>
+                    <aside className="mobile-hide">
                         <VendorList
                             vendors={allVendorsSidebar}
                             activeVendorId={activeVendorId}
@@ -350,6 +389,7 @@ export const Dashboard = () => {
                         }}
                     />
                 </main>
+            </div>
             </div>
         </div>
     );
