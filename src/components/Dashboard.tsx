@@ -13,6 +13,7 @@ import './Dashboard.css';
 export const Dashboard = () => {
     const [interestRate, setInterestRate] = useState(0.10); // 10% default
     const [searchTerm, setSearchTerm] = useState('');
+    const [locationFilter, setLocationFilter] = useState('TODAS');
     const [sortBy, setSortBy] = useState<'balance' | 'aging'>('aging');
     const [disabledVendorIds, setDisabledVendorIds] = useState<Set<string>>(new Set());
     const [activeTab, setActiveTab] = useState<'resumen' | 'clientes'>('resumen');
@@ -115,6 +116,36 @@ export const Dashboard = () => {
         }
     }, [viewData, isoVendor, activeVendorId]);
 
+    // Calculate activeVendor early so hooks can depend on it
+    const activeVendor = useMemo(() => {
+        if (activeVendorId === 'GLOBAL_VIEW') {
+            return null; // For GLOBAL_VIEW, we'll derive baseClients later
+        }
+        return viewData.find(v => v.vendorId === activeVendorId) || null;
+    }, [activeVendorId, viewData]);
+    
+    // We need baseClients for the location dropdown, but we also define it later for sorting.
+    // Let's compute a preliminary list just for the dropdown options to satisfy hook rules.
+    const preBaseClients = activeVendor ? activeVendor.clients : viewData.flatMap(v => v.clients);
+
+    // 2. Extract unique locations BEFORE filtering, so the dropdown always has options
+    const uniqueLocations = useMemo(() => {
+        const locations = new Set<string>();
+        preBaseClients.forEach(c => {
+            if (c.localidad) {
+                // Cleanup text if necessary
+                locations.add(c.localidad.trim());
+            }
+        });
+        const arr = Array.from(locations).filter(Boolean).sort((a, b) => a.localeCompare(b));
+        return ['TODAS', ...arr];
+    }, [preBaseClients]);
+
+    // Reset location option if the vendor changes (since locations might be different)
+    useEffect(() => {
+        setLocationFilter('TODAS');
+    }, [activeVendor?.vendorId]);
+
     if (loading) {
         return (
             <div className="loading-state">
@@ -193,15 +224,19 @@ export const Dashboard = () => {
     // The sidebar needs to see ALL vendors to show them as "greyed out" instead of removing them.
     // However, the "GLOBAL_VIEW" totals should only reflect the ACTIVE (viewData) ones.
     const allVendorsSidebar = [globalVendor, ...rawData]; 
-    const activeVendor = activeVendorId === 'GLOBAL_VIEW'
-        ? globalVendor
-        : viewData.find(v => v.vendorId === activeVendorId) || null;
+    // activeVendor is already computed above
+    const finalActiveVendor = activeVendor || globalVendor;
 
     // 1. Determine Source of Clients
-    let baseClients = activeVendor?.clients || [];
-    let currentViewName = activeVendor?.vendorName || '';
+    let baseClients = finalActiveVendor.clients || [];
+    let currentViewName = finalActiveVendor.vendorName || '';
 
-    // 2. Override with search if active
+    // 3. Apply location filter
+    if (locationFilter !== 'TODAS') {
+        baseClients = baseClients.filter(c => c.localidad?.trim() === locationFilter);
+    }
+
+    // 4. Override with search if active
     if (searchTerm.trim()) {
         baseClients = globalVendor.clients.filter(c =>
             c.clientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -210,7 +245,7 @@ export const Dashboard = () => {
         currentViewName = `Resultados de búsqueda: "${searchTerm}"`;
     }
 
-    // 3. Apply Multi-level Sorting
+    // 5. Apply Multi-level Sorting
     const sortedClients = [...baseClients].sort((a, b) => {
         if (sortBy === 'aging') {
             // Priority 1: Oldest debt age
@@ -230,11 +265,11 @@ export const Dashboard = () => {
     });
 
     const displayedVendor = {
-        vendorId: searchTerm.trim() ? 'SEARCH_RESULTS' : (activeVendor?.vendorId || 'NONE'),
+        vendorId: searchTerm.trim() ? 'SEARCH_RESULTS' : (finalActiveVendor.vendorId || 'NONE'),
         vendorName: currentViewName,
-        totalBalance: activeVendor?.totalBalance || 0,
-        totalInterest: activeVendor?.totalInterest || 0,
-        totalWithInterest: activeVendor?.totalWithInterest || 0,
+        totalBalance: finalActiveVendor.totalBalance || 0,
+        totalInterest: finalActiveVendor.totalInterest || 0,
+        totalWithInterest: finalActiveVendor.totalWithInterest || 0,
         clients: sortedClients
     };
 
@@ -308,7 +343,8 @@ export const Dashboard = () => {
             </div>
 
             <div className={`dashboard-section ${activeTab === 'resumen' ? 'show-mobile' : 'hide-mobile'}`}>
-                {!isoVendor && <TopDebtorsAlert data={viewData} />}
+                {/* Dynamically pass only the active vendor (or global data if GLOBAL_VIEW) to Top Debtors */}
+                {!isoVendor && <TopDebtorsAlert data={activeVendorId === 'GLOBAL_VIEW' ? viewData : (activeVendor ? [activeVendor] : [])} />}
                 <SummaryCards data={viewData} />
             </div>
 
@@ -332,9 +368,22 @@ export const Dashboard = () => {
                         </div>
                     )}
 
-                    <div className="sort-controls glass" style={{ display: 'flex', padding: '0.25rem', borderRadius: '0.5rem' }}>
-                    <button
-                        onClick={() => setSortBy('balance')}
+                    <div className="sort-controls glass" style={{ display: 'flex', padding: '0.25rem', borderRadius: '0.5rem', flexWrap: 'wrap', gap: '0.25rem' }}>
+                        <select
+                            value={locationFilter}
+                            onChange={(e) => setLocationFilter(e.target.value)}
+                            className="sort-btn location-select"
+                            title="Filtrar por Localidad"
+                            style={{ maxWidth: '140px', outline: 'none', cursor: 'pointer', appearance: 'auto' }}
+                        >
+                            {uniqueLocations.map(loc => (
+                                <option key={loc} value={loc}>
+                                    {loc === 'TODAS' ? '📍 Localidad (Todas)' : loc}
+                                </option>
+                            ))}
+                        </select>
+                        <button
+                            onClick={() => setSortBy('balance')}
                         className={`sort-btn ${sortBy === 'balance' ? 'active' : ''}`}
                         title="Ordenar por mayor saldo"
                     >
