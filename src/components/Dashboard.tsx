@@ -260,15 +260,15 @@ export const Dashboard = () => {
                     </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                    <div className="search-bar glass" style={{ display: 'flex', alignItems: 'center', padding: '0.5rem 1rem', borderRadius: '0.5rem' }}>
+                <div className="dashboard-controls">
+                    <div className="search-bar glass">
                         <Search size={18} style={{ opacity: 0.5, marginRight: '0.5rem' }} />
                         <input
                             type="text"
                             placeholder="Buscar cliente o código..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            style={{ border: 'none', background: 'transparent', outline: 'none', width: '250px', fontSize: '0.9rem', color: 'var(--color-text)' }}
+                            className="search-input"
                         />
                     </div>
                     <InterestControl
@@ -289,7 +289,7 @@ export const Dashboard = () => {
             {!isoVendor && <TopDebtorsAlert data={viewData} />}
             <SummaryCards data={viewData} />
 
-            <div className="content-grid-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
+            <div className="content-grid-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', gap: '1rem', flexWrap: 'wrap' }}>
                 <h2 style={{ fontSize: '1.25rem', color: 'var(--color-text)' }}>Detalle por Clientes</h2>
                 <div className="sort-controls glass" style={{ display: 'flex', padding: '0.25rem', borderRadius: '0.5rem' }}>
                     <button
