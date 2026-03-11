@@ -104,11 +104,20 @@ export const ClientTable = ({ vendor, clientThresholds = {}, onUpdateThreshold, 
                                     <tr>
                                         <th className="mobile-hide" style={{ cursor: 'pointer' }} onClick={() => handleSort('date')}>Fecha Emisión {sortIcon('date')}</th>
                                         <th className="mobile-hide" style={{ cursor: 'pointer' }} onClick={() => handleSort('daysEmission')}>Días Emitida {sortIcon('daysEmission')}</th>
-                                        <th style={{ cursor: 'pointer' }} onClick={() => handleSort('daysOverdue')}>Demora {sortIcon('daysOverdue')}</th>
+                                        <th style={{ cursor: 'pointer' }} onClick={() => handleSort('daysOverdue')}>
+                                            <span className="mobile-hide">Demora</span>
+                                            <span className="desktop-hide">Días</span> {sortIcon('daysOverdue')}
+                                        </th>
                                         <th className="amount-column mobile-hide" style={{ cursor: 'pointer' }} onClick={() => handleSort('balance')}>Saldo Original {sortIcon('balance')}</th>
-                                        <th style={{ textAlign: 'center' }}>Aplicar Int.</th>
+                                        <th style={{ textAlign: 'center' }}>
+                                            <span className="mobile-hide">Aplicar Int.</span>
+                                            <span className="desktop-hide" title="Aplicar Interés">% Int.</span>
+                                        </th>
                                         <th className="amount-column mobile-hide">Interés Calculado</th>
-                                        <th className="amount-column" style={{ cursor: 'pointer' }} onClick={() => handleSort('totalWithInterest')}>Total a Cobrar {sortIcon('totalWithInterest')}</th>
+                                        <th className="amount-column" style={{ cursor: 'pointer' }} onClick={() => handleSort('totalWithInterest')}>
+                                            <span className="mobile-hide">Total a Cobrar</span>
+                                            <span className="desktop-hide">Total</span> {sortIcon('totalWithInterest')}
+                                        </th>
                                         <th>Factura</th>
                                     </tr>
                                 </thead>

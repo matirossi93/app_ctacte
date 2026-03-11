@@ -266,7 +266,9 @@
 .content-grid > main {
     max-height: 800px;
     overflow-y: auto;
+    overflow-x: hidden;
     padding-right: 0.5rem; /* for custom scrollbar space */
+    min-width: 0; /* Prevents grid blowout on mobile */
 }
 
 /* Custom Webkit Scrollbar */
@@ -531,6 +533,14 @@
     .mobile-hide {
         display: none !important;
     }
+    
+    .desktop-hide {
+        display: inline !important;
+    }
+}
+
+.desktop-hide {
+    display: none !important;
 }
 
 .data-table tbody tr:hover {
