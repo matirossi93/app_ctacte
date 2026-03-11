@@ -39,15 +39,28 @@
 }
 
 /* Dark Mode Overrides */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg: #111827;
-    --color-surface: #1f2937;
-    --color-surface-hover: #374151;
-    --color-text: #f9fafb;
-    --color-text-muted: #9ca3af;
-    --color-border: #374151;
-  }
+[data-theme="dark"] {
+  --color-bg: #111827;
+  --color-surface: #1f2937;
+  --color-surface-hover: #374151;
+  --color-text: #f9fafb;
+  --color-text-muted: #9ca3af;
+  --color-border: #374151;
+}
+
+[data-theme="dark"] .brand-logo {
+  mix-blend-mode: normal !important;
+  background-color: rgba(255, 255, 255, 0.95);
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-md);
+  margin: 0 !important;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+
+.brand-logo {
+  mix-blend-mode: multiply;
+  margin: -10px 0;
+  transition: all 0.3s ease;
 }
 
 * {

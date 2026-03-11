@@ -7,7 +7,7 @@ import { VendorList } from './VendorList';
 import { ClientTable } from './ClientTable';
 import { InterestControl } from './InterestControl';
 import { TopDebtorsAlert } from './TopDebtorsAlert';
-import { LayoutGrid, ListOrdered } from 'lucide-react';
+import { LayoutGrid, ListOrdered, Moon, Sun } from 'lucide-react';
 import './Dashboard.css';
 
 export const Dashboard = () => {
@@ -41,6 +41,25 @@ export const Dashboard = () => {
             })
             .catch(err => console.error('Error fetching overrides:', err));
     }, []);
+
+    // Theme Management
+    const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+        if (typeof window !== 'undefined') {
+            const savedTheme = localStorage.getItem('app_theme');
+            if (savedTheme === 'light' || savedTheme === 'dark') return savedTheme;
+            if (window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
+        }
+        return 'light';
+    });
+
+    useEffect(() => {
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('app_theme', theme);
+    }, [theme]);
+
+    const toggleTheme = () => {
+        setTheme(prev => prev === 'light' ? 'dark' : 'light');
+    };
 
     const { rawInvoices, clientDbMap, loading, error } = useData();
 
@@ -222,13 +241,12 @@ export const Dashboard = () => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
                     <div style={{ display: 'flex', alignItems: 'center' }}>
                         <img 
+                            className="brand-logo"
                             src="/logo_full.png" 
                             alt="Semillero El Manantial" 
                             style={{ 
                                 height: '100px', 
-                                objectFit: 'contain',
-                                mixBlendMode: 'multiply',
-                                margin: '-10px 0' // Compensate for the image's internal whitespace padding
+                                objectFit: 'contain'
                             }}
                             onError={(e) => {
                                 (e.target as HTMLImageElement).src = '/logo.png';
@@ -250,13 +268,21 @@ export const Dashboard = () => {
                             placeholder="Buscar cliente o código..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            style={{ border: 'none', background: 'transparent', outline: 'none', width: '250px', fontSize: '0.9rem' }}
+                            style={{ border: 'none', background: 'transparent', outline: 'none', width: '250px', fontSize: '0.9rem', color: 'var(--color-text)' }}
                         />
                     </div>
                     <InterestControl
                         currentRate={interestRate}
                         onRateChange={setInterestRate}
                     />
+                    <button 
+                        onClick={toggleTheme} 
+                        className="btn-icon" 
+                        title="Alternar tema claro/oscuro"
+                        style={{ padding: '0.5rem', borderRadius: '50%' }}
+                    >
+                        {theme === 'light' ? <Moon size={20} /> : <Sun size={20} />}
+                    </button>
                 </div>
             </header>
 

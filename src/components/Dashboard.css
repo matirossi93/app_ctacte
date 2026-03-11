@@ -41,10 +41,8 @@
     }
 }
 
-@media (prefers-color-scheme: dark) {
-    .dashboard-header h1 {
-        color: var(--color-accent);
-    }
+[data-theme="dark"] .dashboard-header h1 {
+    color: var(--color-accent);
 }
 
 .sort-btn {
@@ -71,11 +69,9 @@
     color: white;
 }
 
-@media (prefers-color-scheme: dark) {
-    .sort-btn.active {
-        background: var(--color-accent);
-        color: var(--color-bg);
-    }
+[data-theme="dark"] .sort-btn.active {
+    background: var(--color-accent);
+    color: var(--color-bg);
 }
 
 /* Summary Cards */
@@ -182,10 +178,8 @@
     background: var(--color-surface-hover);
 }
 
-@media (prefers-color-scheme: dark) {
-    .btn-icon {
-        color: var(--color-accent);
-    }
+[data-theme="dark"] .btn-icon {
+    color: var(--color-accent);
 }
 
 .interest-popover {
@@ -411,10 +405,8 @@
     text-align: right;
 }
 
-@media (prefers-color-scheme: dark) {
-    .vendor-amount {
-        color: var(--color-accent);
-    }
+[data-theme="dark"] .vendor-amount {
+    color: var(--color-accent);
 }
 
 /* Client Table Area */
@@ -575,10 +567,8 @@
     color: var(--color-primary);
 }
 
-@media (prefers-color-scheme: dark) {
-    .cell-total {
-        color: var(--color-accent);
-    }
+[data-theme="dark"] .cell-total {
+    color: var(--color-accent);
 }
 
 .empty-state {
