@@ -172,7 +172,10 @@ export const processInvoices = (
         clientSummary.totalBalance += inv.balance;
         clientSummary.totalInterest += inv.interestAmount;
         clientSummary.totalWithInterest += inv.totalWithInterest;
-        clientSummary.maxDaysOverdue = Math.max(clientSummary.maxDaysOverdue, inv.daysOverdue);
+        // Solo considerar facturas (FAC) para el cálculo de días de deuda, ignorando NC y ND
+        if (inv.type === 'FAC') {
+            clientSummary.maxDaysOverdue = Math.max(clientSummary.maxDaysOverdue, inv.daysOverdue);
+        }
         clientSummary.invoices.push(inv);
 
         // Accumulate Vendor Data directly
