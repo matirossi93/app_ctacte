@@ -85,8 +85,8 @@ export const processInvoices = (
             daysOverdue = isOverdue ? diffDays : 0;
         }
         
-        // Never apply interest to Credit Notes or Debit Notes — only FAC counts for overdue
-        if (type !== 'FAC') {
+        // Solo facturas (FA) generan atraso/interés — NC, ND, RC no
+        if (type !== 'FA') {
             isOverdue = false;
             daysOverdue = 0;
         }
@@ -174,7 +174,7 @@ export const processInvoices = (
         clientSummary.totalInterest += inv.interestAmount;
         clientSummary.totalWithInterest += inv.totalWithInterest;
         // Solo considerar facturas (FAC) para el cálculo de días de deuda, ignorando NC y ND
-        if (inv.type === 'FAC') {
+        if (inv.type === 'FA') {
             clientSummary.maxDaysOverdue = Math.max(clientSummary.maxDaysOverdue, inv.daysOverdue);
         }
         clientSummary.invoices.push(inv);
