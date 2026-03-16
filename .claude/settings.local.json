@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//tmp/**)",
+      "Bash(git -C /tmp/repo_clone log --oneline -5)",
+      "Bash(__NEW_LINE_508b7bd141657a52__ cd:*)",
+      "Bash(__NEW_LINE_508b7bd141657a52__ git commit -m \"fix: eliminar AnalyticsDashboard y BotJsonFeed del repo:*)",
+      "Bash(__NEW_LINE_508b7bd141657a52__ git:*)",
+      "Bash(__NEW_LINE_9445072f994b76fc__ cd:*)",
+      "Bash(__NEW_LINE_9445072f994b76fc__ git commit -m \"fix: mejorar proxy a Google Sheets y mensajes de error:*)",
+      "Bash(git push:*)",
+      "Bash(git -C /tmp/repo_clone status)"
+    ]
+  }
+}
