@@ -91,12 +91,14 @@ export const processInvoices = (
             daysOverdue = 0;
         }
 
-        // Apply override if it exists
+        // Apply override if it exists (solo para FA — no se calcula interés sobre interés)
         const invoiceId = String(raw.ID);
-        const hasManualOverride = invoiceInterestOverrides[invoiceId] !== undefined;
-        const manuallyApplied = hasManualOverride ? invoiceInterestOverrides[invoiceId] : isOverdue;
-
-        const appliedInterestRate = manuallyApplied ? interestRate : 0;
+        let appliedInterestRate = 0;
+        if (type === 'FA') {
+            const hasManualOverride = invoiceInterestOverrides[invoiceId] !== undefined;
+            const manuallyApplied = hasManualOverride ? invoiceInterestOverrides[invoiceId] : isOverdue;
+            appliedInterestRate = manuallyApplied ? interestRate : 0;
+        }
         const interestAmount = balance * appliedInterestRate;
 
         return {
