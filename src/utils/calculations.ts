@@ -85,9 +85,10 @@ export const processInvoices = (
             daysOverdue = isOverdue ? diffDays : 0;
         }
         
-        // Never apply interest to Credit Notes
-        if (type === 'NC') {
+        // Never apply interest to Credit Notes or Debit Notes — only FAC counts for overdue
+        if (type !== 'FAC') {
             isOverdue = false;
+            daysOverdue = 0;
         }
 
         // Apply override if it exists
