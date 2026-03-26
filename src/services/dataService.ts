@@ -2,8 +2,12 @@ import Papa from 'papaparse';
 import type { InvoiceRaw, ClientDBType } from '../types';
 import { authHeaders, UnauthorizedError } from '../utils/auth';
 
-export const fetchRawData = async (force = false): Promise<{ invoices: InvoiceRaw[], clientDbMap: Map<string, ClientDBType> }> => {
-    const url = force ? '/api/data?nocache=1' : '/api/data';
+export const fetchRawData = async (force = false, codEmpresa?: number): Promise<{ invoices: InvoiceRaw[], clientDbMap: Map<string, ClientDBType> }> => {
+    const params = new URLSearchParams();
+    if (force) params.set('nocache', '1');
+    if (codEmpresa) params.set('codEmpresa', String(codEmpresa));
+    const qs = params.toString();
+    const url = `/api/data${qs ? '?' + qs : ''}`;
     const response = await fetch(url, { headers: authHeaders() });
 
     if (response.status === 401) throw new UnauthorizedError();

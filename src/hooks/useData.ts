@@ -5,7 +5,7 @@ import type { InvoiceRaw, ClientDBType } from '../types';
 
 const AUTO_REFRESH_INTERVAL = 10 * 60 * 1000; // 10 minutes
 
-export const useData = (onUnauthorized?: () => void) => {
+export const useData = (onUnauthorized?: () => void, codEmpresa?: number) => {
     const [rawInvoices, setRawInvoices] = useState<InvoiceRaw[]>([]);
     const [clientDbMap, setClientDbMap] = useState<Map<string, ClientDBType>>(new Map());
     const [loading, setLoading] = useState<boolean>(true);
@@ -21,7 +21,7 @@ export const useData = (onUnauthorized?: () => void) => {
             setLoading(true);
             setError(null);
             try {
-                const result = await fetchRawData(forceRef.current);
+                const result = await fetchRawData(forceRef.current, codEmpresa);
                 forceRef.current = false;
                 if (active) {
                     setRawInvoices(result.invoices);
@@ -43,7 +43,7 @@ export const useData = (onUnauthorized?: () => void) => {
         loadData();
 
         return () => { active = false; };
-    }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [refreshKey, codEmpresa]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Auto-refresh every 10 minutes
     useEffect(() => {

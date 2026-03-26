@@ -94,7 +94,14 @@ export const Dashboard = ({ onUnauthorized }: Props) => {
         localStorage.setItem('disabledVendorIds', JSON.stringify([...disabledVendorIds]));
     }, [disabledVendorIds]);
 
-    const { rawInvoices, clientDbMap, loading, error, lastRefreshed, refresh } = useData(onUnauthorized);
+    // Empresa filter (1 = Casa Central, 2 = BRS San Martín)
+    const [codEmpresa, setCodEmpresa] = useState<number>(() => {
+        const saved = localStorage.getItem('codEmpresa');
+        return saved ? Number(saved) : 1;
+    });
+    useEffect(() => { localStorage.setItem('codEmpresa', String(codEmpresa)); }, [codEmpresa]);
+
+    const { rawInvoices, clientDbMap, loading, error, lastRefreshed, refresh } = useData(onUnauthorized, codEmpresa);
 
     // Apply default disabled vendors on first load (Andrea & Sucursales)
     const rawData = useMemo(() => {
@@ -301,6 +308,19 @@ export const Dashboard = ({ onUnauthorized }: Props) => {
                 </div>
 
                 <div className="dashboard-controls">
+                    {/* Empresa selector */}
+                    {!isoVendor && (
+                        <select
+                            value={codEmpresa}
+                            onChange={e => setCodEmpresa(Number(e.target.value))}
+                            className="empresa-select glass"
+                            title="Seleccionar empresa"
+                        >
+                            <option value={1}>Casa Central</option>
+                            <option value={2}>BRS San Mart&iacute;n</option>
+                        </select>
+                    )}
+
                     {/* Last refresh + Refresh button */}
                     <div className="refresh-group">
                         {lastRefreshed && (

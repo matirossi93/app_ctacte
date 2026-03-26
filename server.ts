@@ -76,7 +76,7 @@ interface NormalizedData {
     clientDbMap: Record<string, any>;
     source: 'infomanager' | 'sheets';
 }
-let dataCache: { data: NormalizedData; timestamp: number } | null = null;
+let dataCache: { data: NormalizedData; timestamp: number; key: number } | null = null;
 
 // ─── Sheets Fetch ────────────────────────────────────────────────────────────
 const fetchSheetsData = async (force = false): Promise<{ invoices: string; clients: string }> => {
@@ -118,16 +118,19 @@ async function getIMToken(): Promise<string> {
 }
 
 // ─── InfoManager Data Fetch ──────────────────────────────────────────────────
-async function fetchIMData(): Promise<NormalizedData> {
+async function fetchIMData(codEmpresa?: number): Promise<NormalizedData> {
     const token = await getIMToken();
     const headers = { Authorization: `Bearer ${token}` };
 
-    // Fetch comprob_pendientes for both empresas + vendedores + clients sheet (for Localidad/Frecuencia)
-    const [invoices1, invoices2, vendedoresRes, clientsSheetRes] = await Promise.all([
-        axios.get(`${IM_BASE_URL}/reportes/comprob_pendientes_clientes?tag=todos&codCliente=0&codEmpresa=1`, { headers, timeout: 60000 }),
-        axios.get(`${IM_BASE_URL}/reportes/comprob_pendientes_clientes?tag=todos&codCliente=0&codEmpresa=2`, { headers, timeout: 60000 }),
+    // Fetch comprob_pendientes for requested empresa(s) + vendedores + clients sheet
+    const empresas = codEmpresa ? [codEmpresa] : [1]; // Default: solo empresa 1
+    const invoicePromises = empresas.map(e =>
+        axios.get(`${IM_BASE_URL}/reportes/comprob_pendientes_clientes?tag=todos&codCliente=0&codEmpresa=${e}`, { headers, timeout: 60000 })
+    );
+    const [vendedoresRes, clientsSheetRes, ...invoiceResults] = await Promise.all([
         axios.get(`${IM_BASE_URL}/vendedores`, { headers, timeout: 15000 }),
         axios.get(CLIENTS_URL, { responseType: 'text', timeout: 30000, maxRedirects: 10 }).catch(() => null),
+        ...invoicePromises,
     ]);
 
     // Build vendedor lookup
@@ -183,24 +186,22 @@ async function fetchIMData(): Promise<NormalizedData> {
         });
     };
 
-    const allInvoices = [
-        ...normalize(invoices1.data, 1),
-        ...normalize(invoices2.data, 2)
-    ];
+    const allInvoices = empresas.flatMap((e, i) => normalize(invoiceResults[i].data, e));
 
     return { invoices: allInvoices, clientDbMap, source: 'infomanager' };
 }
 
 // ─── Unified Data Fetch (IM primary, Sheets fallback) ────────────────────────
-async function fetchData(force = false): Promise<NormalizedData> {
-    if (!force && dataCache && Date.now() - dataCache.timestamp < CACHE_TTL) {
+async function fetchData(force = false, codEmpresa?: number): Promise<NormalizedData> {
+    const cacheKey = codEmpresa || 0;
+    if (!force && dataCache && dataCache.key === cacheKey && Date.now() - dataCache.timestamp < CACHE_TTL) {
         return dataCache.data;
     }
 
     if (DATA_SOURCE === 'infomanager') {
         try {
-            const data = await fetchIMData();
-            dataCache = { data, timestamp: Date.now() };
+            const data = await fetchIMData(codEmpresa);
+            dataCache = { data, timestamp: Date.now(), key: cacheKey };
             return data;
         } catch (err: any) {
             console.error('InfoManager failed, falling back to Sheets:', err.message);
@@ -214,7 +215,7 @@ async function fetchData(force = false): Promise<NormalizedData> {
         clientDbMap: sheets.clients as any,
         source: 'sheets'
     };
-    dataCache = { data: result, timestamp: Date.now() };
+    dataCache = { data: result, timestamp: Date.now(), key: 0 };
     return result;
 }
 
@@ -271,7 +272,8 @@ app.get('/api/auth/check', requireAuth, (_req: express.Request, res: express.Res
 app.get('/api/data', requireAuth, async (req: express.Request, res: express.Response) => {
     try {
         const force = req.query.nocache === '1';
-        const data = await fetchData(force);
+        const codEmpresa = req.query.codEmpresa ? Number(req.query.codEmpresa) : undefined;
+        const data = await fetchData(force, codEmpresa);
         res.json(data);
     } catch (err: any) {
         const detail = err.response ? ` (HTTP ${err.response.status})` : ` (${err.code || 'network error'})`;
