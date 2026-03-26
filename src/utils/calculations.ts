@@ -203,6 +203,11 @@ export const processInvoices = (
         // Filter out clients with negligible balances (e.g. $0 or $0.01)
         v.clients = v.clients.filter(c => c.totalBalance > 1 || c.totalWithInterest > 1);
 
+        // Recalculate vendor totals after filtering clients
+        v.totalBalance = v.clients.reduce((sum, c) => sum + c.totalBalance, 0);
+        v.totalInterest = v.clients.reduce((sum, c) => sum + c.totalInterest, 0);
+        v.totalWithInterest = v.clients.reduce((sum, c) => sum + c.totalWithInterest, 0);
+
         v.clients.sort((a, b) => b.totalBalance - a.totalBalance);
 
         // Sort invoices in client by age (days overdue desc, then emission desc)

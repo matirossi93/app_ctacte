@@ -265,20 +265,21 @@
 /* Dashboard Controls (Search & Settings) */
 .dashboard-controls {
     display: flex;
-    gap: 1rem;
+    gap: 0.5rem;
     align-items: center;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
 }
 
 .empresa-select {
-    padding: 0.45rem 0.75rem;
+    padding: 0.35rem 0.5rem;
     border-radius: 0.5rem;
     border: 1px solid var(--color-border);
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     font-weight: 600;
     color: var(--color-text);
     background: var(--color-surface);
     cursor: pointer;
+    flex-shrink: 0;
 }
 
 .search-bar {
@@ -292,7 +293,7 @@
     border: none;
     background: transparent;
     outline: none;
-    width: 250px;
+    width: 180px;
     font-size: 0.9rem;
     color: var(--color-text);
 }
@@ -301,6 +302,7 @@
     .dashboard-controls {
         width: 100%;
         justify-content: space-between;
+        flex-wrap: wrap;
     }
     
     .search-bar {
