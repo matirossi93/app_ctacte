@@ -188,6 +188,24 @@ async function fetchIMData(codEmpresa?: number): Promise<NormalizedData> {
 
     const allInvoices = empresas.flatMap((e, i) => normalize(invoiceResults[i].data, e));
 
+    // Reasignar comprobantes con cod_vendedor=0 al vendedor real del cliente
+    // (ASD/ASH del sistema no tienen vendedor asignado en InfoManager)
+    const clientVendorMap = new Map<string, { id: string; name: string }>();
+    allInvoices.forEach((inv: any) => {
+        if (inv.COD_VENDED !== '0' && !clientVendorMap.has(inv.COD_CLIENT)) {
+            clientVendorMap.set(inv.COD_CLIENT, { id: inv.COD_VENDED, name: inv.VENDEDORES });
+        }
+    });
+    allInvoices.forEach((inv: any) => {
+        if (inv.COD_VENDED === '0') {
+            const real = clientVendorMap.get(inv.COD_CLIENT);
+            if (real) {
+                inv.COD_VENDED = real.id;
+                inv.VENDEDORES = real.name;
+            }
+        }
+    });
+
     return { invoices: allInvoices, clientDbMap, source: 'infomanager' };
 }
 
