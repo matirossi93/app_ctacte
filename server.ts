@@ -196,17 +196,19 @@ async function fetchIMData(codEmpresa?: number): Promise<NormalizedData> {
             clientVendorMap.set(inv.COD_CLIENT, { id: inv.COD_VENDED, name: inv.VENDEDORES });
         }
     });
-    allInvoices.forEach((inv: any) => {
-        if (inv.COD_VENDED === '0') {
-            const real = clientVendorMap.get(inv.COD_CLIENT);
-            if (real) {
-                inv.COD_VENDED = real.id;
-                inv.VENDEDORES = real.name;
-            }
+    // Reasignar o descartar comprobantes sin vendedor
+    const resolvedInvoices = allInvoices.filter((inv: any) => {
+        if (inv.COD_VENDED !== '0') return true;
+        const real = clientVendorMap.get(inv.COD_CLIENT);
+        if (real) {
+            inv.COD_VENDED = real.id;
+            inv.VENDEDORES = real.name;
+            return true;
         }
+        return false; // Sin vendedor asignable → excluir
     });
 
-    return { invoices: allInvoices, clientDbMap, source: 'infomanager' };
+    return { invoices: resolvedInvoices, clientDbMap, source: 'infomanager' };
 }
 
 // ─── Unified Data Fetch (IM primary, Sheets fallback) ────────────────────────
