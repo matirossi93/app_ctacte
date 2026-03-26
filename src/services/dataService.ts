@@ -13,10 +13,22 @@ export const fetchRawData = async (force = false): Promise<{ invoices: InvoiceRa
         throw new Error(`Error al cargar datos (${response.status})${detail ? ': ' + detail : ''}`);
     }
 
-    const { invoices: invoicesCsvText, clients: clientsCsvText } = await response.json() as {
-        invoices: string;
-        clients: string;
-    };
+    const body = await response.json();
+
+    // InfoManager path: server returns structured JSON
+    if (body.source === 'infomanager') {
+        const clientDbMap = new Map<string, ClientDBType>();
+        if (body.clientDbMap) {
+            Object.entries(body.clientDbMap).forEach(([key, val]) => {
+                clientDbMap.set(key, val as ClientDBType);
+            });
+        }
+        return { invoices: body.invoices as InvoiceRaw[], clientDbMap };
+    }
+
+    // Sheets fallback: parse CSV strings
+    const invoicesCsvText = body.invoices as string;
+    const clientsCsvText = body.clientDbMap as string;
 
     return new Promise((resolve, reject) => {
         Papa.parse<ClientDBType>(clientsCsvText, {

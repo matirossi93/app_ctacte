@@ -53,16 +53,32 @@ const cleanExpiredTokens = () => {
 cleanExpiredTokens();
 setInterval(cleanExpiredTokens, 60 * 60 * 1000);
 
-// ─── Google Sheets URLs (server-only) ─────────────────────────────────────────
+// ─── Data Source Config ───────────────────────────────────────────────────────
+const DATA_SOURCE = process.env.DATA_SOURCE || 'infomanager'; // 'infomanager' | 'sheets'
+
+// Google Sheets URLs (fallback)
 const INVOICES_URL = process.env.INVOICES_URL ||
     'https://docs.google.com/spreadsheets/d/1UMtdGkn7GTAIAZ8De9nWxYQThM6YruzVf1-W757xYmQ/export?format=csv';
 const CLIENTS_URL = process.env.CLIENTS_URL ||
     'https://docs.google.com/spreadsheets/d/1k7B8Phi5QDn_6mFWiAfYBcqqisEWT6nqUwgmhE54Zy8/export?format=csv&gid=2120998313';
 
-// ─── Sheets Cache ──────────────────────────────────────────────────────────────
+// InfoManager API config
+const IM_BASE_URL = process.env.INFOMANAGER_BASE_URL || 'https://impedidos.infomanager.com.ar/api/v1';
+const IM_CLIENT_ID = process.env.INFOMANAGER_CLIENT_ID || 'ck_elmanantialsrl_base';
+const IM_CLIENT_SECRET = process.env.INFOMANAGER_CLIENT_SECRET || 'e4MCtm6L_PzdnTL';
+
+// ─── Cache ───────────────────────────────────────────────────────────────────
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 let sheetsCache: { invoices: string; clients: string; timestamp: number } | null = null;
 
+interface NormalizedData {
+    invoices: any[];
+    clientDbMap: Record<string, any>;
+    source: 'infomanager' | 'sheets';
+}
+let dataCache: { data: NormalizedData; timestamp: number } | null = null;
+
+// ─── Sheets Fetch ────────────────────────────────────────────────────────────
 const fetchSheetsData = async (force = false): Promise<{ invoices: string; clients: string }> => {
     if (!force && sheetsCache && Date.now() - sheetsCache.timestamp < CACHE_TTL) {
         return sheetsCache;
@@ -78,6 +94,129 @@ const fetchSheetsData = async (force = false): Promise<{ invoices: string; clien
     };
     return sheetsCache;
 };
+
+// ─── InfoManager Token Management ────────────────────────────────────────────
+let imToken: { jwt: string; expiresAt: number } | null = null;
+let imTokenPromise: Promise<string> | null = null;
+
+async function getIMToken(): Promise<string> {
+    if (imToken && Date.now() < imToken.expiresAt - 5 * 60 * 1000) {
+        return imToken.jwt;
+    }
+    if (!imTokenPromise) {
+        imTokenPromise = (async () => {
+            const res = await axios.post(`${IM_BASE_URL}/auth/login`, {
+                client_id: IM_CLIENT_ID,
+                client_secret: IM_CLIENT_SECRET
+            }, { timeout: 15000 });
+            const jwt = res.data.token;
+            imToken = { jwt, expiresAt: Date.now() + 23 * 60 * 60 * 1000 };
+            return jwt;
+        })().finally(() => { imTokenPromise = null; });
+    }
+    return imTokenPromise;
+}
+
+// ─── InfoManager Data Fetch ──────────────────────────────────────────────────
+async function fetchIMData(): Promise<NormalizedData> {
+    const token = await getIMToken();
+    const headers = { Authorization: `Bearer ${token}` };
+
+    // Fetch comprob_pendientes for both empresas + vendedores + clients sheet (for Localidad/Frecuencia)
+    const [invoices1, invoices2, vendedoresRes, clientsSheetRes] = await Promise.all([
+        axios.get(`${IM_BASE_URL}/reportes/comprob_pendientes_clientes?tag=todos&codCliente=0&codEmpresa=1`, { headers, timeout: 60000 }),
+        axios.get(`${IM_BASE_URL}/reportes/comprob_pendientes_clientes?tag=todos&codCliente=0&codEmpresa=2`, { headers, timeout: 60000 }),
+        axios.get(`${IM_BASE_URL}/vendedores`, { headers, timeout: 15000 }),
+        axios.get(CLIENTS_URL, { responseType: 'text', timeout: 30000, maxRedirects: 10 }).catch(() => null),
+    ]);
+
+    // Build vendedor lookup
+    const vendedorMap = new Map<number, string>();
+    (vendedoresRes.data as any[]).forEach((v: any) => {
+        vendedorMap.set(v.cod_vendedor, v.nombre);
+    });
+
+    // Build clientDb from Google Sheet (for Localidad/Frecuencia — IM doesn't have these)
+    const clientDbMap: Record<string, any> = {};
+    if (clientsSheetRes?.data) {
+        const clientsParsed = parse(clientsSheetRes.data, { header: true, skipEmptyLines: true }).data as any[];
+        clientsParsed.forEach((c: any) => {
+            const cod = String(c.Cod || '').trim();
+            if (cod) {
+                clientDbMap[cod] = {
+                    Cod: cod,
+                    'Razon Social': c['Razon Social'] || '',
+                    Localidad: c.Localidad?.trim() || '',
+                    Frecuencia: c.Frecuencia?.trim() || '',
+                };
+            }
+        });
+    }
+
+    // Normalize IM invoices to match InvoiceRaw shape
+    const normalize = (imInvoices: any[], codEmpresa: number) => {
+        return imInvoices.map((inv: any) => {
+            // Convert ISO date to DD/MM/YYYY
+            let fecha = '';
+            if (inv.fecha_factura) {
+                const d = new Date(inv.fecha_factura);
+                if (!isNaN(d.getTime())) {
+                    fecha = `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+                }
+            }
+
+            return {
+                COD_CLIENT: String(inv.cod_cliente),
+                CLIENTES_N: inv.nombre || '',
+                COD_VENDED: String(inv.cod_vendedor),
+                VENDEDORES: inv.cod_vendedor === 0 ? 'SIN VENDEDOR' : (vendedorMap.get(inv.cod_vendedor) || `VENDEDOR ${inv.cod_vendedor}`),
+                NUMERO: String(inv.numero || ''),
+                ID: `IM-${codEmpresa}-${inv.tipo_comprobante}-${inv.punto_de_venta || 0}-${inv.numero || 0}`,
+                FECHA: fecha,
+                TOTAL: inv.importe_factura,
+                IMPORTE_PA: inv.importe_pagado,
+                SALDO: inv.saldo,
+                TIPO_COMPR: inv.tipo_comprobante || '',
+                DIAS_EMISI: inv.dias_deuda || 0,
+                COD_EMPRES: String(codEmpresa),
+            };
+        });
+    };
+
+    const allInvoices = [
+        ...normalize(invoices1.data, 1),
+        ...normalize(invoices2.data, 2)
+    ];
+
+    return { invoices: allInvoices, clientDbMap, source: 'infomanager' };
+}
+
+// ─── Unified Data Fetch (IM primary, Sheets fallback) ────────────────────────
+async function fetchData(force = false): Promise<NormalizedData> {
+    if (!force && dataCache && Date.now() - dataCache.timestamp < CACHE_TTL) {
+        return dataCache.data;
+    }
+
+    if (DATA_SOURCE === 'infomanager') {
+        try {
+            const data = await fetchIMData();
+            dataCache = { data, timestamp: Date.now() };
+            return data;
+        } catch (err: any) {
+            console.error('InfoManager failed, falling back to Sheets:', err.message);
+        }
+    }
+
+    // Sheets fallback — return CSV strings for backward compat
+    const sheets = await fetchSheetsData(force);
+    const result: NormalizedData = {
+        invoices: sheets.invoices as any,
+        clientDbMap: sheets.clients as any,
+        source: 'sheets'
+    };
+    dataCache = { data: result, timestamp: Date.now() };
+    return result;
+}
 
 // ─── Auth ──────────────────────────────────────────────────────────────────────
 const APP_PASSWORD = process.env.APP_PASSWORD;
@@ -132,8 +271,8 @@ app.get('/api/auth/check', requireAuth, (_req: express.Request, res: express.Res
 app.get('/api/data', requireAuth, async (req: express.Request, res: express.Response) => {
     try {
         const force = req.query.nocache === '1';
-        const data = await fetchSheetsData(force);
-        res.json({ invoices: data.invoices, clients: data.clients });
+        const data = await fetchData(force);
+        res.json(data);
     } catch (err: any) {
         const detail = err.response ? ` (HTTP ${err.response.status})` : ` (${err.code || 'network error'})`;
         console.error('GET /api/data error:', err.message + detail);
@@ -208,21 +347,34 @@ app.post('/api/client-thresholds', requireAuth, (req: express.Request, res: expr
 app.get('/api/bot', async (req: express.Request, res: express.Response) => {
     try {
         const interestRate = Math.min(1, Math.max(0, parseFloat(req.query.rate as string) || 0.10));
-        const data = await fetchSheetsData();
+        const data = await fetchData();
 
-        const clientsRaw = parse(data.clients, { header: true, skipEmptyLines: true }).data as any[];
-        const invoicesRaw = parse(data.invoices, { header: true, skipEmptyLines: true }).data as any[];
-
+        let invoicesRaw: any[];
         const clientDbMap = new Map<string, { localidad: string; frecuencia: string }>();
-        clientsRaw.forEach((c: any) => {
-            const cod = c.Cod?.toString().trim() || c.COD_CLIENT?.toString().trim();
-            if (cod) {
+
+        if (data.source === 'infomanager') {
+            invoicesRaw = data.invoices;
+            // clientDbMap from normalized data
+            Object.entries(data.clientDbMap).forEach(([cod, c]: [string, any]) => {
                 clientDbMap.set(cod, {
-                    localidad: c.Localidad?.trim() || c.LOCALIDAD?.trim() || '',
-                    frecuencia: c.Frecuencia?.trim() || 'MENSUAL'
+                    localidad: c.Localidad || '',
+                    frecuencia: c.Frecuencia || 'MENSUAL'
                 });
-            }
-        });
+            });
+        } else {
+            // Sheets fallback — parse CSV
+            const clientsRaw = parse(data.clientDbMap as any, { header: true, skipEmptyLines: true }).data as any[];
+            invoicesRaw = parse(data.invoices as any, { header: true, skipEmptyLines: true }).data as any[];
+            clientsRaw.forEach((c: any) => {
+                const cod = c.Cod?.toString().trim() || c.COD_CLIENT?.toString().trim();
+                if (cod) {
+                    clientDbMap.set(cod, {
+                        localidad: c.Localidad?.trim() || c.LOCALIDAD?.trim() || '',
+                        frecuencia: c.Frecuencia?.trim() || 'MENSUAL'
+                    });
+                }
+            });
+        }
 
         const parseNum = (val: any): number => {
             if (!val) return 0;
@@ -251,7 +403,7 @@ app.get('/api/bot', async (req: express.Request, res: express.Response) => {
             if (!clientId || !clientName || !vendorName) return;
 
             const emissionDateStr = String(raw.FECHA || raw[''] || '');
-            let diffDays = 0;
+            let diffDays = Number(raw.DIAS_EMISI) || 0;
             if (emissionDateStr.includes('/')) {
                 const d = parseDate(emissionDateStr); d.setHours(0, 0, 0, 0);
                 diffDays = Math.max(0, Math.floor((today.getTime() - d.getTime()) / 86400000));
@@ -262,7 +414,7 @@ app.get('/api/bot', async (req: express.Request, res: express.Response) => {
             if (clientDb?.frecuencia === 'SEMANAL') threshold = 7;
             else if (clientDb?.frecuencia === 'MENSUAL') threshold = 30;
 
-            const isOverdue = type !== 'NC' && diffDays > threshold;
+            const isOverdue = type === 'FA' && diffDays > threshold;
             const balance = parseNum(raw.SALDO);
             const interest = isOverdue ? balance * interestRate : 0;
 
@@ -320,6 +472,7 @@ app.get('/api/bot', async (req: express.Request, res: express.Response) => {
         res.json({
             status: 'success',
             timestamp: new Date().toISOString(),
+            source: data.source,
             tasa_interes_aplicada: `${(interestRate * 100).toFixed(0)}%`,
             reporte_vendedores
         });
@@ -338,4 +491,5 @@ app.use((_req, res) => {
 app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
     console.log(`Auth: ${APP_PASSWORD ? 'ENABLED' : 'disabled — set APP_PASSWORD env var to enable'}`);
+    console.log(`Data source: ${DATA_SOURCE}${DATA_SOURCE === 'infomanager' ? ' (with Sheets fallback)' : ''}`);
 });

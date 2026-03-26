@@ -48,23 +48,32 @@ export const processInvoices = (
         // Exact Recalculation of Overdue Days based on [Today] - [Emission Date]
         // The date appears in the unnamed first column raw[''] e.g. '9/2/2026' or '21/11/2025'
         const emissionDateStr = String(raw.FECHA || raw[''] || '');
-        let diffDays = Number(raw.DIAS_EMISI) || 0; // Fallback
-        
+        let diffDays = Number(raw.DIAS_EMISI) || 0; // Fallback (InfoManager provides this directly)
+
         if (emissionDateStr.includes('/')) {
             const parts = emissionDateStr.split('/');
             if (parts.length >= 3) {
-                // Ensure YYYY-MM-DD
                 const day = parseInt(parts[0], 10);
                 const month = parseInt(parts[1], 10) - 1; // JS months are 0-indexed
                 const year = parseInt(parts[2], 10);
-                
+
                 const emissionDate = new Date(year, month, day);
                 const today = new Date();
-                
-                // Clear times for pure day diff
+
                 emissionDate.setHours(0,0,0,0);
                 today.setHours(0,0,0,0);
-                
+
+                const diffTime = today.getTime() - emissionDate.getTime();
+                diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+            }
+        } else if (emissionDateStr.includes('-') && emissionDateStr.length >= 10) {
+            // ISO format from InfoManager (YYYY-MM-DD)
+            const [y, m, d] = emissionDateStr.split('-').map(Number);
+            if (y && m && d) {
+                const emissionDate = new Date(y, m - 1, d);
+                const today = new Date();
+                emissionDate.setHours(0,0,0,0);
+                today.setHours(0,0,0,0);
                 const diffTime = today.getTime() - emissionDate.getTime();
                 diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
             }
@@ -85,7 +94,7 @@ export const processInvoices = (
             daysOverdue = isOverdue ? diffDays : 0;
         }
         
-        // Solo facturas (FA) generan atraso/interés — NC, ND, RC no
+        // Solo facturas (FA) generan atraso/interés — NC, ND, RC, ASD, ASH no
         if (type !== 'FA') {
             isOverdue = false;
             daysOverdue = 0;
