@@ -131,7 +131,7 @@ export const processInvoices = (
     });
 
     // Remove negligible balances (residuos de pagos parciales) and KEEP negative (Credit Notes)
-    const invoices = allMappedInvoices.filter(inv => Math.abs(inv.balance) > 500);
+    const invoices = allMappedInvoices.filter(inv => Math.abs(inv.balance) > 2000);
 
     // 2. Group by Vendor
     const vendorMap = new Map<string, VendorSummary>();
@@ -201,7 +201,7 @@ export const processInvoices = (
 
     vendorsArray.forEach(v => {
         // Filter out clients with negligible balances (residuos de pagos parciales)
-        v.clients = v.clients.filter(c => c.totalBalance > 500 || c.totalWithInterest > 500);
+        v.clients = v.clients.filter(c => c.totalBalance > 2000 || c.totalWithInterest > 2000);
 
         // Recalculate vendor totals after filtering clients
         v.totalBalance = v.clients.reduce((sum, c) => sum + c.totalBalance, 0);
