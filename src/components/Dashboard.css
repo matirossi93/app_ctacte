@@ -118,7 +118,7 @@
 }
 
 .primary-gradient {
-    background: linear-gradient(135deg, var(--color-primary), var(--color-primary-light)) !important;
+    background: linear-gradient(135deg, #06652F, #4C8F39) !important;
     color: white;
     border: none;
 }
@@ -252,8 +252,8 @@
     background: var(--color-primary);
     color: white;
     border: none;
-    padding: 0.75rem;
-    border-radius: var(--radius-md);
+    padding: 0.75rem 1.5rem;
+    border-radius: 25px;
     font-weight: 600;
     transition: background 0.2s;
 }
@@ -937,6 +937,19 @@
     .aging-amount {
         font-size: 0.72rem;
     }
+}
+
+/* ── PDF Report Button ─────────────────────────────────────────────── */
+.pdf-report-btn {
+    color: var(--color-accent-dark) !important;
+}
+
+.pdf-report-btn:hover {
+    background: var(--color-warning-bg) !important;
+}
+
+[data-theme="dark"] .pdf-report-btn {
+    color: var(--color-accent) !important;
 }
 
 /* ── Dashboard header bottom border ─────────────────────────────────── */

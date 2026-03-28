@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Search, RefreshCw, Moon, Sun, LayoutGrid, ListOrdered, LogOut, Download } from 'lucide-react';
+import { Search, RefreshCw, Moon, Sun, LayoutGrid, ListOrdered, LogOut, Download, FileText } from 'lucide-react';
 import { useData } from '../hooks/useData';
 import { processInvoices } from '../utils/calculations';
 import { SummaryCards } from './SummaryCards';
@@ -9,6 +9,7 @@ import { InterestControl } from './InterestControl';
 import { TopDebtorsAlert } from './TopDebtorsAlert';
 import { AgingBars } from './AgingBars';
 import { authHeaders, clearToken } from '../utils/auth';
+import { generateVendorReport } from '../utils/pdfReport';
 import './Dashboard.css';
 
 interface Props {
@@ -367,6 +368,15 @@ export const Dashboard = ({ onUnauthorized }: Props) => {
                         style={{ padding: '0.5rem', borderRadius: '50%' }}
                     >
                         <Download size={20} />
+                    </button>
+
+                    <button
+                        onClick={() => generateVendorReport(data)}
+                        className="btn-icon pdf-report-btn"
+                        title="Descargar informe PDF por vendedor (reunión miércoles)"
+                        style={{ padding: '0.5rem', borderRadius: '50%' }}
+                    >
+                        <FileText size={20} />
                     </button>
 
                     <button
