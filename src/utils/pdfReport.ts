@@ -9,13 +9,22 @@ const formatCurrency = (amount: number): string =>
 const GREEN: [number, number, number] = [6, 101, 47];
 const GOLD: [number, number, number] = [238, 192, 69];
 const BEIGE: [number, number, number] = [249, 239, 227];
+const BEIGE_DARK: [number, number, number] = [240, 223, 203];
 const DARK: [number, number, number] = [30, 18, 12];
 
+// Row type markers (stored in first hidden column or tracked via index)
+const ROW_CLIENT_HEADER = '__CLIENT__';
+const ROW_SUBTOTAL = '__SUBTOTAL__';
+
 /**
- * Genera un PDF con informe de deudas por vendedor, clientes agrupados por zona.
- * Diseñado para la reunión de los miércoles con vendedores.
+ * Genera un PDF con informe de deudas por vendedor.
+ * Soporta detalle por factura individual o resumen por cliente.
  */
-export const generateVendorReport = (vendors: VendorSummary[]) => {
+export const generateVendorReport = (
+    vendors: VendorSummary[],
+    options?: { includeInvoiceDetail?: boolean }
+) => {
+    const includeDetail = options?.includeInvoiceDetail ?? true;
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     const pageWidth = doc.internal.pageSize.getWidth();
     const margin = 14;
@@ -25,11 +34,13 @@ export const generateVendorReport = (vendors: VendorSummary[]) => {
     // Filtrar vendedores con deuda real
     const activeVendors = vendors.filter(v => v.totalBalance > 1 && v.clients.length > 0);
 
+    // Contar facturas totales
+    const totalFacturas = activeVendors.reduce((s, v) => s + v.clients.reduce((sc, c) => sc + c.invoices.length, 0), 0);
+
     // ── Portada ──
     doc.setFillColor(...GREEN);
     doc.rect(0, 0, pageWidth, 55, 'F');
 
-    // Línea dorada decorativa
     doc.setFillColor(...GOLD);
     doc.rect(0, 55, pageWidth, 3, 'F');
 
@@ -65,6 +76,7 @@ export const generateVendorReport = (vendors: VendorSummary[]) => {
         body: [
             ['Vendedores activos', String(activeVendors.length)],
             ['Total clientes con deuda', String(totalClientes)],
+            ['Total facturas pendientes', String(totalFacturas)],
             ['Clientes en mora', String(totalMora)],
             ['Deuda total (sin interés)', formatCurrency(totalDeuda)],
             ['Deuda total (con interés)', formatCurrency(totalConInteres)],
@@ -91,10 +103,11 @@ export const generateVendorReport = (vendors: VendorSummary[]) => {
         doc.setFont('helvetica', 'bold');
         doc.text(vendor.vendorName.toUpperCase(), margin, 14);
 
+        const vendorFacturas = vendor.clients.reduce((s, c) => s + c.invoices.length, 0);
         doc.setFontSize(9);
         doc.setFont('helvetica', 'normal');
         doc.text(
-            `${vendor.clients.length} clientes  |  Deuda: ${formatCurrency(vendor.totalBalance)}  |  Con interés: ${formatCurrency(vendor.totalWithInterest)}`,
+            `${vendor.clients.length} clientes  |  ${vendorFacturas} facturas  |  Deuda: ${formatCurrency(vendor.totalBalance)}  |  Con interés: ${formatCurrency(vendor.totalWithInterest)}`,
             margin, 23
         );
 
@@ -106,19 +119,17 @@ export const generateVendorReport = (vendors: VendorSummary[]) => {
             clientsByZone.get(zone)!.push(c);
         });
 
-        // Ordenar zonas alfabéticamente
         const sortedZones = Array.from(clientsByZone.entries()).sort(([a], [b]) => a.localeCompare(b));
 
         let currentY = 38;
 
         sortedZones.forEach(([zone, clients]) => {
-            // Verificar espacio en página
             if (currentY > 260) {
                 doc.addPage();
                 currentY = 20;
             }
 
-            // Título de zona con fondo dorado suave
+            // Título de zona
             doc.setFillColor(252, 243, 222);
             doc.rect(margin, currentY - 5, pageWidth - margin * 2, 8, 'F');
             doc.setTextColor(...GREEN);
@@ -132,62 +143,172 @@ export const generateVendorReport = (vendors: VendorSummary[]) => {
             doc.text(`${clients.length} clientes — ${formatCurrency(zoneTotal)}`, pageWidth - margin - 2, currentY, { align: 'right' });
             currentY += 6;
 
-            // Ordenar clientes por saldo descendente
             const sortedClients = [...clients].sort((a, b) => b.totalBalance - a.totalBalance);
 
-            const tableBody = sortedClients.map(c => [
-                c.clientName,
-                c.clientId,
-                formatCurrency(c.totalBalance),
-                formatCurrency(c.totalInterest),
-                formatCurrency(c.totalWithInterest),
-                c.maxDaysOverdue > 0 ? `${c.maxDaysOverdue} d.` : 'Al día',
-            ]);
+            if (includeDetail) {
+                // ── MODO DETALLE: facturas individuales ──
+                const tableBody: string[][] = [];
+                const rowTypes: string[] = [];
 
-            autoTable(doc, {
-                startY: currentY,
-                margin: { left: margin, right: margin },
-                head: [['Cliente', 'Código', 'Saldo', 'Interés', 'Total', 'Mora']],
-                body: tableBody,
-                theme: 'striped',
-                headStyles: {
-                    fillColor: GREEN,
-                    textColor: [255, 255, 255],
-                    fontStyle: 'bold',
-                    fontSize: 7.5,
-                    cellPadding: 2,
-                },
-                bodyStyles: {
-                    fontSize: 7.5,
-                    textColor: DARK,
-                    cellPadding: 2,
-                },
-                alternateRowStyles: { fillColor: BEIGE },
-                columnStyles: {
-                    0: { cellWidth: 55 },
-                    1: { cellWidth: 18, halign: 'center' },
-                    2: { halign: 'right', cellWidth: 28 },
-                    3: { halign: 'right', cellWidth: 25 },
-                    4: { halign: 'right', fontStyle: 'bold', cellWidth: 28 },
-                    5: { halign: 'center', cellWidth: 18 },
-                },
-                didParseCell: (data) => {
-                    // Resaltar mora en rojo
-                    if (data.section === 'body' && data.column.index === 5) {
-                        const text = data.cell.text[0];
-                        if (text && text !== 'Al día') {
-                            const days = parseInt(text);
-                            if (days >= 30) {
-                                data.cell.styles.textColor = [239, 68, 68];
-                                data.cell.styles.fontStyle = 'bold';
-                            } else if (days > 0) {
-                                data.cell.styles.textColor = [229, 155, 51];
-                                data.cell.styles.fontStyle = 'bold';
+                sortedClients.forEach(c => {
+                    // Fila header del cliente
+                    tableBody.push([
+                        `${c.clientName} (Cód: ${c.clientId})`,
+                        '', '', '', '', '', ''
+                    ]);
+                    rowTypes.push(ROW_CLIENT_HEADER);
+
+                    // Facturas del cliente ordenadas por días desc
+                    const sortedInvoices = [...c.invoices].sort((a, b) => b.daysOverdue - a.daysOverdue || b.daysEmission - a.daysEmission);
+                    sortedInvoices.forEach(inv => {
+                        tableBody.push([
+                            inv.invoiceNumber || '-',
+                            inv.type || '-',
+                            inv.date || '-',
+                            inv.type === 'FA' && inv.daysOverdue > 0 ? `${inv.daysOverdue} d.` : inv.daysEmission > 0 ? `${inv.daysEmission} d.` : '-',
+                            formatCurrency(inv.balance),
+                            inv.interestAmount > 0 ? formatCurrency(inv.interestAmount) : '-',
+                            formatCurrency(inv.totalWithInterest),
+                        ]);
+                        rowTypes.push(inv.type);
+                    });
+
+                    // Fila subtotal
+                    if (c.invoices.length > 1) {
+                        tableBody.push([
+                            `SUBTOTAL (${c.invoices.length} comp.)`,
+                            '', '', '',
+                            formatCurrency(c.totalBalance),
+                            formatCurrency(c.totalInterest),
+                            formatCurrency(c.totalWithInterest),
+                        ]);
+                        rowTypes.push(ROW_SUBTOTAL);
+                    }
+                });
+
+                autoTable(doc, {
+                    startY: currentY,
+                    margin: { left: margin, right: margin },
+                    head: [['Comprobante', 'Tipo', 'Fecha', 'Días', 'Saldo', 'Interés', 'Total']],
+                    body: tableBody,
+                    theme: 'striped',
+                    headStyles: {
+                        fillColor: GREEN,
+                        textColor: [255, 255, 255],
+                        fontStyle: 'bold',
+                        fontSize: 7,
+                        cellPadding: 1.5,
+                    },
+                    bodyStyles: {
+                        fontSize: 7,
+                        textColor: DARK,
+                        cellPadding: 1.5,
+                    },
+                    alternateRowStyles: { fillColor: [255, 255, 255] },
+                    columnStyles: {
+                        0: { cellWidth: 48 },
+                        1: { cellWidth: 10, halign: 'center' },
+                        2: { cellWidth: 22 },
+                        3: { cellWidth: 14, halign: 'center' },
+                        4: { halign: 'right', cellWidth: 28 },
+                        5: { halign: 'right', cellWidth: 24 },
+                        6: { halign: 'right', fontStyle: 'bold', cellWidth: 28 },
+                    },
+                    didParseCell: (data) => {
+                        if (data.section !== 'body') return;
+                        const type = rowTypes[data.row.index];
+
+                        // Fila header de cliente
+                        if (type === ROW_CLIENT_HEADER) {
+                            data.cell.styles.fillColor = BEIGE;
+                            data.cell.styles.fontStyle = 'bold';
+                            data.cell.styles.textColor = GREEN;
+                            data.cell.styles.fontSize = 7.5;
+                        }
+
+                        // Fila subtotal
+                        if (type === ROW_SUBTOTAL) {
+                            data.cell.styles.fillColor = BEIGE_DARK;
+                            data.cell.styles.fontStyle = 'bold';
+                            data.cell.styles.fontSize = 7;
+                        }
+
+                        // NC/ND en gris
+                        if (type === 'NC' || type === 'ND') {
+                            data.cell.styles.textColor = [120, 120, 120];
+                        }
+
+                        // Mora en columna Días (col 3) para filas de factura
+                        if (data.column.index === 3 && type !== ROW_CLIENT_HEADER && type !== ROW_SUBTOTAL) {
+                            const text = data.cell.text[0];
+                            if (text && text !== '-') {
+                                const days = parseInt(text);
+                                if (days >= 30) {
+                                    data.cell.styles.textColor = [239, 68, 68];
+                                    data.cell.styles.fontStyle = 'bold';
+                                } else if (days > 0) {
+                                    data.cell.styles.textColor = [229, 155, 51];
+                                    data.cell.styles.fontStyle = 'bold';
+                                }
                             }
                         }
-                    }
-                },
-            });
+                    },
+                });
+            } else {
+                // ── MODO RESUMEN: totales por cliente (comportamiento original) ──
+                const tableBody = sortedClients.map(c => [
+                    c.clientName,
+                    c.clientId,
+                    formatCurrency(c.totalBalance),
+                    formatCurrency(c.totalInterest),
+                    formatCurrency(c.totalWithInterest),
+                    c.maxDaysOverdue > 0 ? `${c.maxDaysOverdue} d.` : 'Al día',
+                ]);
+
+                autoTable(doc, {
+                    startY: currentY,
+                    margin: { left: margin, right: margin },
+                    head: [['Cliente', 'Código', 'Saldo', 'Interés', 'Total', 'Mora']],
+                    body: tableBody,
+                    theme: 'striped',
+                    headStyles: {
+                        fillColor: GREEN,
+                        textColor: [255, 255, 255],
+                        fontStyle: 'bold',
+                        fontSize: 7.5,
+                        cellPadding: 2,
+                    },
+                    bodyStyles: {
+                        fontSize: 7.5,
+                        textColor: DARK,
+                        cellPadding: 2,
+                    },
+                    alternateRowStyles: { fillColor: BEIGE },
+                    columnStyles: {
+                        0: { cellWidth: 55 },
+                        1: { cellWidth: 18, halign: 'center' },
+                        2: { halign: 'right', cellWidth: 28 },
+                        3: { halign: 'right', cellWidth: 25 },
+                        4: { halign: 'right', fontStyle: 'bold', cellWidth: 28 },
+                        5: { halign: 'center', cellWidth: 18 },
+                    },
+                    didParseCell: (data) => {
+                        if (data.section === 'body' && data.column.index === 5) {
+                            const text = data.cell.text[0];
+                            if (text && text !== 'Al día') {
+                                const days = parseInt(text);
+                                if (days >= 30) {
+                                    data.cell.styles.textColor = [239, 68, 68];
+                                    data.cell.styles.fontStyle = 'bold';
+                                } else if (days > 0) {
+                                    data.cell.styles.textColor = [229, 155, 51];
+                                    data.cell.styles.fontStyle = 'bold';
+                                }
+                            }
+                        }
+                    },
+                });
+            }
 
             currentY = (doc as any).lastAutoTable.finalY + 8;
         });
@@ -226,5 +347,8 @@ export const generateVendorReport = (vendors: VendorSummary[]) => {
 
     // Descargar
     const dateSlug = today.toISOString().slice(0, 10);
-    doc.save(`informe_cobranzas_${dateSlug}.pdf`);
+    const vendorSlug = activeVendors.length === 1
+        ? `_${activeVendors[0].vendorName.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 25)}`
+        : '';
+    doc.save(`informe_cobranzas${vendorSlug}_${dateSlug}.pdf`);
 };

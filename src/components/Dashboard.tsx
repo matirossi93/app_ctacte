@@ -9,7 +9,7 @@ import { InterestControl } from './InterestControl';
 import { TopDebtorsAlert } from './TopDebtorsAlert';
 import { AgingBars } from './AgingBars';
 import { authHeaders, clearToken } from '../utils/auth';
-import { generateVendorReport } from '../utils/pdfReport';
+import { ExportModal } from './ExportModal';
 import './Dashboard.css';
 
 interface Props {
@@ -25,6 +25,7 @@ export const Dashboard = ({ onUnauthorized }: Props) => {
     const [locationFilter, setLocationFilter] = useState('TODAS');
     const [sortBy, setSortBy] = useState<'balance' | 'aging'>('aging');
     const [activeTab, setActiveTab] = useState<'resumen' | 'clientes'>('resumen');
+    const [showExportModal, setShowExportModal] = useState(false);
 
     // URL vendor isolation
     const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
@@ -371,9 +372,9 @@ export const Dashboard = ({ onUnauthorized }: Props) => {
                     </button>
 
                     <button
-                        onClick={() => generateVendorReport(data)}
+                        onClick={() => setShowExportModal(true)}
                         className="btn-icon pdf-report-btn"
-                        title="Descargar informe PDF por vendedor (reunión miércoles)"
+                        title="Descargar informe PDF por vendedor"
                         style={{ padding: '0.5rem', borderRadius: '50%' }}
                     >
                         <FileText size={20} />
@@ -487,6 +488,15 @@ export const Dashboard = ({ onUnauthorized }: Props) => {
                     </main>
                 </div>
             </div>
+
+            {showExportModal && (
+                <ExportModal
+                    onClose={() => setShowExportModal(false)}
+                    vendors={rawData}
+                    activeVendorId={activeVendorId}
+                    disabledVendorIds={disabledVendorIds}
+                />
+            )}
         </div>
     );
 };
