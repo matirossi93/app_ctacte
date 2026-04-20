@@ -231,7 +231,7 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
     // Clientes del vendedor (o todos si admin sin filtro)
     let q = sb().from('client_operational').select('cod_cliente, cod_vendedor, razon_social, localidad, frecuencia, dia_visita, tipo_abc, objetivo_mes, fact_mes_pasado, fact_prom_3m, saldo_cta_cte').eq('tenant_id', TENANT_ID);
     if (codVend != null) q = q.eq('cod_vendedor', codVend);
-    q = q.order('objetivo_mes', { ascending: false, nullsFirst: false }).limit(1000);
+    q = q.order('objetivo_mes', { ascending: false, nullsFirst: false }).limit(2000);
     const { data: clientes, error: errC } = await q;
     if (errC) { res.status(500).json({ error: errC.message }); return; }
 
@@ -278,9 +278,11 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
       };
     });
 
-    // Filtro
+    // Filtros (status + localidad)
     const filter = String(req.query.filter ?? 'todos');
+    const localidadFilter = String(req.query.localidad ?? '').trim();
     const filtered = items.filter(it => {
+      if (localidadFilter && (it.localidad ?? '') !== localidadFilter) return false;
       if (filter === 'completado') return it.status === 'completado';
       if (filter === 'parcial') return it.status === 'parcial';
       if (filter === 'bajo_objetivo') return it.status === 'sin_compras' || it.status === 'parcial';
@@ -289,7 +291,21 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
       return true;
     });
 
-    // Stats
+    // Localidades agregadas (basado en TODOS los clientes, no filtrados)
+    const locMap = new Map<string, { localidad: string; count: number; total_objetivo: number; total_avance: number; completados: number }>();
+    items.forEach(it => {
+      const loc = (it.localidad ?? '').trim() || 'Sin localidad';
+      if (!locMap.has(loc)) locMap.set(loc, { localidad: loc, count: 0, total_objetivo: 0, total_avance: 0, completados: 0 });
+      const l = locMap.get(loc)!;
+      l.count++;
+      l.total_objetivo += it.objetivo_mes ?? 0;
+      l.total_avance += it.avance;
+      if (it.status === 'completado') l.completados++;
+    });
+    const localidades = Array.from(locMap.values())
+      .sort((a, b) => b.total_objetivo - a.total_objetivo);
+
+    // Stats (globales sobre items — antes de filtros)
     const withObjetivo = items.filter(i => i.objetivo_mes != null);
     const totalObjetivo = withObjetivo.reduce((a, i) => a + (i.objetivo_mes ?? 0), 0);
     const totalAvance = items.reduce((a, i) => a + i.avance, 0);
@@ -303,9 +319,26 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
       total_objetivo: totalObjetivo,
       total_avance: totalAvance,
       pct_equipo: totalObjetivo > 0 ? totalAvance / totalObjetivo : null,
+      localidades,
     };
 
-    res.json({ ok: true, year, month, items: filtered, stats });
+    // Resumen de la selección (respeta localidad filter, ignora status filter para el hero)
+    const inSel = items.filter(it => !localidadFilter || (it.localidad ?? '') === localidadFilter);
+    const selObjetivo = inSel.reduce((a, i) => a + (i.objetivo_mes ?? 0), 0);
+    const selAvance = inSel.reduce((a, i) => a + i.avance, 0);
+    const selNumComp = inSel.reduce((a, i) => a + i.num_comprobantes, 0);
+    const selConObjetivo = inSel.filter(i => i.objetivo_mes != null).length;
+    const seleccion = {
+      localidad: localidadFilter || null,
+      total_clientes: inSel.length,
+      con_objetivo: selConObjetivo,
+      total_objetivo: selObjetivo,
+      total_avance: selAvance,
+      num_comprobantes: selNumComp,
+      pct: selObjetivo > 0 ? selAvance / selObjetivo : null,
+    };
+
+    res.json({ ok: true, year, month, items: filtered, stats, seleccion });
   } catch (err: any) {
     console.error('listClientesObjetivo error:', err);
     res.status(500).json({ error: err?.message ?? 'error' });

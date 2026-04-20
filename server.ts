@@ -388,17 +388,23 @@ app.get('/api/data', maybeJwt, requireAuth, async (req: express.Request & { user
         const codEmpresa = req.query.codEmpresa ? Number(req.query.codEmpresa) : undefined;
         const data = await fetchData(force, codEmpresa);
 
-        // Filtro por rol: vendedor solo ve sus invoices
-        if (req.user?.rol === 'vendedor') {
-            const codVend = req.user.cod_vendedor;
-            const vkey = (req.user.vendedor_key ?? '').toLowerCase();
-            if (data.source === 'infomanager' && Array.isArray(data.invoices)) {
-                data.invoices = data.invoices.filter((inv: any) => {
-                    if (codVend != null && String(inv.COD_VENDED) === String(codVend)) return true;
-                    if (vkey && String(inv.VENDEDORES || '').toLowerCase().includes(vkey)) return true;
-                    return false;
-                });
-            }
+        // Filtro por rol: vendedor solo ve sus invoices.
+        // Admin/gerente puede pedir uno específico con ?cod_vendedor=X
+        const userRol = req.user?.rol;
+        let filterCodVend: number | null = null;
+        if (userRol === 'vendedor') {
+            filterCodVend = req.user!.cod_vendedor ?? -1;
+        } else if (req.query.cod_vendedor) {
+            const n = Number(req.query.cod_vendedor);
+            if (n > 0) filterCodVend = n;
+        }
+        if (filterCodVend != null && data.source === 'infomanager' && Array.isArray(data.invoices)) {
+            const vkey = userRol === 'vendedor' ? (req.user?.vendedor_key ?? '').toLowerCase() : '';
+            data.invoices = data.invoices.filter((inv: any) => {
+                if (String(inv.COD_VENDED) === String(filterCodVend)) return true;
+                if (vkey && String(inv.VENDEDORES || '').toLowerCase().includes(vkey)) return true;
+                return false;
+            });
         }
 
         res.json(data);

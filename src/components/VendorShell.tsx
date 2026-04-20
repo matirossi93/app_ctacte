@@ -67,6 +67,24 @@ interface ClienteObjetivo {
     status: 'completado' | 'parcial' | 'sin_compras' | 'sin_objetivo';
 }
 
+interface LocalidadStat {
+    localidad: string;
+    count: number;
+    total_objetivo: number;
+    total_avance: number;
+    completados: number;
+}
+
+interface Seleccion {
+    localidad: string | null;
+    total_clientes: number;
+    con_objetivo: number;
+    total_objetivo: number;
+    total_avance: number;
+    num_comprobantes: number;
+    pct: number | null;
+}
+
 interface ClientesResponse {
     ok: boolean;
     items: ClienteObjetivo[];
@@ -80,7 +98,9 @@ interface ClientesResponse {
         total_objetivo: number;
         total_avance: number;
         pct_equipo: number | null;
+        localidades: LocalidadStat[];
     };
+    seleccion: Seleccion;
 }
 
 interface ActivityItem {
@@ -99,10 +119,17 @@ interface Props {
 
 export const VendorShell = ({ onLogout }: Props) => {
     const user = getUser();
+    const isAdmin = user?.rol === 'admin' || user?.rol === 'gerente';
     const [tab, setTab] = useState<Tab>('cobranzas');
     const [showRecibos, setShowRecibos] = useState(false);
     const [bucket, setBucket] = useState<'todos' | 'ok' | 'warn30' | 'warn60' | 'risk'>('todos');
     const [search, setSearch] = useState('');
+
+    // Vendedor activo: vendedor usa el propio; admin elige (null = Todos)
+    const [selectedVendor, setSelectedVendor] = useState<number | null>(
+        user?.rol === 'vendedor' ? (user?.cod_vendedor ?? null) : null
+    );
+    const [vendedores, setVendedores] = useState<Array<{ cod_vendedor: number; nombre: string }>>([]);
 
     // Data fetching
     const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -111,10 +138,15 @@ export const VendorShell = ({ onLogout }: Props) => {
     const [err, setErr] = useState<string | null>(null);
     const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
+    const vendorQs = selectedVendor != null && isAdmin ? `cod_vendedor=${selectedVendor}` : '';
+
     const loadData = async (force = false) => {
         setLoading(true); setErr(null);
         try {
-            const qs = force ? '?nocache=1' : '';
+            const params = new URLSearchParams();
+            if (force) params.set('nocache', '1');
+            if (vendorQs) params.set('cod_vendedor', String(selectedVendor));
+            const qs = params.toString() ? `?${params.toString()}` : '';
             const res = await fetch(`/api/data${qs}`, { headers: authHeaders() });
             if (res.status === 401) { onLogout(); return; }
             const d = await res.json();
@@ -125,7 +157,20 @@ export const VendorShell = ({ onLogout }: Props) => {
         } catch (e: any) { setErr(e.message); }
         finally { setLoading(false); }
     };
-    useEffect(() => { loadData(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+    useEffect(() => { loadData(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedVendor]);
+
+    // Admin: traer lista de vendedores desde /api/goals
+    useEffect(() => {
+        if (!isAdmin) return;
+        fetch('/api/goals', { headers: authHeaders() })
+            .then(r => r.json())
+            .then(j => {
+                if (j.ok && Array.isArray(j.items)) {
+                    setVendedores(j.items.map((i: any) => ({ cod_vendedor: i.cod_vendedor, nombre: i.nombre })));
+                }
+            })
+            .catch(() => { });
+    }, [isAdmin]);
 
     // Agrupar por cliente (solo saldo > 0)
     const clientsAgg = useMemo<ClientAgg[]>(() => {
@@ -198,7 +243,18 @@ export const VendorShell = ({ onLogout }: Props) => {
                     </div>
                     <div className="vs-brand-text">
                         <span className="eyebrow">SEMILLERO</span>
-                        <span className="name">Panel Vendedor</span>
+                        <span className="name">
+                            {isAdmin && vendedores.length > 0 ? (
+                                <select className="vs-vendor-select"
+                                    value={selectedVendor ?? ''}
+                                    onChange={e => setSelectedVendor(e.target.value ? Number(e.target.value) : null)}>
+                                    <option value="">Todos los vendedores</option>
+                                    {vendedores.map(v => (
+                                        <option key={v.cod_vendedor} value={v.cod_vendedor}>{v.nombre}</option>
+                                    ))}
+                                </select>
+                            ) : 'Panel Vendedor'}
+                        </span>
                     </div>
                 </div>
                 <div className="vs-top-actions">
@@ -231,9 +287,9 @@ export const VendorShell = ({ onLogout }: Props) => {
                     />
                 )}
 
-                {tab === 'objetivos' && <ObjetivosView />}
+                {tab === 'objetivos' && <ObjetivosView selectedVendor={selectedVendor} isAdmin={isAdmin} />}
 
-                {tab === 'actividad' && <ActividadView vendedorKey={user?.vendedor_key ?? null} clientNameMap={clientDbMap} />}
+                {tab === 'actividad' && <ActividadView vendedorKey={user?.vendedor_key ?? null} clientNameMap={clientDbMap} selectedVendor={selectedVendor} isAdmin={isAdmin} />}
             </main>
 
             {/* ═══════════ BOTTOM NAV ═══════════ */}
@@ -406,31 +462,64 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
 // ═══════════════════════════════════════════════════════════════════════════
 // OBJETIVOS VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function ObjetivosView() {
+function ObjetivosView({ selectedVendor, isAdmin }: { selectedVendor: number | null; isAdmin: boolean }) {
     const [g, setG] = useState<GoalData | null>(null);
     const [clientes, setClientes] = useState<ClienteObjetivo[]>([]);
     const [clientesStats, setClientesStats] = useState<ClientesResponse['stats'] | null>(null);
+    const [seleccion, setSeleccion] = useState<Seleccion | null>(null);
     const [filter, setFilter] = useState<'todos' | 'bajo_objetivo' | 'completado' | 'sin_compras' | 'sin_objetivo'>('todos');
+    const [localidad, setLocalidad] = useState<string>('');
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
     const [syncing, setSyncing] = useState(false);
 
+    // Reset localidad al cambiar de vendedor
+    useEffect(() => { setLocalidad(''); }, [selectedVendor]);
+
     const load = async () => {
         setLoading(true); setErr(null);
         try {
+            const qs = new URLSearchParams({ filter });
+            if (localidad) qs.set('localidad', localidad);
+            if (isAdmin && selectedVendor != null) qs.set('cod_vendedor', String(selectedVendor));
             const [gr, cr] = await Promise.all([
                 fetch('/api/goals', { headers: authHeaders() }).then(r => r.json()),
-                fetch(`/api/goals/clientes?filter=${filter}`, { headers: authHeaders() }).then(r => r.json()),
+                fetch(`/api/goals/clientes?${qs.toString()}`, { headers: authHeaders() }).then(r => r.json()),
             ]);
             if (!gr.ok) throw new Error(gr.error);
             if (!cr.ok) throw new Error(cr.error);
-            setG(gr.items?.[0] ?? null);
+            // Admin + selectedVendor: mostrar goal específico del vendedor. Sin selección: agregar todos.
+            let goal: GoalData | null = null;
+            if (isAdmin && selectedVendor != null) {
+                goal = (gr.items ?? []).find((i: any) => i.cod_vendedor === selectedVendor) ?? null;
+            } else if (isAdmin) {
+                // Vista agregada: combinar todos
+                const items = gr.items ?? [];
+                const sumTarget = items.reduce((a: number, i: any) => a + (i.target_neto ?? 0), 0);
+                const sumAvance = items.reduce((a: number, i: any) => a + (i.avance ?? 0), 0);
+                const first = items[0];
+                goal = first ? {
+                    ...first,
+                    cod_vendedor: 0,
+                    nombre: 'Equipo completo',
+                    target_neto: sumTarget || null,
+                    avance: sumAvance,
+                    num_comprobantes: items.reduce((a: number, i: any) => a + (i.num_comprobantes ?? 0), 0),
+                    pct_cumplimiento: sumTarget > 0 ? sumAvance / sumTarget : null,
+                    proyeccion: items.reduce((a: number, i: any) => a + (i.proyeccion ?? 0), 0),
+                    necesario_por_dia: sumTarget && first.dias_restantes > 0 ? Math.max(0, (sumTarget - sumAvance) / first.dias_restantes) : null,
+                } : null;
+            } else {
+                goal = gr.items?.[0] ?? null;
+            }
+            setG(goal);
             setClientes(cr.items || []);
             setClientesStats(cr.stats);
+            setSeleccion(cr.seleccion ?? null);
         } catch (e: any) { setErr(e.message); }
         finally { setLoading(false); }
     };
-    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter]);
+    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, localidad, selectedVendor]);
 
     const syncNow = async () => {
         setSyncing(true);
@@ -452,10 +541,23 @@ function ObjetivosView() {
         </div>
     );
 
-    const pct = g.pct_cumplimiento ?? 0;
+    const isLocFilter = !!localidad && !!seleccion;
+    const heroTarget = isLocFilter ? seleccion!.total_objetivo : g.target_neto;
+    const heroAvance = isLocFilter ? seleccion!.total_avance : g.avance;
+    const heroPct = heroTarget && heroTarget > 0 ? heroAvance / heroTarget : null;
+    const heroNumComp = isLocFilter ? seleccion!.num_comprobantes : g.num_comprobantes;
+    const heroProyeccion = g.dias_habiles_transcurridos > 0
+        ? heroAvance * (g.dias_habiles_total / g.dias_habiles_transcurridos)
+        : heroAvance;
+    const heroNecesarioDia = heroTarget != null && g.dias_restantes > 0
+        ? Math.max(0, (heroTarget - heroAvance) / g.dias_restantes)
+        : null;
+
+    const pct = heroPct ?? 0;
     const pctPct = Math.min(200, pct * 100);
     const circumference = 2 * Math.PI * 54;
     const offset = circumference * (1 - Math.min(1, pct));
+    const localidades = clientesStats?.localidades ?? [];
 
     return (
         <div className="vs-view">
@@ -464,11 +566,26 @@ function ObjetivosView() {
                 <p><span className="dot" /> {monthName(new Date().getUTCMonth() + 1)} · {g.dias_habiles_transcurridos}/{g.dias_habiles_total} días · {g.dias_restantes} restantes</p>
             </div>
 
+            {localidades.length > 0 && (
+                <div className="vs-loc-scroll">
+                    <button className={`vs-loc-chip ${localidad === '' ? 'is-active' : ''}`} onClick={() => setLocalidad('')}>
+                        <span className="lbl">Todas</span>
+                        <span className="count">{clientesStats?.total_clientes ?? 0}</span>
+                    </button>
+                    {localidades.map(l => (
+                        <button key={l.localidad} className={`vs-loc-chip ${localidad === l.localidad ? 'is-active' : ''}`} onClick={() => setLocalidad(l.localidad)}>
+                            <span className="lbl">{l.localidad}</span>
+                            <span className="count">{l.count}</span>
+                        </button>
+                    ))}
+                </div>
+            )}
+
             <div className="vs-hero-goal">
                 <div className="vs-hero-goal-head">
                     <div>
-                        <span className="eyebrow">OBJETIVO DEL MES</span>
-                        <h2>{g.nombre}</h2>
+                        <span className="eyebrow">{isLocFilter ? 'OBJETIVO · LOCALIDAD' : 'OBJETIVO DEL MES'}</span>
+                        <h2>{isLocFilter ? localidad : g.nombre}</h2>
                     </div>
                     <div className="vs-goal-badge">{g.dias_restantes}d restantes</div>
                 </div>
@@ -486,19 +603,19 @@ function ObjetivosView() {
                         </div>
                     </div>
                     <div className="vs-goal-figs">
-                        <div><span className="k">Target</span><span className="v">{formatMoney(g.target_neto)}</span></div>
-                        <div><span className="k">Avance</span><span className="v gold">{formatMoney(g.avance)}</span></div>
-                        <div><span className="k">Proyección</span><span className="v">{formatMoney(g.proyeccion)}</span></div>
+                        <div><span className="k">Target</span><span className="v">{formatMoney(heroTarget)}</span></div>
+                        <div><span className="k">Avance</span><span className="v gold">{formatMoney(heroAvance)}</span></div>
+                        <div><span className="k">Proyección</span><span className="v">{formatMoney(heroProyeccion)}</span></div>
                     </div>
                 </div>
 
                 <div className="vs-goal-daily">
                     <div className="k-box">
                         <span className="k">Necesario por día</span>
-                        <strong>{formatMoney(g.necesario_por_dia)}</strong>
+                        <strong>{formatMoney(heroNecesarioDia)}</strong>
                     </div>
                     <div className="note">
-                        {g.num_comprobantes} comprobantes este mes.
+                        {heroNumComp} comprobantes{isLocFilter ? ' en esta localidad' : ' este mes'}.
                     </div>
                 </div>
 
@@ -510,11 +627,16 @@ function ObjetivosView() {
             {/* ─── Objetivos por cliente ─── */}
             <div className="vs-clientes-obj">
                 <div className="vs-clientes-obj-head">
-                    <h2>Objetivo por cliente</h2>
-                    {clientesStats && (
+                    <h2>Objetivo por cliente{isLocFilter && <span className="vs-clientes-obj-loc"> · {localidad}</span>}</h2>
+                    {clientesStats && !isLocFilter && (
                         <p>
                             {clientesStats.completados}/{clientesStats.con_objetivo} completados ·
                             {' '}{formatMoney(clientesStats.total_avance)} de {formatMoney(clientesStats.total_objetivo)}
+                        </p>
+                    )}
+                    {isLocFilter && seleccion && (
+                        <p>
+                            {seleccion.total_clientes} clientes · {formatMoney(seleccion.total_avance)} de {formatMoney(seleccion.total_objetivo)}
                         </p>
                     )}
                 </div>
@@ -606,7 +728,8 @@ function ClienteObjetivoCard({ c }: { c: ClienteObjetivo }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // ACTIVIDAD VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function ActividadView({ vendedorKey: _vendedorKey, clientNameMap }: { vendedorKey: string | null; clientNameMap: Record<string, any> }) {
+function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendor, isAdmin }:
+    { vendedorKey: string | null; clientNameMap: Record<string, any>; selectedVendor: number | null; isAdmin: boolean }) {
     const [items, setItems] = useState<ActivityItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
@@ -615,14 +738,17 @@ function ActividadView({ vendedorKey: _vendedorKey, clientNameMap }: { vendedorK
     const load = async () => {
         setLoading(true); setErr(null);
         try {
-            const res = await fetch('/api/activity', { headers: authHeaders() });
+            const params = new URLSearchParams();
+            if (isAdmin && selectedVendor != null) params.set('cod_vendedor', String(selectedVendor));
+            const qs = params.toString() ? `?${params.toString()}` : '';
+            const res = await fetch(`/api/activity${qs}`, { headers: authHeaders() });
             const j = await res.json();
             if (!res.ok || !j.ok) throw new Error(j.error);
             setItems(j.items || []);
         } catch (e: any) { setErr(e.message); }
         finally { setLoading(false); }
     };
-    useEffect(() => { load(); }, []);
+    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedVendor]);
 
     useEffect(() => {
         const h = (e: Event) => {

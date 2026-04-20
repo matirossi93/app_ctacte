@@ -1,5 +1,6 @@
 .vs-root {
     position: fixed; inset: 0;
+    height: 100dvh;
     font-family: 'Poppins', system-ui, sans-serif;
     color: #141814;
     background:
@@ -8,6 +9,8 @@
       #F4ECD8;
     overflow: hidden;
     display: flex; flex-direction: column;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
 }
 .vs-backdrop {
     position: absolute; inset: 0; pointer-events: none;
@@ -37,6 +40,16 @@
 .vs-brand-text { display: flex; flex-direction: column; line-height: 1 }
 .vs-brand-text .eyebrow { font-size: 9px; font-weight: 600; letter-spacing: 1.5px; color: #6e7670 }
 .vs-brand-text .name { font-size: 15px; font-weight: 700; margin-top: 3px }
+.vs-vendor-select {
+    font-family: inherit; font-size: 14px; font-weight: 700;
+    color: #06652F; background: transparent;
+    border: 0; padding: 2px 18px 2px 0; cursor: pointer;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%2306652F' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
+    background-repeat: no-repeat; background-position: right center;
+    appearance: none; -webkit-appearance: none;
+    max-width: 190px; text-overflow: ellipsis;
+}
+.vs-vendor-select:focus { outline: none }
 .vs-top-actions { display: flex; align-items: center; gap: 8px }
 .vs-icon-btn {
     width: 36px; height: 36px; border-radius: 12px;
@@ -389,6 +402,44 @@
 }
 .vs-nav-btn span { font-size: 10px; font-weight: 600; letter-spacing: .3px }
 .vs-nav-btn.is-active { color: #141814 }
+
+/* ─── Selector de localidades ─── */
+.vs-loc-scroll {
+    display: flex; gap: 8px;
+    overflow-x: auto; overflow-y: hidden;
+    padding: 2px 0 12px;
+    margin: 0 -18px; padding-left: 18px; padding-right: 18px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+}
+.vs-loc-scroll::-webkit-scrollbar { display: none }
+.vs-loc-chip {
+    flex-shrink: 0;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 12px;
+    border-radius: 18px;
+    background: rgba(255,255,255,.65);
+    border: 1px solid rgba(20,24,20,.08);
+    font-family: inherit; font-size: 12px; font-weight: 600;
+    color: #141814; cursor: pointer;
+    white-space: nowrap;
+    transition: all .2s ease;
+}
+.vs-loc-chip .count {
+    font-size: 10px; font-weight: 700;
+    background: rgba(20,24,20,.08);
+    padding: 2px 6px; border-radius: 10px;
+    color: #6e7670;
+}
+.vs-loc-chip.is-active {
+    background: linear-gradient(135deg, #06652F 0%, #03481F 100%);
+    color: #EEC045; border-color: transparent;
+    box-shadow: 0 4px 10px -2px rgba(6,101,47,.45);
+}
+.vs-loc-chip.is-active .count {
+    background: rgba(238,192,69,.25); color: #EEC045;
+}
+.vs-clientes-obj-loc { color: #06652F; font-weight: 600 }
 
 /* ─── Objetivos por cliente ─── */
 .vs-clientes-obj {

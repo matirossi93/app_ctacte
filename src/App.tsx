@@ -73,10 +73,10 @@ function App() {
         return <LoginScreen onLogin={() => setAuthState('authenticated')} />;
     }
 
-    // Vendedores: shell mobile-first dedicada. Admin/gerente: Dashboard rico.
+    // Shell mobile-first para todos los roles JWT (admin puede alternar vista con selector).
     const mode = getAuthMode();
     const user = getUser();
-    if (mode === 'jwt' && user?.rol === 'vendedor') {
+    if (mode === 'jwt' && user) {
         return <VendorShell onLogout={() => { clearToken(); setAuthState('unauthenticated'); }} />;
     }
 
