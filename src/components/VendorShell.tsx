@@ -50,6 +50,39 @@ interface GoalData {
     dias_restantes: number;
 }
 
+interface ClienteObjetivo {
+    cod_cliente: number;
+    razon_social: string | null;
+    localidad: string | null;
+    frecuencia: string | null;
+    tipo_abc: string | null;
+    objetivo_mes: number | null;
+    fact_mes_pasado: number | null;
+    fact_prom_3m: number | null;
+    avance: number;
+    num_comprobantes: number;
+    pct_cumplimiento: number | null;
+    falta: number | null;
+    sobrante: number;
+    status: 'completado' | 'parcial' | 'sin_compras' | 'sin_objetivo';
+}
+
+interface ClientesResponse {
+    ok: boolean;
+    items: ClienteObjetivo[];
+    stats: {
+        total_clientes: number;
+        con_objetivo: number;
+        completados: number;
+        parciales: number;
+        sin_compras: number;
+        sin_objetivo: number;
+        total_objetivo: number;
+        total_avance: number;
+        pct_equipo: number | null;
+    };
+}
+
 interface ActivityItem {
     id: string;
     cod_cliente: number | null;
@@ -375,6 +408,9 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
 // ═══════════════════════════════════════════════════════════════════════════
 function ObjetivosView() {
     const [g, setG] = useState<GoalData | null>(null);
+    const [clientes, setClientes] = useState<ClienteObjetivo[]>([]);
+    const [clientesStats, setClientesStats] = useState<ClientesResponse['stats'] | null>(null);
+    const [filter, setFilter] = useState<'todos' | 'bajo_objetivo' | 'completado' | 'sin_compras' | 'sin_objetivo'>('todos');
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
     const [syncing, setSyncing] = useState(false);
@@ -382,14 +418,19 @@ function ObjetivosView() {
     const load = async () => {
         setLoading(true); setErr(null);
         try {
-            const res = await fetch('/api/goals', { headers: authHeaders() });
-            const j = await res.json();
-            if (!res.ok || !j.ok) throw new Error(j.error || `HTTP ${res.status}`);
-            setG(j.items?.[0] ?? null);
+            const [gr, cr] = await Promise.all([
+                fetch('/api/goals', { headers: authHeaders() }).then(r => r.json()),
+                fetch(`/api/goals/clientes?filter=${filter}`, { headers: authHeaders() }).then(r => r.json()),
+            ]);
+            if (!gr.ok) throw new Error(gr.error);
+            if (!cr.ok) throw new Error(cr.error);
+            setG(gr.items?.[0] ?? null);
+            setClientes(cr.items || []);
+            setClientesStats(cr.stats);
         } catch (e: any) { setErr(e.message); }
         finally { setLoading(false); }
     };
-    useEffect(() => { load(); }, []);
+    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter]);
 
     const syncNow = async () => {
         setSyncing(true);
@@ -465,6 +506,99 @@ function ObjetivosView() {
                     {syncing ? <><Loader2 size={12} className="spin" /> Sincronizando…</> : <><RefreshCw size={12} /> Actualizar avance</>}
                 </button>
             </div>
+
+            {/* ─── Objetivos por cliente ─── */}
+            <div className="vs-clientes-obj">
+                <div className="vs-clientes-obj-head">
+                    <h2>Objetivo por cliente</h2>
+                    {clientesStats && (
+                        <p>
+                            {clientesStats.completados}/{clientesStats.con_objetivo} completados ·
+                            {' '}{formatMoney(clientesStats.total_avance)} de {formatMoney(clientesStats.total_objetivo)}
+                        </p>
+                    )}
+                </div>
+
+                <div className="vs-chips">
+                    <button className={`vs-chip ${filter === 'todos' ? 'is-active' : ''}`} onClick={() => setFilter('todos')}>
+                        Todos {clientesStats && <span className="count">{clientesStats.total_clientes}</span>}
+                    </button>
+                    <button className={`vs-chip ${filter === 'bajo_objetivo' ? 'is-active' : ''}`} onClick={() => setFilter('bajo_objetivo')}>
+                        <span className="dot-b" style={{ background: '#EEC045' }} />Bajo objetivo
+                        {clientesStats && <span className="count">{clientesStats.parciales}</span>}
+                    </button>
+                    <button className={`vs-chip ${filter === 'completado' ? 'is-active' : ''}`} onClick={() => setFilter('completado')}>
+                        <span className="dot-b" style={{ background: '#06652F' }} />Completados
+                        {clientesStats && <span className="count">{clientesStats.completados}</span>}
+                    </button>
+                    <button className={`vs-chip ${filter === 'sin_compras' ? 'is-active' : ''}`} onClick={() => setFilter('sin_compras')}>
+                        <span className="dot-b" style={{ background: '#A83E2B' }} />Sin compras
+                        {clientesStats && <span className="count">{clientesStats.sin_compras}</span>}
+                    </button>
+                </div>
+
+                {clientes.length === 0 && (
+                    <div className="vs-empty" style={{ padding: '24px 16px' }}>
+                        <Target size={28} />
+                        <p>Sin clientes en este filtro.</p>
+                    </div>
+                )}
+
+                <div className="vs-clientes-obj-list">
+                    {clientes.map(c => <ClienteObjetivoCard key={c.cod_cliente} c={c} />)}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function ClienteObjetivoCard({ c }: { c: ClienteObjetivo }) {
+    const pct = c.pct_cumplimiento ?? 0;
+    const barPct = Math.min(100, pct * 100);
+    const statusCfg = {
+        completado: { label: 'Completado', color: '#06652F' },
+        parcial: { label: 'En curso', color: '#EEC045' },
+        sin_compras: { label: 'Sin compras', color: '#A83E2B' },
+        sin_objetivo: { label: 'Sin objetivo', color: '#6B7280' },
+    }[c.status];
+
+    return (
+        <div className="vs-cliente-obj">
+            <div className="vs-cliente-obj-head">
+                <div>
+                    <h3>{c.razon_social || `Cliente #${c.cod_cliente}`}</h3>
+                    <div className="vs-cliente-obj-meta">
+                        <span>{c.localidad || 'Sin localidad'}</span>
+                        {c.tipo_abc && <><span className="sep" /><span>ABC {c.tipo_abc}</span></>}
+                        {c.frecuencia && <><span className="sep" /><span>{c.frecuencia}</span></>}
+                    </div>
+                </div>
+                <span className="vs-cliente-obj-status" style={{ background: statusCfg.color + '22', color: statusCfg.color }}>
+                    {statusCfg.label}
+                </span>
+            </div>
+
+            {c.objetivo_mes != null && (
+                <>
+                    <div className="vs-cliente-obj-bar">
+                        <div className="vs-cliente-obj-bar-fill" style={{ width: `${barPct}%`, background: statusCfg.color }} />
+                    </div>
+                    <div className="vs-cliente-obj-figs">
+                        <div><span className="k">Objetivo</span><span className="v">{formatMoney(c.objetivo_mes)}</span></div>
+                        <div><span className="k">Avance</span><span className="v gold">{formatMoney(c.avance)}</span></div>
+                        <div>
+                            <span className="k">{c.status === 'completado' ? 'Sobrante' : 'Falta'}</span>
+                            <span className="v">{formatMoney(c.status === 'completado' ? c.sobrante : c.falta)}</span>
+                        </div>
+                    </div>
+                </>
+            )}
+
+            {c.objetivo_mes == null && (
+                <div className="vs-cliente-obj-no-target">
+                    Avance: <strong>{formatMoney(c.avance)}</strong> ({c.num_comprobantes} comprob.)
+                </div>
+            )}
         </div>
     );
 }

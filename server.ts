@@ -20,7 +20,7 @@ import { syncVentasMesActual } from './server-lib/syncVentas.js';
 import {
   uploadRecibo, listRecibos, facturasCandidatas, aprobarRecibo, rechazarRecibo
 } from './server-lib/recibos.js';
-import { listGoals, setGoal, syncVentasNow } from './server-lib/goals.js';
+import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo } from './server-lib/goals.js';
 import { listActivity, createActivity, deleteActivity } from './server-lib/activity.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -372,6 +372,8 @@ app.post('/api/recibos/:id/rechazar', requireJwt, (req: any, res) => rechazarRec
 app.get('/api/goals', requireJwt, (req: any, res) => listGoals(req, res));
 app.post('/api/goals', requireJwt, (req: any, res) => setGoal(req, res));
 app.post('/api/goals/sync-now', requireJwt, (req: any, res) => syncVentasNow(req, res));
+app.post('/api/month-config', requireJwt, (req: any, res) => setMonthConfig(req, res));
+app.get('/api/goals/clientes', requireJwt, (req: any, res) => listClientesObjetivo(req, res));
 
 // ─── Actividad ───────────────────────────────────────────────────────────────
 app.get('/api/activity', requireJwt, (req: any, res) => listActivity(req, res));

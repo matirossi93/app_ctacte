@@ -390,6 +390,82 @@
 .vs-nav-btn span { font-size: 10px; font-weight: 600; letter-spacing: .3px }
 .vs-nav-btn.is-active { color: #141814 }
 
+/* ─── Objetivos por cliente ─── */
+.vs-clientes-obj {
+    margin-top: 20px;
+    display: flex; flex-direction: column; gap: 12px;
+}
+.vs-clientes-obj-head h2 {
+    font-size: 18px; font-weight: 700; margin: 0 0 2px;
+    color: #141814;
+}
+.vs-clientes-obj-head p {
+    font-size: 12px; color: #6e7670; margin: 0;
+}
+.vs-clientes-obj-list {
+    display: flex; flex-direction: column; gap: 10px;
+    margin-top: 4px;
+}
+.vs-cliente-obj {
+    background: rgba(255,255,255,.78);
+    border: 1px solid rgba(20,24,20,.06);
+    border-radius: 16px;
+    padding: 14px 14px 12px;
+    box-shadow: 0 2px 6px -2px rgba(20,24,20,.06);
+}
+.vs-cliente-obj-head {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 10px; margin-bottom: 10px;
+}
+.vs-cliente-obj-head h3 {
+    font-size: 14px; font-weight: 600; margin: 0 0 3px;
+    color: #141814; line-height: 1.2;
+}
+.vs-cliente-obj-meta {
+    font-size: 11px; color: #6e7670;
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.vs-cliente-obj-meta .sep {
+    width: 3px; height: 3px; border-radius: 50%; background: #b5bab5;
+}
+.vs-cliente-obj-status {
+    font-size: 10px; font-weight: 700; letter-spacing: .4px;
+    padding: 4px 8px; border-radius: 8px;
+    white-space: nowrap; text-transform: uppercase;
+}
+.vs-cliente-obj-bar {
+    height: 6px; border-radius: 99px;
+    background: rgba(20,24,20,.06); overflow: hidden;
+    margin-bottom: 10px;
+}
+.vs-cliente-obj-bar-fill {
+    height: 100%; border-radius: 99px;
+    transition: width .4s ease;
+}
+.vs-cliente-obj-figs {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+}
+.vs-cliente-obj-figs > div {
+    display: flex; flex-direction: column;
+    padding: 8px 10px;
+    background: rgba(240,223,203,.4);
+    border-radius: 10px;
+}
+.vs-cliente-obj-figs .k {
+    font-size: 9px; font-weight: 600; letter-spacing: .5px;
+    color: #6e7670; text-transform: uppercase;
+}
+.vs-cliente-obj-figs .v {
+    font-size: 12px; font-weight: 700; color: #141814;
+    margin-top: 2px;
+}
+.vs-cliente-obj-figs .v.gold { color: #06652F }
+.vs-cliente-obj-no-target {
+    font-size: 12px; color: #6e7670;
+    padding: 8px 0; border-top: 1px dashed rgba(20,24,20,.08);
+}
+.vs-cliente-obj-no-target strong { color: #141814 }
+
 /* Desktop: centrar en frame */
 @media (min-width: 760px) {
     .vs-root {

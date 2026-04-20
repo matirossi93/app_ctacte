@@ -18,11 +18,17 @@ function businessDaysInMonth(year: number, month: number): number {
   return bd;
 }
 
-function businessDaysElapsed(year: number, month: number, day: number): number {
+function businessDaysElapsed(year: number, month: number, day: number, totalDays: number, totalAuto: number): number {
+  // Días trabajados reales excluyendo domingos
   let bd = 0;
   for (let d = 1; d <= day; d++) {
     const wd = new Date(year, month - 1, d).getDay();
     if (wd !== 0) bd++;
+  }
+  // Si hay override manual de totalDays (total con feriados descontados),
+  // proporcionamos el transcurrido a esa escala
+  if (totalDays !== totalAuto && totalAuto > 0) {
+    bd = Math.min(totalDays, Math.round(bd * (totalDays / totalAuto)));
   }
   return bd;
 }
@@ -61,11 +67,12 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
     const year = Number(req.query.year) || t.year;
     const month = Number(req.query.month) || t.month;
 
-    // Fetch goals + ventas caches + vendedores IM en paralelo
-    const [goalsRes, salesRes, vendedoresIM] = await Promise.all([
-      sb().from('vendor_goals').select('cod_vendedor, target_neto, set_by, updated_at').eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month),
+    // Fetch goals + ventas caches + vendedores IM + month_config en paralelo
+    const [goalsRes, salesRes, vendedoresIM, monthCfgRes] = await Promise.all([
+      sb().from('vendor_goals').select('cod_vendedor, target_neto, dias_habiles, set_by, updated_at').eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month),
       sb().from('vendor_sales_monthly').select('cod_vendedor, neto, num_comprobantes').eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month),
-      fetchVendedores().catch(() => [])
+      fetchVendedores().catch(() => []),
+      sb().from('month_config').select('dias_habiles').eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month).maybeSingle()
     ]);
 
     if (goalsRes.error) { res.status(500).json({ error: `goals: ${goalsRes.error.message}` }); return; }
@@ -88,9 +95,11 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
     const salesByCod = new Map<number, { neto: number; num: number }>();
     (salesRes.data ?? []).forEach((s: any) => salesByCod.set(s.cod_vendedor, { neto: Number(s.neto) || 0, num: s.num_comprobantes || 0 }));
 
-    const diasTotal = businessDaysInMonth(year, month);
+    const diasAuto = businessDaysInMonth(year, month);
+    // Prioridad: month_config.dias_habiles > cálculo automático (feriados no considerados)
+    const diasTotal = (monthCfgRes.data as any)?.dias_habiles ?? diasAuto;
     const isCurrentMonth = year === t.year && month === t.month;
-    const diasTrans = isCurrentMonth ? businessDaysElapsed(year, month, t.day) : diasTotal;
+    const diasTrans = isCurrentMonth ? businessDaysElapsed(year, month, t.day, diasTotal, diasAuto) : diasTotal;
     const diasRestantes = Math.max(0, diasTotal - diasTrans);
 
     // Base: unión de vendedores de InfoManager (filtramos los reales de venta, no sucursales/consumo interno)
@@ -153,6 +162,8 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
       ok: true,
       year, month,
       dias_habiles_total: diasTotal,
+      dias_habiles_auto: diasAuto,
+      dias_habiles_source: (monthCfgRes.data as any)?.dias_habiles ? 'manual' : 'auto',
       dias_habiles_transcurridos: diasTrans,
       dias_restantes: diasRestantes,
       items: visible,
@@ -192,6 +203,141 @@ export async function setGoal(req: Request & { user?: JwtPayload }, res: Respons
     }, { onConflict: 'tenant_id,cod_vendedor,year,month' }).select().single();
     if (error) { res.status(500).json({ error: error.message }); return; }
     res.json({ ok: true, goal: data });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
+ * GET /api/goals/clientes?year=&month=&cod_vendedor=&filter=
+ * Devuelve clientes del vendedor con objetivo mes vs avance real.
+ * Vendedor ve solo sus clientes. Admin/gerente puede pasar cod_vendedor o ver todos.
+ */
+export async function listClientesObjetivo(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    if (!hasSupabase()) { res.status(500).json({ error: 'Supabase no configurado' }); return; }
+    const user = req.user!;
+    const t = today();
+    const year = Number(req.query.year) || t.year;
+    const month = Number(req.query.month) || t.month;
+
+    let codVend: number | null = null;
+    if (user.rol === 'vendedor') {
+      codVend = user.cod_vendedor ?? -1;
+    } else if (req.query.cod_vendedor) {
+      codVend = Number(req.query.cod_vendedor);
+    }
+
+    // Clientes del vendedor (o todos si admin sin filtro)
+    let q = sb().from('client_operational').select('cod_cliente, cod_vendedor, razon_social, localidad, frecuencia, dia_visita, tipo_abc, objetivo_mes, fact_mes_pasado, fact_prom_3m, saldo_cta_cte').eq('tenant_id', TENANT_ID);
+    if (codVend != null) q = q.eq('cod_vendedor', codVend);
+    q = q.order('objetivo_mes', { ascending: false, nullsFirst: false }).limit(1000);
+    const { data: clientes, error: errC } = await q;
+    if (errC) { res.status(500).json({ error: errC.message }); return; }
+
+    // Avance por cliente mes actual
+    const { data: salesMes, error: errS } = await sb().from('client_sales_monthly')
+      .select('cod_cliente, neto, num_comprobantes')
+      .eq('tenant_id', TENANT_ID)
+      .eq('year', year)
+      .eq('month', month);
+    if (errS) { res.status(500).json({ error: errS.message }); return; }
+    const salesByCliente = new Map<number, { neto: number; num: number }>();
+    (salesMes ?? []).forEach((s: any) => salesByCliente.set(s.cod_cliente, { neto: Number(s.neto) || 0, num: s.num_comprobantes || 0 }));
+
+    const items = (clientes ?? []).map((c: any) => {
+      const sale = salesByCliente.get(c.cod_cliente);
+      const avance = sale?.neto ?? 0;
+      const objetivo = c.objetivo_mes != null ? Number(c.objetivo_mes) : null;
+      const pct = objetivo && objetivo > 0 ? avance / objetivo : null;
+      const falta = objetivo != null ? Math.max(0, objetivo - avance) : null;
+      const sobrante = objetivo != null && avance > objetivo ? avance - objetivo : 0;
+      const status = objetivo == null
+        ? 'sin_objetivo'
+        : avance >= objetivo ? 'completado'
+        : avance > 0 ? 'parcial'
+        : 'sin_compras';
+      return {
+        cod_cliente: c.cod_cliente,
+        cod_vendedor: c.cod_vendedor,
+        razon_social: c.razon_social,
+        localidad: c.localidad,
+        frecuencia: c.frecuencia,
+        dia_visita: c.dia_visita,
+        tipo_abc: c.tipo_abc,
+        objetivo_mes: objetivo,
+        fact_mes_pasado: c.fact_mes_pasado != null ? Number(c.fact_mes_pasado) : null,
+        fact_prom_3m: c.fact_prom_3m != null ? Number(c.fact_prom_3m) : null,
+        saldo_cta_cte: c.saldo_cta_cte != null ? Number(c.saldo_cta_cte) : null,
+        avance,
+        num_comprobantes: sale?.num ?? 0,
+        pct_cumplimiento: pct,
+        falta,
+        sobrante,
+        status,
+      };
+    });
+
+    // Filtro
+    const filter = String(req.query.filter ?? 'todos');
+    const filtered = items.filter(it => {
+      if (filter === 'completado') return it.status === 'completado';
+      if (filter === 'parcial') return it.status === 'parcial';
+      if (filter === 'bajo_objetivo') return it.status === 'sin_compras' || it.status === 'parcial';
+      if (filter === 'sin_compras') return it.status === 'sin_compras';
+      if (filter === 'sin_objetivo') return it.status === 'sin_objetivo';
+      return true;
+    });
+
+    // Stats
+    const withObjetivo = items.filter(i => i.objetivo_mes != null);
+    const totalObjetivo = withObjetivo.reduce((a, i) => a + (i.objetivo_mes ?? 0), 0);
+    const totalAvance = items.reduce((a, i) => a + i.avance, 0);
+    const stats = {
+      total_clientes: items.length,
+      con_objetivo: withObjetivo.length,
+      completados: items.filter(i => i.status === 'completado').length,
+      parciales: items.filter(i => i.status === 'parcial').length,
+      sin_compras: items.filter(i => i.status === 'sin_compras').length,
+      sin_objetivo: items.filter(i => i.status === 'sin_objetivo').length,
+      total_objetivo: totalObjetivo,
+      total_avance: totalAvance,
+      pct_equipo: totalObjetivo > 0 ? totalAvance / totalObjetivo : null,
+    };
+
+    res.json({ ok: true, year, month, items: filtered, stats });
+  } catch (err: any) {
+    console.error('listClientesObjetivo error:', err);
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
+ * POST /api/month-config
+ * Body: { year, month, dias_habiles, notas? }
+ * Solo admin/gerente. Override de días hábiles del mes (feriados, etc).
+ */
+export async function setMonthConfig(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    const body = req.body ?? {};
+    const year = Number(body.year);
+    const month = Number(body.month);
+    const dias_habiles = Number(body.dias_habiles);
+    if (!year || !month || !dias_habiles || dias_habiles > 31 || dias_habiles < 1) {
+      res.status(400).json({ error: 'payload inválido: { year, month, dias_habiles }' });
+      return;
+    }
+    const { data, error } = await sb().from('month_config').upsert({
+      tenant_id: TENANT_ID,
+      year, month, dias_habiles,
+      notas: body.notas ?? null,
+      set_by: user.sub,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'tenant_id,year,month' }).select().single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true, config: data });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'error' });
   }

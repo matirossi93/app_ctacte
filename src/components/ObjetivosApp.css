@@ -39,6 +39,26 @@
 .obj-icon-btn:disabled { opacity: .5; cursor: not-allowed }
 
 .obj-body { flex: 1; overflow-y: auto; padding: 20px 22px 32px }
+
+/* Days bar */
+.obj-days-bar {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: #FAECC2; color: #8A5518;
+    padding: 7px 12px; border-radius: 20px;
+    font-size: 12px; font-weight: 600;
+    margin-bottom: 14px;
+}
+.obj-days-label { font-weight: 500 }
+.obj-days-value { font-weight: 700 }
+.obj-days-value.is-manual { color: #06652F }
+.obj-days-auto, .obj-days-manual {
+    font-size: 10px; font-weight: 500; margin-left: 6px; opacity: .75;
+}
+.obj-days-input {
+    width: 60px; padding: 3px 8px; border: 1px solid #06652F; border-radius: 8px;
+    font-family: inherit; font-size: 13px; font-weight: 700; text-align: center;
+}
+[data-theme="dark"] .obj-days-bar { background: #3A2F1D; color: #EEC045 }
 .obj-loading, .obj-error, .obj-empty {
     display: flex; gap: 10px; align-items: center; justify-content: center;
     padding: 40px 20px; color: #6e7670; flex-direction: column; text-align: center;

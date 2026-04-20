@@ -30,6 +30,8 @@ interface GoalsResponse {
     year: number;
     month: number;
     dias_habiles_total: number;
+    dias_habiles_auto: number;
+    dias_habiles_source: 'manual' | 'auto';
     dias_habiles_transcurridos: number;
     dias_restantes: number;
     items: GoalItem[];
@@ -49,6 +51,8 @@ export const ObjetivosApp = ({ onClose }: Props) => {
     const [editValue, setEditValue] = useState('');
     const [saving, setSaving] = useState(false);
     const [syncing, setSyncing] = useState(false);
+    const [editingDias, setEditingDias] = useState(false);
+    const [diasEdit, setDiasEdit] = useState('');
 
     const load = async () => {
         setLoading(true); setErr(null);
@@ -93,6 +97,22 @@ export const ObjetivosApp = ({ onClose }: Props) => {
         } finally { setSyncing(false); }
     };
 
+    const saveDiasHabiles = async () => {
+        const n = Number(diasEdit);
+        if (!n || n < 1 || n > 31) { alert('Días inválidos (1-31)'); return; }
+        try {
+            const res = await fetch('/api/month-config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders() },
+                body: JSON.stringify({ year, month, dias_habiles: n })
+            });
+            const j = await res.json();
+            if (!res.ok || !j.ok) throw new Error(j.error);
+            setEditingDias(false);
+            await load();
+        } catch (e: any) { alert(`Error: ${e.message}`); }
+    };
+
     const monthNames = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
     const monthLabel = `${monthNames[month - 1]} ${year}`;
 
@@ -121,6 +141,35 @@ export const ObjetivosApp = ({ onClose }: Props) => {
 
                     {!loading && !err && data && (
                         <>
+                            {/* Días hábiles pill */}
+                            <div className="obj-days-bar">
+                                <span className="obj-days-label">Días hábiles del mes:</span>
+                                {editingDias ? (
+                                    <>
+                                        <input type="number" min="1" max="31" className="obj-days-input"
+                                            value={diasEdit}
+                                            onChange={e => setDiasEdit(e.target.value)}
+                                            onKeyDown={e => { if (e.key === 'Enter') saveDiasHabiles(); if (e.key === 'Escape') setEditingDias(false); }}
+                                            autoFocus />
+                                        <button className="obj-btn-icon" onClick={saveDiasHabiles} title="Guardar"><Check size={12} /></button>
+                                        <button className="obj-btn-icon" onClick={() => setEditingDias(false)} title="Cancelar"><X size={12} /></button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <span className={`obj-days-value ${data.dias_habiles_source === 'manual' ? 'is-manual' : ''}`}>
+                                            {data.dias_habiles_total} días
+                                            {data.dias_habiles_source === 'auto' && <span className="obj-days-auto">(auto, sin feriados)</span>}
+                                            {data.dias_habiles_source === 'manual' && <span className="obj-days-manual">fijado manual</span>}
+                                        </span>
+                                        {isAdmin && (
+                                            <button className="obj-edit-btn" onClick={() => { setDiasEdit(String(data.dias_habiles_total)); setEditingDias(true); }} title="Editar días hábiles">
+                                                <Edit3 size={12} />
+                                            </button>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+
                             {/* Vendedor: vista hero con ring */}
                             {ownItem && <HeroGoal item={ownItem} />}
 
