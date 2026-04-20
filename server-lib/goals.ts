@@ -3,6 +3,18 @@ import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import { fetchVendedores } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
 
+function normLoc(s: string | null | undefined): string {
+  if (!s) return '';
+  return s
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quita tildes
+    .trim().toUpperCase()
+    .replace(/\s+/g, ' ');
+}
+function prettyLoc(s: string): string {
+  // Title case preservando el normalizado (resultado típico: "Alberdi")
+  return s.toLowerCase().replace(/(^|\s|-)(\w)/g, (_, pre, ch) => pre + ch.toUpperCase());
+}
+
 function today(): { year: number; month: number; day: number } {
   const d = new Date();
   return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
@@ -257,11 +269,13 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
         : avance >= objetivo ? 'completado'
         : avance > 0 ? 'parcial'
         : 'sin_compras';
+      const locNorm = normLoc(c.localidad);
       return {
         cod_cliente: c.cod_cliente,
         cod_vendedor: c.cod_vendedor,
         razon_social: c.razon_social,
-        localidad: c.localidad,
+        localidad: locNorm ? prettyLoc(locNorm) : c.localidad,
+        localidad_norm: locNorm,
         frecuencia: c.frecuencia,
         dia_visita: c.dia_visita,
         tipo_abc: c.tipo_abc,
@@ -278,11 +292,11 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
       };
     });
 
-    // Filtros (status + localidad)
+    // Filtros (status + localidad) — localidad se compara normalizada
     const filter = String(req.query.filter ?? 'todos');
-    const localidadFilter = String(req.query.localidad ?? '').trim();
+    const localidadFilter = normLoc(String(req.query.localidad ?? ''));
     const filtered = items.filter(it => {
-      if (localidadFilter && (it.localidad ?? '') !== localidadFilter) return false;
+      if (localidadFilter && it.localidad_norm !== localidadFilter) return false;
       if (filter === 'completado') return it.status === 'completado';
       if (filter === 'parcial') return it.status === 'parcial';
       if (filter === 'bajo_objetivo') return it.status === 'sin_compras' || it.status === 'parcial';
@@ -291,12 +305,14 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
       return true;
     });
 
-    // Localidades agregadas (basado en TODOS los clientes, no filtrados)
+    // Localidades agregadas (basado en TODOS los clientes, no filtrados).
+    // Key por forma normalizada → display con título.
     const locMap = new Map<string, { localidad: string; count: number; total_objetivo: number; total_avance: number; completados: number }>();
     items.forEach(it => {
-      const loc = (it.localidad ?? '').trim() || 'Sin localidad';
-      if (!locMap.has(loc)) locMap.set(loc, { localidad: loc, count: 0, total_objetivo: 0, total_avance: 0, completados: 0 });
-      const l = locMap.get(loc)!;
+      const key = it.localidad_norm || '__sin_localidad__';
+      const display = it.localidad_norm ? prettyLoc(it.localidad_norm) : 'Sin localidad';
+      if (!locMap.has(key)) locMap.set(key, { localidad: display, count: 0, total_objetivo: 0, total_avance: 0, completados: 0 });
+      const l = locMap.get(key)!;
       l.count++;
       l.total_objetivo += it.objetivo_mes ?? 0;
       l.total_avance += it.avance;
@@ -323,13 +339,13 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
     };
 
     // Resumen de la selección (respeta localidad filter, ignora status filter para el hero)
-    const inSel = items.filter(it => !localidadFilter || (it.localidad ?? '') === localidadFilter);
+    const inSel = items.filter(it => !localidadFilter || it.localidad_norm === localidadFilter);
     const selObjetivo = inSel.reduce((a, i) => a + (i.objetivo_mes ?? 0), 0);
     const selAvance = inSel.reduce((a, i) => a + i.avance, 0);
     const selNumComp = inSel.reduce((a, i) => a + i.num_comprobantes, 0);
     const selConObjetivo = inSel.filter(i => i.objetivo_mes != null).length;
     const seleccion = {
-      localidad: localidadFilter || null,
+      localidad: localidadFilter ? prettyLoc(localidadFilter) : null,
       total_clientes: inSel.length,
       con_objetivo: selConObjetivo,
       total_objetivo: selObjetivo,
