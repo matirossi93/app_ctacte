@@ -20,27 +20,30 @@ function today(): { year: number; month: number; day: number } {
   return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
 }
 
-function businessDaysInMonth(year: number, month: number): number {
+/**
+ * Días hábiles del mes: excluye domingos + feriados pasados como array de días (1..31).
+ * Sábado cuenta (Semillero opera sábados).
+ */
+function businessDaysInMonth(year: number, month: number, holidays: number[] = []): number {
   const days = new Date(year, month, 0).getDate();
+  const h = new Set(holidays);
   let bd = 0;
   for (let d = 1; d <= days; d++) {
     const wd = new Date(year, month - 1, d).getDay();
-    if (wd !== 0) bd++; // excluye domingo, sábado cuenta (Semillero opera sábados)
+    if (wd !== 0 && !h.has(d)) bd++;
   }
   return bd;
 }
 
-function businessDaysElapsed(year: number, month: number, day: number, totalDays: number, totalAuto: number): number {
-  // Días trabajados reales excluyendo domingos
+/**
+ * Días hábiles transcurridos hasta (incluido) `day`, excluyendo domingos + feriados.
+ */
+function businessDaysElapsed(year: number, month: number, day: number, holidays: number[] = []): number {
+  const h = new Set(holidays);
   let bd = 0;
   for (let d = 1; d <= day; d++) {
     const wd = new Date(year, month - 1, d).getDay();
-    if (wd !== 0) bd++;
-  }
-  // Si hay override manual de totalDays (total con feriados descontados),
-  // proporcionamos el transcurrido a esa escala
-  if (totalDays !== totalAuto && totalAuto > 0) {
-    bd = Math.min(totalDays, Math.round(bd * (totalDays / totalAuto)));
+    if (wd !== 0 && !h.has(d)) bd++;
   }
   return bd;
 }
@@ -84,7 +87,7 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
       sb().from('vendor_goals').select('cod_vendedor, target_neto, dias_habiles, set_by, updated_at').eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month),
       sb().from('vendor_sales_monthly').select('cod_vendedor, neto, num_comprobantes').eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month),
       fetchVendedores().catch(() => []),
-      sb().from('month_config').select('dias_habiles').eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month).maybeSingle()
+      sb().from('month_config').select('dias_habiles, holidays').eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month).maybeSingle()
     ]);
 
     if (goalsRes.error) { res.status(500).json({ error: `goals: ${goalsRes.error.message}` }); return; }
@@ -107,11 +110,17 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
     const salesByCod = new Map<number, { neto: number; num: number }>();
     (salesRes.data ?? []).forEach((s: any) => salesByCod.set(s.cod_vendedor, { neto: Number(s.neto) || 0, num: s.num_comprobantes || 0 }));
 
-    const diasAuto = businessDaysInMonth(year, month);
-    // Prioridad: month_config.dias_habiles > cálculo automático (feriados no considerados)
-    const diasTotal = (monthCfgRes.data as any)?.dias_habiles ?? diasAuto;
+    const cfg = monthCfgRes.data as any;
+    const holidaysRaw = Array.isArray(cfg?.holidays) ? cfg.holidays : [];
+    const holidays: number[] = holidaysRaw
+      .map((d: any) => Number(d))
+      .filter((d: number) => Number.isInteger(d) && d >= 1 && d <= 31);
+    const diasAuto = businessDaysInMonth(year, month); // sin feriados — para referencia
+    const diasConFeriados = businessDaysInMonth(year, month, holidays);
+    // Prioridad: dias_habiles manual > auto con feriados
+    const diasTotal = cfg?.dias_habiles ?? diasConFeriados;
     const isCurrentMonth = year === t.year && month === t.month;
-    const diasTrans = isCurrentMonth ? businessDaysElapsed(year, month, t.day, diasTotal, diasAuto) : diasTotal;
+    const diasTrans = isCurrentMonth ? businessDaysElapsed(year, month, t.day, holidays) : diasTotal;
     const diasRestantes = Math.max(0, diasTotal - diasTrans);
 
     // Base: unión de vendedores de InfoManager (filtramos los reales de venta, no sucursales/consumo interno)
@@ -175,9 +184,11 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
       year, month,
       dias_habiles_total: diasTotal,
       dias_habiles_auto: diasAuto,
-      dias_habiles_source: (monthCfgRes.data as any)?.dias_habiles ? 'manual' : 'auto',
+      dias_habiles_con_feriados: diasConFeriados,
+      dias_habiles_source: cfg?.dias_habiles ? 'manual' : (holidays.length > 0 ? 'con_feriados' : 'auto'),
       dias_habiles_transcurridos: diasTrans,
       dias_restantes: diasRestantes,
+      holidays,
       items: visible,
       totales,
     });
@@ -373,18 +384,38 @@ export async function setMonthConfig(req: Request & { user?: JwtPayload }, res: 
     const body = req.body ?? {};
     const year = Number(body.year);
     const month = Number(body.month);
-    const dias_habiles = Number(body.dias_habiles);
-    if (!year || !month || !dias_habiles || dias_habiles > 31 || dias_habiles < 1) {
-      res.status(400).json({ error: 'payload inválido: { year, month, dias_habiles }' });
-      return;
+    if (!year || !month) { res.status(400).json({ error: 'year, month obligatorios' }); return; }
+
+    // holidays opcional — array de días (1..31)
+    let holidays: number[] | undefined;
+    if (Array.isArray(body.holidays)) {
+      const cleaned: number[] = body.holidays
+        .map((d: any) => Number(d))
+        .filter((d: number) => Number.isInteger(d) && d >= 1 && d <= 31);
+      holidays = Array.from(new Set<number>(cleaned)).sort((a, b) => a - b);
     }
-    const { data, error } = await sb().from('month_config').upsert({
+
+    // dias_habiles opcional — override manual
+    const diasProvided = body.dias_habiles != null;
+    const dias_habiles = diasProvided ? Number(body.dias_habiles) : null;
+    if (diasProvided && (!dias_habiles || dias_habiles < 1 || dias_habiles > 31)) {
+      res.status(400).json({ error: 'dias_habiles debe estar entre 1 y 31' }); return;
+    }
+
+    const payload: any = {
       tenant_id: TENANT_ID,
-      year, month, dias_habiles,
+      year, month,
       notas: body.notas ?? null,
       set_by: user.sub,
-      updated_at: new Date().toISOString()
-    }, { onConflict: 'tenant_id,year,month' }).select().single();
+      updated_at: new Date().toISOString(),
+    };
+    // Si vienen holidays, seteamos dias_habiles a NULL (prioridad a cálculo con feriados)
+    // a menos que el body explícitamente pase dias_habiles.
+    if (diasProvided) payload.dias_habiles = dias_habiles;
+    else if (holidays) payload.dias_habiles = null;
+    if (holidays) payload.holidays = holidays;
+
+    const { data, error } = await sb().from('month_config').upsert(payload, { onConflict: 'tenant_id,year,month' }).select().single();
     if (error) { res.status(500).json({ error: error.message }); return; }
     res.json({ ok: true, config: data });
   } catch (err: any) {

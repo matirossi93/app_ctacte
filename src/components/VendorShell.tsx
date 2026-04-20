@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
-    DollarSign, Truck
+    DollarSign, Truck, Edit3
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser } from '../utils/auth';
 import { RecibosApp } from './RecibosApp';
@@ -48,6 +48,13 @@ interface GoalData {
     dias_habiles_total: number;
     dias_habiles_transcurridos: number;
     dias_restantes: number;
+}
+
+interface GoalsMeta {
+    holidays: number[];
+    dias_habiles_source: 'manual' | 'con_feriados' | 'auto';
+    year: number;
+    month: number;
 }
 
 interface ClienteObjetivo {
@@ -464,6 +471,7 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
 // ═══════════════════════════════════════════════════════════════════════════
 function ObjetivosView({ selectedVendor, isAdmin }: { selectedVendor: number | null; isAdmin: boolean }) {
     const [g, setG] = useState<GoalData | null>(null);
+    const [meta, setMeta] = useState<GoalsMeta | null>(null);
     const [clientes, setClientes] = useState<ClienteObjetivo[]>([]);
     const [clientesStats, setClientesStats] = useState<ClientesResponse['stats'] | null>(null);
     const [seleccion, setSeleccion] = useState<Seleccion | null>(null);
@@ -472,6 +480,9 @@ function ObjetivosView({ selectedVendor, isAdmin }: { selectedVendor: number | n
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
     const [syncing, setSyncing] = useState(false);
+    const [editingHolidays, setEditingHolidays] = useState(false);
+    const [holidaysInput, setHolidaysInput] = useState('');
+    const [savingHolidays, setSavingHolidays] = useState(false);
 
     // Reset localidad al cambiar de vendedor
     useEffect(() => { setLocalidad(''); }, [selectedVendor]);
@@ -513,6 +524,12 @@ function ObjetivosView({ selectedVendor, isAdmin }: { selectedVendor: number | n
                 goal = gr.items?.[0] ?? null;
             }
             setG(goal);
+            setMeta({
+                holidays: gr.holidays ?? [],
+                dias_habiles_source: gr.dias_habiles_source ?? 'auto',
+                year: gr.year,
+                month: gr.month,
+            });
             setClientes(cr.items || []);
             setClientesStats(cr.stats);
             setSeleccion(cr.seleccion ?? null);
@@ -527,6 +544,28 @@ function ObjetivosView({ selectedVendor, isAdmin }: { selectedVendor: number | n
             await fetch('/api/goals/sync-now', { method: 'POST', headers: authHeaders() });
             await load();
         } finally { setSyncing(false); }
+    };
+
+    const saveHolidays = async () => {
+        if (!meta) return;
+        // Parsea "2, 3, 12" → [2,3,12]
+        const parsed = holidaysInput.split(/[,\s]+/)
+            .map(s => s.trim()).filter(Boolean)
+            .map(s => Number(s))
+            .filter(n => Number.isInteger(n) && n >= 1 && n <= 31);
+        setSavingHolidays(true);
+        try {
+            const res = await fetch('/api/month-config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders() },
+                body: JSON.stringify({ year: meta.year, month: meta.month, holidays: parsed }),
+            });
+            const j = await res.json();
+            if (!res.ok || !j.ok) throw new Error(j.error);
+            setEditingHolidays(false);
+            await load();
+        } catch (e: any) { alert(`Error: ${e.message}`); }
+        finally { setSavingHolidays(false); }
     };
 
     if (loading) return <div className="vs-loading"><Loader2 className="spin" /> Cargando objetivo…</div>;
@@ -564,6 +603,45 @@ function ObjetivosView({ selectedVendor, isAdmin }: { selectedVendor: number | n
             <div className="vs-view-title">
                 <h1>Mis <em>Objetivos</em></h1>
                 <p><span className="dot" /> {monthName(new Date().getUTCMonth() + 1)} · {g.dias_habiles_transcurridos}/{g.dias_habiles_total} días · {g.dias_restantes} restantes</p>
+            </div>
+
+            {/* Feriados del mes */}
+            <div className="vs-holidays-bar">
+                {editingHolidays ? (
+                    <>
+                        <span className="vs-holidays-label">Feriados (días):</span>
+                        <input className="vs-holidays-input"
+                            value={holidaysInput}
+                            onChange={e => setHolidaysInput(e.target.value)}
+                            placeholder="ej: 2, 3"
+                            onKeyDown={e => { if (e.key === 'Enter') saveHolidays(); if (e.key === 'Escape') setEditingHolidays(false); }}
+                            autoFocus />
+                        <button className="vs-holidays-btn" onClick={saveHolidays} disabled={savingHolidays}>
+                            {savingHolidays ? <Loader2 size={13} className="spin" /> : '✓'}
+                        </button>
+                        <button className="vs-holidays-btn" onClick={() => setEditingHolidays(false)}>×</button>
+                    </>
+                ) : (
+                    <>
+                        <Calendar size={13} />
+                        <span className="vs-holidays-label">Feriados:</span>
+                        {meta && meta.holidays.length > 0 ? (
+                            <span className="vs-holidays-chips">
+                                {meta.holidays.map(d => <span key={d} className="vs-holiday-chip">{d}</span>)}
+                            </span>
+                        ) : (
+                            <span className="vs-holidays-empty">Ninguno configurado</span>
+                        )}
+                        {isAdmin && (
+                            <button className="vs-holidays-edit" onClick={() => {
+                                setHolidaysInput((meta?.holidays ?? []).join(', '));
+                                setEditingHolidays(true);
+                            }} title="Editar feriados del mes">
+                                <Edit3 size={12} />
+                            </button>
+                        )}
+                    </>
+                )}
             </div>
 
             {localidades.length > 0 && (

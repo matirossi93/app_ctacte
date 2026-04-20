@@ -403,6 +403,48 @@
 .vs-nav-btn span { font-size: 10px; font-weight: 600; letter-spacing: .3px }
 .vs-nav-btn.is-active { color: #141814 }
 
+/* ─── Feriados del mes ─── */
+.vs-holidays-bar {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    padding: 8px 12px;
+    background: rgba(255,255,255,.65);
+    border: 1px solid rgba(20,24,20,.08);
+    border-radius: 14px;
+    margin-bottom: 12px;
+    font-size: 12px;
+}
+.vs-holidays-bar > svg { color: #6e7670; flex-shrink: 0 }
+.vs-holidays-label { font-weight: 600; color: #6e7670 }
+.vs-holidays-empty { color: #9aa29a; font-style: italic }
+.vs-holidays-chips { display: inline-flex; gap: 4px; flex-wrap: wrap }
+.vs-holiday-chip {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 26px; height: 22px; padding: 0 6px;
+    background: linear-gradient(135deg, #A83E2B 0%, #8A2F20 100%);
+    color: #fff; font-weight: 700; font-size: 11px;
+    border-radius: 11px;
+}
+.vs-holidays-edit {
+    background: transparent; border: 0; cursor: pointer;
+    color: #06652F; padding: 2px 4px;
+    margin-left: auto; font-family: inherit;
+    display: inline-flex; align-items: center;
+}
+.vs-holidays-input {
+    flex: 1; min-width: 100px;
+    border: 1px solid rgba(20,24,20,.15); border-radius: 8px;
+    padding: 4px 8px; font-family: inherit; font-size: 12px;
+    background: #fff; outline: none;
+}
+.vs-holidays-input:focus { border-color: #06652F }
+.vs-holidays-btn {
+    width: 24px; height: 24px; border-radius: 8px;
+    background: #06652F; color: #EEC045; border: 0;
+    cursor: pointer; font-family: inherit; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center;
+}
+.vs-holidays-btn:disabled { opacity: .6 }
+
 /* ─── Selector de localidades ─── */
 .vs-loc-scroll {
     display: flex; gap: 8px;
