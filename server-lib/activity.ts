@@ -1,0 +1,117 @@
+import type { Request, Response } from 'express';
+import { sb, TENANT_ID, hasSupabase } from './supabase.js';
+import type { JwtPayload } from './auth.js';
+
+export type ActivityTipo = 'nota' | 'llamada' | 'wa' | 'promesa' | 'pago' | 'visita';
+const TIPOS: ActivityTipo[] = ['nota', 'llamada', 'wa', 'promesa', 'pago', 'visita'];
+
+/** GET /api/activity?tipo=&cod_cliente=&cod_vendedor=&limit=&offset= */
+export async function listActivity(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    if (!hasSupabase()) { res.status(500).json({ error: 'Supabase no configurado' }); return; }
+    const user = req.user!;
+    let q = sb().from('vendor_activity').select('*').eq('tenant_id', TENANT_ID);
+
+    if (user.rol === 'vendedor') {
+      if (user.cod_vendedor == null) { res.json({ ok: true, items: [] }); return; }
+      q = q.eq('cod_vendedor', user.cod_vendedor);
+    } else if (req.query.cod_vendedor) {
+      q = q.eq('cod_vendedor', Number(req.query.cod_vendedor));
+    }
+
+    if (req.query.tipo) q = q.eq('tipo', String(req.query.tipo));
+    if (req.query.cod_cliente) q = q.eq('cod_cliente', Number(req.query.cod_cliente));
+
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const offset = Number(req.query.offset) || 0;
+    q = q.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+
+    const { data, error } = await q;
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    // Enriquecer con email del creador (nombre para display)
+    const ids = Array.from(new Set((data ?? []).map((r: any) => r.created_by).filter(Boolean)));
+    let creadoresMap = new Map<string, { email: string; nombre: string | null }>();
+    if (ids.length) {
+      const { data: us } = await sb().from('usuarios').select('id, email, nombre').in('id', ids);
+      (us ?? []).forEach((u: any) => creadoresMap.set(u.id, { email: u.email, nombre: u.nombre }));
+    }
+
+    const items = (data ?? []).map((r: any) => ({
+      ...r,
+      created_by_email: r.created_by ? creadoresMap.get(r.created_by)?.email ?? null : null,
+      created_by_nombre: r.created_by ? creadoresMap.get(r.created_by)?.nombre ?? null : null,
+    }));
+
+    res.json({ ok: true, items });
+  } catch (err: any) {
+    console.error('listActivity error:', err);
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/** POST /api/activity { tipo, cod_cliente?, contenido?, monto?, fecha_promesa?, cod_vendedor? } */
+export async function createActivity(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    if (!hasSupabase()) { res.status(500).json({ error: 'Supabase no configurado' }); return; }
+    const user = req.user!;
+    const body = req.body ?? {};
+
+    const tipo = String(body.tipo);
+    if (!TIPOS.includes(tipo as ActivityTipo)) {
+      res.status(400).json({ error: `tipo inválido: ${tipo}. Válidos: ${TIPOS.join(', ')}` });
+      return;
+    }
+
+    // cod_vendedor: vendedor usa el suyo, admin/gerente puede elegir
+    let codVendedor: number;
+    if (user.rol === 'vendedor') {
+      if (user.cod_vendedor == null) {
+        res.status(400).json({ error: 'Tu usuario no tiene cod_vendedor asignado' });
+        return;
+      }
+      codVendedor = user.cod_vendedor;
+    } else {
+      codVendedor = Number(body.cod_vendedor) || 0;
+      if (!codVendedor) {
+        res.status(400).json({ error: 'cod_vendedor obligatorio para admin/gerente' });
+        return;
+      }
+    }
+
+    const row: any = {
+      tenant_id: TENANT_ID,
+      cod_vendedor: codVendedor,
+      cod_cliente: body.cod_cliente ? Number(body.cod_cliente) : null,
+      tipo,
+      contenido: body.contenido ?? null,
+      monto: body.monto != null ? Number(body.monto) : null,
+      fecha_promesa: body.fecha_promesa ?? null,
+      created_by: user.sub,
+    };
+
+    const { data, error } = await sb().from('vendor_activity').insert(row).select().single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true, item: data });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/** DELETE /api/activity/:id — borra (solo propia o admin) */
+export async function deleteActivity(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    const { data: row } = await sb().from('vendor_activity').select('created_by').eq('id', req.params.id).eq('tenant_id', TENANT_ID).maybeSingle();
+    if (!row) { res.status(404).json({ error: 'No encontrado' }); return; }
+    if (user.rol === 'vendedor' && row.created_by !== user.sub) {
+      res.status(403).json({ error: 'No podés borrar actividad de otro usuario' });
+      return;
+    }
+    const { error } = await sb().from('vendor_activity').delete().eq('id', req.params.id).eq('tenant_id', TENANT_ID);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}

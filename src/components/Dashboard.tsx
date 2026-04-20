@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Search, RefreshCw, Moon, Sun, LayoutGrid, ListOrdered, LogOut, Download, FileText } from 'lucide-react';
+import { Search, RefreshCw, Moon, Sun, LayoutGrid, ListOrdered, LogOut, Download, FileText, Receipt, Target, Activity } from 'lucide-react';
 import { useData } from '../hooks/useData';
 import { processInvoices } from '../utils/calculations';
 import { SummaryCards } from './SummaryCards';
@@ -8,8 +8,11 @@ import { ClientTable } from './ClientTable';
 import { InterestControl } from './InterestControl';
 import { TopDebtorsAlert } from './TopDebtorsAlert';
 import { AgingBars } from './AgingBars';
-import { authHeaders, clearToken } from '../utils/auth';
+import { authHeaders, clearToken, getAuthMode, getUser } from '../utils/auth';
 import { ExportModal } from './ExportModal';
+import { RecibosApp } from './RecibosApp';
+import { ObjetivosApp } from './ObjetivosApp';
+import { ActividadApp } from './ActividadApp';
 import './Dashboard.css';
 
 interface Props {
@@ -26,6 +29,13 @@ export const Dashboard = ({ onUnauthorized }: Props) => {
     const [sortBy, setSortBy] = useState<'balance' | 'aging'>('aging');
     const [activeTab, setActiveTab] = useState<'resumen' | 'clientes'>('resumen');
     const [showExportModal, setShowExportModal] = useState(false);
+    const [showRecibos, setShowRecibos] = useState(false);
+    const [showObjetivos, setShowObjetivos] = useState(false);
+    const [showActividad, setShowActividad] = useState(false);
+    const authMode = getAuthMode();
+    const authUser = getUser();
+    const panelEnabled = authMode === 'jwt' && !!authUser;
+    const isVendorView = authMode === 'jwt' && authUser?.rol === 'vendedor';
 
     // URL vendor isolation
     const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
@@ -134,6 +144,21 @@ export const Dashboard = ({ onUnauthorized }: Props) => {
     };
 
     const data = rawData.filter(v => !disabledVendorIds.has(v.vendorId));
+
+    // Lista de clientes para el selector del modal de recibos (dedup por código)
+    const recibosClients = useMemo(() => {
+        const map = new Map<string, { cod: string; name: string; localidad?: string }>();
+        rawInvoices.forEach((inv: any) => {
+            const cod = String(inv.COD_CLIENT || '').trim();
+            if (!cod || map.has(cod)) return;
+            map.set(cod, {
+                cod,
+                name: String(inv.CLIENTES_N || `Cliente ${cod}`).trim(),
+                localidad: (clientDbMap as any)?.[cod]?.Localidad ?? undefined,
+            });
+        });
+        return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+    }, [rawInvoices, clientDbMap]);
 
     const viewData = useMemo(() => {
         if (!isoVendor) return data;
@@ -301,17 +326,17 @@ export const Dashboard = ({ onUnauthorized }: Props) => {
                     <div className="mobile-hide" style={{ height: '50px', width: '2px', background: 'var(--color-border)' }} />
                     <div style={{ paddingLeft: '0.5rem' }}>
                         <h1 style={{ fontSize: '1.75rem', margin: '0 0 0.2rem 0', fontWeight: 800, color: 'var(--color-text)', letterSpacing: '-0.02em', lineHeight: 1.1 }}>
-                            Panel de Cobranzas
+                            {isVendorView ? 'Mis Cobranzas' : 'Panel de Cobranzas'}
                         </h1>
                         <span style={{ color: 'var(--color-primary)', fontSize: '0.9rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', opacity: 0.9 }}>
-                            Gestión de Vendedores
+                            {isVendorView ? (authUser?.nombre ?? 'Vendedor') : 'Gestión de Vendedores'}
                         </span>
                     </div>
                 </div>
 
                 <div className="dashboard-controls">
-                    {/* Empresa selector */}
-                    {!isoVendor && (
+                    {/* Empresa selector — oculto para vendedores */}
+                    {!isoVendor && !isVendorView && (
                         <select
                             value={codEmpresa}
                             onChange={e => setCodEmpresa(Number(e.target.value))}
@@ -351,7 +376,7 @@ export const Dashboard = ({ onUnauthorized }: Props) => {
                         />
                     </div>
 
-                    <InterestControl currentRate={interestRate} onRateChange={setInterestRate} />
+                    {!isVendorView && <InterestControl currentRate={interestRate} onRateChange={setInterestRate} />}
 
                     <button
                         onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')}
@@ -379,6 +404,39 @@ export const Dashboard = ({ onUnauthorized }: Props) => {
                     >
                         <FileText size={20} />
                     </button>
+
+                    {panelEnabled && (
+                        <button
+                            onClick={() => setShowObjetivos(true)}
+                            className="btn-icon"
+                            title={authUser?.rol === 'vendedor' ? 'Mis objetivos' : 'Objetivos del equipo'}
+                            style={{ padding: '0.5rem', borderRadius: '50%', color: '#B58829' }}
+                        >
+                            <Target size={20} />
+                        </button>
+                    )}
+
+                    {panelEnabled && (
+                        <button
+                            onClick={() => setShowActividad(true)}
+                            className="btn-icon"
+                            title={authUser?.rol === 'vendedor' ? 'Mi actividad' : 'Actividad del equipo'}
+                            style={{ padding: '0.5rem', borderRadius: '50%', color: '#A83E2B' }}
+                        >
+                            <Activity size={20} />
+                        </button>
+                    )}
+
+                    {panelEnabled && (
+                        <button
+                            onClick={() => setShowRecibos(true)}
+                            className="btn-icon"
+                            title={authUser?.rol === 'vendedor' ? 'Cargar comprobante de pago' : 'Revisar recibos pendientes'}
+                            style={{ padding: '0.5rem', borderRadius: '50%', color: '#06652F' }}
+                        >
+                            <Receipt size={20} />
+                        </button>
+                    )}
 
                     <button
                         onClick={() => { clearToken(); onUnauthorized?.(); }}
@@ -458,8 +516,8 @@ export const Dashboard = ({ onUnauthorized }: Props) => {
                     </div>
                 </div>
 
-                <div className={`content-grid ${isoVendor ? 'isolated-view' : ''}`}>
-                    {!isoVendor && (
+                <div className={`content-grid ${(isoVendor || isVendorView) ? 'isolated-view' : ''}`}>
+                    {!isoVendor && !isVendorView && (
                         <aside className="mobile-hide">
                             <VendorList
                                 vendors={allVendorsSidebar}
@@ -470,7 +528,7 @@ export const Dashboard = ({ onUnauthorized }: Props) => {
                             />
                         </aside>
                     )}
-                    <main style={{ gridColumn: isoVendor ? '1 / -1' : undefined }}>
+                    <main style={{ gridColumn: (isoVendor || isVendorView) ? '1 / -1' : undefined }}>
                         <ClientTable
                             vendor={displayedVendor}
                             clientThresholds={clientThresholds}
@@ -496,6 +554,21 @@ export const Dashboard = ({ onUnauthorized }: Props) => {
                     activeVendorId={activeVendorId}
                     disabledVendorIds={disabledVendorIds}
                 />
+            )}
+
+            {showRecibos && (
+                <RecibosApp
+                    onClose={() => setShowRecibos(false)}
+                    clients={recibosClients}
+                />
+            )}
+
+            {showObjetivos && (
+                <ObjetivosApp onClose={() => setShowObjetivos(false)} />
+            )}
+
+            {showActividad && (
+                <ActividadApp onClose={() => setShowActividad(false)} clients={recibosClients} />
             )}
         </div>
     );

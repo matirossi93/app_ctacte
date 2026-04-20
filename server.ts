@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -8,6 +9,19 @@ import { randomUUID } from 'node:crypto';
 import pkg from 'papaparse';
 const { parse } = pkg;
 import axios from 'axios';
+import cron from 'node-cron';
+import multer from 'multer';
+import {
+  findUsuarioByEmail, signJwt, verifyJwt, sha256hex, usuarioToJwtPayload,
+  type JwtPayload
+} from './server-lib/auth.js';
+import { hasSupabase } from './server-lib/supabase.js';
+import { syncVentasMesActual } from './server-lib/syncVentas.js';
+import {
+  uploadRecibo, listRecibos, facturasCandidatas, aprobarRecibo, rechazarRecibo
+} from './server-lib/recibos.js';
+import { listGoals, setGoal, syncVentasNow } from './server-lib/goals.js';
+import { listActivity, createActivity, deleteActivity } from './server-lib/activity.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -288,12 +302,103 @@ app.get('/api/auth/check', requireAuth, (_req: express.Request, res: express.Res
     res.json({ valid: true, authRequired: !!APP_PASSWORD });
 });
 
+// ─── Auth v2: email+password+JWT (reusa tabla usuarios del CRM) ───────────────
+app.post('/api/auth/login-v2', async (req: express.Request, res: express.Response) => {
+    const ip = req.ip || 'unknown';
+    const now = Date.now();
+    const attempts = loginAttempts.get(ip);
+    if (attempts && now < attempts.resetAt && attempts.count >= 10) {
+        res.status(429).json({ success: false, error: 'Demasiados intentos. Esperá 15 minutos.' });
+        return;
+    }
+    if (!attempts || now >= attempts.resetAt) {
+        loginAttempts.set(ip, { count: 1, resetAt: now + 15 * 60 * 1000 });
+    } else {
+        attempts.count++;
+    }
+
+    const { email, password } = req.body as { email?: string; password?: string };
+    if (!email || !password) { res.status(400).json({ success: false, error: 'email y password requeridos' }); return; }
+    if (!hasSupabase()) { res.status(500).json({ success: false, error: 'Supabase no configurado' }); return; }
+
+    try {
+        const user = await findUsuarioByEmail(email.trim());
+        if (!user) { res.status(401).json({ success: false, error: 'Credenciales inválidas' }); return; }
+        const hash = sha256hex(password);
+        if (hash !== user.password_hash) { res.status(401).json({ success: false, error: 'Credenciales inválidas' }); return; }
+        loginAttempts.delete(ip);
+        const jwt = signJwt(usuarioToJwtPayload(user));
+        res.json({ success: true, jwt, user: { email: user.email, rol: user.rol, cod_vendedor: user.cod_vendedor, vendedor_key: user.vendedor_key, nombre: user.nombre } });
+    } catch (err: any) {
+        console.error('login-v2 error:', err);
+        res.status(500).json({ success: false, error: err?.message ?? 'error' });
+    }
+});
+
+// Middleware JWT: adjunta req.user si hay Bearer válido
+const requireJwt = (req: express.Request & { user?: JwtPayload }, res: express.Response, next: express.NextFunction): void => {
+    const auth = req.headers.authorization;
+    if (!auth?.startsWith('Bearer ')) { res.status(401).json({ error: 'No autorizado' }); return; }
+    const payload = verifyJwt(auth.slice(7));
+    if (!payload) { res.status(401).json({ error: 'Sesión inválida o expirada' }); return; }
+    req.user = payload;
+    next();
+};
+
+// Middleware opcional: si hay JWT lo adjunta, sino sigue (compat con legacy SQLite tokens)
+const maybeJwt = (req: express.Request & { user?: JwtPayload }, _res: express.Response, next: express.NextFunction): void => {
+    const auth = req.headers.authorization;
+    if (auth?.startsWith('Bearer ')) {
+        const payload = verifyJwt(auth.slice(7));
+        if (payload) req.user = payload;
+    }
+    next();
+};
+
+app.get('/api/me', requireJwt, (req: express.Request & { user?: JwtPayload }, res: express.Response) => {
+    res.json({ ok: true, user: req.user });
+});
+
+// ─── Recibos ──────────────────────────────────────────────────────────────────
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+app.post('/api/recibos/upload', requireJwt, upload.single('foto'), (req: any, res) => uploadRecibo(req, res));
+app.get('/api/recibos', requireJwt, (req: any, res) => listRecibos(req, res));
+app.get('/api/recibos/:id/facturas-candidatas', requireJwt, (req: any, res) => facturasCandidatas(req, res));
+app.post('/api/recibos/:id/aprobar', requireJwt, (req: any, res) => aprobarRecibo(req, res));
+app.post('/api/recibos/:id/rechazar', requireJwt, (req: any, res) => rechazarRecibo(req, res));
+
+// ─── Objetivos ───────────────────────────────────────────────────────────────
+app.get('/api/goals', requireJwt, (req: any, res) => listGoals(req, res));
+app.post('/api/goals', requireJwt, (req: any, res) => setGoal(req, res));
+app.post('/api/goals/sync-now', requireJwt, (req: any, res) => syncVentasNow(req, res));
+
+// ─── Actividad ───────────────────────────────────────────────────────────────
+app.get('/api/activity', requireJwt, (req: any, res) => listActivity(req, res));
+app.post('/api/activity', requireJwt, (req: any, res) => createActivity(req, res));
+app.delete('/api/activity/:id', requireJwt, (req: any, res) => deleteActivity(req, res));
+
 // ─── Data Proxy ───────────────────────────────────────────────────────────────
-app.get('/api/data', requireAuth, async (req: express.Request, res: express.Response) => {
+// Si el JWT es de un vendedor, filtramos los invoices solo a los suyos.
+app.get('/api/data', maybeJwt, requireAuth, async (req: express.Request & { user?: JwtPayload }, res: express.Response) => {
     try {
         const force = req.query.nocache === '1';
         const codEmpresa = req.query.codEmpresa ? Number(req.query.codEmpresa) : undefined;
         const data = await fetchData(force, codEmpresa);
+
+        // Filtro por rol: vendedor solo ve sus invoices
+        if (req.user?.rol === 'vendedor') {
+            const codVend = req.user.cod_vendedor;
+            const vkey = (req.user.vendedor_key ?? '').toLowerCase();
+            if (data.source === 'infomanager' && Array.isArray(data.invoices)) {
+                data.invoices = data.invoices.filter((inv: any) => {
+                    if (codVend != null && String(inv.COD_VENDED) === String(codVend)) return true;
+                    if (vkey && String(inv.VENDEDORES || '').toLowerCase().includes(vkey)) return true;
+                    return false;
+                });
+            }
+        }
+
         res.json(data);
     } catch (err: any) {
         const detail = err.response ? ` (HTTP ${err.response.status})` : ` (${err.code || 'network error'})`;
@@ -514,4 +619,23 @@ app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
     console.log(`Auth: ${APP_PASSWORD ? 'ENABLED' : 'disabled — set APP_PASSWORD env var to enable'}`);
     console.log(`Data source: ${DATA_SOURCE}${DATA_SOURCE === 'infomanager' ? ' (with Sheets fallback)' : ''}`);
+    console.log(`Supabase: ${hasSupabase() ? 'ENABLED' : 'disabled'}`);
 });
+
+// ─── Crons ────────────────────────────────────────────────────────────────────
+if (hasSupabase()) {
+    cron.schedule('*/30 * * * *', async () => {
+        const r = await syncVentasMesActual();
+        if (r.ok) {
+            console.log(`[cron syncVentas] ok · ${r.comprobantes} comprob → ${r.clientes} clientes, ${r.vendedores} vendedores · ${r.elapsedMs}ms`);
+        } else {
+            console.error(`[cron syncVentas] FAIL · ${r.error}`);
+        }
+    });
+    if (process.env.SYNC_ON_START === 'true') {
+        syncVentasMesActual().then(r => console.log('[sync on start]', r));
+    }
+    console.log('Cron syncVentasMesActual: */30 * * * *');
+} else {
+    console.log('Cron deshabilitado (Supabase no configurado)');
+}

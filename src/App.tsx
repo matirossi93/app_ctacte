@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Dashboard } from './components/Dashboard';
 import { LoginScreen } from './components/LoginScreen';
-import { authHeaders, clearToken } from './utils/auth';
+import { VendorShell } from './components/VendorShell';
+import { authHeaders, clearToken, getAuthMode, getUser, setUser } from './utils/auth';
 
 type AuthState = 'checking' | 'authenticated' | 'unauthenticated';
 
@@ -9,6 +10,33 @@ function App() {
     const [authState, setAuthState] = useState<AuthState>('checking');
 
     useEffect(() => {
+        const mode = getAuthMode();
+        if (mode === 'jwt') {
+            fetch('/api/me', { headers: authHeaders() })
+                .then(async res => {
+                    if (res.ok) {
+                        const data = await res.json() as { ok: boolean; user: any };
+                        if (data.ok && data.user) {
+                            setUser({
+                                email: data.user.email,
+                                rol: data.user.rol,
+                                cod_vendedor: data.user.cod_vendedor ?? null,
+                                vendedor_key: data.user.vendedor_key ?? null,
+                                nombre: data.user.nombre ?? null,
+                            });
+                            setAuthState('authenticated');
+                        } else {
+                            clearToken();
+                            setAuthState('unauthenticated');
+                        }
+                    } else {
+                        clearToken();
+                        setAuthState('unauthenticated');
+                    }
+                })
+                .catch(() => { clearToken(); setAuthState('unauthenticated'); });
+            return;
+        }
         fetch('/api/auth/check', { headers: authHeaders() })
             .then(async res => {
                 if (res.ok) {
@@ -43,6 +71,13 @@ function App() {
 
     if (authState === 'unauthenticated') {
         return <LoginScreen onLogin={() => setAuthState('authenticated')} />;
+    }
+
+    // Vendedores: shell mobile-first dedicada. Admin/gerente: Dashboard rico.
+    const mode = getAuthMode();
+    const user = getUser();
+    if (mode === 'jwt' && user?.rol === 'vendedor') {
+        return <VendorShell onLogout={() => { clearToken(); setAuthState('unauthenticated'); }} />;
     }
 
     return (

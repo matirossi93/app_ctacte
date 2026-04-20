@@ -15,6 +15,14 @@ dist-ssr
 data/
 data.csv
 
+# Env & secrets
+.env
+.env.*
+!.env.example
+*.key
+credentials*
+tokens.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
