@@ -67,6 +67,15 @@ export async function findUsuarioByEmail(email: string): Promise<UsuarioRow | nu
   return data as UsuarioRow | null;
 }
 
+/** Middleware: exige JWT con rol admin o gerente. Requiere que requireJwt haya ya corrido. */
+export function requireAdmin(req: any, res: any, next: any): void {
+  if (!req.user) { res.status(401).json({ error: 'Requiere autenticación' }); return; }
+  if (req.user.rol !== 'admin' && req.user.rol !== 'gerente') {
+    res.status(403).json({ error: 'Requiere rol admin o gerente' }); return;
+  }
+  next();
+}
+
 export function usuarioToJwtPayload(u: UsuarioRow): JwtPayload {
   return {
     sub: u.id,

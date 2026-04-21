@@ -13,6 +13,7 @@ import cron from 'node-cron';
 import multer from 'multer';
 import {
   findUsuarioByEmail, signJwt, verifyJwt, sha256hex, usuarioToJwtPayload,
+  requireAdmin,
   type JwtPayload
 } from './server-lib/auth.js';
 import { hasSupabase } from './server-lib/supabase.js';
@@ -22,6 +23,9 @@ import {
 } from './server-lib/recibos.js';
 import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo } from './server-lib/goals.js';
 import { listActivity, createActivity, deleteActivity } from './server-lib/activity.js';
+import {
+  listUsuarios, createUsuario, updateUsuario, deleteUsuario, changePassword
+} from './server-lib/usuarios.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -379,6 +383,13 @@ app.get('/api/goals/clientes', requireJwt, (req: any, res) => listClientesObjeti
 app.get('/api/activity', requireJwt, (req: any, res) => listActivity(req, res));
 app.post('/api/activity', requireJwt, (req: any, res) => createActivity(req, res));
 app.delete('/api/activity/:id', requireJwt, (req: any, res) => deleteActivity(req, res));
+
+// ─── Gestión de usuarios ─────────────────────────────────────────────────────
+app.get('/api/usuarios', requireJwt, requireAdmin, (req: any, res) => listUsuarios(req, res));
+app.post('/api/usuarios', requireJwt, requireAdmin, (req: any, res) => createUsuario(req, res));
+app.put('/api/usuarios/:id', requireJwt, requireAdmin, (req: any, res) => updateUsuario(req, res));
+app.delete('/api/usuarios/:id', requireJwt, requireAdmin, (req: any, res) => deleteUsuario(req, res));
+app.post('/api/usuarios/change-password', requireJwt, (req: any, res) => changePassword(req, res));
 
 // ─── Data Proxy ───────────────────────────────────────────────────────────────
 // Si el JWT es de un vendedor, filtramos los invoices solo a los suyos.

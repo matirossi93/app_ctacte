@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
-    DollarSign, Truck, Edit3
+    DollarSign, Truck, Edit3, Lock, Users, LogOut
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser } from '../utils/auth';
 import { RecibosApp } from './RecibosApp';
+import { CambiarPassword } from './CambiarPassword';
+import { UsuariosAdmin } from './UsuariosAdmin';
 import './VendorShell.css';
 
 type Tab = 'cobranzas' | 'objetivos' | 'actividad';
@@ -131,12 +133,31 @@ export const VendorShell = ({ onLogout }: Props) => {
     const [showRecibos, setShowRecibos] = useState(false);
     const [bucket, setBucket] = useState<'todos' | 'ok' | 'warn30' | 'warn60' | 'risk'>('todos');
     const [search, setSearch] = useState('');
+    // Pendiente de crear actividad (disparado desde CobranzasView)
+    const [pendingNewActivity, setPendingNewActivity] = useState<{ cod_cliente?: string; name?: string } | null>(null);
+
+    // Menu del avatar
+    const [avatarMenu, setAvatarMenu] = useState(false);
+    const [showCambiarPass, setShowCambiarPass] = useState(false);
+    const [showUsuariosAdmin, setShowUsuariosAdmin] = useState(false);
+
+    // Listener global para 'vs-open-activity' — switchea al tab Actividad y pasa el cliente.
+    useEffect(() => {
+        const h = (e: Event) => {
+            const d = (e as CustomEvent).detail;
+            setTab('actividad');
+            setPendingNewActivity({ cod_cliente: d?.cod_cliente, name: d?.name });
+        };
+        window.addEventListener('vs-open-activity', h);
+        return () => window.removeEventListener('vs-open-activity', h);
+    }, []);
 
     // Vendedor activo: vendedor usa el propio; admin elige (null = Todos)
     const [selectedVendor, setSelectedVendor] = useState<number | null>(
         user?.rol === 'vendedor' ? (user?.cod_vendedor ?? null) : null
     );
-    const [vendedores, setVendedores] = useState<Array<{ cod_vendedor: number; nombre: string }>>([]);
+    const [vendedores, setVendedores] = useState<Array<{ cod_vendedor: number; nombre: string; activo: boolean }>>([]);
+    const [showInactivos, setShowInactivos] = useState(false);
 
     // Data fetching
     const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -166,18 +187,19 @@ export const VendorShell = ({ onLogout }: Props) => {
     };
     useEffect(() => { loadData(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedVendor]);
 
-    // Admin: traer lista de vendedores desde /api/goals
+    // Admin: traer lista de vendedores desde /api/goals (filtrada por activo según toggle)
     useEffect(() => {
         if (!isAdmin) return;
-        fetch('/api/goals', { headers: authHeaders() })
+        const qs = showInactivos ? '?incluir_inactivos=true' : '';
+        fetch(`/api/goals${qs}`, { headers: authHeaders() })
             .then(r => r.json())
             .then(j => {
                 if (j.ok && Array.isArray(j.items)) {
-                    setVendedores(j.items.map((i: any) => ({ cod_vendedor: i.cod_vendedor, nombre: i.nombre })));
+                    setVendedores(j.items.map((i: any) => ({ cod_vendedor: i.cod_vendedor, nombre: i.nombre, activo: i.activo !== false })));
                 }
             })
             .catch(() => { });
-    }, [isAdmin]);
+    }, [isAdmin, showInactivos]);
 
     // Agrupar por cliente (solo saldo > 0)
     const clientsAgg = useMemo<ClientAgg[]>(() => {
@@ -252,14 +274,24 @@ export const VendorShell = ({ onLogout }: Props) => {
                         <span className="eyebrow">SEMILLERO</span>
                         <span className="name">
                             {isAdmin && vendedores.length > 0 ? (
-                                <select className="vs-vendor-select"
-                                    value={selectedVendor ?? ''}
-                                    onChange={e => setSelectedVendor(e.target.value ? Number(e.target.value) : null)}>
-                                    <option value="">Todos los vendedores</option>
-                                    {vendedores.map(v => (
-                                        <option key={v.cod_vendedor} value={v.cod_vendedor}>{v.nombre}</option>
-                                    ))}
-                                </select>
+                                <>
+                                    <select className="vs-vendor-select"
+                                        value={selectedVendor ?? ''}
+                                        onChange={e => setSelectedVendor(e.target.value ? Number(e.target.value) : null)}>
+                                        <option value="">Todos los vendedores</option>
+                                        {vendedores.map(v => (
+                                            <option key={v.cod_vendedor} value={v.cod_vendedor}>
+                                                {v.nombre}{!v.activo && ' (inactivo)'}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <label className="vs-inactivos-toggle" title="Incluir vendedores inactivos / históricos">
+                                        <input type="checkbox"
+                                            checked={showInactivos}
+                                            onChange={e => setShowInactivos(e.target.checked)} />
+                                        <span>Ver inactivos</span>
+                                    </label>
+                                </>
                             ) : 'Panel Vendedor'}
                         </span>
                     </div>
@@ -268,11 +300,34 @@ export const VendorShell = ({ onLogout }: Props) => {
                     <button className="vs-icon-btn" onClick={() => loadData(true)} title="Refrescar" disabled={loading}>
                         {loading ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
                     </button>
-                    <button className="vs-avatar" onClick={() => {
-                        if (confirm(`¿Cerrar sesión de ${user?.nombre ?? user?.email}?`)) { clearToken(); onLogout(); }
-                    }} title="Cerrar sesión">
-                        {(user?.nombre ?? user?.email ?? '?').slice(0, 2).toUpperCase()}
-                    </button>
+                    <div className="vs-avatar-wrap">
+                        <button className="vs-avatar" onClick={() => setAvatarMenu(v => !v)} title="Mi cuenta">
+                            {(user?.nombre ?? user?.email ?? '?').slice(0, 2).toUpperCase()}
+                        </button>
+                        {avatarMenu && (
+                            <>
+                                <div className="vs-avatar-scrim" onClick={() => setAvatarMenu(false)} />
+                                <div className="vs-avatar-menu" role="menu">
+                                    <div className="vs-avatar-header">
+                                        <strong>{user?.nombre ?? user?.email}</strong>
+                                        <span>{user?.email}</span>
+                                    </div>
+                                    <button onClick={() => { setAvatarMenu(false); setShowCambiarPass(true); }}>
+                                        <Lock size={14} /> Cambiar mi contraseña
+                                    </button>
+                                    {isAdmin && (
+                                        <button onClick={() => { setAvatarMenu(false); setShowUsuariosAdmin(true); }}>
+                                            <Users size={14} /> Gestionar usuarios
+                                        </button>
+                                    )}
+                                    <div className="vs-avatar-sep" />
+                                    <button className="danger" onClick={() => { setAvatarMenu(false); clearToken(); onLogout(); }}>
+                                        <LogOut size={14} /> Cerrar sesión
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
                 </div>
             </header>
 
@@ -294,9 +349,16 @@ export const VendorShell = ({ onLogout }: Props) => {
                     />
                 )}
 
-                {tab === 'objetivos' && <ObjetivosView selectedVendor={selectedVendor} isAdmin={isAdmin} />}
+                {tab === 'objetivos' && <ObjetivosView selectedVendor={selectedVendor} isAdmin={isAdmin} showInactivos={showInactivos} />}
 
-                {tab === 'actividad' && <ActividadView vendedorKey={user?.vendedor_key ?? null} clientNameMap={clientDbMap} selectedVendor={selectedVendor} isAdmin={isAdmin} />}
+                {tab === 'actividad' && <ActividadView
+                    vendedorKey={user?.vendedor_key ?? null}
+                    clientNameMap={clientDbMap}
+                    selectedVendor={selectedVendor}
+                    isAdmin={isAdmin}
+                    pendingNew={pendingNewActivity}
+                    onPendingConsumed={() => setPendingNewActivity(null)}
+                />}
             </main>
 
             {/* ═══════════ BOTTOM NAV ═══════════ */}
@@ -324,6 +386,8 @@ export const VendorShell = ({ onLogout }: Props) => {
             {showRecibos && (
                 <RecibosApp onClose={() => setShowRecibos(false)} clients={clientsAgg.map(c => ({ cod: c.cod, name: c.name, localidad: c.localidad }))} />
             )}
+            {showCambiarPass && <CambiarPassword onClose={() => setShowCambiarPass(false)} />}
+            {showUsuariosAdmin && <UsuariosAdmin onClose={() => setShowUsuariosAdmin(false)} />}
         </div>
     );
 };
@@ -469,7 +533,7 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
 // ═══════════════════════════════════════════════════════════════════════════
 // OBJETIVOS VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function ObjetivosView({ selectedVendor, isAdmin }: { selectedVendor: number | null; isAdmin: boolean }) {
+function ObjetivosView({ selectedVendor, isAdmin, showInactivos }: { selectedVendor: number | null; isAdmin: boolean; showInactivos: boolean }) {
     const [g, setG] = useState<GoalData | null>(null);
     const [meta, setMeta] = useState<GoalsMeta | null>(null);
     const [clientes, setClientes] = useState<ClienteObjetivo[]>([]);
@@ -493,8 +557,9 @@ function ObjetivosView({ selectedVendor, isAdmin }: { selectedVendor: number | n
             const qs = new URLSearchParams({ filter });
             if (localidad) qs.set('localidad', localidad);
             if (isAdmin && selectedVendor != null) qs.set('cod_vendedor', String(selectedVendor));
+            const goalsQs = showInactivos ? '?incluir_inactivos=true' : '';
             const [gr, cr] = await Promise.all([
-                fetch('/api/goals', { headers: authHeaders() }).then(r => r.json()),
+                fetch(`/api/goals${goalsQs}`, { headers: authHeaders() }).then(r => r.json()),
                 fetch(`/api/goals/clientes?${qs.toString()}`, { headers: authHeaders() }).then(r => r.json()),
             ]);
             if (!gr.ok) throw new Error(gr.error);
@@ -536,7 +601,7 @@ function ObjetivosView({ selectedVendor, isAdmin }: { selectedVendor: number | n
         } catch (e: any) { setErr(e.message); }
         finally { setLoading(false); }
     };
-    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, localidad, selectedVendor]);
+    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, localidad, selectedVendor, showInactivos]);
 
     const syncNow = async () => {
         setSyncing(true);
@@ -806,8 +871,13 @@ function ClienteObjetivoCard({ c }: { c: ClienteObjetivo }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // ACTIVIDAD VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendor, isAdmin }:
-    { vendedorKey: string | null; clientNameMap: Record<string, any>; selectedVendor: number | null; isAdmin: boolean }) {
+function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendor, isAdmin, pendingNew, onPendingConsumed }:
+    {
+        vendedorKey: string | null; clientNameMap: Record<string, any>;
+        selectedVendor: number | null; isAdmin: boolean;
+        pendingNew: { cod_cliente?: string; name?: string } | null;
+        onPendingConsumed: () => void;
+    }) {
     const [items, setItems] = useState<ActivityItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
@@ -828,14 +898,14 @@ function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendo
     };
     useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedVendor]);
 
+    // Cuando llega un pendingNew desde el root (ej. tap "Nota" en Cobranzas), abrir modal.
     useEffect(() => {
-        const h = (e: Event) => {
-            const d = (e as CustomEvent).detail;
-            setShowNew({ cod_cliente: d?.cod_cliente, name: d?.name });
-        };
-        window.addEventListener('vs-open-activity', h);
-        return () => window.removeEventListener('vs-open-activity', h);
-    }, []);
+        if (pendingNew) {
+            setShowNew({ cod_cliente: pendingNew.cod_cliente, name: pendingNew.name });
+            onPendingConsumed();
+        }
+        /* eslint-disable-next-line react-hooks/exhaustive-deps */
+    }, [pendingNew]);
 
     const byDay = useMemo(() => {
         const map = new Map<string, ActivityItem[]>();

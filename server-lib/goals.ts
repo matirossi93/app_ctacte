@@ -53,6 +53,7 @@ export interface GoalItem {
   nombre: string;
   vendedor_key: string | null;
   email: string | null;
+  activo: boolean;
   year: number;
   month: number;
   target_neto: number | null;
@@ -93,9 +94,9 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
     if (goalsRes.error) { res.status(500).json({ error: `goals: ${goalsRes.error.message}` }); return; }
     if (salesRes.error) { res.status(500).json({ error: `sales: ${salesRes.error.message}` }); return; }
 
-    // Traer usuarios con cod_vendedor + email para tags visuales
+    // Traer usuarios con cod_vendedor + email para tags visuales + flag activo.
     const { data: usuariosRows } = await sb().from('usuarios')
-      .select('id, email, cod_vendedor, vendedor_key, nombre')
+      .select('id, email, cod_vendedor, vendedor_key, nombre, activo')
       .eq('tenant_id', TENANT_ID)
       .not('cod_vendedor', 'is', null);
     const usuariosById = new Map<string, any>();
@@ -123,10 +124,18 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
     const diasTrans = isCurrentMonth ? businessDaysElapsed(year, month, t.day, holidays) : diasTotal;
     const diasRestantes = Math.max(0, diasTotal - diasTrans);
 
-    // Base: unión de vendedores de InfoManager (filtramos los reales de venta, no sucursales/consumo interno)
+    // Base: unión de vendedores de InfoManager (filtramos sucursales/consumo).
+    // Además, por default filtramos los que NO tienen usuario con activo=true.
+    // El admin puede pedir ?incluir_inactivos=true para verlos igual.
+    const incluirInactivos = String(req.query.incluir_inactivos ?? '') === 'true';
     const vendedoresValidos = (vendedoresIM ?? []).filter((v: any) => {
       const n = String(v?.nombre ?? '').toUpperCase();
-      return !n.includes('SUCURSAL') && !n.includes('CONSUMO');
+      if (n.includes('SUCURSAL') || n.includes('CONSUMO')) return false;
+      if (incluirInactivos) return true;
+      const u = usuariosByCod.get(v.cod_vendedor);
+      // Si no hay usuario asociado → oculto por default (probable histórico IM).
+      // Si hay usuario → solo si activo=true.
+      return !!u && u.activo !== false;
     });
 
     const items: GoalItem[] = vendedoresValidos.map((v: any) => {
@@ -144,6 +153,7 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
         nombre: u?.nombre ?? v.nombre,
         vendedor_key: u?.vendedor_key ?? null,
         email: u?.email ?? null,
+        activo: u?.activo !== false,
         year, month,
         target_neto: target,
         avance,
@@ -409,11 +419,22 @@ export async function setMonthConfig(req: Request & { user?: JwtPayload }, res: 
       set_by: user.sub,
       updated_at: new Date().toISOString(),
     };
-    // Si vienen holidays, seteamos dias_habiles a NULL (prioridad a cálculo con feriados)
-    // a menos que el body explícitamente pase dias_habiles.
-    if (diasProvided) payload.dias_habiles = dias_habiles;
-    else if (holidays) payload.dias_habiles = null;
     if (holidays) payload.holidays = holidays;
+
+    if (diasProvided) {
+      payload.dias_habiles = dias_habiles;
+    } else if (holidays) {
+      // dias_habiles es NOT NULL — si el row no existe aún, necesitamos un valor.
+      // Chequear si existe; si no, calcular auto desde el cálculo con feriados.
+      const { data: existing } = await sb().from('month_config')
+        .select('dias_habiles')
+        .eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month)
+        .maybeSingle();
+      if (!existing) {
+        payload.dias_habiles = businessDaysInMonth(year, month, holidays);
+      }
+      // Si existe, no tocamos dias_habiles (se mantiene el valor previo).
+    }
 
     const { data, error } = await sb().from('month_config').upsert(payload, { onConflict: 'tenant_id,year,month' }).select().single();
     if (error) { res.status(500).json({ error: error.message }); return; }
