@@ -1,7 +1,8 @@
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
-import { fetchVendedores } from './infomanager.js';
+import { fetchVendedores, fetchVentas } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
+import { computeVentaNeta, monthKey } from '../src/utils/ventas.js';
 
 function normLoc(s: string | null | undefined): string {
   if (!s) return '';
@@ -453,6 +454,109 @@ export async function syncVentasNow(req: Request & { user?: JwtPayload }, res: R
     const result = await syncVentasMesActual();
     res.json(result);
   } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
+ * GET /api/goals/debug-cliente/:cod?year=&month=
+ * Admin only. Consulta /ventas de InfoManager live para ese cliente + mes,
+ * devuelve comprobante por comprobante con lo que computeVentaNeta calcula,
+ * y compara contra el row de client_sales_monthly cacheado.
+ * Uso: verificar discrepancias puntuales. No pisa la cache.
+ */
+export async function debugClienteAvance(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    if (!hasSupabase()) { res.status(500).json({ error: 'Supabase no configurado' }); return; }
+
+    const cod = Number(req.params.cod);
+    if (!cod) { res.status(400).json({ error: 'cod_cliente inválido' }); return; }
+
+    const t = today();
+    const year = Number(req.query.year) || t.year;
+    const month = Number(req.query.month) || t.month;
+    const desde = `${year}-${String(month).padStart(2, '0')}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const isCurrentMonth = year === t.year && month === t.month;
+    const hasta = isCurrentMonth
+      ? new Date().toISOString().slice(0, 10)
+      : `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+    // Traer todas las ventas del mes (sin filtrar por cod_cliente — InfoManager
+    // no soporta query por cliente en /ventas según Swagger actual).
+    const ventasMes = await fetchVentas(desde, hasta);
+
+    // Filtrar client-side.
+    const delCliente = ventasMes.filter((v: any) => Number(v.cod_cliente) === cod);
+
+    // Breakdown por tipo para este cliente.
+    const tipoBreak = new Map<string, { count: number; sumTotal: number; sumNeto: number }>();
+    let sumNeto = 0;
+    const comprobantes = delCliente.map((v: any) => {
+      const tipo = String(v.tipo ?? v.tipo_comprobante ?? '').toUpperCase();
+      const fa_total = Number(v.fa_total ?? v.total ?? 0);
+      const neto = computeVentaNeta(v);
+      const mk = monthKey(v.fa_fecha ?? v.fecha);
+      const inMonth = mk && mk.year === year && mk.month === month;
+      sumNeto += neto;
+      const b = tipoBreak.get(tipo) ?? { count: 0, sumTotal: 0, sumNeto: 0 };
+      b.count++; b.sumTotal += fa_total; b.sumNeto += neto;
+      tipoBreak.set(tipo, b);
+      return {
+        id: v.id ?? null,
+        tipo, fecha: v.fa_fecha ?? v.fecha,
+        cod_empresa: v.cod_empresa ?? null,
+        cod_vendedor: v.cod_vendedor ?? null,
+        fa_total, neto_calculado: neto,
+        anulada: v.anulada ?? null,
+        in_month: inMonth,
+      };
+    });
+
+    // Cache row.
+    const { data: cacheRow } = await sb().from('client_sales_monthly')
+      .select('neto, num_comprobantes, updated_at')
+      .eq('tenant_id', TENANT_ID).eq('cod_cliente', cod)
+      .eq('year', year).eq('month', month)
+      .maybeSingle();
+
+    // Operational (razón social).
+    const { data: opRow } = await sb().from('client_operational')
+      .select('razon_social, localidad, cod_vendedor, objetivo_mes')
+      .eq('tenant_id', TENANT_ID).eq('cod_cliente', cod)
+      .maybeSingle();
+
+    res.json({
+      ok: true,
+      cliente: {
+        cod_cliente: cod,
+        razon_social: opRow?.razon_social ?? null,
+        localidad: opRow?.localidad ?? null,
+        cod_vendedor: opRow?.cod_vendedor ?? null,
+        objetivo_mes: opRow?.objetivo_mes ?? null,
+      },
+      periodo: { year, month, desde, hasta },
+      live: {
+        total_ventas_mes_InfoManager: ventasMes.length,
+        comprobantes_del_cliente: delCliente.length,
+        neto_calculado_live: Number(sumNeto.toFixed(2)),
+        breakdown_tipo: Object.fromEntries(
+          Array.from(tipoBreak.entries())
+            .map(([t, s]) => [t || '(vacío)', { count: s.count, total: Math.round(s.sumTotal), neto: Math.round(s.sumNeto) }])
+        ),
+        comprobantes,
+      },
+      cache: cacheRow ? {
+        neto: Number(cacheRow.neto) || 0,
+        num_comprobantes: cacheRow.num_comprobantes,
+        updated_at: cacheRow.updated_at,
+      } : null,
+      discrepancia: cacheRow ? Number((sumNeto - (Number(cacheRow.neto) || 0)).toFixed(2)) : null,
+    });
+  } catch (err: any) {
+    console.error('debugClienteAvance error:', err);
     res.status(500).json({ error: err?.message ?? 'error' });
   }
 }
