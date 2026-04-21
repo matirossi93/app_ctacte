@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
@@ -557,7 +557,6 @@ function ObjetivosView({ selectedVendor, isAdmin, showInactivos, reloadTick }: {
     const [err, setErr] = useState<string | null>(null);
     const [syncing, setSyncing] = useState(false);
     const [editingHolidays, setEditingHolidays] = useState(false);
-    const [holidaysInput, setHolidaysInput] = useState('');
     const [savingHolidays, setSavingHolidays] = useState(false);
     const [editingTarget, setEditingTarget] = useState(false);
     const [targetInput, setTargetInput] = useState('');
@@ -638,19 +637,17 @@ function ObjetivosView({ selectedVendor, isAdmin, showInactivos, reloadTick }: {
         } finally { setSyncing(false); }
     };
 
-    const saveHolidays = async () => {
+    const saveHolidays = async (days: number[]) => {
         if (!meta) return;
-        // Parsea "2, 3, 12" → [2,3,12]
-        const parsed = holidaysInput.split(/[,\s]+/)
-            .map(s => s.trim()).filter(Boolean)
-            .map(s => Number(s))
-            .filter(n => Number.isInteger(n) && n >= 1 && n <= 31);
+        const clean = Array.from(new Set(days))
+            .filter(n => Number.isInteger(n) && n >= 1 && n <= 31)
+            .sort((a, b) => a - b);
         setSavingHolidays(true);
         try {
             const res = await fetch('/api/month-config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...authHeaders() },
-                body: JSON.stringify({ year: meta.year, month: meta.month, holidays: parsed }),
+                body: JSON.stringify({ year: meta.year, month: meta.month, holidays: clean }),
             });
             const j = await res.json();
             if (!res.ok || !j.ok) throw new Error(j.error);
@@ -717,41 +714,32 @@ function ObjetivosView({ selectedVendor, isAdmin, showInactivos, reloadTick }: {
             </div>
 
             {/* Feriados del mes */}
-            <div className="vs-holidays-bar">
-                {editingHolidays ? (
-                    <>
-                        <span className="vs-holidays-label">Feriados (días):</span>
-                        <input className="vs-holidays-input"
-                            value={holidaysInput}
-                            onChange={e => setHolidaysInput(e.target.value)}
-                            placeholder="ej: 2, 3"
-                            onKeyDown={e => { if (e.key === 'Enter') saveHolidays(); if (e.key === 'Escape') setEditingHolidays(false); }}
-                            autoFocus />
-                        <button className="vs-holidays-btn" onClick={saveHolidays} disabled={savingHolidays}>
-                            {savingHolidays ? <Loader2 size={13} className="spin" /> : '✓'}
+            <div className={`vs-holidays-bar ${editingHolidays ? 'is-open' : ''}`}>
+                <div className="vs-holidays-row">
+                    <Calendar size={13} />
+                    <span className="vs-holidays-label">Feriados:</span>
+                    {meta && meta.holidays.length > 0 ? (
+                        <span className="vs-holidays-chips">
+                            {meta.holidays.map(d => <span key={d} className="vs-holiday-chip">{d}</span>)}
+                        </span>
+                    ) : (
+                        <span className="vs-holidays-empty">Ninguno configurado</span>
+                    )}
+                    {isAdmin && !editingHolidays && (
+                        <button className="vs-holidays-edit" onClick={() => setEditingHolidays(true)} title="Editar feriados del mes">
+                            <Edit3 size={12} />
                         </button>
-                        <button className="vs-holidays-btn" onClick={() => setEditingHolidays(false)}>×</button>
-                    </>
-                ) : (
-                    <>
-                        <Calendar size={13} />
-                        <span className="vs-holidays-label">Feriados:</span>
-                        {meta && meta.holidays.length > 0 ? (
-                            <span className="vs-holidays-chips">
-                                {meta.holidays.map(d => <span key={d} className="vs-holiday-chip">{d}</span>)}
-                            </span>
-                        ) : (
-                            <span className="vs-holidays-empty">Ninguno configurado</span>
-                        )}
-                        {isAdmin && (
-                            <button className="vs-holidays-edit" onClick={() => {
-                                setHolidaysInput((meta?.holidays ?? []).join(', '));
-                                setEditingHolidays(true);
-                            }} title="Editar feriados del mes">
-                                <Edit3 size={12} />
-                            </button>
-                        )}
-                    </>
+                    )}
+                </div>
+                {editingHolidays && meta && (
+                    <HolidayPickerGrid
+                        year={meta.year}
+                        month={meta.month}
+                        initialHolidays={meta.holidays}
+                        saving={savingHolidays}
+                        onSave={saveHolidays}
+                        onCancel={() => setEditingHolidays(false)}
+                    />
                 )}
             </div>
 
@@ -1140,6 +1128,85 @@ function NewActivityInline({ defaultClientCod, defaultClientName, onClose, onCre
                         {saving ? <><Loader2 size={14} className="spin" /> Guardando…</> : 'Guardar'}
                     </button>
                 </div>
+            </div>
+        </div>
+    );
+}
+
+// ─── HolidayPickerGrid — calendario plegable para seleccionar feriados ─────
+function HolidayPickerGrid({ year, month, initialHolidays, saving, onSave, onCancel }: {
+    year: number; month: number; initialHolidays: number[];
+    saving: boolean;
+    onSave: (days: number[]) => Promise<void> | void;
+    onCancel: () => void;
+}) {
+    const [selected, setSelected] = useState<Set<number>>(() => new Set(initialHolidays));
+
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const firstDow = new Date(year, month - 1, 1).getDay(); // 0=dom, 1=lun, ...
+    // Shift para grilla LUN primero: lun=0, mar=1, ..., sab=5, dom=6
+    const pad = (firstDow + 6) % 7;
+
+    const now = new Date();
+    const isCurrentMonth = now.getUTCFullYear() === year && (now.getUTCMonth() + 1) === month;
+    const today = isCurrentMonth ? now.getUTCDate() : null;
+
+    const toggle = (d: number) => {
+        // No permitir marcar domingos (ya excluidos por backend) — pero UX cerrada igual.
+        const dow = new Date(year, month - 1, d).getDay();
+        if (dow === 0) return;
+        setSelected(prev => {
+            const next = new Set(prev);
+            if (next.has(d)) next.delete(d); else next.add(d);
+            return next;
+        });
+    };
+
+    const cells: ReactNode[] = [];
+    for (let i = 0; i < pad; i++) cells.push(<div key={`p${i}`} className="vs-hp-day is-pad" />);
+    for (let d = 1; d <= daysInMonth; d++) {
+        const dow = new Date(year, month - 1, d).getDay();
+        const isSunday = dow === 0;
+        const isToday = today === d;
+        const isPast = today != null && d < today;
+        const isHoliday = selected.has(d);
+        const cls = [
+            'vs-hp-day',
+            isSunday && 'is-sunday',
+            isToday && 'is-today',
+            isPast && 'is-past',
+            isHoliday && 'is-holiday',
+        ].filter(Boolean).join(' ');
+        cells.push(
+            <button key={d} className={cls} disabled={isSunday} onClick={() => toggle(d)} type="button">
+                {d}
+            </button>
+        );
+    }
+
+    const count = selected.size;
+    const mes = monthName(month);
+
+    return (
+        <div className="vs-hp-grid">
+            <div className="vs-hp-title">
+                {mes} {year}
+                <span className="vs-hp-hint">Tocá los días que NO se trabaja (domingos ya excluidos)</span>
+            </div>
+            <div className="vs-hp-weekdays">
+                {['L', 'M', 'X', 'J', 'V', 'S', 'D'].map(l => <div key={l}>{l}</div>)}
+            </div>
+            <div className="vs-hp-days">{cells}</div>
+            <div className="vs-hp-legend">
+                <span className="vs-hp-leg-dot today" /> Hoy
+                <span className="vs-hp-leg-dot holiday" /> No laborable
+                <span className="vs-hp-leg-dot sunday" /> Domingo
+            </div>
+            <div className="vs-hp-footer">
+                <button className="vs-btn-sec" onClick={onCancel} disabled={saving}>Cancelar</button>
+                <button className="vs-btn-primary" onClick={() => onSave(Array.from(selected))} disabled={saving}>
+                    {saving ? <><Loader2 size={14} className="spin" /> Guardando…</> : `Guardar ${count} día${count !== 1 ? 's' : ''}`}
+                </button>
             </div>
         </div>
     );

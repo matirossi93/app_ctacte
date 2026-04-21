@@ -496,15 +496,20 @@
 
 /* ─── Feriados del mes ─── */
 .vs-holidays-bar {
-    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    display: flex; flex-direction: column; gap: 10px;
     padding: 8px 12px;
     background: rgba(255,255,255,.65);
     border: 1px solid rgba(20,24,20,.08);
     border-radius: 14px;
     margin-bottom: 12px;
     font-size: 12px;
+    transition: padding .15s ease;
 }
-.vs-holidays-bar > svg { color: #6e7670; flex-shrink: 0 }
+.vs-holidays-bar.is-open { padding: 12px }
+.vs-holidays-row {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.vs-holidays-row > svg { color: #6e7670; flex-shrink: 0 }
 .vs-holidays-label { font-weight: 600; color: #6e7670 }
 .vs-holidays-empty { color: #9aa29a; font-style: italic }
 .vs-holidays-chips { display: inline-flex; gap: 4px; flex-wrap: wrap }
@@ -535,6 +540,96 @@
     display: inline-flex; align-items: center; justify-content: center;
 }
 .vs-holidays-btn:disabled { opacity: .6 }
+
+/* ─── HolidayPickerGrid (calendario plegable de feriados) ─── */
+.vs-hp-grid {
+    display: flex; flex-direction: column; gap: 10px;
+    padding: 12px;
+    background: #fff;
+    border-radius: 14px;
+    border: 1px solid rgba(20,24,20,.08);
+    animation: vs-hp-in .18s ease;
+}
+@keyframes vs-hp-in {
+    from { opacity: 0; transform: translateY(-4px) }
+    to { opacity: 1; transform: translateY(0) }
+}
+.vs-hp-title {
+    display: flex; flex-direction: column; gap: 2px;
+    font-size: 13px; font-weight: 700; color: #141814;
+    text-transform: capitalize;
+}
+.vs-hp-hint { font-size: 10px; font-weight: 500; color: #6e7670; text-transform: none }
+.vs-hp-weekdays {
+    display: grid; grid-template-columns: repeat(7, 1fr);
+    gap: 4px; text-align: center;
+    font-size: 10px; font-weight: 700; letter-spacing: .5px;
+    color: #6e7670; text-transform: uppercase;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(20,24,20,.06);
+}
+.vs-hp-days {
+    display: grid; grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+}
+.vs-hp-day {
+    aspect-ratio: 1 / 1;
+    display: grid; place-items: center;
+    background: rgba(20,24,20,.03);
+    border: 1px solid transparent; border-radius: 10px;
+    font-family: inherit; font-size: 13px; font-weight: 600;
+    color: #141814; cursor: pointer;
+    transition: background .15s ease, transform .15s ease;
+}
+.vs-hp-day:not(:disabled):hover {
+    background: rgba(6,101,47,.08);
+    transform: translateY(-1px);
+}
+.vs-hp-day.is-pad { background: transparent; border: 0; cursor: default }
+.vs-hp-day.is-sunday {
+    background: rgba(20,24,20,.08);
+    color: #b3b8b3;
+    cursor: not-allowed;
+}
+.vs-hp-day.is-past { opacity: .55 }
+.vs-hp-day.is-today {
+    border: 2px solid #06652F;
+    box-shadow: 0 0 0 2px rgba(6,101,47,.15);
+}
+.vs-hp-day.is-holiday {
+    background: linear-gradient(135deg, #A83E2B 0%, #8A2F20 100%);
+    color: #fff;
+}
+.vs-hp-day.is-holiday.is-today {
+    border-color: #EEC045;
+    box-shadow: 0 0 0 2px rgba(238,192,69,.35);
+}
+
+.vs-hp-legend {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    font-size: 10px; font-weight: 600; color: #6e7670;
+    padding: 4px 0;
+}
+.vs-hp-leg-dot {
+    display: inline-block; width: 10px; height: 10px;
+    border-radius: 50%; vertical-align: middle; margin-right: 3px;
+}
+.vs-hp-leg-dot.today { background: #fff; border: 2px solid #06652F }
+.vs-hp-leg-dot.holiday { background: #A83E2B }
+.vs-hp-leg-dot.sunday { background: rgba(20,24,20,.25) }
+
+.vs-hp-footer {
+    display: flex; justify-content: flex-end; gap: 8px;
+    padding-top: 4px;
+    border-top: 1px solid rgba(20,24,20,.06);
+    margin-top: 2px; padding-top: 10px;
+}
+
+/* Mobile: celdas un toque más chicas */
+@media (max-width: 400px) {
+    .vs-hp-day { font-size: 12px }
+    .vs-hp-weekdays { font-size: 9px }
+}
 
 /* ─── Selector de localidades ─── */
 .vs-loc-scroll {
