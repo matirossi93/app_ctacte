@@ -172,6 +172,15 @@
     flex: 1; border: 0; outline: none; background: transparent;
     font-family: inherit; font-size: 14px; font-weight: 500;
 }
+.vs-search-clear {
+    background: rgba(20,24,20,.06); border: 0; cursor: pointer;
+    width: 22px; height: 22px; border-radius: 50%;
+    color: #6e7670; font-size: 15px; line-height: 1;
+    display: grid; place-items: center;
+    font-family: inherit;
+}
+.vs-search-clear:hover { background: rgba(20,24,20,.12) }
+.vs-search-obj { margin-top: 4px; height: 40px }
 
 /* Chips */
 .vs-chips {

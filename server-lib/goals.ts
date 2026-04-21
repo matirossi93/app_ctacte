@@ -262,7 +262,7 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
     }
 
     // Clientes del vendedor (o todos si admin sin filtro)
-    let q = sb().from('client_operational').select('cod_cliente, cod_vendedor, razon_social, localidad, frecuencia, dia_visita, tipo_abc, objetivo_mes, fact_mes_pasado, fact_prom_3m, saldo_cta_cte').eq('tenant_id', TENANT_ID);
+    let q = sb().from('client_operational').select('cod_cliente, cod_vendedor, razon_social, localidad, frecuencia, dia_visita, tipo_abc, objetivo_mes, objetivo_year, objetivo_month, fact_mes_pasado, fact_prom_3m, saldo_cta_cte').eq('tenant_id', TENANT_ID);
     if (codVend != null) q = q.eq('cod_vendedor', codVend);
     q = q.order('objetivo_mes', { ascending: false, nullsFirst: false }).limit(2000);
     const { data: clientes, error: errC } = await q;
@@ -281,7 +281,10 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
     const items = (clientes ?? []).map((c: any) => {
       const sale = salesByCliente.get(c.cod_cliente);
       const avance = sale?.neto ?? 0;
-      const objetivo = c.objetivo_mes != null ? Number(c.objetivo_mes) : null;
+      // Rollover: si el objetivo_mes del cliente corresponde a otro mes/año,
+      // lo ignoramos. El vendedor tiene que re-importar el Maestro del mes en curso.
+      const objetivoMatches = c.objetivo_year === year && c.objetivo_month === month;
+      const objetivo = (objetivoMatches && c.objetivo_mes != null) ? Number(c.objetivo_mes) : null;
       const pct = objetivo && objetivo > 0 ? avance / objetivo : null;
       const falta = objetivo != null ? Math.max(0, objetivo - avance) : null;
       const sobrante = objetivo != null && avance > objetivo ? avance - objetivo : 0;

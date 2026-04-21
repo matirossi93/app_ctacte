@@ -1,7 +1,15 @@
 // Helpers de ventas InfoManager.
-// NC y ND vienen con fa_total positivo pero RESTAN al neto — negarlos acá
-// es la única fuente de verdad de la app. Si rompés el signo, rompés todo
-// el cálculo de cumplimiento de objetivos.
+//
+// Reglas de signo para el AVANCE del objetivo mensual:
+//   FA (Factura)          → SUMA
+//   NC (Nota de Crédito)  → RESTA (viene con fa_total positivo — negarla acá)
+//   ND (Nota de Débito)   → IGNORAR (no se cuenta como venta).
+//                           Semillero emite NDs por intereses de mora, no por ventas,
+//                           así que distorsionan el cumplimiento. Sí aparecen en
+//                           cuenta corriente / cobranzas (otro pipeline).
+//   Resto (RC, RE, PR, ASD, ASH, anuladas, etc.) → 0.
+//
+// Si rompés este signo, rompés todo el cálculo de cumplimiento.
 
 export type TipoComprobante =
   | 'FA' | 'NC' | 'ND'
@@ -38,9 +46,10 @@ export function computeVentaNeta(c: Comprobante): number {
   if (isAnulada(c)) return 0;
   const tipo = tipoComprobante(c);
   const total = toNumber(c.fa_total ?? c.total);
-  const sign = (tipo === 'NC' || tipo === 'ND') ? -1 : 1;
-  if (tipo !== 'FA' && tipo !== 'NC' && tipo !== 'ND') return 0;
-  return total * sign;
+  if (tipo === 'FA') return total;
+  if (tipo === 'NC') return -total;
+  // ND y cualquier otro tipo se excluyen del avance.
+  return 0;
 }
 
 export interface AggKey { year: number; month: number; }

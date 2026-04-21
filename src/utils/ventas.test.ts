@@ -10,8 +10,8 @@ describe('computeVentaNeta', () => {
     expect(computeVentaNeta({ tipo: 'NC', fa_total: 25000 })).toBe(-25000);
   });
 
-  it('ND resta (viene positivo, se niega)', () => {
-    expect(computeVentaNeta({ tipo: 'ND', fa_total: 5000 })).toBe(-5000);
+  it('ND se excluye del avance (intereses por mora, no venta)', () => {
+    expect(computeVentaNeta({ tipo: 'ND', fa_total: 5000 })).toBe(0);
   });
 
   it('RC / RE / otros NO suman al neto de ventas', () => {

@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
-    DollarSign, Truck, Edit3, Lock, Users, LogOut
+    DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser } from '../utils/auth';
 import { RecibosApp } from './RecibosApp';
 import { CambiarPassword } from './CambiarPassword';
 import { UsuariosAdmin } from './UsuariosAdmin';
+import { ImportarSheet } from './ImportarSheet';
 import './VendorShell.css';
 
 type Tab = 'cobranzas' | 'objetivos' | 'actividad';
@@ -140,6 +141,8 @@ export const VendorShell = ({ onLogout }: Props) => {
     const [avatarMenu, setAvatarMenu] = useState(false);
     const [showCambiarPass, setShowCambiarPass] = useState(false);
     const [showUsuariosAdmin, setShowUsuariosAdmin] = useState(false);
+    const [showImportSheet, setShowImportSheet] = useState(false);
+    const [reloadObjetivosTick, setReloadObjetivosTick] = useState(0);
 
     // Listener global para 'vs-open-activity' — switchea al tab Actividad y pasa el cliente.
     useEffect(() => {
@@ -316,6 +319,11 @@ export const VendorShell = ({ onLogout }: Props) => {
                                         <Lock size={14} /> Cambiar mi contraseña
                                     </button>
                                     {isAdmin && (
+                                        <button onClick={() => { setAvatarMenu(false); setShowImportSheet(true); }}>
+                                            <FileSpreadsheet size={14} /> Actualizar objetivos del mes
+                                        </button>
+                                    )}
+                                    {isAdmin && (
                                         <button onClick={() => { setAvatarMenu(false); setShowUsuariosAdmin(true); }}>
                                             <Users size={14} /> Gestionar usuarios
                                         </button>
@@ -349,7 +357,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                     />
                 )}
 
-                {tab === 'objetivos' && <ObjetivosView selectedVendor={selectedVendor} isAdmin={isAdmin} showInactivos={showInactivos} />}
+                {tab === 'objetivos' && <ObjetivosView selectedVendor={selectedVendor} isAdmin={isAdmin} showInactivos={showInactivos} reloadTick={reloadObjetivosTick} />}
 
                 {tab === 'actividad' && <ActividadView
                     vendedorKey={user?.vendedor_key ?? null}
@@ -388,6 +396,10 @@ export const VendorShell = ({ onLogout }: Props) => {
             )}
             {showCambiarPass && <CambiarPassword onClose={() => setShowCambiarPass(false)} />}
             {showUsuariosAdmin && <UsuariosAdmin onClose={() => setShowUsuariosAdmin(false)} />}
+            {showImportSheet && <ImportarSheet
+                onClose={() => setShowImportSheet(false)}
+                onImported={() => setReloadObjetivosTick(t => t + 1)}
+            />}
         </div>
     );
 };
@@ -533,7 +545,7 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
 // ═══════════════════════════════════════════════════════════════════════════
 // OBJETIVOS VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function ObjetivosView({ selectedVendor, isAdmin, showInactivos }: { selectedVendor: number | null; isAdmin: boolean; showInactivos: boolean }) {
+function ObjetivosView({ selectedVendor, isAdmin, showInactivos, reloadTick }: { selectedVendor: number | null; isAdmin: boolean; showInactivos: boolean; reloadTick: number }) {
     const [g, setG] = useState<GoalData | null>(null);
     const [meta, setMeta] = useState<GoalsMeta | null>(null);
     const [clientes, setClientes] = useState<ClienteObjetivo[]>([]);
@@ -550,9 +562,21 @@ function ObjetivosView({ selectedVendor, isAdmin, showInactivos }: { selectedVen
     const [editingTarget, setEditingTarget] = useState(false);
     const [targetInput, setTargetInput] = useState('');
     const [savingTarget, setSavingTarget] = useState(false);
+    const [searchClientes, setSearchClientes] = useState('');
 
-    // Reset localidad al cambiar de vendedor
-    useEffect(() => { setLocalidad(''); }, [selectedVendor]);
+    // Reset localidad + search al cambiar de vendedor
+    useEffect(() => { setLocalidad(''); setSearchClientes(''); }, [selectedVendor]);
+    useEffect(() => { setSearchClientes(''); }, [localidad]);
+
+    const clientesFiltered = useMemo(() => {
+        const q = searchClientes.trim().toLowerCase();
+        if (!q) return clientes;
+        return clientes.filter(c =>
+            (c.razon_social ?? '').toLowerCase().includes(q) ||
+            (c.localidad ?? '').toLowerCase().includes(q) ||
+            String(c.cod_cliente).includes(q)
+        );
+    }, [clientes, searchClientes]);
 
     const load = async () => {
         setLoading(true); setErr(null);
@@ -604,7 +628,7 @@ function ObjetivosView({ selectedVendor, isAdmin, showInactivos }: { selectedVen
         } catch (e: any) { setErr(e.message); }
         finally { setLoading(false); }
     };
-    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, localidad, selectedVendor, showInactivos]);
+    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, localidad, selectedVendor, showInactivos, reloadTick]);
 
     const syncNow = async () => {
         setSyncing(true);
@@ -849,15 +873,24 @@ function ObjetivosView({ selectedVendor, isAdmin, showInactivos }: { selectedVen
                     </button>
                 </div>
 
-                {clientes.length === 0 && (
+                <div className="vs-search vs-search-obj">
+                    <Search size={16} />
+                    <input value={searchClientes} onChange={e => setSearchClientes(e.target.value)}
+                        placeholder="Buscar cliente, localidad o código…" />
+                    {searchClientes && (
+                        <button className="vs-search-clear" onClick={() => setSearchClientes('')} aria-label="Limpiar">×</button>
+                    )}
+                </div>
+
+                {clientesFiltered.length === 0 && (
                     <div className="vs-empty" style={{ padding: '24px 16px' }}>
                         <Target size={28} />
-                        <p>Sin clientes en este filtro.</p>
+                        <p>{searchClientes ? 'Sin coincidencias para la búsqueda.' : 'Sin clientes en este filtro.'}</p>
                     </div>
                 )}
 
                 <div className="vs-clientes-obj-list">
-                    {clientes.map(c => <ClienteObjetivoCard key={c.cod_cliente} c={c} />)}
+                    {clientesFiltered.map(c => <ClienteObjetivoCard key={c.cod_cliente} c={c} />)}
                 </div>
             </div>
         </div>

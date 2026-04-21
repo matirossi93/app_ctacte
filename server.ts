@@ -26,6 +26,7 @@ import { listActivity, createActivity, deleteActivity } from './server-lib/activ
 import {
   listUsuarios, createUsuario, updateUsuario, deleteUsuario, changePassword
 } from './server-lib/usuarios.js';
+import { importMaestroClientes } from './server-lib/sheetImport.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -390,6 +391,10 @@ app.post('/api/usuarios', requireJwt, requireAdmin, (req: any, res) => createUsu
 app.put('/api/usuarios/:id', requireJwt, requireAdmin, (req: any, res) => updateUsuario(req, res));
 app.delete('/api/usuarios/:id', requireJwt, requireAdmin, (req: any, res) => deleteUsuario(req, res));
 app.post('/api/usuarios/change-password', requireJwt, (req: any, res) => changePassword(req, res));
+
+// ─── Import sheet Maestro Clientes ───────────────────────────────────────────
+app.post('/api/sheet-import/maestro-clientes', requireJwt, requireAdmin, upload.single('file'),
+    (req: any, res) => importMaestroClientes(req, res));
 
 // ─── Data Proxy ───────────────────────────────────────────────────────────────
 // Si el JWT es de un vendedor, filtramos los invoices solo a los suyos.
