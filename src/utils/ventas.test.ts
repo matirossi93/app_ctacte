@@ -6,12 +6,25 @@ describe('computeVentaNeta', () => {
     expect(computeVentaNeta({ tipo: 'FA', fa_total: 100000 })).toBe(100000);
   });
 
+  it('FB / FC / FD / FE también suman (facturas de otras clases)', () => {
+    expect(computeVentaNeta({ tipo: 'FB', fa_total: 50000 })).toBe(50000);
+    expect(computeVentaNeta({ tipo: 'FC', fa_total: 75000 })).toBe(75000);
+    expect(computeVentaNeta({ tipo: 'FD', fa_total: 12000 })).toBe(12000);
+    expect(computeVentaNeta({ tipo: 'FE', fa_total: 30000 })).toBe(30000);
+  });
+
   it('NC resta (viene positivo, se niega)', () => {
     expect(computeVentaNeta({ tipo: 'NC', fa_total: 25000 })).toBe(-25000);
   });
 
+  it('NCA / NCB / NCC también restan (variantes de NC)', () => {
+    expect(computeVentaNeta({ tipo: 'NCA', fa_total: 10000 })).toBe(-10000);
+    expect(computeVentaNeta({ tipo: 'NCB', fa_total: 8000 })).toBe(-8000);
+  });
+
   it('ND se excluye del avance (intereses por mora, no venta)', () => {
     expect(computeVentaNeta({ tipo: 'ND', fa_total: 5000 })).toBe(0);
+    expect(computeVentaNeta({ tipo: 'NDA', fa_total: 5000 })).toBe(0);
   });
 
   it('RC / RE / otros NO suman al neto de ventas', () => {

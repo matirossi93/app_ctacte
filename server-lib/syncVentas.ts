@@ -95,6 +95,18 @@ export async function syncVentasMesActual(opts?: { codEmpresa?: number }): Promi
     console.log(`[syncVentas] Breakdown por tipo: ${tipoSummary}`);
     console.log(`[syncVentas] Comprobantes c/neto=0 (ND/RC/RE/PR/anuladas): ${comprobantesCero}. Reasignados cod_vendedor=0→cliente: ${reasignados}`);
 
+    // Top 5 clientes por neto acumulado — permite al admin cross-checkear.
+    const topClientes = Array.from(byCliente.values())
+      .sort((a, b) => b.neto - a.neto)
+      .slice(0, 5)
+      .map(c => `cli ${c.cod_cliente}: $${Math.round(c.neto).toLocaleString('es-AR')} (${c.num} comp)`)
+      .join(' | ');
+    console.log(`[syncVentas] Top 5 clientes del mes: ${topClientes}`);
+
+    // Totales globales — reconciliación con el cruce de Matías.
+    const totalNetoGlobal = Array.from(byCliente.values()).reduce((a, c) => a + c.neto, 0);
+    console.log(`[syncVentas] TOTAL NETO mes actual: $${Math.round(totalNetoGlobal).toLocaleString('es-AR')} sobre ${byCliente.size} clientes y ${byVendedor.size} vendedores. ${ventas.length} ventas procesadas.`);
+
     const clientRows = Array.from(byCliente.values()).map(r => ({
       tenant_id: TENANT_ID,
       cod_cliente: r.cod_cliente,

@@ -1,12 +1,10 @@
 // Helpers de ventas InfoManager.
 //
 // Reglas de signo para el AVANCE del objetivo mensual:
-//   FA (Factura)          → SUMA
-//   NC (Nota de Crédito)  → RESTA (viene con fa_total positivo — negarla acá)
-//   ND (Nota de Débito)   → IGNORAR (no se cuenta como venta).
-//                           Semillero emite NDs por intereses de mora, no por ventas,
-//                           así que distorsionan el cumplimiento. Sí aparecen en
-//                           cuenta corriente / cobranzas (otro pipeline).
+//   F*  (Factura A/B/C/D/E, FAC, FACT...) → SUMA
+//   NC* (Nota de Crédito en cualquier clase) → RESTA (fa_total positivo → negarla)
+//   ND* (Nota de Débito)  → IGNORAR (Semillero las emite por intereses de mora,
+//                           no ventas. Siguen apareciendo en Cobranzas via otro pipeline).
 //   Resto (RC, RE, PR, ASD, ASH, anuladas, etc.) → 0.
 //
 // Si rompés este signo, rompés todo el cálculo de cumplimiento.
@@ -46,9 +44,13 @@ export function computeVentaNeta(c: Comprobante): number {
   if (isAnulada(c)) return 0;
   const tipo = tipoComprobante(c);
   const total = toNumber(c.fa_total ?? c.total);
-  if (tipo === 'FA') return total;
-  if (tipo === 'NC') return -total;
-  // ND y cualquier otro tipo se excluyen del avance.
+  // ND primero — para que "NDA" no caiga en la rama NC.
+  if (tipo.startsWith('ND')) return 0;
+  // NC en cualquier clase (NC, NCA, NCB, NCC) — resta.
+  if (tipo.startsWith('NC')) return -total;
+  // Facturas de cualquier clase (FA, FB, FC, FD, FE, FAC, FACT) — suman.
+  if (tipo.startsWith('F')) return total;
+  // Todo lo demás (RC, RE, PR, IR, ASD, ASH, cobranzas, etc.) → 0.
   return 0;
 }
 
