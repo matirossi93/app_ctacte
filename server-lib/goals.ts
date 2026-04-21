@@ -421,19 +421,14 @@ export async function setMonthConfig(req: Request & { user?: JwtPayload }, res: 
     };
     if (holidays) payload.holidays = holidays;
 
+    // dias_habiles es NOT NULL. En upsert, Postgres evalúa primero el INSERT,
+    // así que hay que mandarlo SIEMPRE — sea manual o auto-calculado con feriados.
     if (diasProvided) {
       payload.dias_habiles = dias_habiles;
     } else if (holidays) {
-      // dias_habiles es NOT NULL — si el row no existe aún, necesitamos un valor.
-      // Chequear si existe; si no, calcular auto desde el cálculo con feriados.
-      const { data: existing } = await sb().from('month_config')
-        .select('dias_habiles')
-        .eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month)
-        .maybeSingle();
-      if (!existing) {
-        payload.dias_habiles = businessDaysInMonth(year, month, holidays);
-      }
-      // Si existe, no tocamos dias_habiles (se mantiene el valor previo).
+      payload.dias_habiles = businessDaysInMonth(year, month, holidays);
+    } else {
+      payload.dias_habiles = businessDaysInMonth(year, month);
     }
 
     const { data, error } = await sb().from('month_config').upsert(payload, { onConflict: 'tenant_id,year,month' }).select().single();

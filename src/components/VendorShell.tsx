@@ -547,6 +547,9 @@ function ObjetivosView({ selectedVendor, isAdmin, showInactivos }: { selectedVen
     const [editingHolidays, setEditingHolidays] = useState(false);
     const [holidaysInput, setHolidaysInput] = useState('');
     const [savingHolidays, setSavingHolidays] = useState(false);
+    const [editingTarget, setEditingTarget] = useState(false);
+    const [targetInput, setTargetInput] = useState('');
+    const [savingTarget, setSavingTarget] = useState(false);
 
     // Reset localidad al cambiar de vendedor
     useEffect(() => { setLocalidad(''); }, [selectedVendor]);
@@ -631,6 +634,25 @@ function ObjetivosView({ selectedVendor, isAdmin, showInactivos }: { selectedVen
             await load();
         } catch (e: any) { alert(`Error: ${e.message}`); }
         finally { setSavingHolidays(false); }
+    };
+
+    const saveTarget = async () => {
+        if (!meta || selectedVendor == null) return;
+        const n = Number(targetInput);
+        if (!isFinite(n) || n < 0) { alert('Target inválido'); return; }
+        setSavingTarget(true);
+        try {
+            const res = await fetch('/api/goals', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders() },
+                body: JSON.stringify({ cod_vendedor: selectedVendor, year: meta.year, month: meta.month, target_neto: n }),
+            });
+            const j = await res.json();
+            if (!res.ok || !j.ok) throw new Error(j.error);
+            setEditingTarget(false);
+            await load();
+        } catch (e: any) { alert(`Error: ${e.message}`); }
+        finally { setSavingTarget(false); }
     };
 
     if (loading) return <div className="vs-loading"><Loader2 className="spin" /> Cargando objetivo…</div>;
@@ -746,7 +768,32 @@ function ObjetivosView({ selectedVendor, isAdmin, showInactivos }: { selectedVen
                         </div>
                     </div>
                     <div className="vs-goal-figs">
-                        <div><span className="k">Target</span><span className="v">{formatMoney(heroTarget)}</span></div>
+                        <div>
+                            <span className="k">Target</span>
+                            {editingTarget ? (
+                                <span className="vs-target-edit">
+                                    <input type="number" step="1" min="0" autoFocus
+                                        value={targetInput}
+                                        onChange={e => setTargetInput(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') saveTarget(); if (e.key === 'Escape') setEditingTarget(false); }} />
+                                    <button onClick={saveTarget} disabled={savingTarget} title="Guardar">
+                                        {savingTarget ? <Loader2 size={12} className="spin" /> : '✓'}
+                                    </button>
+                                    <button onClick={() => setEditingTarget(false)} title="Cancelar">×</button>
+                                </span>
+                            ) : (
+                                <span className="v">
+                                    {formatMoney(heroTarget)}
+                                    {isAdmin && selectedVendor != null && !isLocFilter && (
+                                        <button className="vs-target-edit-btn"
+                                            onClick={() => { setTargetInput(String(heroTarget ?? 0)); setEditingTarget(true); }}
+                                            title="Editar target">
+                                            <Edit3 size={11} />
+                                        </button>
+                                    )}
+                                </span>
+                            )}
+                        </div>
                         <div><span className="k">Avance</span><span className="v gold">{formatMoney(heroAvance)}</span></div>
                         <div><span className="k">Proyección</span><span className="v">{formatMoney(heroProyeccion)}</span></div>
                     </div>

@@ -305,7 +305,31 @@
 .vs-goal-figs > div { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 7px; border-bottom: 1px solid rgba(255,255,255,.12) }
 .vs-goal-figs > div:last-child { border-bottom: 0 }
 .vs-goal-figs .k { font-size: 10px; letter-spacing: .8px; text-transform: uppercase; opacity: .65; font-weight: 600 }
-.vs-goal-figs .v { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums }
+.vs-goal-figs .v { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 6px }
+.vs-target-edit-btn {
+    background: rgba(238,192,69,.18); color: #EEC045;
+    border: 0; border-radius: 6px;
+    width: 22px; height: 22px; cursor: pointer;
+    display: inline-grid; place-items: center;
+    font-family: inherit;
+}
+.vs-target-edit-btn:hover { background: rgba(238,192,69,.32) }
+.vs-target-edit { display: inline-flex; align-items: center; gap: 4px }
+.vs-target-edit input {
+    width: 110px; height: 28px; border: 0;
+    background: rgba(255,255,255,.1); color: #fff;
+    border-radius: 8px; padding: 0 8px;
+    font-family: inherit; font-size: 13px; font-weight: 700;
+    outline: none;
+}
+.vs-target-edit input:focus { background: rgba(255,255,255,.18) }
+.vs-target-edit button {
+    width: 24px; height: 24px; border: 0; cursor: pointer;
+    background: rgba(238,192,69,.85); color: #03481F;
+    border-radius: 6px; font-weight: 700; font-family: inherit;
+    display: inline-grid; place-items: center;
+}
+.vs-target-edit button:last-child { background: rgba(255,255,255,.15); color: #fff }
 .vs-goal-figs .v.gold { color: #EEC045 }
 
 .vs-goal-daily {

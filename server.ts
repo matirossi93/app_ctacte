@@ -409,16 +409,19 @@ app.get('/api/data', maybeJwt, requireAuth, async (req: express.Request & { user
             const n = Number(req.query.cod_vendedor);
             if (n > 0) filterCodVend = n;
         }
+        // IMPORTANTE: `data` es el cache compartido. NO mutar data.invoices.
+        // Se construye una respuesta nueva con invoices filtrados si aplica.
+        let responseInvoices = data.invoices;
         if (filterCodVend != null && data.source === 'infomanager' && Array.isArray(data.invoices)) {
             const vkey = userRol === 'vendedor' ? (req.user?.vendedor_key ?? '').toLowerCase() : '';
-            data.invoices = data.invoices.filter((inv: any) => {
+            responseInvoices = data.invoices.filter((inv: any) => {
                 if (String(inv.COD_VENDED) === String(filterCodVend)) return true;
                 if (vkey && String(inv.VENDEDORES || '').toLowerCase().includes(vkey)) return true;
                 return false;
             });
         }
 
-        res.json(data);
+        res.json({ ...data, invoices: responseInvoices });
     } catch (err: any) {
         const detail = err.response ? ` (HTTP ${err.response.status})` : ` (${err.code || 'network error'})`;
         console.error('GET /api/data error:', err.message + detail);
