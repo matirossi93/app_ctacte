@@ -1,13 +1,14 @@
 // Helpers de ventas InfoManager.
 //
-// Reglas de signo para el AVANCE del objetivo mensual:
-//   F*  (Factura A/B/C/D/E, FAC, FACT...) → SUMA
-//   NC* (Nota de Crédito en cualquier clase) → RESTA (fa_total positivo → negarla)
-//   ND* (Nota de Débito)  → IGNORAR (Semillero las emite por intereses de mora,
-//                           no ventas. Siguen apareciendo en Cobranzas via otro pipeline).
-//   Resto (RC, RE, PR, ASD, ASH, anuladas, etc.) → 0.
+// Reglas de signo para el AVANCE del objetivo mensual del vendedor:
+//   F*  (Factura A/B/C/D/E, FAC, FACT...) → SUMA. Cualquier factura emitida.
+//   NC* (Nota de Crédito, NCA, NCB, NCC)  → RESTA. Resta del avance porque
+//         representa devolución / ajuste contable real sobre la venta.
+//   ND* → IGNORAR. Semillero emite NDs por intereses de mora, no por ventas.
+//         Siguen apareciendo en Cobranzas via otro pipeline (/api/data).
+//   Resto (RC, RE, PR, IR, ASD, ASH, anuladas) → 0.
 //
-// Si rompés este signo, rompés todo el cálculo de cumplimiento.
+// Si cambia la política, acordate de ajustar los tests en ventas.test.ts.
 
 export type TipoComprobante =
   | 'FA' | 'NC' | 'ND'
