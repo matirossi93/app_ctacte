@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -35,6 +36,8 @@ const app = express();
 const PORT = process.env.PORT || 80;
 
 app.use(cors());
+// gzip JSON responses (reduce ~80% el payload de /api/data y similares).
+app.use(compression({ threshold: 1024 }));
 app.use(express.json());
 
 // ─── SQLite Setup ─────────────────────────────────────────────────────────────
@@ -87,7 +90,7 @@ const IM_CLIENT_ID = process.env.INFOMANAGER_CLIENT_ID || 'ck_elmanantialsrl_bas
 const IM_CLIENT_SECRET = process.env.INFOMANAGER_CLIENT_SECRET || 'e4MCtm6L_PzdnTL';
 
 // ─── Cache ───────────────────────────────────────────────────────────────────
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL = 10 * 60 * 1000; // 10 min — pre-warm cron refresca cada 4 min
 let sheetsCache: { invoices: string; clients: string; timestamp: number } | null = null;
 
 interface NormalizedData {
@@ -667,3 +670,22 @@ if (hasSupabase()) {
 } else {
     console.log('Cron deshabilitado (Supabase no configurado)');
 }
+
+// Pre-warm del cache de /api/data cada 4 min — así el cache (TTL 10 min)
+// nunca entra en cold. Los vendedores siempre pegan a cache caliente.
+cron.schedule('*/4 * * * *', async () => {
+    try {
+        const t0 = Date.now();
+        await fetchData(true);
+        console.log(`[cron pre-warm] /api/data refreshed in ${Date.now() - t0}ms`);
+    } catch (err: any) {
+        console.warn(`[cron pre-warm] fallo: ${err?.message ?? err}`);
+    }
+});
+// Primer pre-warm al arrancar el server (3s de delay para no competir con boot).
+setTimeout(() => {
+    fetchData(true)
+        .then(() => console.log('[pre-warm on start] /api/data cache listo'))
+        .catch(err => console.warn('[pre-warm on start] fallo:', err?.message));
+}, 3000);
+console.log('Cron pre-warm /api/data: */4 * * * *');
