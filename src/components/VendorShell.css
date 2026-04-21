@@ -401,13 +401,16 @@
 .vs-newact-backdrop {
     position: fixed; inset: 0; z-index: 200;
     background: rgba(15,20,15,.65); backdrop-filter: blur(10px);
-    display: flex; align-items: flex-end; animation: vs-fade .2s ease;
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px 12px;
+    animation: vs-fade .2s ease;
 }
 .vs-newact {
-    width: 100%; max-width: 520px; margin: 0 auto;
-    background: #fff; border-radius: 24px 24px 0 0; padding: 18px;
+    width: 100%; max-width: 520px;
+    background: #fff; border-radius: 22px; padding: 18px;
     display: flex; flex-direction: column; gap: 12px;
-    max-height: 90vh; overflow-y: auto;
+    max-height: calc(100dvh - 40px); overflow-y: auto;
+    box-shadow: 0 20px 50px -10px rgba(0,0,0,.5);
 }
 .vs-newact header { display: flex; justify-content: space-between; align-items: center }
 .vs-newact header h3 { margin: 0; font-size: 17px; font-weight: 700 }
@@ -680,28 +683,32 @@
     .vs-goal-ring-center .pct span { font-size: 15px }
     .vs-goal-ring-center .sub { font-size: 10px }
 
-    /* Bottom nav → lateral vertical */
+    /* Bottom nav → lateral vertical compacto (altura auto según contenido) */
     .vs-nav {
         left: 18px; right: auto;
-        top: 90px; bottom: 24px;
+        top: 100px; bottom: auto;
         width: 92px; height: auto;
-        padding: 10px 8px;
+        padding: 8px;
         flex-direction: column;
+        gap: 4px;
         border-radius: 28px;
     }
-    .vs-nav-btn { flex: 0 1 auto; padding: 16px 0; gap: 6px }
+    .vs-nav-btn {
+        flex: 0 0 auto;
+        padding: 14px 0; gap: 6px;
+        border-radius: 20px;
+        transition: background .2s ease, color .2s ease;
+    }
     .vs-nav-btn svg { width: 24px; height: 24px }
     .vs-nav-btn span { font-size: 11px }
 
-    /* Pill vertical en lugar de horizontal */
-    .vs-nav-pill {
-        left: 8px; right: 8px;
-        width: auto; height: calc(33.333% - 8px);
-        transition: top .35s cubic-bezier(.4,1.4,.5,1);
+    /* Desktop: no usamos pill animado; el btn activo se colorea directo */
+    .vs-nav-pill { display: none }
+    .vs-nav-btn.is-active {
+        background: linear-gradient(135deg, #EEC045 0%, #FFD971 100%);
+        color: #141814;
+        box-shadow: 0 6px 16px -4px rgba(238,192,69,.5);
     }
-    .vs-nav[data-tab="cobranzas"] .vs-nav-pill { top: 10px; left: 8px }
-    .vs-nav[data-tab="objetivos"] .vs-nav-pill { top: calc(33.333% + 4px); left: 8px }
-    .vs-nav[data-tab="actividad"] .vs-nav-pill { top: calc(66.666% - 2px); left: 8px }
 
     /* FAB Recibos: más lejos del corner */
     .vs-fab {
