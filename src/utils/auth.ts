@@ -6,24 +6,24 @@ export interface AuthUser {
     nombre: string | null;
 }
 
-export const getToken = (): string | null => sessionStorage.getItem('auth_token');
-export const setToken = (token: string): void => sessionStorage.setItem('auth_token', token);
+export const getToken = (): string | null => localStorage.getItem('auth_token');
+export const setToken = (token: string): void => localStorage.setItem('auth_token', token);
 export const clearToken = (): void => {
-    sessionStorage.removeItem('auth_token');
-    sessionStorage.removeItem('auth_user');
-    sessionStorage.removeItem('auth_mode');
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('auth_user');
+    localStorage.removeItem('auth_mode');
 };
 
 export type AuthMode = 'legacy' | 'jwt';
-export const getAuthMode = (): AuthMode => (sessionStorage.getItem('auth_mode') as AuthMode) || 'jwt';
-export const setAuthMode = (m: AuthMode): void => { sessionStorage.setItem('auth_mode', m); };
+export const getAuthMode = (): AuthMode => (localStorage.getItem('auth_mode') as AuthMode) || 'jwt';
+export const setAuthMode = (m: AuthMode): void => { localStorage.setItem('auth_mode', m); };
 
 export const getUser = (): AuthUser | null => {
-    const raw = sessionStorage.getItem('auth_user');
+    const raw = localStorage.getItem('auth_user');
     if (!raw) return null;
     try { return JSON.parse(raw) as AuthUser; } catch { return null; }
 };
-export const setUser = (u: AuthUser): void => { sessionStorage.setItem('auth_user', JSON.stringify(u)); };
+export const setUser = (u: AuthUser): void => { localStorage.setItem('auth_user', JSON.stringify(u)); };
 
 export const authHeaders = (): Record<string, string> => {
     const token = getToken();
