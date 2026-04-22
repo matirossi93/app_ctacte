@@ -15,7 +15,7 @@ export const clearToken = (): void => {
 };
 
 export type AuthMode = 'legacy' | 'jwt';
-export const getAuthMode = (): AuthMode => (sessionStorage.getItem('auth_mode') as AuthMode) || 'legacy';
+export const getAuthMode = (): AuthMode => (sessionStorage.getItem('auth_mode') as AuthMode) || 'jwt';
 export const setAuthMode = (m: AuthMode): void => { sessionStorage.setItem('auth_mode', m); };
 
 export const getUser = (): AuthUser | null => {
