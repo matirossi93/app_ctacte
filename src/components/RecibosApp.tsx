@@ -271,7 +271,6 @@ function UploadRecibo({ clients, defaultCodVendedor, onDone, onCancel }:
                         ref={fileRef}
                         type="file"
                         accept="image/*,application/pdf"
-                        capture="environment"
                         style={{ display: 'none' }}
                         onChange={e => onPickFile(e.target.files?.[0] ?? null)}
                     />
