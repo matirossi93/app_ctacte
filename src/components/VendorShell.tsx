@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
-    DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet
+    DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, Settings2
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser } from '../utils/auth';
 import { RecibosApp } from './RecibosApp';
@@ -162,6 +162,24 @@ export const VendorShell = ({ onLogout }: Props) => {
     const [vendedores, setVendedores] = useState<Array<{ cod_vendedor: number; nombre: string; activo: boolean }>>([]);
     const [showInactivos, setShowInactivos] = useState(false);
 
+    // Vendedores que cuentan en la vista "Todos los vendedores" (admin-only).
+    // Persiste en localStorage. Primera vez se siembra con todos los activos que trae /api/goals.
+    const [visibleCods, setVisibleCods] = useState<Set<number>>(() => {
+        const saved = localStorage.getItem('vendedoresVisibles');
+        if (saved) {
+            try { return new Set(JSON.parse(saved) as number[]); } catch { /* ignore */ }
+        }
+        return new Set();
+    });
+    const [visiblesSeeded, setVisiblesSeeded] = useState(() => localStorage.getItem('vendedoresVisibles') !== null);
+    const [vendoresMenuOpen, setVendoresMenuOpen] = useState(false);
+
+    useEffect(() => {
+        if (visiblesSeeded) {
+            localStorage.setItem('vendedoresVisibles', JSON.stringify([...visibleCods]));
+        }
+    }, [visibleCods, visiblesSeeded]);
+
     // Data fetching
     const [invoices, setInvoices] = useState<Invoice[]>([]);
     const [clientDbMap, setClientDbMap] = useState<Record<string, any>>({});
@@ -169,14 +187,18 @@ export const VendorShell = ({ onLogout }: Props) => {
     const [err, setErr] = useState<string | null>(null);
     const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
-    const vendorQs = selectedVendor != null && isAdmin ? `cod_vendedor=${selectedVendor}` : '';
+    // ¿Hay un filtro multi activo? (admin, sin vendor específico, con una selección distinta al total)
+    const customCodsActive = isAdmin && selectedVendor == null && visiblesSeeded
+        && visibleCods.size > 0 && vendedores.length > 0 && visibleCods.size < vendedores.length;
+    const codsQs = customCodsActive ? [...visibleCods].join(',') : '';
 
     const loadData = async (force = false) => {
         setLoading(true); setErr(null);
         try {
             const params = new URLSearchParams();
             if (force) params.set('nocache', '1');
-            if (vendorQs) params.set('cod_vendedor', String(selectedVendor));
+            if (selectedVendor != null && isAdmin) params.set('cod_vendedor', String(selectedVendor));
+            else if (codsQs) params.set('cods', codsQs);
             const qs = params.toString() ? `?${params.toString()}` : '';
             const res = await fetch(`/api/data${qs}`, { headers: authHeaders() });
             if (res.status === 401) { onLogout(); return; }
@@ -188,7 +210,7 @@ export const VendorShell = ({ onLogout }: Props) => {
         } catch (e: any) { setErr(e.message); }
         finally { setLoading(false); }
     };
-    useEffect(() => { loadData(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedVendor]);
+    useEffect(() => { loadData(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedVendor, codsQs]);
 
     // Admin: traer lista de vendedores desde /api/goals (filtrada por activo según toggle)
     useEffect(() => {
@@ -198,11 +220,17 @@ export const VendorShell = ({ onLogout }: Props) => {
             .then(r => r.json())
             .then(j => {
                 if (j.ok && Array.isArray(j.items)) {
-                    setVendedores(j.items.map((i: any) => ({ cod_vendedor: i.cod_vendedor, nombre: i.nombre, activo: i.activo !== false })));
+                    const list = j.items.map((i: any) => ({ cod_vendedor: i.cod_vendedor, nombre: i.nombre, activo: i.activo !== false }));
+                    setVendedores(list);
+                    // Primera vez (sin localStorage): sembrar con todos los activos.
+                    if (!visiblesSeeded) {
+                        setVisibleCods(new Set(list.filter((v: any) => v.activo).map((v: any) => v.cod_vendedor)));
+                        setVisiblesSeeded(true);
+                    }
                 }
             })
             .catch(() => { });
-    }, [isAdmin, showInactivos]);
+    }, [isAdmin, showInactivos, visiblesSeeded]);
 
     // Agrupar por cliente (solo saldo > 0)
     const clientsAgg = useMemo<ClientAgg[]>(() => {
@@ -281,13 +309,58 @@ export const VendorShell = ({ onLogout }: Props) => {
                                     <select className="vs-vendor-select"
                                         value={selectedVendor ?? ''}
                                         onChange={e => setSelectedVendor(e.target.value ? Number(e.target.value) : null)}>
-                                        <option value="">Todos los vendedores</option>
+                                        <option value="">
+                                            {customCodsActive
+                                                ? `Todos los vendedores (${visibleCods.size} de ${vendedores.length})`
+                                                : 'Todos los vendedores'}
+                                        </option>
                                         {vendedores.map(v => (
                                             <option key={v.cod_vendedor} value={v.cod_vendedor}>
                                                 {v.nombre}{!v.activo && ' (inactivo)'}
                                             </option>
                                         ))}
                                     </select>
+                                    <div className="vs-vendor-gear-wrap">
+                                        <button className="vs-vendor-gear"
+                                            onClick={() => setVendoresMenuOpen(v => !v)}
+                                            title="Configurar vendedores visibles en 'Todos'"
+                                            aria-label="Configurar vendedores visibles">
+                                            <Settings2 size={14} />
+                                        </button>
+                                        {vendoresMenuOpen && (
+                                            <>
+                                                <div className="vs-avatar-scrim" onClick={() => setVendoresMenuOpen(false)} />
+                                                <div className="vs-vendores-menu" role="menu">
+                                                    <div className="vs-vendores-menu-header">
+                                                        <strong>Incluir en "Todos los vendedores"</strong>
+                                                        <div className="vs-vendores-menu-quick">
+                                                            <button type="button" onClick={() => setVisibleCods(new Set(vendedores.map(v => v.cod_vendedor)))}>Todos</button>
+                                                            <button type="button" onClick={() => setVisibleCods(new Set(vendedores.filter(v => v.activo).map(v => v.cod_vendedor)))}>Solo activos</button>
+                                                            <button type="button" onClick={() => setVisibleCods(new Set())}>Ninguno</button>
+                                                        </div>
+                                                    </div>
+                                                    <div className="vs-vendores-menu-list">
+                                                        {vendedores.map(v => (
+                                                            <label key={v.cod_vendedor} className="vs-vendor-check">
+                                                                <input type="checkbox"
+                                                                    checked={visibleCods.has(v.cod_vendedor)}
+                                                                    onChange={() => {
+                                                                        setVisibleCods(prev => {
+                                                                            const next = new Set(prev);
+                                                                            if (next.has(v.cod_vendedor)) next.delete(v.cod_vendedor);
+                                                                            else next.add(v.cod_vendedor);
+                                                                            return next;
+                                                                        });
+                                                                        if (!visiblesSeeded) setVisiblesSeeded(true);
+                                                                    }} />
+                                                                <span>{v.nombre}{!v.activo && ' (inactivo)'}</span>
+                                                            </label>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
                                     <label className="vs-inactivos-toggle" title="Incluir vendedores inactivos / históricos">
                                         <input type="checkbox"
                                             checked={showInactivos}
@@ -357,12 +430,13 @@ export const VendorShell = ({ onLogout }: Props) => {
                     />
                 )}
 
-                {tab === 'objetivos' && <ObjetivosView selectedVendor={selectedVendor} isAdmin={isAdmin} showInactivos={showInactivos} reloadTick={reloadObjetivosTick} />}
+                {tab === 'objetivos' && <ObjetivosView selectedVendor={selectedVendor} cods={codsQs} isAdmin={isAdmin} showInactivos={showInactivos} reloadTick={reloadObjetivosTick} />}
 
                 {tab === 'actividad' && <ActividadView
                     vendedorKey={user?.vendedor_key ?? null}
                     clientNameMap={clientDbMap}
                     selectedVendor={selectedVendor}
+                    cods={codsQs}
                     isAdmin={isAdmin}
                     pendingNew={pendingNewActivity}
                     onPendingConsumed={() => setPendingNewActivity(null)}
@@ -545,7 +619,7 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
 // ═══════════════════════════════════════════════════════════════════════════
 // OBJETIVOS VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function ObjetivosView({ selectedVendor, isAdmin, showInactivos, reloadTick }: { selectedVendor: number | null; isAdmin: boolean; showInactivos: boolean; reloadTick: number }) {
+function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTick }: { selectedVendor: number | null; cods: string; isAdmin: boolean; showInactivos: boolean; reloadTick: number }) {
     const [g, setG] = useState<GoalData | null>(null);
     const [meta, setMeta] = useState<GoalsMeta | null>(null);
     const [clientes, setClientes] = useState<ClienteObjetivo[]>([]);
@@ -583,6 +657,7 @@ function ObjetivosView({ selectedVendor, isAdmin, showInactivos, reloadTick }: {
             const qs = new URLSearchParams({ filter });
             if (localidad) qs.set('localidad', localidad);
             if (isAdmin && selectedVendor != null) qs.set('cod_vendedor', String(selectedVendor));
+            else if (isAdmin && cods) qs.set('cods', cods);
             const goalsQs = showInactivos ? '?incluir_inactivos=true' : '';
             const [gr, cr] = await Promise.all([
                 fetch(`/api/goals${goalsQs}`, { headers: authHeaders() }).then(r => r.json()),
@@ -627,7 +702,7 @@ function ObjetivosView({ selectedVendor, isAdmin, showInactivos, reloadTick }: {
         } catch (e: any) { setErr(e.message); }
         finally { setLoading(false); }
     };
-    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, localidad, selectedVendor, showInactivos, reloadTick]);
+    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, localidad, selectedVendor, cods, showInactivos, reloadTick]);
 
     const syncNow = async () => {
         setSyncing(true);
@@ -939,10 +1014,10 @@ function ClienteObjetivoCard({ c }: { c: ClienteObjetivo }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // ACTIVIDAD VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendor, isAdmin, pendingNew, onPendingConsumed }:
+function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendor, cods, isAdmin, pendingNew, onPendingConsumed }:
     {
         vendedorKey: string | null; clientNameMap: Record<string, any>;
-        selectedVendor: number | null; isAdmin: boolean;
+        selectedVendor: number | null; cods: string; isAdmin: boolean;
         pendingNew: { cod_cliente?: string; name?: string } | null;
         onPendingConsumed: () => void;
     }) {
@@ -956,6 +1031,7 @@ function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendo
         try {
             const params = new URLSearchParams();
             if (isAdmin && selectedVendor != null) params.set('cod_vendedor', String(selectedVendor));
+            else if (isAdmin && cods) params.set('cods', cods);
             const qs = params.toString() ? `?${params.toString()}` : '';
             const res = await fetch(`/api/activity${qs}`, { headers: authHeaders() });
             const j = await res.json();
@@ -964,7 +1040,7 @@ function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendo
         } catch (e: any) { setErr(e.message); }
         finally { setLoading(false); }
     };
-    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedVendor]);
+    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedVendor, cods]);
 
     // Cuando llega un pendingNew desde el root (ej. tap "Nota" en Cobranzas), abrir modal.
     useEffect(() => {

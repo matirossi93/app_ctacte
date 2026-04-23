@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { X, Camera, Upload, Check, AlertCircle, ChevronLeft, Loader2, Search, Clock, FileText, RefreshCw } from 'lucide-react';
 import { authHeaders, getUser } from '../utils/auth';
+import { MEDIOS_PAGO_UI, DEFAULT_MEDIO_UI, normalizeMedioUI } from '../utils/mediosPago';
 import './RecibosApp.css';
 
 interface Props {
@@ -52,6 +53,13 @@ export const RecibosApp = ({ onClose, clients = [] }: Props) => {
     const [view, setView] = useState<'list' | 'upload' | 'detail'>(isBackoffice ? 'list' : 'upload');
     const [selectedId, setSelectedId] = useState<string | null>(null);
 
+    // Lookup rápido por cod_cliente para mostrar nombre en lista/detalle
+    const clientNameByCod = useMemo(() => {
+        const m = new Map<string, string>();
+        clients.forEach(c => m.set(String(c.cod), c.name));
+        return m;
+    }, [clients]);
+
     return (
         <div className="recibos-overlay" role="dialog" aria-modal="true">
             <div className="recibos-modal">
@@ -77,6 +85,7 @@ export const RecibosApp = ({ onClose, clients = [] }: Props) => {
                     {view === 'list' && (
                         <RecibosList
                             isBackoffice={!!isBackoffice}
+                            clientNameByCod={clientNameByCod}
                             onOpenDetail={(id) => { setSelectedId(id); setView('detail'); }}
                             onUpload={() => setView('upload')}
                         />
@@ -93,6 +102,7 @@ export const RecibosApp = ({ onClose, clients = [] }: Props) => {
                         <DetalleRecibo
                             id={selectedId}
                             isBackoffice={!!isBackoffice}
+                            clientNameByCod={clientNameByCod}
                             onBack={() => { setSelectedId(null); setView('list'); }}
                         />
                     )}
@@ -105,7 +115,7 @@ export const RecibosApp = ({ onClose, clients = [] }: Props) => {
 // ───────────────────────────────────────────────────────────────────────────
 // LIST
 // ───────────────────────────────────────────────────────────────────────────
-function RecibosList({ isBackoffice, onOpenDetail, onUpload }: { isBackoffice: boolean; onOpenDetail: (id: string) => void; onUpload: () => void }) {
+function RecibosList({ isBackoffice, clientNameByCod, onOpenDetail, onUpload }: { isBackoffice: boolean; clientNameByCod: Map<string, string>; onOpenDetail: (id: string) => void; onUpload: () => void }) {
     const [items, setItems] = useState<ReciboRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState<'pendiente_revision' | 'todos' | 'imputado' | 'rechazado'>(isBackoffice ? 'pendiente_revision' : 'todos');
@@ -163,7 +173,10 @@ function RecibosList({ isBackoffice, onOpenDetail, onUpload }: { isBackoffice: b
                         </div>
                         <div className="rec-item-body">
                             <div className="rec-item-row1">
-                                <strong>Cliente #{r.cod_cliente}</strong>
+                                <strong>
+                                    {clientNameByCod.get(String(r.cod_cliente)) ?? `Cliente ${r.cod_cliente}`}
+                                    <span className="rec-cod"> #{r.cod_cliente}</span>
+                                </strong>
                                 <span className={`rec-status rec-status--${r.status}`}>{statusLabel(r.status)}</span>
                             </div>
                             <div className="rec-item-row2">
@@ -195,7 +208,7 @@ function UploadRecibo({ clients, defaultCodVendedor, onDone, onCancel }:
     const [codVendedor, setCodVendedor] = useState(defaultCodVendedor?.toString() ?? '');
     const [monto, setMonto] = useState('');
     const [fecha, setFecha] = useState<string>(new Date().toISOString().slice(0, 10));
-    const [medioPago, setMedioPago] = useState<string>('transferencia');
+    const [medioPago, setMedioPago] = useState<string>(DEFAULT_MEDIO_UI);
     const [observaciones, setObservaciones] = useState('');
     const [clientSearch, setClientSearch] = useState('');
     const [busy, setBusy] = useState(false);
@@ -333,11 +346,9 @@ function UploadRecibo({ clients, defaultCodVendedor, onDone, onCancel }:
                     <label className="rec-field">
                         <span>Medio</span>
                         <select value={medioPago} onChange={e => setMedioPago(e.target.value)}>
-                            <option value="transferencia">Transferencia</option>
-                            <option value="efectivo">Efectivo</option>
-                            <option value="cheque">Cheque</option>
-                            <option value="mercadopago">Mercado Pago</option>
-                            <option value="otro">Otro</option>
+                            {MEDIOS_PAGO_UI.map(m => (
+                                <option key={m.value} value={m.value}>{m.label}</option>
+                            ))}
                         </select>
                     </label>
                     {defaultCodVendedor == null && (
@@ -387,7 +398,7 @@ function UploadRecibo({ clients, defaultCodVendedor, onDone, onCancel }:
 // ───────────────────────────────────────────────────────────────────────────
 // DETAIL + APPROVAL (backoffice)
 // ───────────────────────────────────────────────────────────────────────────
-function DetalleRecibo({ id, isBackoffice, onBack }: { id: string; isBackoffice: boolean; onBack: () => void }) {
+function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: string; isBackoffice: boolean; clientNameByCod: Map<string, string>; onBack: () => void }) {
     const [rec, setRec] = useState<ReciboRow | null>(null);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
@@ -412,7 +423,8 @@ function DetalleRecibo({ id, isBackoffice, onBack }: { id: string; isBackoffice:
             if (item) {
                 setMontoFinal(item.monto?.toString() ?? '');
                 setFechaFinal(item.fecha_comprobante ?? new Date().toISOString().slice(0, 10));
-                setMedioFinal(item.medio_pago ?? 'transferencia');
+                // Normaliza recibos legacy ('transferencia', 'otro', 'tarjeta') al canon actual
+                setMedioFinal(normalizeMedioUI(item.medio_pago));
             }
         } catch (e: any) { setErr(e.message); }
         finally { setLoading(false); }
@@ -517,8 +529,8 @@ function DetalleRecibo({ id, isBackoffice, onBack }: { id: string; isBackoffice:
                     <div className="rec-detail-head">
                         <div>
                             <span className={`rec-status rec-status--${rec.status}`}>{statusLabel(rec.status)}</span>
-                            <h3>Cliente #{rec.cod_cliente}</h3>
-                            <p>Vendedor cod {rec.cod_vendedor} · {timeAgo(rec.created_at)}</p>
+                            <h3>{clientNameByCod.get(String(rec.cod_cliente)) ?? `Cliente ${rec.cod_cliente}`}</h3>
+                            <p>Cod {rec.cod_cliente} · Vendedor cod {rec.cod_vendedor} · {timeAgo(rec.created_at)}</p>
                         </div>
                         <div className="rec-detail-amount">
                             {formatMoney(rec.monto)}
@@ -563,11 +575,9 @@ function DetalleRecibo({ id, isBackoffice, onBack }: { id: string; isBackoffice:
                                 <label className="rec-field">
                                     <span>Medio</span>
                                     <select value={medioFinal} onChange={e => setMedioFinal(e.target.value)}>
-                                        <option value="transferencia">Transferencia</option>
-                                        <option value="efectivo">Efectivo</option>
-                                        <option value="cheque">Cheque</option>
-                                        <option value="mercadopago">Mercado Pago</option>
-                                        <option value="otro">Otro</option>
+                                        {MEDIOS_PAGO_UI.map(m => (
+                                            <option key={m.value} value={m.value}>{m.label}</option>
+                                        ))}
                                     </select>
                                 </label>
                             </div>

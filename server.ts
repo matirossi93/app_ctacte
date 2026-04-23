@@ -410,24 +410,33 @@ app.get('/api/data', maybeJwt, requireAuth, async (req: express.Request & { user
 
         // Filtro por rol: vendedor solo ve sus invoices.
         // Admin/gerente puede pedir uno específico con ?cod_vendedor=X
+        // o una lista con ?cods=3,4,11 (vista "Todos" con selección manual).
         const userRol = req.user?.rol;
         let filterCodVend: number | null = null;
+        let filterCods: Set<string> | null = null;
         if (userRol === 'vendedor') {
             filterCodVend = req.user!.cod_vendedor ?? -1;
         } else if (req.query.cod_vendedor) {
             const n = Number(req.query.cod_vendedor);
             if (n > 0) filterCodVend = n;
+        } else if (req.query.cods) {
+            const cods = String(req.query.cods).split(',').map(s => s.trim()).filter(Boolean);
+            if (cods.length) filterCods = new Set(cods);
         }
         // IMPORTANTE: `data` es el cache compartido. NO mutar data.invoices.
         // Se construye una respuesta nueva con invoices filtrados si aplica.
         let responseInvoices = data.invoices;
-        if (filterCodVend != null && data.source === 'infomanager' && Array.isArray(data.invoices)) {
-            const vkey = userRol === 'vendedor' ? (req.user?.vendedor_key ?? '').toLowerCase() : '';
-            responseInvoices = data.invoices.filter((inv: any) => {
-                if (String(inv.COD_VENDED) === String(filterCodVend)) return true;
-                if (vkey && String(inv.VENDEDORES || '').toLowerCase().includes(vkey)) return true;
-                return false;
-            });
+        if (data.source === 'infomanager' && Array.isArray(data.invoices)) {
+            if (filterCodVend != null) {
+                const vkey = userRol === 'vendedor' ? (req.user?.vendedor_key ?? '').toLowerCase() : '';
+                responseInvoices = data.invoices.filter((inv: any) => {
+                    if (String(inv.COD_VENDED) === String(filterCodVend)) return true;
+                    if (vkey && String(inv.VENDEDORES || '').toLowerCase().includes(vkey)) return true;
+                    return false;
+                });
+            } else if (filterCods) {
+                responseInvoices = data.invoices.filter((inv: any) => filterCods!.has(String(inv.COD_VENDED)));
+            }
         }
 
         res.json({ ...data, invoices: responseInvoices });

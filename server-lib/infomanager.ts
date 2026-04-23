@@ -122,13 +122,8 @@ export async function crearRecibo(input: CrearReciboInput): Promise<{ ok: true; 
   }
 }
 
-/** Helper para mapear medio_pago UI → forma_pago InfoManager */
-export function formaPagoUIToIM(medio: string | null | undefined): FormaPagoIM {
-  const m = (medio ?? '').toLowerCase();
-  if (m === 'efectivo') return 'EF';
-  if (m === 'tarjeta') return 'TJ';
-  return 'OT'; // transferencia, mercadopago, cheque, otro
-}
+/** @deprecated Usar getFormaPagoIM de ./mediosPago.js — este re-export queda por compat */
+export { getFormaPagoIM as formaPagoUIToIM } from './mediosPago.js';
 
 export async function fetchComprobPendientes(codEmpresa: number, codCliente?: number): Promise<any[]> {
   const cli = await imClient();

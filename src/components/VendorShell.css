@@ -61,6 +61,58 @@
     accent-color: #06652F;
 }
 
+/* Gear para configurar vendedores visibles en "Todos" */
+.vs-vendor-gear-wrap { position: relative; display: inline-flex; vertical-align: middle; margin-left: 4px }
+.vs-vendor-gear {
+    width: 22px; height: 22px; border-radius: 6px;
+    background: transparent; border: 1px solid rgba(6, 101, 47, .2);
+    display: grid; place-items: center; cursor: pointer; color: #06652F;
+    padding: 0;
+}
+.vs-vendor-gear:hover { background: rgba(6, 101, 47, .08) }
+.vs-vendores-menu {
+    position: absolute; top: calc(100% + 8px); left: 0;
+    min-width: 260px; max-width: 320px; z-index: 41;
+    background: #F9EFE3;
+    border: 1px solid rgba(20, 24, 20, .08);
+    border-radius: 14px;
+    padding: 8px;
+    box-shadow: 0 16px 40px -8px rgba(20, 24, 20, .35);
+    font-family: inherit;
+    animation: vs-avatar-in .14s ease;
+}
+.vs-vendores-menu-header {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 6px 8px 10px;
+    border-bottom: 1px solid rgba(20, 24, 20, .06);
+    margin-bottom: 4px;
+}
+.vs-vendores-menu-header strong { font-size: 12px; color: #141814; font-weight: 700 }
+.vs-vendores-menu-quick {
+    display: flex; gap: 4px; flex-wrap: wrap;
+}
+.vs-vendores-menu-quick button {
+    font-family: inherit; font-size: 10px; font-weight: 600;
+    padding: 3px 8px; border-radius: 6px;
+    background: rgba(6, 101, 47, .08); color: #06652F; border: 0;
+    cursor: pointer;
+}
+.vs-vendores-menu-quick button:hover { background: rgba(6, 101, 47, .16) }
+.vs-vendores-menu-list {
+    max-height: 280px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 2px;
+}
+.vs-vendor-check {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-radius: 8px; cursor: pointer;
+    font-size: 12px; color: #141814;
+}
+.vs-vendor-check:hover { background: rgba(6, 101, 47, .06) }
+.vs-vendor-check input {
+    margin: 0; width: 14px; height: 14px; cursor: pointer;
+    accent-color: #06652F;
+}
+
 /* Avatar menu */
 .vs-avatar-wrap { position: relative }
 .vs-avatar-scrim {

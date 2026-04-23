@@ -17,6 +17,10 @@ export async function listActivity(req: Request & { user?: JwtPayload }, res: Re
       q = q.eq('cod_vendedor', user.cod_vendedor);
     } else if (req.query.cod_vendedor) {
       q = q.eq('cod_vendedor', Number(req.query.cod_vendedor));
+    } else if (req.query.cods) {
+      const parsed = String(req.query.cods)
+        .split(',').map(s => Number(s.trim())).filter(n => Number.isInteger(n) && n > 0);
+      if (parsed.length) q = q.in('cod_vendedor', parsed);
     }
 
     if (req.query.tipo) q = q.eq('tipo', String(req.query.tipo));

@@ -256,15 +256,21 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
     const month = Number(req.query.month) || t.month;
 
     let codVend: number | null = null;
+    let codsList: number[] | null = null;
     if (user.rol === 'vendedor') {
       codVend = user.cod_vendedor ?? -1;
     } else if (req.query.cod_vendedor) {
       codVend = Number(req.query.cod_vendedor);
+    } else if (req.query.cods) {
+      const parsed = String(req.query.cods)
+        .split(',').map(s => Number(s.trim())).filter(n => Number.isInteger(n) && n > 0);
+      if (parsed.length) codsList = parsed;
     }
 
     // Clientes del vendedor (o todos si admin sin filtro)
     let q = sb().from('client_operational').select('cod_cliente, cod_vendedor, razon_social, localidad, frecuencia, dia_visita, tipo_abc, objetivo_mes, objetivo_year, objetivo_month, fact_mes_pasado, fact_prom_3m, saldo_cta_cte').eq('tenant_id', TENANT_ID);
     if (codVend != null) q = q.eq('cod_vendedor', codVend);
+    else if (codsList) q = q.in('cod_vendedor', codsList);
     q = q.order('objetivo_mes', { ascending: false, nullsFirst: false }).limit(2000);
     const { data: clientes, error: errC } = await q;
     if (errC) { res.status(500).json({ error: errC.message }); return; }

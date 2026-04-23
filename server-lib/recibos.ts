@@ -2,25 +2,13 @@ import { randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
 import { ocrRecibo } from './ocrRecibo.js';
-import { crearRecibo, fetchComprobPendientes, formaPagoUIToIM, type ReciboPago, type ReciboComprobante } from './infomanager.js';
-
-const CUENTA_EFECTIVO = process.env.IM_CUENTA_EFECTIVO || '';
-const CUENTA_TRANSFERENCIA = process.env.IM_CUENTA_TRANSFERENCIA || '';
-const CUENTA_TARJETA = process.env.IM_CUENTA_TARJETA || '';
-const CUENTA_CHEQUE = process.env.IM_CUENTA_CHEQUE || '';
-const CUENTA_MP = process.env.IM_CUENTA_MERCADOPAGO || CUENTA_TRANSFERENCIA;
-const IM_USUARIO = process.env.INFOMANAGER_USUARIO || 'matias';
-const IM_CENTRO_COSTO_DEFAULT = (process.env.IM_CENTRO_COSTO_DEFAULT || 'S') as 'S' | 'N';
-
-function cuentaPorMedio(medio: string | null | undefined): string {
-  const m = (medio ?? '').toLowerCase();
-  if (m === 'efectivo') return CUENTA_EFECTIVO;
-  if (m === 'tarjeta') return CUENTA_TARJETA;
-  if (m === 'cheque') return CUENTA_CHEQUE || CUENTA_TRANSFERENCIA;
-  if (m === 'mercadopago') return CUENTA_MP;
-  return CUENTA_TRANSFERENCIA; // transferencia / otro
-}
+import { crearRecibo, fetchComprobPendientes, type ReciboPago, type ReciboComprobante } from './infomanager.js';
+import { getCuentaCod, getFormaPagoIM } from './mediosPago.js';
 import type { JwtPayload } from './auth.js';
+
+const { env } = process;
+const IM_USUARIO = env.INFOMANAGER_USUARIO || 'matias';
+const IM_CENTRO_COSTO_DEFAULT = (env.IM_CENTRO_COSTO_DEFAULT || 'S') as 'S' | 'N';
 
 const BUCKET = 'recibos';
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -218,11 +206,11 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
 
     // pagos: si el front no envía explícitamente, armo uno solo a partir de medio + monto
     const pagosBody: Array<Partial<ReciboPago>> = Array.isArray(body.pagos) ? body.pagos : [];
-    const cuentaDefault = cuentaPorMedio(medioPago);
+    const cuentaDefault = getCuentaCod(medioPago);
     let pagos: ReciboPago[];
     if (pagosBody.length) {
       pagos = pagosBody.map(p => ({
-        forma_pago: (p.forma_pago ?? formaPagoUIToIM(medioPago)) as any,
+        forma_pago: (p.forma_pago ?? getFormaPagoIM(medioPago)) as any,
         importe: Number(p.importe ?? 0).toFixed(2),
         cod_cuenta: String(p.cod_cuenta ?? cuentaDefault ?? '0'),
         cod_unidad_negocio: p.cod_unidad_negocio ?? '',
@@ -231,7 +219,7 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
       }));
     } else {
       pagos = [{
-        forma_pago: formaPagoUIToIM(medioPago),
+        forma_pago: getFormaPagoIM(medioPago),
         importe: monto.toFixed(2),
         cod_cuenta: cuentaDefault || '0',
         cod_unidad_negocio: '',
@@ -241,7 +229,7 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
     }
 
     if (!pagos[0].cod_cuenta || pagos[0].cod_cuenta === '0') {
-      res.status(400).json({ error: `cod_cuenta no configurada para medio "${medioPago}". Seteá IM_CUENTA_${formaPagoUIToIM(medioPago)} o pasalo explícito.` });
+      res.status(400).json({ error: `cod_cuenta no configurada para medio "${medioPago}". Seteá IM_CUENTA_${getFormaPagoIM(medioPago)} o pasalo explícito.` });
       return;
     }
     if (!comprobantes.length) {
