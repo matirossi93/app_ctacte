@@ -784,9 +784,11 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
     const heroNecesarioDia = heroTarget != null && g.dias_restantes > 0
         ? Math.max(0, (heroTarget - heroAvance) / g.dias_restantes)
         : null;
+    const heroPctProy = heroTarget && heroTarget > 0 ? heroProyeccion / heroTarget : null;
 
     const pct = heroPct ?? 0;
     const pctPct = Math.min(200, pct * 100);
+    const pctProyPct = heroPctProy != null ? Math.min(999, heroPctProy * 100) : null;
     const circumference = 2 * Math.PI * 54;
     const offset = circumference * (1 - Math.min(1, pct));
     const localidades = clientesStats?.localidades ?? [];
@@ -891,8 +893,20 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                                 </span>
                             )}
                         </div>
-                        <div><span className="k">Avance</span><span className="v gold">{formatMoney(heroAvance)}</span></div>
-                        <div><span className="k">Proyección</span><span className="v">{formatMoney(heroProyeccion)}</span></div>
+                        <div>
+                            <span className="k">Avance</span>
+                            <span className="v gold">
+                                {formatMoney(heroAvance)}
+                                {pctPct > 0 && <span className="vs-goal-pct"> · {Math.round(pctPct)}%</span>}
+                            </span>
+                        </div>
+                        <div>
+                            <span className="k">Proyección</span>
+                            <span className="v">
+                                {formatMoney(heroProyeccion)}
+                                {pctProyPct != null && <span className="vs-goal-pct"> · {Math.round(pctProyPct)}%</span>}
+                            </span>
+                        </div>
                     </div>
                 </div>
 

@@ -392,6 +392,7 @@
 }
 .vs-target-edit button:last-child { background: rgba(255,255,255,.15); color: #fff }
 .vs-goal-figs .v.gold { color: #EEC045 }
+.vs-goal-pct { font-size: 11px; font-weight: 600; opacity: .55; letter-spacing: .3px }
 
 .vs-goal-daily {
     margin-top: 14px; position: relative; z-index: 2;
