@@ -137,3 +137,22 @@ export async function fetchVendedores(): Promise<Array<{ cod_vendedor: number; n
   const { data } = await cli.get('/vendedores');
   return Array.isArray(data) ? data : (data?.results ?? []);
 }
+
+export interface PlanCuenta {
+  cod_cuenta: string;
+  nombre: string;
+  [k: string]: any;
+}
+
+/** Trae el plan de cuentas completo (~316 cuentas). */
+export async function fetchPlanCuentas(): Promise<PlanCuenta[]> {
+  const cli = await imClient();
+  const { data } = await cli.get('/planes');
+  const rows = Array.isArray(data) ? data : (data?.results ?? []);
+  // InfoManager puede usar "id" o "cod_cuenta" según el recurso — normalizo.
+  return rows.map((r: any) => ({
+    ...r,
+    cod_cuenta: String(r.cod_cuenta ?? r.id ?? r.codigo ?? ''),
+    nombre: String(r.nombre ?? r.descripcion ?? ''),
+  }));
+}

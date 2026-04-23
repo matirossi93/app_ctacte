@@ -20,7 +20,7 @@ import {
 import { hasSupabase } from './server-lib/supabase.js';
 import { syncVentasMesActual } from './server-lib/syncVentas.js';
 import {
-  uploadRecibo, listRecibos, facturasCandidatas, aprobarRecibo, rechazarRecibo
+  uploadRecibo, listRecibos, facturasCandidatas, aprobarRecibo, rechazarRecibo, cuentasDebug, cuentasRefresh
 } from './server-lib/recibos.js';
 import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance } from './server-lib/goals.js';
 import { listActivity, createActivity, deleteActivity } from './server-lib/activity.js';
@@ -375,6 +375,8 @@ app.get('/api/recibos', requireJwt, (req: any, res) => listRecibos(req, res));
 app.get('/api/recibos/:id/facturas-candidatas', requireJwt, (req: any, res) => facturasCandidatas(req, res));
 app.post('/api/recibos/:id/aprobar', requireJwt, (req: any, res) => aprobarRecibo(req, res));
 app.post('/api/recibos/:id/rechazar', requireJwt, (req: any, res) => rechazarRecibo(req, res));
+app.get('/api/cuentas/debug', requireJwt, (req: any, res) => cuentasDebug(req, res));
+app.post('/api/cuentas/refresh', requireJwt, (req: any, res) => cuentasRefresh(req, res));
 
 // ─── Objetivos ───────────────────────────────────────────────────────────────
 app.get('/api/goals', requireJwt, (req: any, res) => listGoals(req, res));
@@ -696,5 +698,7 @@ setTimeout(() => {
     fetchData(true)
         .then(() => console.log('[pre-warm on start] /api/data cache listo'))
         .catch(err => console.warn('[pre-warm on start] fallo:', err?.message));
+    // Resolver de cod_cuenta desde /planes de InfoManager — evita env vars manuales
+    import('./server-lib/cuentasResolver.js').then(m => m.prewarmCuentasCache());
 }, 3000);
 console.log('Cron pre-warm /api/data: */4 * * * *');

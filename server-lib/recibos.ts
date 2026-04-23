@@ -3,7 +3,8 @@ import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
 import { ocrRecibo } from './ocrRecibo.js';
 import { crearRecibo, fetchComprobPendientes, type ReciboPago, type ReciboComprobante } from './infomanager.js';
-import { getCuentaCod, getFormaPagoIM } from './mediosPago.js';
+import { getFormaPagoIM } from './mediosPago.js';
+import { resolveCuentaCod, debugCuentasResolver, invalidateCuentasCache } from './cuentasResolver.js';
 import type { JwtPayload } from './auth.js';
 
 const { env } = process;
@@ -206,7 +207,7 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
 
     // pagos: si el front no envía explícitamente, armo uno solo a partir de medio + monto
     const pagosBody: Array<Partial<ReciboPago>> = Array.isArray(body.pagos) ? body.pagos : [];
-    const cuentaDefault = getCuentaCod(medioPago);
+    const cuentaDefault = await resolveCuentaCod(medioPago);
     let pagos: ReciboPago[];
     if (pagosBody.length) {
       pagos = pagosBody.map(p => ({
@@ -229,7 +230,11 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
     }
 
     if (!pagos[0].cod_cuenta || pagos[0].cod_cuenta === '0') {
-      res.status(400).json({ error: `cod_cuenta no configurada para medio "${medioPago}". Seteá IM_CUENTA_${getFormaPagoIM(medioPago)} o pasalo explícito.` });
+      const debug = await debugCuentasResolver();
+      res.status(400).json({
+        error: `cod_cuenta no resuelta para medio "${medioPago}". Revisá /api/cuentas/debug o seteá IM_CUENTA_* como fallback.`,
+        resolverStatus: debug[medioPago] ?? null,
+      });
       return;
     }
     if (!comprobantes.length) {
@@ -306,6 +311,36 @@ export async function rechazarRecibo(req: Request & { user?: JwtPayload }, res: 
     }).eq('id', req.params.id).eq('tenant_id', TENANT_ID);
     if (error) { res.status(500).json({ error: error.message }); return; }
     res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
+ * GET /api/cuentas/debug — admin-only. Muestra el mapping medio→cod_cuenta
+ * resuelto desde /planes de InfoManager, con fallback a env vars.
+ */
+export async function cuentasDebug(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    const mapping = await debugCuentasResolver();
+    res.json({ ok: true, mapping });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
+ * POST /api/cuentas/refresh — admin-only. Fuerza re-consulta a /planes.
+ */
+export async function cuentasRefresh(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    invalidateCuentasCache();
+    const mapping = await debugCuentasResolver();
+    res.json({ ok: true, mapping });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'error' });
   }
