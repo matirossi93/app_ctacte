@@ -673,11 +673,13 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
             if (isAdmin && selectedVendor != null) {
                 goal = (gr.items ?? []).find((i: any) => i.cod_vendedor === selectedVendor) ?? null;
             } else if (isAdmin) {
-                // Vista agregada: combinar todos
-                const items = gr.items ?? [];
+                // Vista agregada: solo vendedores activos (mismo criterio que backend totales).
+                // Andrea/Dario/Federico estan en la lista para filtrar pero no suman al equipo.
+                const allItems = gr.items ?? [];
+                const items = allItems.filter((i: any) => i.activo);
                 const sumTarget = items.reduce((a: number, i: any) => a + (i.target_neto ?? 0), 0);
                 const sumAvance = items.reduce((a: number, i: any) => a + (i.avance ?? 0), 0);
-                const first = items[0];
+                const first = items[0] ?? allItems[0];
                 goal = first ? {
                     ...first,
                     cod_vendedor: 0,

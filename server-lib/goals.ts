@@ -179,18 +179,21 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
       ? items.filter(it => it.cod_vendedor === user.cod_vendedor)
       : items;
 
-    // Totales equipo (solo para admin/gerente)
+    // Totales equipo (solo para admin/gerente) — solo vendedores activos (con usuario).
+    // Andrea/Dario/Federico/etc. aparecen en la lista para el popover de filtro pero
+    // NO deben sumar al avance/target del equipo.
     let totales: any = null;
     if (user.rol !== 'vendedor') {
-      const tgt = visible.reduce((a, i) => a + (i.target_neto ?? 0), 0);
-      const av = visible.reduce((a, i) => a + i.avance, 0);
+      const equipo = visible.filter(i => i.activo);
+      const tgt = equipo.reduce((a, i) => a + (i.target_neto ?? 0), 0);
+      const av = equipo.reduce((a, i) => a + i.avance, 0);
       totales = {
         target: tgt,
         avance: av,
         pct: tgt > 0 ? av / tgt : null,
-        proyeccion: visible.reduce((a, i) => a + i.proyeccion, 0),
-        vendedores_con_target: visible.filter(i => i.target_neto != null).length,
-        vendedores_total: visible.length,
+        proyeccion: equipo.reduce((a, i) => a + i.proyeccion, 0),
+        vendedores_con_target: equipo.filter(i => i.target_neto != null).length,
+        vendedores_total: equipo.length,
       };
     }
 
