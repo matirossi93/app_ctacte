@@ -236,12 +236,17 @@ export const VendorShell = ({ onLogout }: Props) => {
     }, [isAdmin, showInactivos, visiblesSeeded]);
 
     // Agrupar por cliente (solo saldo > 0)
+    // Umbral $100 para ignorar facturas con saldo despreciable (ajustes contables,
+    // redondeos, anuladas parciales). Estas ensucian el maxDias antiguedad si no se filtran.
+    const UMBRAL_SALDO_FACTURA = 100;
     const clientsAgg = useMemo<ClientAgg[]>(() => {
         const map = new Map<string, ClientAgg>();
         for (const inv of invoices) {
             const cod = inv.COD_CLIENT;
             if (!cod) continue;
             const saldo = Number(inv.SALDO) || 0;
+            // Facturas con saldo practicamente 0 no suman al total ni a la antiguedad.
+            if (Math.abs(saldo) <= UMBRAL_SALDO_FACTURA) continue;
             if (!map.has(cod)) {
                 map.set(cod, {
                     cod,
