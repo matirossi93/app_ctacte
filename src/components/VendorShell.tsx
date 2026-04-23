@@ -187,10 +187,13 @@ export const VendorShell = ({ onLogout }: Props) => {
     const [err, setErr] = useState<string | null>(null);
     const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
-    // ¿Hay un filtro multi activo? (admin, sin vendor específico, con una selección distinta al total)
-    const customCodsActive = isAdmin && selectedVendor == null && visiblesSeeded
-        && visibleCods.size > 0 && vendedores.length > 0 && visibleCods.size < vendedores.length;
+    // Filtro multi en vista "Todos": siempre se aplica cuando hay seed, así Andrea/etc.
+    // quedan fuera por default aunque no aparezcan en la lista de /api/goals.
+    // El admin amplía tildando más en el popover si quiere verlos.
+    const customCodsActive = isAdmin && selectedVendor == null && visiblesSeeded && visibleCods.size > 0;
     const codsQs = customCodsActive ? [...visibleCods].join(',') : '';
+    // Mostrar conteo solo cuando tiene sentido (hay lista cargada y el filtro achica)
+    const showCustomBadge = customCodsActive && vendedores.length > 0 && visibleCods.size < vendedores.length;
 
     const loadData = async (force = false) => {
         setLoading(true); setErr(null);
@@ -310,7 +313,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                                         value={selectedVendor ?? ''}
                                         onChange={e => setSelectedVendor(e.target.value ? Number(e.target.value) : null)}>
                                         <option value="">
-                                            {customCodsActive
+                                            {showCustomBadge
                                                 ? `Todos los vendedores (${visibleCods.size} de ${vendedores.length})`
                                                 : 'Todos los vendedores'}
                                         </option>
