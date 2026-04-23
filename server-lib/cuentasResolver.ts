@@ -40,10 +40,18 @@ const ENV_FALLBACK: Record<string, string> = {
   cheque: 'IM_CUENTA_CHEQUE',
 };
 
+// Último recurso: cod_cuenta conocidos del plan InfoManager Semillero.
+// Confirmados con Matías el 23/04/2026 directamente del sistema.
+const HARDCODED_FALLBACK: Record<string, string> = {
+  recaudadora_1: '1120005',
+  recaudadora_2: '1120006',
+  // MercadoPago, Efectivo, Cheque ya están en env vars desde el MVP 20/04 — no hardcode.
+};
+
 interface ResolvedCuenta {
   cod_cuenta: string;
   nombre: string;
-  source: 'api' | 'env' | 'none';
+  source: 'api' | 'env' | 'hardcoded' | 'none';
 }
 
 let cache: Record<string, ResolvedCuenta> | null = null;
@@ -69,9 +77,14 @@ async function buildCache(): Promise<Record<string, ResolvedCuenta>> {
     const envVal = env[ENV_FALLBACK[medio]];
     if (envVal) {
       result[medio] = { cod_cuenta: envVal, nombre: `(env ${ENV_FALLBACK[medio]})`, source: 'env' };
-    } else {
-      result[medio] = { cod_cuenta: '', nombre: '(sin resolver)', source: 'none' };
+      continue;
     }
+    const hardcoded = HARDCODED_FALLBACK[medio];
+    if (hardcoded) {
+      result[medio] = { cod_cuenta: hardcoded, nombre: '(hardcoded fallback)', source: 'hardcoded' };
+      continue;
+    }
+    result[medio] = { cod_cuenta: '', nombre: '(sin resolver)', source: 'none' };
   }
   return result;
 }
