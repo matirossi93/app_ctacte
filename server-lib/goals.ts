@@ -125,19 +125,20 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
     const diasTrans = isCurrentMonth ? businessDaysElapsed(year, month, t.day, holidays) : diasTotal;
     const diasRestantes = Math.max(0, diasTotal - diasTrans);
 
-    // Base: unión de vendedores de InfoManager (filtramos sucursales/consumo).
-    // Incluye vendedores reales de InfoManager aunque no tengan usuario en la app
-    // (ej. Andrea — backoffice, aparece en facturas). Así el admin los puede ver
-    // en el popover de filtro y decidir si los muestra en la vista "Todos".
-    // Solo excluye los que tienen usuario explícitamente marcado como activo=false.
+    // Whitelist de cod_vendedor que nos interesa mostrar. InfoManager trae históricos
+    // (Federico=1, Adolfo=5, Robledo=8, Dario=9, Niño=10) que no operan más — no los queremos.
+    // Si se incorpora alguien nuevo, agregar su cod_vendedor acá.
+    // 2=Sebastián, 3=Marcelo, 4=Julio, 6=Andrea (backoffice), 12=Brian.
+    const COD_VENDEDORES_VISIBLES = new Set([2, 3, 4, 6, 12]);
+
     const incluirInactivos = String(req.query.incluir_inactivos ?? '') === 'true';
     const vendedoresValidos = (vendedoresIM ?? []).filter((v: any) => {
       const n = String(v?.nombre ?? '').toUpperCase();
       if (n.includes('SUCURSAL') || n.includes('CONSUMO')) return false;
+      if (!COD_VENDEDORES_VISIBLES.has(Number(v.cod_vendedor))) return false;
       if (incluirInactivos) return true;
       const u = usuariosByCod.get(v.cod_vendedor);
-      // Sin usuario: incluir (histórico InfoManager válido).
-      // Con usuario: solo si activo !== false.
+      // Sin usuario (Andrea) → incluir. Con usuario → solo si activo !== false.
       return !u || u.activo !== false;
     });
 
