@@ -126,17 +126,19 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
     const diasRestantes = Math.max(0, diasTotal - diasTrans);
 
     // Base: unión de vendedores de InfoManager (filtramos sucursales/consumo).
-    // Además, por default filtramos los que NO tienen usuario con activo=true.
-    // El admin puede pedir ?incluir_inactivos=true para verlos igual.
+    // Incluye vendedores reales de InfoManager aunque no tengan usuario en la app
+    // (ej. Andrea — backoffice, aparece en facturas). Así el admin los puede ver
+    // en el popover de filtro y decidir si los muestra en la vista "Todos".
+    // Solo excluye los que tienen usuario explícitamente marcado como activo=false.
     const incluirInactivos = String(req.query.incluir_inactivos ?? '') === 'true';
     const vendedoresValidos = (vendedoresIM ?? []).filter((v: any) => {
       const n = String(v?.nombre ?? '').toUpperCase();
       if (n.includes('SUCURSAL') || n.includes('CONSUMO')) return false;
       if (incluirInactivos) return true;
       const u = usuariosByCod.get(v.cod_vendedor);
-      // Si no hay usuario asociado → oculto por default (probable histórico IM).
-      // Si hay usuario → solo si activo=true.
-      return !!u && u.activo !== false;
+      // Sin usuario: incluir (histórico InfoManager válido).
+      // Con usuario: solo si activo !== false.
+      return !u || u.activo !== false;
     });
 
     const items: GoalItem[] = vendedoresValidos.map((v: any) => {
@@ -154,7 +156,9 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
         nombre: u?.nombre ?? v.nombre,
         vendedor_key: u?.vendedor_key ?? null,
         email: u?.email ?? null,
-        activo: u?.activo !== false,
+        // activo=true solo si hay usuario explícito y activo. Sin usuario (Andrea, Dario,
+        // Federico, etc.) → activo=false, aparece destildado por default en el popover.
+        activo: !!(u && u.activo !== false),
         year, month,
         target_neto: target,
         avance,
