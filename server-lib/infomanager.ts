@@ -166,16 +166,26 @@ export interface ClienteIM {
 }
 
 /**
- * Trae la lista de clientes desde InfoManager. Sin doc formal del shape, soportamos
- * varios nombres comunes de columna (telefono/tel_fijo/tel, celular/whatsapp/movil)
- * y normalizamos a `{telefono, whatsapp}`. Si InfoManager no trae contactos, devuelve
- * nulls graciosamente.
+ * Trae la lista de clientes desde InfoManager. Endpoint paginado (requiere page+limit).
+ * Iteramos hasta que la página vuelva vacía o con menos elementos que limit.
+ * Sin doc formal del shape, soportamos varios nombres comunes de columna
+ * (telefono/tel_fijo/tel, celular/whatsapp/movil) y normalizamos a
+ * `{telefono, whatsapp}`. Si IM no trae contactos, devuelve nulls graciosamente.
  */
 export async function fetchClientesIM(): Promise<ClienteIM[]> {
   const cli = await imClient();
-  const { data } = await cli.get('/clientes');
-  const rows = Array.isArray(data) ? data : (data?.results ?? data?.clientes ?? []);
-  return rows.map((r: any) => {
+  const PAGE_SIZE = 500;
+  const MAX_PAGES = 20; // safety cap: soporta hasta 10k clientes
+  const all: any[] = [];
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const { data } = await cli.get('/clientes', { params: { page, limit: PAGE_SIZE } });
+    const rows = Array.isArray(data) ? data
+      : (data?.results ?? data?.clientes ?? data?.data ?? data?.items ?? []);
+    if (!rows.length) break;
+    all.push(...rows);
+    if (rows.length < PAGE_SIZE) break;
+  }
+  return all.map((r: any) => {
     const cod = Number(r.cod_cliente ?? r.codigo ?? r.id ?? r.cod ?? 0);
     const telFijo = r.telefono ?? r.tel_fijo ?? r.tel ?? r.telefonos ?? null;
     const cel = r.celular ?? r.whatsapp ?? r.movil ?? r.cel ?? null;

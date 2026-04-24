@@ -483,21 +483,28 @@ app.get('/api/clientes/lookup', requireJwt, (req: any, res) => listClientesLooku
 app.get('/api/debug/im-clientes-sample', requireJwt, requireAdmin, async (req: any, res) => {
     try {
         const limit = Number(req.query.limit) || 3;
+        const page = Number(req.query.page) || 1;
         const codFilter = req.query.cod ? Number(req.query.cod) : null;
         const token = await getIMToken();
         const { data } = await axios.get(`${IM_BASE_URL}/clientes`, {
+            params: { page, limit },
             headers: { Authorization: `Bearer ${token}` },
             timeout: 30000,
         });
-        const rows = Array.isArray(data) ? data : (data?.results ?? data?.clientes ?? []);
+        const rows = Array.isArray(data) ? data
+            : (data?.results ?? data?.clientes ?? data?.data ?? data?.items ?? []);
         const filtered = codFilter != null
             ? rows.filter((r: any) => Number(r.cod_cliente ?? r.codigo ?? r.id ?? r.cod) === codFilter)
-            : rows.slice(0, limit);
-        // Sample devuelve el row crudo + las keys disponibles para detectar
-        // el nombre correcto de cada campo de contacto.
+            : rows;
+        // Sample devuelve el row crudo + las keys disponibles + el envelope top-level
+        // para detectar el nombre correcto de cada campo de contacto y del paginador.
         res.json({
             ok: true,
-            total: rows.length,
+            envelope_keys: (data && typeof data === 'object' && !Array.isArray(data)) ? Object.keys(data) : [],
+            envelope_meta: (data && typeof data === 'object' && !Array.isArray(data))
+                ? Object.fromEntries(Object.entries(data).filter(([k]) => k !== 'results' && k !== 'clientes' && k !== 'data' && k !== 'items'))
+                : null,
+            rows_count: rows.length,
             sample_count: filtered.length,
             available_keys: rows[0] ? Object.keys(rows[0]) : [],
             sample: filtered,
