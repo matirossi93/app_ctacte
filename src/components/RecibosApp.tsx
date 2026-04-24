@@ -253,9 +253,27 @@ function UploadRecibo({ clients, defaultCodVendedor, onDone, onCancel }:
         setPreviewUrl(URL.createObjectURL(f));
     };
 
+    // Sanitiza lo que el user escribe en el campo monto: saca "$", letras, espacios,
+    // acepta "," o "." como decimal (AR usa coma, pero aceptamos ambos).
+    const cleanMonto = (raw: string): string => {
+        let v = raw.replace(/[^\d.,]/g, '');
+        // Si tiene "." y "," (formato AR típico "1.500,50"): "." son miles, "," decimal.
+        if (v.includes('.') && v.includes(',')) {
+            v = v.replace(/\./g, '').replace(',', '.');
+        } else if (v.includes(',')) {
+            v = v.replace(',', '.');
+        }
+        // Dejar un solo punto decimal
+        const parts = v.split('.');
+        if (parts.length > 2) v = parts[0] + '.' + parts.slice(1).join('');
+        return v;
+    };
+
     const submit = async () => {
         if (!file) { setMsg({ kind: 'err', text: 'Falta la foto del comprobante' }); return; }
         if (!codCliente) { setMsg({ kind: 'err', text: 'Elegí el cliente' }); return; }
+        const montoNum = Number(monto);
+        if (!monto || !isFinite(montoNum) || montoNum <= 0) { setMsg({ kind: 'err', text: 'Ingresá el monto del pago' }); return; }
         setBusy(true); setMsg(null);
         try {
             const fd = new FormData();
@@ -354,8 +372,14 @@ function UploadRecibo({ clients, defaultCodVendedor, onDone, onCancel }:
 
                 <div className="rec-row">
                     <label className="rec-field">
-                        <span>Monto</span>
-                        <input type="number" step="0.01" placeholder="(opcional — OCR lo detecta)" value={monto} onChange={e => setMonto(e.target.value)} />
+                        <span>Monto *</span>
+                        <input
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="0,00"
+                            value={monto}
+                            onChange={e => setMonto(cleanMonto(e.target.value))}
+                        />
                     </label>
                     <label className="rec-field">
                         <span>Fecha</span>
@@ -407,7 +431,9 @@ function UploadRecibo({ clients, defaultCodVendedor, onDone, onCancel }:
 
                 <div className="rec-form-actions">
                     <button className="btn-secondary" onClick={onCancel} disabled={busy}>Cancelar</button>
-                    <button className="btn-primary" onClick={submit} disabled={busy || !file || !codCliente}>
+                    <button className="btn-primary" onClick={submit}
+                        disabled={busy || !file || !codCliente || !monto || !(Number(monto) > 0)}
+                        title={!monto ? 'Cargá el monto del comprobante' : undefined}>
                         {busy ? <><Loader2 size={16} className="spin" /> Enviando…</> : <><Upload size={16} /> Enviar comprobante</>}
                     </button>
                 </div>
