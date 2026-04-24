@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
-    DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, Settings2, MapPin
+    DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, Settings2, MapPin,
+    Sun, ChevronRight, AlertTriangle
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser } from '../utils/auth';
 import { RecibosApp } from './RecibosApp';
@@ -11,7 +12,7 @@ import { UsuariosAdmin } from './UsuariosAdmin';
 import { ImportarSheet } from './ImportarSheet';
 import './VendorShell.css';
 
-type Tab = 'cobranzas' | 'objetivos' | 'actividad';
+type Tab = 'hoy' | 'cobranzas' | 'objetivos' | 'actividad';
 
 interface Invoice {
     ID: string;
@@ -124,11 +125,13 @@ interface ClientesResponse {
 interface ActivityItem {
     id: string;
     cod_cliente: number | null;
+    cod_vendedor: number;
     tipo: 'nota' | 'llamada' | 'wa' | 'promesa' | 'pago' | 'visita';
     contenido: string | null;
     monto: number | null;
     fecha_promesa: string | null;
     created_at: string;
+    created_by_nombre?: string | null;
 }
 
 interface Props {
@@ -138,12 +141,14 @@ interface Props {
 export const VendorShell = ({ onLogout }: Props) => {
     const user = getUser();
     const isAdmin = user?.rol === 'admin' || user?.rol === 'gerente';
-    const [tab, setTab] = useState<Tab>('cobranzas');
+    const [tab, setTab] = useState<Tab>('hoy');
     const [showRecibos, setShowRecibos] = useState(false);
     const [bucket, setBucket] = useState<'todos' | 'reciente' | 'medio' | 'vencido'>('todos');
     const [search, setSearch] = useState('');
     // Pendiente de crear actividad (disparado desde CobranzasView)
     const [pendingNewActivity, setPendingNewActivity] = useState<{ cod_cliente?: string; name?: string } | null>(null);
+    // Pendiente de abrir un cliente en Cobranzas (disparado desde HoyView)
+    const [pendingCobClient, setPendingCobClient] = useState<string | null>(null);
 
     // Menu del avatar
     const [avatarMenu, setAvatarMenu] = useState(false);
@@ -431,6 +436,19 @@ export const VendorShell = ({ onLogout }: Props) => {
             <main className="vs-main">
                 {err && <div className="vs-error"><AlertCircle size={16} /> {err}</div>}
 
+                {tab === 'hoy' && (
+                    <HoyView
+                        clientsAgg={clientsAgg}
+                        user={user}
+                        isAdmin={isAdmin}
+                        selectedVendor={selectedVendor}
+                        cods={codsQs}
+                        onGoToTab={(t) => setTab(t)}
+                        onOpenCobClient={(cod) => { setPendingCobClient(cod); setTab('cobranzas'); }}
+                        onOpenActivityForClient={(cod, name) => { setPendingNewActivity({ cod_cliente: cod, name }); setTab('actividad'); }}
+                    />
+                )}
+
                 {tab === 'cobranzas' && (
                     <CobranzasView
                         clients={clientsFiltered}
@@ -442,6 +460,8 @@ export const VendorShell = ({ onLogout }: Props) => {
                         onUploadPago={() => setShowRecibos(true)}
                         lastRefresh={lastRefresh}
                         loading={loading && invoices.length === 0}
+                        pendingOpenClient={pendingCobClient}
+                        onPendingOpenConsumed={() => setPendingCobClient(null)}
                     />
                 )}
 
@@ -461,6 +481,10 @@ export const VendorShell = ({ onLogout }: Props) => {
             {/* ═══════════ BOTTOM NAV ═══════════ */}
             <nav className="vs-nav" data-tab={tab}>
                 <div className="vs-nav-pill" />
+                <button className={`vs-nav-btn ${tab === 'hoy' ? 'is-active' : ''}`} onClick={() => setTab('hoy')}>
+                    <Sun size={22} />
+                    <span>Hoy</span>
+                </button>
                 <button className={`vs-nav-btn ${tab === 'cobranzas' ? 'is-active' : ''}`} onClick={() => setTab('cobranzas')}>
                     <ReceiptText size={22} />
                     <span>Cobranzas</span>
@@ -494,9 +518,306 @@ export const VendorShell = ({ onLogout }: Props) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// HOY VIEW (Dashboard del día)
+// ═══════════════════════════════════════════════════════════════════════════
+function HoyView({ clientsAgg, user, isAdmin, selectedVendor, cods, onGoToTab, onOpenCobClient, onOpenActivityForClient }:
+    {
+        clientsAgg: ClientAgg[];
+        user: any;
+        isAdmin: boolean;
+        selectedVendor: number | null;
+        cods: string;
+        onGoToTab: (t: Tab) => void;
+        onOpenCobClient: (cod: string) => void;
+        onOpenActivityForClient: (cod: string, name: string) => void;
+    }) {
+    const [goal, setGoal] = useState<GoalData | null>(null);
+    const [rankingItems, setRankingItems] = useState<any[]>([]);
+    const [teamTotales, setTeamTotales] = useState<{ target: number; avance: number; pct: number | null; proyeccion: number; diasRestantes: number } | null>(null);
+    const [activity, setActivity] = useState<ActivityItem[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [err, setErr] = useState<string | null>(null);
+
+    const load = async () => {
+        setLoading(true); setErr(null);
+        try {
+            const actParams = new URLSearchParams();
+            if (isAdmin && selectedVendor != null) actParams.set('cod_vendedor', String(selectedVendor));
+            else if (isAdmin && cods) actParams.set('cods', cods);
+            actParams.set('limit', '200');
+            const actQs = actParams.toString() ? `?${actParams.toString()}` : '';
+
+            const [gr, ar] = await Promise.all([
+                fetch(`/api/goals`, { headers: authHeaders() }).then(r => r.json()),
+                fetch(`/api/activity${actQs}`, { headers: authHeaders() }).then(r => r.json()),
+            ]);
+            if (!gr.ok) throw new Error(gr.error || 'goals error');
+            if (!ar.ok) throw new Error(ar.error || 'activity error');
+
+            const items = (gr.items ?? []) as any[];
+            setRankingItems(items);
+
+            if (isAdmin && selectedVendor != null) {
+                const g = items.find(i => i.cod_vendedor === selectedVendor) ?? null;
+                setGoal(g);
+                setTeamTotales(null);
+            } else if (isAdmin) {
+                // Agregado del equipo activos
+                const activos = items.filter(i => i.activo !== false);
+                const sumTarget = activos.reduce((a, i) => a + (i.target_neto ?? 0), 0);
+                const sumAvance = activos.reduce((a, i) => a + (i.avance ?? 0), 0);
+                const sumProy = activos.reduce((a, i) => a + (i.proyeccion ?? 0), 0);
+                const first = activos[0] ?? items[0];
+                setTeamTotales({
+                    target: sumTarget,
+                    avance: sumAvance,
+                    pct: sumTarget > 0 ? sumAvance / sumTarget : null,
+                    proyeccion: sumProy,
+                    diasRestantes: first?.dias_restantes ?? 0,
+                });
+                setGoal(null);
+            } else {
+                setGoal(items[0] ?? null);
+                setTeamTotales(null);
+            }
+
+            setActivity((ar.items ?? []) as ActivityItem[]);
+        } catch (e: any) { setErr(e.message); }
+        finally { setLoading(false); }
+    };
+    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [isAdmin, selectedVendor, cods]);
+
+    // Promesas vigentes (≤ hoy + 2d), ordenadas por urgencia
+    const promesas = useMemo(() => {
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const limit = new Date(today); limit.setDate(limit.getDate() + 2);
+        return activity
+            .filter(a => a.tipo === 'promesa' && a.fecha_promesa)
+            .map(a => {
+                const fp = new Date(a.fecha_promesa + 'T00:00:00');
+                const diff = Math.floor((fp.getTime() - today.getTime()) / 86400000);
+                return { ...a, _fp: fp, _diff: diff };
+            })
+            .filter(p => p._fp <= limit)
+            .sort((a, b) => a._fp.getTime() - b._fp.getTime());
+    }, [activity]);
+
+    // Top deudores (mora > 15d)
+    const topDeudores = useMemo(() => {
+        return clientsAgg
+            .filter(c => c.maxDias > 15)
+            .sort((a, b) => b.maxDias - a.maxDias)
+            .slice(0, 5);
+    }, [clientsAgg]);
+
+    // Top 3 ranking equipo (admin)
+    const top3 = useMemo(() => {
+        return rankingItems
+            .filter(i => i.activo !== false && i.target_neto && i.target_neto > 0)
+            .sort((a, b) => (b.pct_cumplimiento ?? 0) - (a.pct_cumplimiento ?? 0))
+            .slice(0, 3);
+    }, [rankingItems]);
+
+    // Saludo por hora
+    const hour = new Date().getHours();
+    const saludo = hour < 12 ? 'Buenos días' : hour < 20 ? 'Buenas tardes' : 'Buenas noches';
+    const nombreCorto = (user?.nombre ?? user?.email ?? '').split(' ')[0] || 'che';
+
+    if (loading) return <div className="vs-loading"><Loader2 className="spin" /> Cargando…</div>;
+
+    return (
+        <div className="vs-view vs-hoy">
+            <div className="vs-hoy-saludo">
+                <h1>{saludo}, <em>{nombreCorto}</em></h1>
+                <p>
+                    {promesas.length > 0
+                        ? <>⚡ <strong>{promesas.length}</strong> {promesas.length === 1 ? 'promesa' : 'promesas'} en los próximos días</>
+                        : <>Sin promesas urgentes esta semana.</>}
+                    {topDeudores.length > 0 && <> · <strong>{topDeudores.length}</strong> {topDeudores.length === 1 ? 'cliente' : 'clientes'} con mora alta</>}
+                </p>
+                {err && <div className="vs-error" style={{ marginTop: 8 }}><AlertCircle size={14} /> {err}</div>}
+            </div>
+
+            <div className="vs-hoy-grid">
+                {/* Promesas vigentes — fila completa */}
+                <WidgetPromesas items={promesas} isAdmin={isAdmin} onOpen={(p) => {
+                    const cc = clientsAgg.find(c => c.cod === String(p.cod_cliente));
+                    const name = cc?.name ?? `Cliente ${p.cod_cliente}`;
+                    onOpenActivityForClient(String(p.cod_cliente), name);
+                }} onGoToActividad={() => onGoToTab('actividad')} />
+
+                {/* Avance o Equipo */}
+                {isAdmin
+                    ? <WidgetEquipo totales={teamTotales} top3={top3} onGoTo={() => onGoToTab('objetivos')} />
+                    : <WidgetAvance goal={goal} onGoTo={() => onGoToTab('objetivos')} />
+                }
+
+                {/* Top deudores */}
+                <WidgetTopDeudores clients={topDeudores} onOpenClient={onOpenCobClient} onGoToCobranzas={() => onGoToTab('cobranzas')} />
+            </div>
+        </div>
+    );
+}
+
+function WidgetPromesas({ items, isAdmin, onOpen, onGoToActividad }: { items: any[]; isAdmin: boolean; onOpen: (p: any) => void; onGoToActividad: () => void }) {
+    return (
+        <div className="vs-widget vs-widget--wide">
+            <div className="vs-widget-head">
+                <h3>📌 Promesas vigentes</h3>
+                <button className="vs-widget-more" onClick={onGoToActividad} title="Ver todas">
+                    Ver todo <ChevronRight size={14} />
+                </button>
+            </div>
+            {items.length === 0 ? (
+                <div className="vs-widget-empty">No tenés promesas para esta semana. 🎉</div>
+            ) : (
+                <div className="vs-promesa-list">
+                    {items.slice(0, 6).map(p => {
+                        const tone = p._diff < 0 ? 'late' : p._diff === 0 ? 'today' : 'soon';
+                        const label = p._diff < 0 ? `hace ${Math.abs(p._diff)}d` : p._diff === 0 ? 'HOY' : `en ${p._diff}d`;
+                        return (
+                            <button key={p.id} className={`vs-promesa vs-promesa--${tone}`} onClick={() => onOpen(p)}>
+                                <div className="vs-promesa-date">{label}</div>
+                                <div className="vs-promesa-body">
+                                    <strong>Cliente {p.cod_cliente ?? '—'}</strong>
+                                    {p.monto != null && <span className="vs-promesa-monto">{formatMoney(p.monto)}</span>}
+                                    {p.contenido && <span className="vs-promesa-note">{p.contenido}</span>}
+                                    {isAdmin && p.created_by_nombre && <span className="vs-promesa-owner">· {p.created_by_nombre}</span>}
+                                </div>
+                                <ChevronRight size={16} className="vs-promesa-arrow" />
+                            </button>
+                        );
+                    })}
+                    {items.length > 6 && <button className="vs-widget-more-link" onClick={onGoToActividad}>+ {items.length - 6} más</button>}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function WidgetAvance({ goal, onGoTo }: { goal: GoalData | null; onGoTo: () => void }) {
+    if (!goal || goal.target_neto == null) {
+        return (
+            <div className="vs-widget vs-widget--avance">
+                <div className="vs-widget-head"><h3>🎯 Avance del mes</h3></div>
+                <div className="vs-widget-empty">Sin target este mes. Pedile a Matías o Manolo.</div>
+            </div>
+        );
+    }
+    const pct = goal.pct_cumplimiento ?? 0;
+    const pctPct = Math.min(200, pct * 100);
+    const circumference = 2 * Math.PI * 36;
+    const offset = circumference * (1 - Math.min(1, pct));
+    const tone = pct >= 0.9 ? 'ok' : pct >= 0.5 ? 'mid' : 'low';
+    return (
+        <button className={`vs-widget vs-widget--avance vs-widget--${tone}`} onClick={onGoTo}>
+            <div className="vs-widget-head">
+                <h3>🎯 Tu avance</h3>
+                <ChevronRight size={14} />
+            </div>
+            <div className="vs-avance-body">
+                <div className="vs-avance-ring">
+                    <svg viewBox="0 0 80 80">
+                        <circle cx="40" cy="40" r="36" fill="none" stroke="rgba(20,24,20,.08)" strokeWidth="6" />
+                        <circle cx="40" cy="40" r="36" fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round"
+                            style={{ strokeDasharray: circumference, strokeDashoffset: offset, transform: 'rotate(-90deg)', transformOrigin: 'center' }} />
+                    </svg>
+                    <div className="vs-avance-pct">{Math.round(pctPct)}<span>%</span></div>
+                </div>
+                <div className="vs-avance-figs">
+                    <div><span className="k">Target</span><strong>{formatMoney(goal.target_neto)}</strong></div>
+                    <div><span className="k">Avance</span><strong className="gold">{formatMoney(goal.avance)}</strong></div>
+                    <div><span className="k">Necesario/día</span><strong>{formatMoney(goal.necesario_por_dia)}</strong></div>
+                </div>
+            </div>
+            <div className="vs-widget-foot">{goal.dias_restantes}d restantes</div>
+        </button>
+    );
+}
+
+function WidgetEquipo({ totales, top3, onGoTo }: { totales: { target: number; avance: number; pct: number | null; proyeccion: number; diasRestantes: number } | null; top3: any[]; onGoTo: () => void }) {
+    if (!totales) return null;
+    const pct = totales.pct ?? 0;
+    const pctPct = Math.min(200, pct * 100);
+    const tone = pct >= 0.9 ? 'ok' : pct >= 0.5 ? 'mid' : 'low';
+    const medals = ['🥇', '🥈', '🥉'];
+    return (
+        <button className={`vs-widget vs-widget--avance vs-widget--${tone}`} onClick={onGoTo}>
+            <div className="vs-widget-head">
+                <h3>🎯 Equipo</h3>
+                <ChevronRight size={14} />
+            </div>
+            <div className="vs-avance-figs" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+                <div><span className="k">Target</span><strong>{formatMoney(totales.target)}</strong></div>
+                <div><span className="k">Avance</span><strong className="gold">{formatMoney(totales.avance)}</strong></div>
+                <div><span className="k">Cumplimiento</span><strong>{Math.round(pctPct)}%</strong></div>
+            </div>
+            {top3.length > 0 && (
+                <div className="vs-hoy-top3">
+                    {top3.map((v, i) => {
+                        const vPct = Math.round(Math.min(200, (v.pct_cumplimiento ?? 0) * 100));
+                        const barPct = Math.min(100, (v.pct_cumplimiento ?? 0) * 100);
+                        return (
+                            <div key={v.cod_vendedor} className="vs-hoy-top3-row">
+                                <span className="medal">{medals[i]}</span>
+                                <strong>{v.nombre}</strong>
+                                <span className="pct">{vPct}%</span>
+                                <div className="bar"><div className="bar-fill" style={{ width: `${barPct}%` }} /></div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+            <div className="vs-widget-foot">{totales.diasRestantes}d restantes · proyección {formatMoney(totales.proyeccion)}</div>
+        </button>
+    );
+}
+
+function WidgetTopDeudores({ clients, onOpenClient, onGoToCobranzas }: { clients: ClientAgg[]; onOpenClient: (cod: string) => void; onGoToCobranzas: () => void }) {
+    return (
+        <div className="vs-widget vs-widget--deudores">
+            <div className="vs-widget-head">
+                <h3>🚨 Mora alta</h3>
+                <button className="vs-widget-more" onClick={onGoToCobranzas}>
+                    Ver todo <ChevronRight size={14} />
+                </button>
+            </div>
+            {clients.length === 0 ? (
+                <div className="vs-widget-empty">Sin clientes con +15d. ¡Excelente!</div>
+            ) : (
+                <div className="vs-deudor-list">
+                    {clients.map(c => {
+                        const tel = telHref(c.db?.telefono);
+                        const wa = waHref(c.db?.whatsapp ?? c.db?.telefono);
+                        return (
+                            <div key={c.cod} className="vs-deudor">
+                                <button className="vs-deudor-main" onClick={() => onOpenClient(c.cod)}>
+                                    <div>
+                                        <strong>{c.name}</strong>
+                                        <span>{c.localidad || 'Sin localidad'}</span>
+                                    </div>
+                                    <div className="vs-deudor-right">
+                                        <div className="vs-deudor-saldo">{formatMoney(c.totalSaldo)}</div>
+                                        <span className="vs-deudor-dias"><AlertTriangle size={11} />{c.maxDias}d</span>
+                                    </div>
+                                </button>
+                                <div className="vs-deudor-actions">
+                                    {tel && <a className="vs-deudor-qa" href={tel} title="Llamar"><Phone size={14} /></a>}
+                                    {wa && <a className="vs-deudor-qa" href={wa} target="_blank" rel="noreferrer" title="WhatsApp"><MessageSquare size={14} /></a>}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // COBRANZAS VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function CobranzasView({ clients, search, setSearch, bucket, setBucket, buckets, totalSaldo, totalClientes, onUploadPago, lastRefresh, loading }:
+function CobranzasView({ clients, search, setSearch, bucket, setBucket, buckets, totalSaldo, totalClientes, onUploadPago, lastRefresh, loading, pendingOpenClient, onPendingOpenConsumed }:
     {
         clients: ClientAgg[]; search: string; setSearch: (s: string) => void;
         bucket: 'todos' | 'reciente' | 'medio' | 'vencido'; setBucket: (b: any) => void;
@@ -505,8 +826,24 @@ function CobranzasView({ clients, search, setSearch, bucket, setBucket, buckets,
         onUploadPago: () => void;
         lastRefresh: Date | null;
         loading: boolean;
+        pendingOpenClient?: string | null;
+        onPendingOpenConsumed?: () => void;
     }) {
     const [openClient, setOpenClient] = useState<string | null>(null);
+
+    // Si vienen con un cliente pre-seleccionado desde "Hoy", expandirlo y scrollear.
+    useEffect(() => {
+        if (!pendingOpenClient) return;
+        setOpenClient(pendingOpenClient);
+        setBucket('todos');
+        setSearch('');
+        setTimeout(() => {
+            const el = document.querySelector(`[data-client-cod="${pendingOpenClient}"]`);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 50);
+        onPendingOpenConsumed?.();
+        /* eslint-disable-next-line react-hooks/exhaustive-deps */
+    }, [pendingOpenClient]);
 
     return (
         <div className="vs-view">
@@ -564,7 +901,7 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
     const wa = waHref(db.whatsapp ?? db.telefono); // fallback a teléfono si no hay celular separado
 
     return (
-        <div className={`vs-client ${isOpen ? 'is-open' : ''}`}>
+        <div className={`vs-client ${isOpen ? 'is-open' : ''}`} data-client-cod={client.cod}>
             <div className="vs-client-head" onClick={onToggle}>
                 <div className={`vs-client-strip bucket-${bucket}`} />
                 <div className="vs-client-info">

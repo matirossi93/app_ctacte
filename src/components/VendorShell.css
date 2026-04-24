@@ -523,7 +523,7 @@
 }
 .vs-nav-pill {
     position: absolute; top: 6px; bottom: 6px;
-    width: calc(33.333% - 4px);
+    width: calc(25% - 4px);
     background: linear-gradient(135deg, #EEC045 0%, #FFD971 100%);
     border-radius: 18px;
     transition: left .35s cubic-bezier(.4,1.4,.5,1);
@@ -531,9 +531,10 @@
     z-index: 1;
     left: 6px;
 }
-.vs-nav[data-tab="cobranzas"] .vs-nav-pill { left: 6px }
-.vs-nav[data-tab="objetivos"] .vs-nav-pill { left: calc(33.333% + 4px) }
-.vs-nav[data-tab="actividad"] .vs-nav-pill { left: calc(66.666% + 2px) }
+.vs-nav[data-tab="hoy"] .vs-nav-pill { left: 6px }
+.vs-nav[data-tab="cobranzas"] .vs-nav-pill { left: calc(25% + 4px) }
+.vs-nav[data-tab="objetivos"] .vs-nav-pill { left: calc(50% + 4px) }
+.vs-nav[data-tab="actividad"] .vs-nav-pill { left: calc(75% + 2px) }
 .vs-nav-btn {
     flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
     background: transparent; border: 0; cursor: pointer;
@@ -914,6 +915,169 @@
     color: #8A5518; padding: 2px 8px; background: rgba(238,192,69,.25); border-radius: 8px;
 }
 
+/* ═══════════ HOY · Dashboard del día ═══════════ */
+.vs-hoy { gap: 16px; display: flex; flex-direction: column }
+
+.vs-hoy-saludo { margin-bottom: 4px }
+.vs-hoy-saludo h1 {
+    font-size: 28px; font-weight: 800; letter-spacing: -.5px;
+    margin: 0; color: #141814;
+}
+.vs-hoy-saludo h1 em { font-style: normal; color: #06652F }
+.vs-hoy-saludo p {
+    margin: 6px 0 0; color: #6e7670; font-size: 13px;
+}
+.vs-hoy-saludo p strong { color: #141814 }
+
+.vs-hoy-grid {
+    display: grid; grid-template-columns: 1fr; gap: 14px;
+}
+
+.vs-widget {
+    background: #fff; border-radius: 22px;
+    border: 1px solid rgba(20,24,20,.06);
+    box-shadow: 0 2px 0 rgba(20,24,20,.04), 0 8px 20px -8px rgba(20,24,20,.12);
+    padding: 16px;
+    display: flex; flex-direction: column; gap: 12px;
+    text-align: left; font-family: inherit; color: inherit;
+}
+button.vs-widget { cursor: pointer; transition: transform .15s ease, box-shadow .15s ease }
+button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(20,24,20,.04), 0 14px 28px -8px rgba(20,24,20,.18) }
+
+.vs-widget-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.vs-widget-head h3 {
+    margin: 0; font-size: 14px; font-weight: 800; letter-spacing: -.2px;
+    color: #141814;
+}
+.vs-widget-more {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: transparent; border: 0; cursor: pointer;
+    font-size: 11px; font-weight: 700; color: #06652F; letter-spacing: .3px;
+    font-family: inherit;
+}
+.vs-widget-empty {
+    padding: 14px; text-align: center;
+    font-size: 13px; color: #6e7670;
+    background: #F5F1E8; border-radius: 12px;
+}
+.vs-widget-foot {
+    font-size: 10px; font-weight: 700; letter-spacing: .5px;
+    text-transform: uppercase; color: #8A5518;
+    padding-top: 6px; border-top: 1px dashed rgba(20,24,20,.08);
+}
+
+/* Promesas */
+.vs-promesa-list { display: flex; flex-direction: column; gap: 6px }
+.vs-promesa {
+    display: grid; grid-template-columns: 70px 1fr auto; gap: 10px; align-items: center;
+    padding: 10px 12px; border-radius: 14px;
+    background: #FCF8EE; border: 1px solid rgba(238,192,69,.28);
+    font-family: inherit; cursor: pointer; text-align: left;
+    transition: transform .12s ease;
+}
+.vs-promesa:hover { transform: translateX(2px) }
+.vs-promesa--late { background: #F5DDD6; border-color: rgba(168,62,43,.32) }
+.vs-promesa--today { background: #E6F0E8; border-color: rgba(6,101,47,.32) }
+.vs-promesa--soon { background: #FCF8EE; border-color: rgba(238,192,69,.4) }
+.vs-promesa-date {
+    font-size: 10px; font-weight: 800; letter-spacing: .5px; text-transform: uppercase;
+    padding: 4px 8px; border-radius: 8px; text-align: center;
+}
+.vs-promesa--late .vs-promesa-date { background: #A83E2B; color: #fff }
+.vs-promesa--today .vs-promesa-date { background: #06652F; color: #EEC045 }
+.vs-promesa--soon .vs-promesa-date { background: #EEC045; color: #141814 }
+.vs-promesa-body { display: flex; flex-direction: column; gap: 2px; min-width: 0 }
+.vs-promesa-body strong { font-size: 13px; font-weight: 700; color: #141814 }
+.vs-promesa-monto { font-size: 12px; font-weight: 700; color: #06652F; font-variant-numeric: tabular-nums }
+.vs-promesa-note {
+    font-size: 11px; color: #6e7670;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vs-promesa-owner { font-size: 10px; color: #8A5518; font-weight: 700 }
+.vs-promesa-arrow { color: #6e7670; flex-shrink: 0 }
+.vs-widget-more-link {
+    align-self: center; background: transparent; border: 0; cursor: pointer;
+    font-size: 12px; color: #06652F; font-weight: 700; padding: 6px;
+    font-family: inherit;
+}
+
+/* Avance / Equipo */
+.vs-widget--avance { color: #141814 }
+.vs-widget--avance.vs-widget--ok { border-left: 3px solid #06652F }
+.vs-widget--avance.vs-widget--mid { border-left: 3px solid #EEC045 }
+.vs-widget--avance.vs-widget--low { border-left: 3px solid #A83E2B }
+.vs-avance-body { display: flex; align-items: center; gap: 16px }
+.vs-avance-ring {
+    position: relative; width: 80px; height: 80px; flex-shrink: 0;
+    color: #06652F;
+}
+.vs-widget--mid .vs-avance-ring { color: #D18A3C }
+.vs-widget--low .vs-avance-ring { color: #A83E2B }
+.vs-avance-ring svg { width: 100%; height: 100% }
+.vs-avance-pct {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    font-size: 18px; font-weight: 800; letter-spacing: -.5px; color: #141814;
+    font-variant-numeric: tabular-nums;
+}
+.vs-avance-pct span { font-size: 10px; margin-left: 1px }
+.vs-avance-figs {
+    flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+}
+.vs-avance-figs > div {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 6px 8px; background: #F5F1E8; border-radius: 10px;
+}
+.vs-avance-figs .k {
+    font-size: 9px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+    color: #6e7670;
+}
+.vs-avance-figs strong { font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; color: #141814 }
+.vs-avance-figs .gold { color: #06652F }
+
+/* Top 3 ranking en widget equipo */
+.vs-hoy-top3 { display: flex; flex-direction: column; gap: 6px }
+.vs-hoy-top3-row {
+    display: grid; grid-template-columns: 24px 1fr 42px 60px; gap: 8px; align-items: center;
+    padding: 6px 10px; background: #FCF8EE; border-radius: 10px;
+}
+.vs-hoy-top3-row .medal { font-size: 16px; line-height: 1 }
+.vs-hoy-top3-row strong { font-size: 12px; color: #141814; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.vs-hoy-top3-row .pct { font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; text-align: right }
+.vs-hoy-top3-row .bar { height: 4px; background: rgba(20,24,20,.08); border-radius: 99px; overflow: hidden }
+.vs-hoy-top3-row .bar-fill { height: 100%; background: linear-gradient(90deg, #06652F, #EEC045); border-radius: 99px }
+
+/* Top deudores */
+.vs-deudor-list { display: flex; flex-direction: column; gap: 6px }
+.vs-deudor {
+    display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center;
+    padding: 8px 10px; border-radius: 12px;
+    background: #F5DDD6; border: 1px solid rgba(168,62,43,.22);
+}
+.vs-deudor-main {
+    grid-column: 1; display: flex; justify-content: space-between; align-items: center;
+    gap: 10px; background: transparent; border: 0; padding: 0; cursor: pointer;
+    font-family: inherit; text-align: left;
+}
+.vs-deudor-main:hover strong { text-decoration: underline }
+.vs-deudor-main strong { font-size: 13px; color: #141814; display: block }
+.vs-deudor-main span { font-size: 11px; color: #6e7670 }
+.vs-deudor-right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px }
+.vs-deudor-saldo { font-size: 13px; font-weight: 800; color: #141814; font-variant-numeric: tabular-nums }
+.vs-deudor-dias {
+    font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px;
+    color: #A83E2B; display: inline-flex; align-items: center; gap: 3px;
+}
+.vs-deudor-actions { display: flex; gap: 4px }
+.vs-deudor-qa {
+    width: 28px; height: 28px; display: grid; place-items: center;
+    border-radius: 8px; background: #fff; color: #141814;
+    text-decoration: none; flex-shrink: 0;
+    transition: transform .12s ease;
+}
+.vs-deudor-qa:hover { transform: scale(1.08) }
+
 /* Desktop: layout fluido con nav lateral + grids de cards */
 @media (min-width: 900px) {
     /* Root fluido, sin frame */
@@ -953,6 +1117,11 @@
     .vs-goal-main { gap: 28px }
     .vs-goal-ring { width: 160px; height: 160px }
     .vs-goal-ring-center .pct { font-size: 30px }
+
+    /* Hoy — grid 2 col, promesas full width */
+    .vs-hoy-grid { grid-template-columns: 1fr 1fr; gap: 16px }
+    .vs-hoy-grid > .vs-widget--wide { grid-column: 1 / -1 }
+    .vs-hoy-saludo h1 { font-size: 36px }
     .vs-goal-ring-center .pct span { font-size: 15px }
     .vs-goal-ring-center .sub { font-size: 10px }
 
