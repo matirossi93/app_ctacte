@@ -431,6 +431,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
     const [fechaFinal, setFechaFinal] = useState('');
     const [medioFinal, setMedioFinal] = useState('');
     const [motivoRechazo, setMotivoRechazo] = useState('');
+    const [esAnticipo, setEsAnticipo] = useState(false);
     const [busy, setBusy] = useState(false);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
@@ -488,9 +489,11 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
         if (!rec) return;
         setBusy(true); setMsg(null);
         try {
-            const comprobantesPayload = Object.entries(selFacturas).map(([id, importe]) => ({
-                id, importe_a_pagar: Number(importe)
-            }));
+            const comprobantesPayload = esAnticipo
+                ? []
+                : Object.entries(selFacturas).map(([id, importe]) => ({
+                    id, importe_a_pagar: Number(importe)
+                }));
             const res = await fetch(`/api/recibos/${rec.id}/aprobar`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -499,7 +502,8 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                     fecha: fechaFinal,
                     medio_pago: medioFinal,
                     cod_empresa: codEmpresa,
-                    comprobantes: comprobantesPayload
+                    comprobantes: comprobantesPayload,
+                    es_anticipo: esAnticipo,
                 })
             });
             const data = await res.json();
@@ -573,7 +577,16 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
 
                     {isBackoffice && (rec.status === 'pendiente_revision' || rec.status === 'error') && (
                         <div className="rec-approval">
-                            <h4>Imputar a facturas</h4>
+                            <h4>{esAnticipo ? 'Imputar como anticipo' : 'Imputar a facturas'}</h4>
+
+                            <label className="rec-anticipo-toggle">
+                                <input type="checkbox" checked={esAnticipo} onChange={e => setEsAnticipo(e.target.checked)} />
+                                <div>
+                                    <strong>Es anticipo de cliente (sin factura)</strong>
+                                    <span>Se imputa a la cuenta 2124000 — Anticipo de clientes.</span>
+                                </div>
+                            </label>
+
                             <div className="rec-row">
                                 <label className="rec-field">
                                     <span>Empresa</span>
@@ -603,7 +616,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                                 </label>
                             </div>
 
-                            <div className="rec-facturas">
+                            {!esAnticipo && <div className="rec-facturas">
                                 {loadingFacturas && <div><Loader2 className="spin" size={14} /> Cargando facturas pendientes…</div>}
                                 {!loadingFacturas && facturas.length === 0 && <div className="rec-empty">Sin facturas pendientes para esta empresa.</div>}
                                 {!loadingFacturas && facturas.map(f => {
@@ -629,16 +642,23 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                                         </div>
                                     );
                                 })}
-                            </div>
+                            </div>}
 
-                            <div className="rec-approval-summary">
-                                <span>Total a imputar: <strong>{formatMoney(totalImputado)}</strong> / {formatMoney(Number(montoFinal))}</span>
-                                {Math.abs(totalImputado - Number(montoFinal)) > 0.01 && (
-                                    <span className="rec-warn">
-                                        ⚠ Diferencia: {formatMoney(Number(montoFinal) - totalImputado)}
-                                    </span>
-                                )}
-                            </div>
+                            {!esAnticipo && (
+                                <div className="rec-approval-summary">
+                                    <span>Total a imputar: <strong>{formatMoney(totalImputado)}</strong> / {formatMoney(Number(montoFinal))}</span>
+                                    {Math.abs(totalImputado - Number(montoFinal)) > 0.01 && (
+                                        <span className="rec-warn">
+                                            ⚠ Diferencia: {formatMoney(Number(montoFinal) - totalImputado)}
+                                        </span>
+                                    )}
+                                </div>
+                            )}
+                            {esAnticipo && (
+                                <div className="rec-approval-summary">
+                                    <span>Anticipo por <strong>{formatMoney(Number(montoFinal))}</strong> → cta 2124000</span>
+                                </div>
+                            )}
 
                             {msg && <div className={`rec-msg rec-msg--${msg.kind}`}>{msg.text}</div>}
 
@@ -652,10 +672,12 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                                 />
                                 <button className="btn-danger" disabled={busy || !motivoRechazo.trim()} onClick={rechazar}>Rechazar</button>
                                 <button className="btn-primary"
-                                    disabled={busy || Object.keys(selFacturas).length === 0 || Math.abs(totalImputado - Number(montoFinal)) > 0.01}
+                                    disabled={busy || (esAnticipo
+                                        ? !(Number(montoFinal) > 0)
+                                        : (Object.keys(selFacturas).length === 0 || Math.abs(totalImputado - Number(montoFinal)) > 0.01))}
                                     onClick={aprobar}
-                                    title={Math.abs(totalImputado - Number(montoFinal)) > 0.01 ? 'El total a imputar debe coincidir con el monto final' : ''}>
-                                    {busy ? <><Loader2 size={14} className="spin" /> Emitiendo…</> : <><Check size={14} /> Aprobar y emitir recibo</>}
+                                    title={!esAnticipo && Math.abs(totalImputado - Number(montoFinal)) > 0.01 ? 'El total a imputar debe coincidir con el monto final' : ''}>
+                                    {busy ? <><Loader2 size={14} className="spin" /> Emitiendo…</> : <><Check size={14} /> {esAnticipo ? 'Aprobar como anticipo' : 'Aprobar y emitir recibo'}</>}
                                 </button>
                             </div>
                         </div>

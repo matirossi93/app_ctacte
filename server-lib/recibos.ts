@@ -10,6 +10,7 @@ import type { JwtPayload } from './auth.js';
 const { env } = process;
 const IM_USUARIO = env.INFOMANAGER_USUARIO || 'matias';
 const IM_CENTRO_COSTO_DEFAULT = (env.IM_CENTRO_COSTO_DEFAULT || 'S') as 'S' | 'N';
+const IM_CUENTA_ANTICIPO_CLIENTES = env.IM_CUENTA_ANTICIPO_CLIENTES || '2124000';
 
 const BUCKET = 'recibos';
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -197,19 +198,23 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
     const medioPago = String(body.medio_pago ?? comp.medio_pago ?? 'transferencia');
     const centroCosto: 'S' | 'N' = body.centro_costo === 'N' ? 'N' : IM_CENTRO_COSTO_DEFAULT;
     const usuario = String(body.usuario ?? IM_USUARIO);
+    const esAnticipo = body.es_anticipo === true;
 
-    // comprobantes: [{id, importe_a_pagar}] — id viene del endpoint comprob_pendientes_clientes
+    // comprobantes: [{id, importe_a_pagar}] — id viene del endpoint comprob_pendientes_clientes.
+    // En anticipos no se imputa a facturas → queda vacío, la cuenta de destino es 2124000.
     const comprobantesBody: Array<{ id: string | number; importe_a_pagar: number | string }> =
-      Array.isArray(body.comprobantes) ? body.comprobantes : [];
+      esAnticipo ? [] : (Array.isArray(body.comprobantes) ? body.comprobantes : []);
     const comprobantes: ReciboComprobante[] = comprobantesBody
       .filter(c => c && c.id != null && c.importe_a_pagar != null)
       .map(c => ({ id: String(c.id), importe_a_pagar: Number(c.importe_a_pagar).toFixed(2) }));
 
-    // pagos: si el front no envía explícitamente, armo uno solo a partir de medio + monto
+    // pagos: si el front no envía explícitamente, armo uno solo a partir de medio + monto.
+    // En anticipos se fuerza la cuenta 2124000 (Anticipo de clientes), replicando el
+    // comportamiento manual actual en InfoManager.
     const pagosBody: Array<Partial<ReciboPago>> = Array.isArray(body.pagos) ? body.pagos : [];
-    const cuentaDefault = await resolveCuentaCod(medioPago);
+    const cuentaDefault = esAnticipo ? IM_CUENTA_ANTICIPO_CLIENTES : await resolveCuentaCod(medioPago);
     let pagos: ReciboPago[];
-    if (pagosBody.length) {
+    if (pagosBody.length && !esAnticipo) {
       pagos = pagosBody.map(p => ({
         forma_pago: (p.forma_pago ?? getFormaPagoIM(medioPago)) as any,
         importe: Number(p.importe ?? 0).toFixed(2),
@@ -237,10 +242,15 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
       });
       return;
     }
-    if (!comprobantes.length) {
-      res.status(400).json({ error: 'Tenés que seleccionar al menos un comprobante a imputar' });
+    if (!esAnticipo && !comprobantes.length) {
+      res.status(400).json({ error: 'Tenés que seleccionar al menos un comprobante a imputar (o marcá "Es anticipo de cliente")' });
       return;
     }
+
+    const detalleBase = body.observaciones ?? comp.observaciones ?? comp.referencia ?? '';
+    const detalleFinal = esAnticipo
+      ? `[ANTICIPO] ${detalleBase}`.trim()
+      : detalleBase;
 
     const imRes = await crearRecibo({
       cod_empresa: String(codEmpresa),
@@ -248,7 +258,7 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
       centro_costo: centroCosto,
       cod_cliente: String(comp.cod_cliente),
       usuario,
-      detalle: body.observaciones ?? comp.observaciones ?? comp.referencia ?? '',
+      detalle: detalleFinal,
       moneda: 'P',
       cotizacion: '1.0',
       pagos,
@@ -268,9 +278,11 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
     }
 
     const now = new Date().toISOString();
-    const facturaResumen = comprobantes.length
-      ? comprobantes.map(c => `#${c.id}·$${c.importe_a_pagar}`).join(',')
-      : null;
+    const facturaResumen = esAnticipo
+      ? `ANTICIPO cta ${IM_CUENTA_ANTICIPO_CLIENTES} $${monto.toFixed(2)}`
+      : comprobantes.length
+        ? comprobantes.map(c => `#${c.id}·$${c.importe_a_pagar}`).join(',')
+        : null;
     const { error: updErr } = await sb().from('comprobantes_pago').update({
       status: 'imputado',
       monto,

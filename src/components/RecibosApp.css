@@ -217,6 +217,14 @@
 .rec-approval { margin-top: 10px; padding-top: 14px; border-top: 1px dashed rgba(20,24,20,.15); display: flex; flex-direction: column; gap: 12px }
 .rec-approval h4 { margin: 0 0 4px; font-size: 13px; letter-spacing: .5px; text-transform: uppercase; color: #6e7670 }
 
+.rec-anticipo-toggle {
+    display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px;
+    background: #FBF4E0; border: 1px solid rgba(238,192,69,.45); border-radius: 12px; cursor: pointer;
+}
+.rec-anticipo-toggle input[type="checkbox"] { margin-top: 3px; width: 16px; height: 16px; accent-color: #06652F }
+.rec-anticipo-toggle strong { display: block; font-size: 13px; color: #141814 }
+.rec-anticipo-toggle span { display: block; font-size: 11px; color: #6e7670; margin-top: 2px }
+
 .rec-facturas { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; padding: 2px }
 .rec-factura {
     display: flex; align-items: center; gap: 10px; padding: 10px 12px;
