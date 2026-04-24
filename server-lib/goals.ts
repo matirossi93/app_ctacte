@@ -276,7 +276,7 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
     }
 
     // Clientes del vendedor (o todos si admin sin filtro)
-    let q = sb().from('client_operational').select('cod_cliente, cod_vendedor, razon_social, localidad, frecuencia, dia_visita, tipo_abc, objetivo_mes, objetivo_year, objetivo_month, fact_mes_pasado, fact_prom_3m, saldo_cta_cte').eq('tenant_id', TENANT_ID);
+    let q = sb().from('client_operational').select('cod_cliente, cod_vendedor, razon_social, localidad, frecuencia, dia_visita, tipo_abc, direccion, repartidor, hoja_ruta, dia_entrega, cond_pago, notas, objetivo_mes, objetivo_year, objetivo_month, fact_mes_pasado, fact_prom_3m, saldo_cta_cte').eq('tenant_id', TENANT_ID);
     if (codVend != null) q = q.eq('cod_vendedor', codVend);
     else if (codsList) q = q.in('cod_vendedor', codsList);
     q = q.order('objetivo_mes', { ascending: false, nullsFirst: false }).limit(2000);
@@ -318,6 +318,12 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
         frecuencia: c.frecuencia,
         dia_visita: c.dia_visita,
         tipo_abc: c.tipo_abc,
+        direccion: c.direccion ?? null,
+        repartidor: c.repartidor ?? null,
+        hoja_ruta: c.hoja_ruta ?? null,
+        dia_entrega: c.dia_entrega ?? null,
+        cond_pago: c.cond_pago ?? null,
+        notas: c.notas ?? null,
         objetivo_mes: objetivo,
         fact_mes_pasado: c.fact_mes_pasado != null ? Number(c.fact_mes_pasado) : null,
         fact_prom_3m: c.fact_prom_3m != null ? Number(c.fact_prom_3m) : null,

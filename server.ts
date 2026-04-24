@@ -476,6 +476,37 @@ app.get('/api/goals/debug-cliente/:cod', requireJwt, requireAdmin, (req: any, re
 // ─── Clientes lookup (maestro completo, con y sin deuda) ─────────────────────
 app.get('/api/clientes/lookup', requireJwt, (req: any, res) => listClientesLookup(req, res));
 
+// ─── DEBUG: sample crudo de /clientes de InfoManager (admin-only) ────────────
+// Uso: curl/browser con JWT admin → ver el shape real para ajustar el mapping
+// de telefono/whatsapp en fetchClientesIM cuando no traigan los nombres
+// comunes que asumimos por defecto.
+app.get('/api/debug/im-clientes-sample', requireJwt, requireAdmin, async (req: any, res) => {
+    try {
+        const limit = Number(req.query.limit) || 3;
+        const codFilter = req.query.cod ? Number(req.query.cod) : null;
+        const token = await getIMToken();
+        const { data } = await axios.get(`${IM_BASE_URL}/clientes`, {
+            headers: { Authorization: `Bearer ${token}` },
+            timeout: 30000,
+        });
+        const rows = Array.isArray(data) ? data : (data?.results ?? data?.clientes ?? []);
+        const filtered = codFilter != null
+            ? rows.filter((r: any) => Number(r.cod_cliente ?? r.codigo ?? r.id ?? r.cod) === codFilter)
+            : rows.slice(0, limit);
+        // Sample devuelve el row crudo + las keys disponibles para detectar
+        // el nombre correcto de cada campo de contacto.
+        res.json({
+            ok: true,
+            total: rows.length,
+            sample_count: filtered.length,
+            available_keys: rows[0] ? Object.keys(rows[0]) : [],
+            sample: filtered,
+        });
+    } catch (err: any) {
+        res.status(500).json({ ok: false, error: err?.message ?? 'error', status: err?.response?.status, raw: err?.response?.data });
+    }
+});
+
 // ─── Actividad ───────────────────────────────────────────────────────────────
 app.get('/api/activity', requireJwt, (req: any, res) => listActivity(req, res));
 app.post('/api/activity', requireJwt, (req: any, res) => createActivity(req, res));

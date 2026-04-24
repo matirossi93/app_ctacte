@@ -292,21 +292,6 @@
 .vs-bucket-pill.bucket-medio .dot-b { background: #D18A3C }
 .vs-bucket-pill.bucket-vencido { background: #F5DDD6; color: #A83E2B }
 .vs-bucket-pill.bucket-vencido .dot-b { background: #A83E2B }
-.vs-abc-tag {
-    font-weight: 700; color: #06652F; font-size: 10px; letter-spacing: .5px;
-    text-transform: uppercase;
-}
-.vs-visita-hoy {
-    display: inline-flex; align-items: center; gap: 4px;
-    padding: 3px 8px; border-radius: 8px;
-    background: #06652F; color: #EEC045;
-    font-size: 10px; font-weight: 800; letter-spacing: .5px;
-    animation: vs-pulse 2.5s ease-in-out infinite;
-}
-@keyframes vs-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(6,101,47,.4) }
-    50% { box-shadow: 0 0 0 6px rgba(6,101,47,0) }
-}
 .vs-bucket-pill .dot-b { width: 6px; height: 6px; border-radius: 50% }
 .vs-client-docs { font-size: 11px; color: #6e7670; font-weight: 500 }
 
@@ -809,6 +794,19 @@
     padding: 8px 0; border-top: 1px dashed rgba(20,24,20,.08);
 }
 .vs-cliente-obj-no-target strong { color: #141814 }
+
+/* Expandible: cursor pointer en el head cuando hay info comercial/histórico */
+.vs-cliente-obj.is-expandable .vs-cliente-obj-head { cursor: pointer; }
+.vs-cliente-obj.is-expandable .vs-cliente-obj-head::after {
+    content: '▾'; color: #6e7670; font-size: 12px; margin-left: 6px; align-self: center;
+    transition: transform .2s ease;
+}
+.vs-cliente-obj.is-expandable.is-open .vs-cliente-obj-head::after { transform: rotate(180deg); }
+.vs-cliente-obj-detail {
+    margin-top: 12px; padding-top: 12px;
+    border-top: 1px dashed rgba(20,24,20,.1);
+    display: flex; flex-direction: column; gap: 10px;
+}
 
 /* ═══════════ FICHA DE CLIENTE ENRIQUECIDA ═══════════ */
 .vs-client-info-comercial {

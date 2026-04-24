@@ -67,9 +67,16 @@ interface ClienteObjetivo {
     localidad: string | null;
     frecuencia: string | null;
     tipo_abc: string | null;
+    direccion: string | null;
+    repartidor: string | null;
+    hoja_ruta: string | null;
+    dia_entrega: string | null;
+    cond_pago: string | null;
+    notas: string | null;
     objetivo_mes: number | null;
     fact_mes_pasado: number | null;
     fact_prom_3m: number | null;
+    saldo_cta_cte: number | null;
     avance: number;
     num_comprobantes: number;
     pct_cumplimiento: number | null;
@@ -553,11 +560,8 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
     const bucket = client.maxDias <= 7 ? 'reciente' : client.maxDias <= 15 ? 'medio' : 'vencido';
     const bucketLabel = `${client.maxDias}d`;
     const db = client.db ?? {};
-    const visitaHoy = isVisitaHoy(db.dia_visita);
     const tel = telHref(db.telefono);
     const wa = waHref(db.whatsapp ?? db.telefono); // fallback a teléfono si no hay celular separado
-    const hasHistorico = db.fact_mes_pasado != null || db.fact_prom_3m != null;
-    const hasInfoComercial = db.direccion || db.tipo_abc || db.cond_pago || db.hoja_ruta || db.repartidor || db.notas;
 
     return (
         <div className={`vs-client ${isOpen ? 'is-open' : ''}`}>
@@ -571,7 +575,6 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
                                 <span>{client.localidad || 'Sin localidad'}</span>
                                 <span className="sep" />
                                 <span>Cod {client.cod}</span>
-                                {db.tipo_abc && <><span className="sep" /><span className="vs-abc-tag">ABC {db.tipo_abc}</span></>}
                             </div>
                         </div>
                         <div className="vs-client-saldo">{formatMoney(client.totalSaldo)}</div>
@@ -580,8 +583,6 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
                         <span className={`vs-bucket-pill bucket-${bucket}`}>
                             <span className="dot-b" />{bucketLabel}
                         </span>
-                        {visitaHoy && <span className="vs-visita-hoy"><Calendar size={11} /> VISITA HOY</span>}
-                        {db.dia_visita && !visitaHoy && <span className="vs-client-docs">📅 {db.dia_visita}</span>}
                         <span className="vs-client-docs">{client.invoices.length} comprob.</span>
                     </div>
                 </div>
@@ -611,32 +612,6 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
 
             {isOpen && (
                 <div className="vs-timeline">
-                    {hasInfoComercial && (
-                        <div className="vs-client-info-comercial">
-                            <h4>Info comercial</h4>
-                            {db.direccion && <div className="vs-info-row"><MapPin size={13} /><span>{db.direccion}</span></div>}
-                            {db.repartidor && <div className="vs-info-row"><Truck size={13} /><span>Repartidor: <strong>{db.repartidor}</strong>{db.hoja_ruta ? ` · ruta ${db.hoja_ruta}` : ''}{db.dia_entrega ? ` · entrega ${db.dia_entrega}` : ''}</span></div>}
-                            {(db.cond_pago || client.db?.Frecuencia) && (
-                                <div className="vs-info-row"><DollarSign size={13} /><span>{db.cond_pago ? `Pago: ${db.cond_pago}` : ''}{db.cond_pago && client.db?.Frecuencia ? ' · ' : ''}{client.db?.Frecuencia ? `Frec: ${client.db.Frecuencia}` : ''}</span></div>
-                            )}
-                            {db.notas && <div className="vs-info-notes">💬 {db.notas}</div>}
-                        </div>
-                    )}
-
-                    {hasHistorico && (
-                        <div className="vs-client-historico">
-                            {db.fact_mes_pasado != null && (
-                                <div><span className="k">Mes pasado</span><strong>{formatMoney(db.fact_mes_pasado)}</strong></div>
-                            )}
-                            {db.fact_prom_3m != null && (
-                                <div><span className="k">Prom. 3m</span><strong>{formatMoney(db.fact_prom_3m)}</strong></div>
-                            )}
-                            {db.saldo_cta_cte != null && (
-                                <div><span className="k">Saldo ctacte</span><strong>{formatMoney(db.saldo_cta_cte)}</strong></div>
-                            )}
-                        </div>
-                    )}
-
                     <h4>Facturas pendientes</h4>
                     {client.invoices.slice(0, 12).map(inv => (
                         <div key={inv.ID} className="vs-tl-item">
@@ -682,6 +657,7 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
     const [targetInput, setTargetInput] = useState('');
     const [savingTarget, setSavingTarget] = useState(false);
     const [searchClientes, setSearchClientes] = useState('');
+    const [openCliObj, setOpenCliObj] = useState<number | null>(null);
 
     // Reset localidad + search al cambiar de vendedor
     useEffect(() => { setLocalidad(''); setSearchClientes(''); }, [selectedVendor]);
@@ -1028,14 +1004,21 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                 )}
 
                 <div className="vs-clientes-obj-list">
-                    {clientesFiltered.map(c => <ClienteObjetivoCard key={c.cod_cliente} c={c} />)}
+                    {clientesFiltered.map(c => (
+                        <ClienteObjetivoCard
+                            key={c.cod_cliente}
+                            c={c}
+                            isOpen={openCliObj === c.cod_cliente}
+                            onToggle={() => setOpenCliObj(p => p === c.cod_cliente ? null : c.cod_cliente)}
+                        />
+                    ))}
                 </div>
             </div>
         </div>
     );
 }
 
-function ClienteObjetivoCard({ c }: { c: ClienteObjetivo }) {
+function ClienteObjetivoCard({ c, isOpen, onToggle }: { c: ClienteObjetivo; isOpen: boolean; onToggle: () => void }) {
     const pct = c.pct_cumplimiento ?? 0;
     const barPct = Math.min(100, pct * 100);
     const statusCfg = {
@@ -1045,9 +1028,13 @@ function ClienteObjetivoCard({ c }: { c: ClienteObjetivo }) {
         sin_objetivo: { label: 'Sin objetivo', color: '#6B7280' },
     }[c.status];
 
+    const hasInfoComercial = c.direccion || c.cond_pago || c.hoja_ruta || c.repartidor || c.dia_entrega || c.notas;
+    const hasHistorico = c.fact_mes_pasado != null || c.fact_prom_3m != null || c.saldo_cta_cte != null;
+    const canExpand = hasInfoComercial || hasHistorico;
+
     return (
-        <div className="vs-cliente-obj">
-            <div className="vs-cliente-obj-head">
+        <div className={`vs-cliente-obj ${isOpen ? 'is-open' : ''} ${canExpand ? 'is-expandable' : ''}`}>
+            <div className="vs-cliente-obj-head" onClick={canExpand ? onToggle : undefined}>
                 <div>
                     <h3>{c.razon_social || `Cliente #${c.cod_cliente}`}</h3>
                     <div className="vs-cliente-obj-meta">
@@ -1080,6 +1067,34 @@ function ClienteObjetivoCard({ c }: { c: ClienteObjetivo }) {
             {c.objetivo_mes == null && (
                 <div className="vs-cliente-obj-no-target">
                     Avance: <strong>{formatMoney(c.avance)}</strong> ({c.num_comprobantes} comprob.)
+                </div>
+            )}
+
+            {isOpen && canExpand && (
+                <div className="vs-cliente-obj-detail">
+                    {hasInfoComercial && (
+                        <div className="vs-client-info-comercial">
+                            <h4>Info comercial</h4>
+                            {c.direccion && <div className="vs-info-row"><MapPin size={13} /><span>{c.direccion}</span></div>}
+                            {c.repartidor && <div className="vs-info-row"><Truck size={13} /><span>Repartidor: <strong>{c.repartidor}</strong>{c.hoja_ruta ? ` · ruta ${c.hoja_ruta}` : ''}{c.dia_entrega ? ` · entrega ${c.dia_entrega}` : ''}</span></div>}
+                            {c.cond_pago && <div className="vs-info-row"><DollarSign size={13} /><span>Pago: <strong>{c.cond_pago}</strong></span></div>}
+                            {c.notas && <div className="vs-info-notes">💬 {c.notas}</div>}
+                        </div>
+                    )}
+
+                    {hasHistorico && (
+                        <div className="vs-client-historico">
+                            {c.fact_mes_pasado != null && (
+                                <div><span className="k">Mes pasado</span><strong>{formatMoney(c.fact_mes_pasado)}</strong></div>
+                            )}
+                            {c.fact_prom_3m != null && (
+                                <div><span className="k">Prom. 3m</span><strong>{formatMoney(c.fact_prom_3m)}</strong></div>
+                            )}
+                            {c.saldo_cta_cte != null && (
+                                <div><span className="k">Saldo ctacte</span><strong>{formatMoney(c.saldo_cta_cte)}</strong></div>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
         </div>
@@ -1457,24 +1472,6 @@ function formatTime(iso: string): string {
 }
 function monthName(m: number): string {
     return ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][m - 1];
-}
-
-// Normaliza un día de visita del maestro ("LUN", "Lunes", "lu", "l") al weekday actual (0=Dom..6=Sáb).
-// Devuelve true si matchea hoy.
-function isVisitaHoy(diaVisita: string | null | undefined): boolean {
-    if (!diaVisita) return false;
-    const raw = diaVisita.trim().toLowerCase();
-    if (!raw) return false;
-    const daysArg = ['dom', 'lun', 'mar', 'mie', 'jue', 'vie', 'sab'];
-    const todayWeekday = new Date().getDay();
-    // Acepta "lun", "lunes", "l", "lu", también palabras separadas por coma/espacio.
-    const tokens = raw.split(/[\s,;/]+/).filter(Boolean);
-    return tokens.some(tok => {
-        const n = tok.replace(/[áéíóú]/g, (c) => ({ á: 'a', é: 'e', í: 'i', ó: 'o', ú: 'u' }[c] ?? c));
-        const norm = n.slice(0, 3);
-        const idx = daysArg.indexOf(norm);
-        return idx === todayWeekday;
-    });
 }
 
 // Extrae un número de teléfono normalizado para `tel:` (strip non-digits, prefija +54 si falta).
