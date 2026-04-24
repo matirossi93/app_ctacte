@@ -53,12 +53,33 @@ export const RecibosApp = ({ onClose, clients = [] }: Props) => {
     const [view, setView] = useState<'list' | 'upload' | 'detail'>(isBackoffice ? 'list' : 'upload');
     const [selectedId, setSelectedId] = useState<string | null>(null);
 
+    // Maestro completo: incluye clientes sin saldo (p.ej. adelantos de dinero).
+    // El `clients` prop viene filtrado por saldo > 1000 desde VendorShell, así que
+    // acá pedimos la lista completa al backend y dejamos el prop como fallback.
+    const [fullClients, setFullClients] = useState<Array<{ cod: string; name: string; localidad?: string }>>([]);
+    useEffect(() => {
+        let alive = true;
+        fetch('/api/clientes/lookup', { headers: authHeaders() })
+            .then(r => r.json())
+            .then(j => { if (alive && j.ok && Array.isArray(j.items)) setFullClients(j.items); })
+            .catch(() => { /* silencioso: si falla, usamos el prop clients */ });
+        return () => { alive = false; };
+    }, []);
+
+    // Merge: maestro + clientes con deuda. Maestro pisa por si trae razón social más actual.
+    const mergedClients = useMemo(() => {
+        const m = new Map<string, { cod: string; name: string; localidad?: string }>();
+        clients.forEach(c => m.set(String(c.cod), c));
+        fullClients.forEach(c => m.set(String(c.cod), c));
+        return Array.from(m.values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    }, [clients, fullClients]);
+
     // Lookup rápido por cod_cliente para mostrar nombre en lista/detalle
     const clientNameByCod = useMemo(() => {
         const m = new Map<string, string>();
-        clients.forEach(c => m.set(String(c.cod), c.name));
+        mergedClients.forEach(c => m.set(String(c.cod), c.name));
         return m;
-    }, [clients]);
+    }, [mergedClients]);
 
     return (
         <div className="recibos-overlay" role="dialog" aria-modal="true">
@@ -92,7 +113,7 @@ export const RecibosApp = ({ onClose, clients = [] }: Props) => {
                     )}
                     {view === 'upload' && (
                         <UploadRecibo
-                            clients={clients}
+                            clients={mergedClients}
                             defaultCodVendedor={user?.cod_vendedor ?? null}
                             onDone={() => setView(isBackoffice ? 'list' : 'list')}
                             onCancel={() => setView('list')}

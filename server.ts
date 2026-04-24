@@ -23,6 +23,7 @@ import {
   uploadRecibo, listRecibos, facturasCandidatas, aprobarRecibo, rechazarRecibo, cuentasDebug, cuentasRefresh
 } from './server-lib/recibos.js';
 import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance } from './server-lib/goals.js';
+import { listClientesLookup } from './server-lib/clientes.js';
 import { listActivity, createActivity, deleteActivity } from './server-lib/activity.js';
 import {
   listUsuarios, createUsuario, updateUsuario, deleteUsuario, changePassword
@@ -385,6 +386,9 @@ app.post('/api/goals/sync-now', requireJwt, (req: any, res) => syncVentasNow(req
 app.post('/api/month-config', requireJwt, (req: any, res) => setMonthConfig(req, res));
 app.get('/api/goals/clientes', requireJwt, (req: any, res) => listClientesObjetivo(req, res));
 app.get('/api/goals/debug-cliente/:cod', requireJwt, requireAdmin, (req: any, res) => debugClienteAvance(req, res));
+
+// ─── Clientes lookup (maestro completo, con y sin deuda) ─────────────────────
+app.get('/api/clientes/lookup', requireJwt, (req: any, res) => listClientesLookup(req, res));
 
 // ─── Actividad ───────────────────────────────────────────────────────────────
 app.get('/api/activity', requireJwt, (req: any, res) => listActivity(req, res));
