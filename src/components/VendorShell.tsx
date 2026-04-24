@@ -132,7 +132,7 @@ export const VendorShell = ({ onLogout }: Props) => {
     const isAdmin = user?.rol === 'admin' || user?.rol === 'gerente';
     const [tab, setTab] = useState<Tab>('cobranzas');
     const [showRecibos, setShowRecibos] = useState(false);
-    const [bucket, setBucket] = useState<'todos' | 'ok' | 'warn30' | 'warn60' | 'risk'>('todos');
+    const [bucket, setBucket] = useState<'todos' | 'reciente' | 'medio' | 'vencido'>('todos');
     const [search, setSearch] = useState('');
     // Pendiente de crear actividad (disparado desde CobranzasView)
     const [pendingNewActivity, setPendingNewActivity] = useState<{ cod_cliente?: string; name?: string } | null>(null);
@@ -270,12 +270,11 @@ export const VendorShell = ({ onLogout }: Props) => {
     }, [invoices, clientDbMap]);
 
     const buckets = useMemo(() => {
-        const b = { ok: 0, warn30: 0, warn60: 0, risk: 0 };
+        const b = { reciente: 0, medio: 0, vencido: 0 };
         clientsAgg.forEach(c => {
-            if (c.maxDias <= 30) b.ok++;
-            else if (c.maxDias <= 60) b.warn30++;
-            else if (c.maxDias <= 90) b.warn60++;
-            else b.risk++;
+            if (c.maxDias <= 7) b.reciente++;
+            else if (c.maxDias <= 15) b.medio++;
+            else b.vencido++;
         });
         return b;
     }, [clientsAgg]);
@@ -284,10 +283,9 @@ export const VendorShell = ({ onLogout }: Props) => {
         let list = clientsAgg;
         if (bucket !== 'todos') {
             list = list.filter(c => {
-                if (bucket === 'ok') return c.maxDias <= 30;
-                if (bucket === 'warn30') return c.maxDias > 30 && c.maxDias <= 60;
-                if (bucket === 'warn60') return c.maxDias > 60 && c.maxDias <= 90;
-                return c.maxDias > 90;
+                if (bucket === 'reciente') return c.maxDias <= 7;
+                if (bucket === 'medio') return c.maxDias > 7 && c.maxDias <= 15;
+                return c.maxDias > 15;
             });
         }
         if (search.trim()) {
@@ -492,8 +490,8 @@ export const VendorShell = ({ onLogout }: Props) => {
 function CobranzasView({ clients, search, setSearch, bucket, setBucket, buckets, totalSaldo, totalClientes, onUploadPago, lastRefresh, loading }:
     {
         clients: ClientAgg[]; search: string; setSearch: (s: string) => void;
-        bucket: 'todos' | 'ok' | 'warn30' | 'warn60' | 'risk'; setBucket: (b: any) => void;
-        buckets: { ok: number; warn30: number; warn60: number; risk: number };
+        bucket: 'todos' | 'reciente' | 'medio' | 'vencido'; setBucket: (b: any) => void;
+        buckets: { reciente: number; medio: number; vencido: number };
         totalSaldo: number; totalClientes: number;
         onUploadPago: () => void;
         lastRefresh: Date | null;
@@ -515,19 +513,16 @@ function CobranzasView({ clients, search, setSearch, bucket, setBucket, buckets,
 
             <div className="vs-chips">
                 <button className={`vs-chip ${bucket === 'todos' ? 'is-active' : ''}`} onClick={() => setBucket('todos')}>
-                    Todos <span className="count">{buckets.ok + buckets.warn30 + buckets.warn60 + buckets.risk}</span>
+                    Todos <span className="count">{buckets.reciente + buckets.medio + buckets.vencido}</span>
                 </button>
-                <button className={`vs-chip ${bucket === 'ok' ? 'is-active' : ''}`} onClick={() => setBucket('ok')}>
-                    <span className="dot-b" style={{ background: '#06652F' }} />0-30d <span className="count">{buckets.ok}</span>
+                <button className={`vs-chip ${bucket === 'reciente' ? 'is-active' : ''}`} onClick={() => setBucket('reciente')}>
+                    <span className="dot-b" style={{ background: '#06652F' }} />0-7d <span className="count">{buckets.reciente}</span>
                 </button>
-                <button className={`vs-chip ${bucket === 'warn30' ? 'is-active' : ''}`} onClick={() => setBucket('warn30')}>
-                    <span className="dot-b" style={{ background: '#EEC045' }} />30-60d <span className="count">{buckets.warn30}</span>
+                <button className={`vs-chip ${bucket === 'medio' ? 'is-active' : ''}`} onClick={() => setBucket('medio')}>
+                    <span className="dot-b" style={{ background: '#D18A3C' }} />7-15d <span className="count">{buckets.medio}</span>
                 </button>
-                <button className={`vs-chip ${bucket === 'warn60' ? 'is-active' : ''}`} onClick={() => setBucket('warn60')}>
-                    <span className="dot-b" style={{ background: '#D18A3C' }} />60-90d <span className="count">{buckets.warn60}</span>
-                </button>
-                <button className={`vs-chip ${bucket === 'risk' ? 'is-active' : ''}`} onClick={() => setBucket('risk')}>
-                    <span className="dot-b" style={{ background: '#A83E2B' }} />+90d <span className="count">{buckets.risk}</span>
+                <button className={`vs-chip ${bucket === 'vencido' ? 'is-active' : ''}`} onClick={() => setBucket('vencido')}>
+                    <span className="dot-b" style={{ background: '#A83E2B' }} />+15d <span className="count">{buckets.vencido}</span>
                 </button>
             </div>
 
@@ -553,8 +548,8 @@ function CobranzasView({ clients, search, setSearch, bucket, setBucket, buckets,
 }
 
 function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: ClientAgg; isOpen: boolean; onToggle: () => void; onUploadPago: () => void }) {
-    const bucket = client.maxDias <= 30 ? 'ok' : client.maxDias <= 60 ? 'warn30' : client.maxDias <= 90 ? 'warn60' : 'risk';
-    const bucketLabel = bucket === 'ok' ? `${client.maxDias}d` : bucket === 'warn30' ? `${client.maxDias}d` : bucket === 'warn60' ? `${client.maxDias}d` : `+${client.maxDias}d`;
+    const bucket = client.maxDias <= 7 ? 'reciente' : client.maxDias <= 15 ? 'medio' : 'vencido';
+    const bucketLabel = `${client.maxDias}d`;
     const phoneHref = `tel:`; // a futuro: obtener teléfono de InfoManager client detail
     const waHref = `https://wa.me/`;
 
@@ -666,7 +661,9 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
             if (localidad) qs.set('localidad', localidad);
             if (isAdmin && selectedVendor != null) qs.set('cod_vendedor', String(selectedVendor));
             else if (isAdmin && cods) qs.set('cods', cods);
-            const goalsQs = showInactivos ? '?incluir_inactivos=true' : '';
+            // Forzar inactivos cuando se filtra un vendedor específico: así el .find siempre encuentra,
+            // aunque el vendedor esté marcado inactivo y el toggle "Ver inactivos" esté apagado.
+            const goalsQs = (showInactivos || (isAdmin && selectedVendor != null)) ? '?incluir_inactivos=true' : '';
             const [gr, cr] = await Promise.all([
                 fetch(`/api/goals${goalsQs}`, { headers: authHeaders() }).then(r => r.json()),
                 fetch(`/api/goals/clientes?${qs.toString()}`, { headers: authHeaders() }).then(r => r.json()),
@@ -848,7 +845,12 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
             <div className="vs-hero-goal">
                 <div className="vs-hero-goal-head">
                     <div>
-                        <span className="eyebrow">{isLocFilter ? 'OBJETIVO · LOCALIDAD' : 'OBJETIVO DEL MES'}</span>
+                        <span className="eyebrow">
+                            {isLocFilter ? 'OBJETIVO · LOCALIDAD'
+                                : (isAdmin && selectedVendor != null) ? 'OBJETIVO DEL VENDEDOR'
+                                    : isAdmin ? 'OBJETIVO DEL EQUIPO'
+                                        : 'OBJETIVO DEL MES'}
+                        </span>
                         <h2>{isLocFilter ? localidad : g.nombre}</h2>
                     </div>
                     <div className="vs-goal-badge">{g.dias_restantes}d restantes</div>

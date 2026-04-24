@@ -266,10 +266,9 @@
 
 .vs-client-head { padding: 14px 16px 12px; display: flex; gap: 12px; cursor: pointer }
 .vs-client-strip { width: 4px; border-radius: 4px; flex-shrink: 0; align-self: stretch }
-.bucket-ok { background: #06652F }
-.bucket-warn30 { background: #EEC045 }
-.bucket-warn60 { background: #D18A3C }
-.bucket-risk { background: #A83E2B }
+.bucket-reciente { background: #06652F }
+.bucket-medio { background: #D18A3C }
+.bucket-vencido { background: #A83E2B }
 
 .vs-client-info { flex: 1; min-width: 0 }
 .vs-client-row1 { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start }
@@ -287,14 +286,12 @@
     font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
     padding: 4px 10px; border-radius: 10px;
 }
-.vs-bucket-pill.bucket-ok { background: #E6F0E8; color: #03481F }
-.vs-bucket-pill.bucket-ok .dot-b { background: #06652F }
-.vs-bucket-pill.bucket-warn30 { background: #FAECC2; color: #8A5518 }
-.vs-bucket-pill.bucket-warn30 .dot-b { background: #EEC045 }
-.vs-bucket-pill.bucket-warn60 { background: #F7E5D0; color: #8A5518 }
-.vs-bucket-pill.bucket-warn60 .dot-b { background: #D18A3C }
-.vs-bucket-pill.bucket-risk { background: #F5DDD6; color: #A83E2B }
-.vs-bucket-pill.bucket-risk .dot-b { background: #A83E2B }
+.vs-bucket-pill.bucket-reciente { background: #E6F0E8; color: #03481F }
+.vs-bucket-pill.bucket-reciente .dot-b { background: #06652F }
+.vs-bucket-pill.bucket-medio { background: #F7E5D0; color: #8A5518 }
+.vs-bucket-pill.bucket-medio .dot-b { background: #D18A3C }
+.vs-bucket-pill.bucket-vencido { background: #F5DDD6; color: #A83E2B }
+.vs-bucket-pill.bucket-vencido .dot-b { background: #A83E2B }
 .vs-bucket-pill .dot-b { width: 6px; height: 6px; border-radius: 50% }
 .vs-client-docs { font-size: 11px; color: #6e7670; font-weight: 500 }
 
