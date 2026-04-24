@@ -1,0 +1,166 @@
+.rep-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 16px;
+}
+.rep-modal {
+    background: #fff;
+    border-radius: 14px;
+    max-width: 640px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, .3);
+    display: flex;
+    flex-direction: column;
+}
+.rep-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 18px 22px;
+    border-bottom: 1px solid #eee;
+}
+.rep-head h2 {
+    margin: 0;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #06652f;
+}
+.rep-close {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: #777;
+    padding: 6px;
+    border-radius: 6px;
+}
+.rep-close:hover { background: #f0f0f0; }
+
+.rep-period {
+    display: flex;
+    gap: 12px;
+    padding: 14px 22px;
+    border-bottom: 1px solid #eee;
+    background: #fafafa;
+}
+.rep-period label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+}
+.rep-period label span {
+    font-size: 11px;
+    color: #666;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+}
+.rep-period select {
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 14px;
+    background: #fff;
+}
+
+.rep-error {
+    margin: 12px 22px 0;
+    padding: 10px 12px;
+    background: #fdecec;
+    border: 1px solid #e3a39a;
+    color: #a83e2b;
+    border-radius: 8px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 13px;
+}
+
+.rep-list {
+    padding: 16px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.rep-card {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    padding: 14px;
+    border: 1px solid #e4e4e4;
+    border-radius: 10px;
+    background: #fff;
+    transition: border-color .15s;
+}
+.rep-card:hover { border-color: #eec045; }
+.rep-card-info { flex: 1; min-width: 0; }
+.rep-card-info h3 {
+    margin: 0 0 4px;
+    font-size: 15px;
+    color: #222;
+}
+.rep-card-info p {
+    margin: 0;
+    font-size: 12px;
+    color: #666;
+    line-height: 1.4;
+}
+.rep-dl-btn {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    background: #06652f;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
+}
+.rep-dl-btn:hover:not(:disabled) { background: #054e24; }
+.rep-dl-btn:disabled { opacity: .6; cursor: not-allowed; }
+.rep-spin { animation: rep-spin 1s linear infinite; }
+@keyframes rep-spin { to { transform: rotate(360deg); } }
+
+.rep-foot {
+    padding: 12px 22px;
+    border-top: 1px solid #eee;
+    font-size: 11px;
+    color: #888;
+    background: #fafafa;
+    border-radius: 0 0 14px 14px;
+}
+
+/* Dark */
+[data-theme="dark"] .rep-modal { background: #1a1a1a; color: #eee; }
+[data-theme="dark"] .rep-head { border-color: #2a2a2a; }
+[data-theme="dark"] .rep-head h2 { color: #7fdfa0; }
+[data-theme="dark"] .rep-close { color: #aaa; }
+[data-theme="dark"] .rep-close:hover { background: #2a2a2a; }
+[data-theme="dark"] .rep-period { background: #141414; border-color: #2a2a2a; }
+[data-theme="dark"] .rep-period select { background: #222; border-color: #3a3a3a; color: #eee; }
+[data-theme="dark"] .rep-card { background: #222; border-color: #3a3a3a; }
+[data-theme="dark"] .rep-card:hover { border-color: #eec045; }
+[data-theme="dark"] .rep-card-info h3 { color: #eee; }
+[data-theme="dark"] .rep-card-info p { color: #aaa; }
+[data-theme="dark"] .rep-foot { background: #141414; border-color: #2a2a2a; color: #888; }
+
+/* Mobile */
+@media (max-width: 600px) {
+    .rep-overlay { padding: 0; }
+    .rep-modal { border-radius: 0; max-height: 100vh; height: 100vh; max-width: 100%; }
+    .rep-card { flex-direction: column; align-items: flex-start; }
+    .rep-dl-btn { width: 100%; justify-content: center; }
+}

@@ -3,13 +3,14 @@ import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
     DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, Settings2, MapPin,
-    Sun, ChevronRight, AlertTriangle
+    Sun, ChevronRight, AlertTriangle, Download
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser } from '../utils/auth';
 import { RecibosApp } from './RecibosApp';
 import { CambiarPassword } from './CambiarPassword';
 import { UsuariosAdmin } from './UsuariosAdmin';
 import { ImportarSheet } from './ImportarSheet';
+import { ReportesModal } from './ReportesModal';
 import './VendorShell.css';
 
 type Tab = 'hoy' | 'cobranzas' | 'objetivos' | 'actividad';
@@ -155,6 +156,7 @@ export const VendorShell = ({ onLogout }: Props) => {
     const [showCambiarPass, setShowCambiarPass] = useState(false);
     const [showUsuariosAdmin, setShowUsuariosAdmin] = useState(false);
     const [showImportSheet, setShowImportSheet] = useState(false);
+    const [showReportes, setShowReportes] = useState(false);
     const [reloadObjetivosTick, setReloadObjetivosTick] = useState(0);
 
     // Listener global para 'vs-open-activity' — switchea al tab Actividad y pasa el cliente.
@@ -421,6 +423,11 @@ export const VendorShell = ({ onLogout }: Props) => {
                                             <Users size={14} /> Gestionar usuarios
                                         </button>
                                     )}
+                                    {isAdmin && (
+                                        <button onClick={() => { setAvatarMenu(false); setShowReportes(true); }}>
+                                            <Download size={14} /> Exportar reportes
+                                        </button>
+                                    )}
                                     <div className="vs-avatar-sep" />
                                     <button className="danger" onClick={() => { setAvatarMenu(false); clearToken(); onLogout(); }}>
                                         <LogOut size={14} /> Cerrar sesión
@@ -513,6 +520,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                 onClose={() => setShowImportSheet(false)}
                 onImported={() => setReloadObjetivosTick(t => t + 1)}
             />}
+            {showReportes && <ReportesModal onClose={() => setShowReportes(false)} />}
         </div>
     );
 };

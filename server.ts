@@ -30,6 +30,7 @@ import {
   listUsuarios, createUsuario, updateUsuario, deleteUsuario, changePassword
 } from './server-lib/usuarios.js';
 import { importMaestroClientes } from './server-lib/sheetImport.js';
+import { descargarReporte } from './server-lib/reportes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -465,6 +466,9 @@ app.post('/api/recibos/:id/aprobar', requireJwt, (req: any, res) => aprobarRecib
 app.post('/api/recibos/:id/rechazar', requireJwt, (req: any, res) => rechazarRecibo(req, res));
 app.post('/api/recibos/:id/reverificar-mp', requireJwt, (req: any, res) => reverificarMP(req, res));
 app.post('/api/recibos/:id/elegir-match', requireJwt, (req: any, res) => elegirMatchMP(req, res));
+
+// Reportes admin-only (xlsx)
+app.get('/api/reportes/:tipo', requireJwt, (req: any, res) => descargarReporte(req, res));
 app.get('/api/cuentas/debug', requireJwt, (req: any, res) => cuentasDebug(req, res));
 app.post('/api/cuentas/refresh', requireJwt, (req: any, res) => cuentasRefresh(req, res));
 
