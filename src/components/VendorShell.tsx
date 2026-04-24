@@ -1474,22 +1474,34 @@ function monthName(m: number): string {
     return ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][m - 1];
 }
 
-// Extrae un número de teléfono normalizado para `tel:` (strip non-digits, prefija +54 si falta).
-function telHref(raw: string | null | undefined): string | null {
+// Normaliza un número argentino a 10 u 11 dígitos locales (área + número), manejando:
+// - Múltiples números separados por / , ; | " y " " ó " → toma el primero.
+// - 0 inicial (ej. "0381"), prefijo país "+54", prefijo móvil internacional "9".
+// - "15" prefix viejo sin código área → asume Tucumán (381). Con código área → lo quita.
+// - "15" intermedio (ej. "381 15 4161064") → lo saca.
+// Retorna null si no llega a 10-11 dígitos válidos.
+function normalizeArgPhone(raw: string | null | undefined): string | null {
     if (!raw) return null;
-    const digits = String(raw).replace(/\D/g, '');
-    if (digits.length < 8) return null;
-    const withCC = digits.startsWith('54') ? digits : `54${digits}`;
-    return `tel:+${withCC}`;
+    const parts = String(raw).split(/[\/;|,]|\sy\s|\só\s/i).map(s => s.trim()).filter(Boolean);
+    if (parts.length === 0) return null;
+    let digits = parts[0].replace(/\D/g, '');
+    if (!digits) return null;
+    if (digits.startsWith('0') && digits.length >= 11) digits = digits.slice(1);
+    if (digits.startsWith('54') && digits.length >= 12) digits = digits.slice(2);
+    if (digits.startsWith('9') && digits.length === 11) digits = digits.slice(1);
+    if (digits.startsWith('15') && digits.length === 9) digits = '381' + digits.slice(2);
+    else if (digits.startsWith('15') && digits.length >= 10) digits = digits.slice(2);
+    digits = digits.replace(/^(\d{2,4})15(\d{6,8})$/, '$1$2');
+    if (digits.length < 10 || digits.length > 11) return null;
+    return digits;
 }
 
-// Igual pero para wa.me (requiere 54 9 + número, sin "+").
+function telHref(raw: string | null | undefined): string | null {
+    const n = normalizeArgPhone(raw);
+    return n ? `tel:+54${n}` : null;
+}
+
 function waHref(raw: string | null | undefined): string | null {
-    if (!raw) return null;
-    const digits = String(raw).replace(/\D/g, '');
-    if (digits.length < 8) return null;
-    // ARG móvil: asegura "54 9 <area> <num>".
-    let base = digits.startsWith('54') ? digits.slice(2) : digits;
-    if (!base.startsWith('9')) base = `9${base}`;
-    return `https://wa.me/54${base}`;
+    const n = normalizeArgPhone(raw);
+    return n ? `https://wa.me/549${n}` : null;
 }
