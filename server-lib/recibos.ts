@@ -5,6 +5,7 @@ import { ocrRecibo } from './ocrRecibo.js';
 import { crearRecibo, fetchComprobPendientes, type ReciboPago, type ReciboComprobante } from './infomanager.js';
 import { getFormaPagoIM } from './mediosPago.js';
 import { resolveCuentaCod, debugCuentasResolver, invalidateCuentasCache } from './cuentasResolver.js';
+import { buscarPagoEnMP, todayISO_AR, type MPMatch, type MPCuenta } from './mercadopago.js';
 import type { JwtPayload } from './auth.js';
 
 const { env } = process;
@@ -114,6 +115,17 @@ export async function uploadRecibo(req: Request & { user?: JwtPayload; file?: an
       await sb().storage.from(BUCKET).remove([objectPath]).catch(() => {});
       res.status(500).json({ error: `insert comprobantes_pago: ${error.message}` });
       return;
+    }
+
+    // MP auto-verify: fire-and-forget si es mercadopago, skip para otros medios
+    if (data.medio_pago === 'mercadopago') {
+      verificarReciboMP(data.id).catch(err =>
+        console.error('[MP] verify async failed', data.id, err?.message ?? err)
+      );
+    } else if (data.medio_pago) {
+      // Marcar skipped inmediato para que el cron no lo levante
+      sb().from('comprobantes_pago').update({ mp_status: 'skipped' })
+        .eq('id', data.id).then(() => {}, () => {});
     }
 
     res.json({ ok: true, comprobante: data, ocr });
@@ -353,6 +365,156 @@ export async function cuentasRefresh(req: Request & { user?: JwtPayload }, res: 
     invalidateCuentasCache();
     const mapping = await debugCuentasResolver();
     res.json({ ok: true, mapping });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MP verification — busca el pago en las 3 cuentas MP y actualiza mp_status
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function verificarReciboMP(id: string): Promise<{ status: string; matches: number }> {
+  const { data: comp, error } = await sb().from('comprobantes_pago')
+    .select('id, monto, fecha_comprobante, medio_pago, mp_lookup_attempts')
+    .eq('id', id).eq('tenant_id', TENANT_ID).maybeSingle();
+  if (error || !comp) throw new Error('comprobante no encontrado');
+  if (comp.medio_pago !== 'mercadopago') {
+    await sb().from('comprobantes_pago').update({ mp_status: 'skipped' }).eq('id', id);
+    return { status: 'skipped', matches: 0 };
+  }
+
+  const monto = Number(comp.monto);
+  const desdeISO = comp.fecha_comprobante || todayISO_AR();
+  const hastaISO = todayISO_AR();
+  const nowIso = new Date().toISOString();
+
+  let matches: MPMatch[] = [];
+  let errored = false;
+  try {
+    matches = await buscarPagoEnMP({ monto, desdeISO, hastaISO });
+  } catch (e: any) {
+    console.warn(`[MP] buscarPagoEnMP threw id=${id} err=${e?.message}`);
+    errored = true;
+  }
+
+  const baseUpdate: any = {
+    mp_lookup_attempts: (comp.mp_lookup_attempts ?? 0) + 1,
+    mp_last_lookup_at: nowIso,
+  };
+
+  if (errored) {
+    await sb().from('comprobantes_pago').update({ ...baseUpdate, mp_status: 'error' }).eq('id', id);
+    return { status: 'error', matches: 0 };
+  }
+
+  if (matches.length === 1) {
+    const m = matches[0];
+    await sb().from('comprobantes_pago').update({
+      ...baseUpdate,
+      mp_status: 'verified',
+      mp_payment_id: m.payment_id,
+      mp_cuenta: m.cuenta,
+      mp_verified_at: nowIso,
+      mp_candidates: matches,
+    }).eq('id', id);
+    console.log(`[MP] verified id=${id} payment=${m.payment_id} cuenta=${m.cuenta}`);
+    return { status: 'verified', matches: 1 };
+  }
+
+  if (matches.length >= 2) {
+    await sb().from('comprobantes_pago').update({
+      ...baseUpdate,
+      mp_status: 'ambiguous',
+      mp_candidates: matches,
+    }).eq('id', id);
+    console.log(`[MP] ambiguous id=${id} candidates=${matches.length}`);
+    return { status: 'ambiguous', matches: matches.length };
+  }
+
+  await sb().from('comprobantes_pago').update({
+    ...baseUpdate,
+    mp_status: 'not_found',
+  }).eq('id', id);
+  return { status: 'not_found', matches: 0 };
+}
+
+/**
+ * Proceso batch: levanta comprobantes MP pendientes/errados dentro de ventana 24h
+ * y los reverifica. Llamado desde cron every 5min.
+ */
+export async function procesarColaMP(limit: number = 20): Promise<{ procesados: number; verificados: number; ambiguos: number }> {
+  const cutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const { data, error } = await sb().from('comprobantes_pago')
+    .select('id')
+    .eq('tenant_id', TENANT_ID)
+    .eq('medio_pago', 'mercadopago')
+    .in('mp_status', ['pending', 'not_found', 'ambiguous', 'error'])
+    .gte('created_at', cutoff)
+    .lt('mp_lookup_attempts', 50)
+    .order('mp_last_lookup_at', { ascending: true, nullsFirst: true })
+    .limit(limit);
+  if (error) { console.error('[MP] procesarColaMP select', error.message); return { procesados: 0, verificados: 0, ambiguos: 0 }; }
+  let verificados = 0, ambiguos = 0;
+  for (const row of data ?? []) {
+    try {
+      const r = await verificarReciboMP(row.id);
+      if (r.status === 'verified') verificados++;
+      if (r.status === 'ambiguous') ambiguos++;
+    } catch (e: any) {
+      console.warn(`[MP] cola fail id=${row.id} err=${e?.message}`);
+    }
+  }
+  return { procesados: (data ?? []).length, verificados, ambiguos };
+}
+
+/**
+ * POST /api/recibos/:id/reverificar-mp — fuerza lookup ad-hoc (admin/gerente)
+ */
+export async function reverificarMP(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    const id = String(req.params.id);
+    const result = await verificarReciboMP(id);
+    const { data } = await sb().from('comprobantes_pago').select('*').eq('id', id).maybeSingle();
+    res.json({ ok: true, result, comprobante: data });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
+ * POST /api/recibos/:id/elegir-match — resuelve ambigüedad (admin/gerente)
+ * Body: { payment_id, cuenta }
+ */
+export async function elegirMatchMP(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    const id = String(req.params.id);
+    const { payment_id, cuenta } = req.body ?? {};
+    if (!payment_id || !cuenta) { res.status(400).json({ error: 'Faltan payment_id y cuenta' }); return; }
+    if (!['principal', 'recaudadora_1', 'recaudadora_2'].includes(cuenta)) {
+      res.status(400).json({ error: `cuenta invalida: ${cuenta}` }); return;
+    }
+
+    const { data: comp } = await sb().from('comprobantes_pago')
+      .select('mp_candidates').eq('id', id).eq('tenant_id', TENANT_ID).maybeSingle();
+    if (!comp) { res.status(404).json({ error: 'Comprobante no encontrado' }); return; }
+    const candidates: MPMatch[] = comp.mp_candidates ?? [];
+    const match = candidates.find(c => c.payment_id === String(payment_id) && c.cuenta === cuenta);
+    if (!match) { res.status(400).json({ error: 'El payment_id/cuenta no esta en los candidatos del comprobante' }); return; }
+
+    await sb().from('comprobantes_pago').update({
+      mp_status: 'verified',
+      mp_payment_id: match.payment_id,
+      mp_cuenta: match.cuenta as MPCuenta,
+      mp_verified_at: new Date().toISOString(),
+    }).eq('id', id);
+
+    const { data } = await sb().from('comprobantes_pago').select('*').eq('id', id).maybeSingle();
+    res.json({ ok: true, comprobante: data });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'error' });
   }

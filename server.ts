@@ -20,7 +20,8 @@ import {
 import { hasSupabase, sb, TENANT_ID } from './server-lib/supabase.js';
 import { syncVentasMesActual } from './server-lib/syncVentas.js';
 import {
-  uploadRecibo, listRecibos, facturasCandidatas, aprobarRecibo, rechazarRecibo, cuentasDebug, cuentasRefresh
+  uploadRecibo, listRecibos, facturasCandidatas, aprobarRecibo, rechazarRecibo, cuentasDebug, cuentasRefresh,
+  reverificarMP, elegirMatchMP, procesarColaMP
 } from './server-lib/recibos.js';
 import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance } from './server-lib/goals.js';
 import { listClientesLookup } from './server-lib/clientes.js';
@@ -462,6 +463,8 @@ app.get('/api/recibos', requireJwt, (req: any, res) => listRecibos(req, res));
 app.get('/api/recibos/:id/facturas-candidatas', requireJwt, (req: any, res) => facturasCandidatas(req, res));
 app.post('/api/recibos/:id/aprobar', requireJwt, (req: any, res) => aprobarRecibo(req, res));
 app.post('/api/recibos/:id/rechazar', requireJwt, (req: any, res) => rechazarRecibo(req, res));
+app.post('/api/recibos/:id/reverificar-mp', requireJwt, (req: any, res) => reverificarMP(req, res));
+app.post('/api/recibos/:id/elegir-match', requireJwt, (req: any, res) => elegirMatchMP(req, res));
 app.get('/api/cuentas/debug', requireJwt, (req: any, res) => cuentasDebug(req, res));
 app.post('/api/cuentas/refresh', requireJwt, (req: any, res) => cuentasRefresh(req, res));
 
@@ -830,3 +833,16 @@ setTimeout(() => {
     import('./server-lib/cuentasResolver.js').then(m => m.prewarmCuentasCache());
 }, 3000);
 console.log('Cron pre-warm /api/data: */4 * * * *');
+
+// MP verification — reintenta comprobantes MP pendientes/no encontrados en ventana 24h
+cron.schedule('*/5 * * * *', async () => {
+    try {
+        const r = await procesarColaMP(20);
+        if (r.procesados > 0) {
+            console.log(`[cron MP] procesados=${r.procesados} verificados=${r.verificados} ambiguos=${r.ambiguos}`);
+        }
+    } catch (err: any) {
+        console.warn(`[cron MP] fallo: ${err?.message ?? err}`);
+    }
+});
+console.log('Cron MP verify: */5 * * * *');

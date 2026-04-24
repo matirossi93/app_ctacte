@@ -9,6 +9,16 @@ interface Props {
     clients?: Array<{ cod: string; name: string; localidad?: string }>; // opcional: para selector
 }
 
+interface MPCandidate {
+    cuenta: 'principal' | 'recaudadora_1' | 'recaudadora_2';
+    payment_id: string;
+    date_approved: string;
+    amount: number;
+    status: string;
+    payer_email?: string;
+    description?: string;
+}
+
 interface ReciboRow {
     id: string;
     cod_cliente: number;
@@ -32,6 +42,13 @@ interface ReciboRow {
     created_at: string;
     reviewed_at: string | null;
     imputado_at: string | null;
+    // MP verification
+    mp_status?: 'pending' | 'verified' | 'not_found' | 'ambiguous' | 'skipped' | 'error' | null;
+    mp_payment_id?: string | null;
+    mp_cuenta?: 'principal' | 'recaudadora_1' | 'recaudadora_2' | null;
+    mp_verified_at?: string | null;
+    mp_lookup_attempts?: number | null;
+    mp_candidates?: MPCandidate[] | null;
 }
 
 interface FacturaCandidata {
@@ -445,6 +462,92 @@ function UploadRecibo({ clients, defaultCodVendedor, onDone, onCancel }:
 // ───────────────────────────────────────────────────────────────────────────
 // DETAIL + APPROVAL (backoffice)
 // ───────────────────────────────────────────────────────────────────────────
+function cuentaLabel(c: string | null | undefined): string {
+    if (c === 'principal') return 'MP Principal';
+    if (c === 'recaudadora_1') return 'MP Recaudadora 1';
+    if (c === 'recaudadora_2') return 'MP Recaudadora 2';
+    return c ?? '?';
+}
+
+function MPBadge({ rec, isBackoffice, onReverify, onPickMatch }: {
+    rec: ReciboRow;
+    isBackoffice: boolean;
+    onReverify: () => void;
+    onPickMatch: (payment_id: string, cuenta: string) => void;
+}) {
+    if (rec.medio_pago !== 'mercadopago') return null;
+    const status = rec.mp_status;
+    const candidates = rec.mp_candidates ?? [];
+    if (status === 'skipped') return null;
+
+    if (status === 'verified') {
+        const c = candidates.find(x => x.payment_id === rec.mp_payment_id) ?? null;
+        return (
+            <div className="mp-badge mp-badge--verified">
+                <strong>✓ Verificado en MercadoPago</strong>
+                <div className="mp-badge-detail">
+                    <span>{cuentaLabel(rec.mp_cuenta)}</span>
+                    {c?.date_approved && <span>Acreditado {new Date(c.date_approved).toLocaleString('es-AR')}</span>}
+                    {c?.payer_email && <span>Pagador: {c.payer_email}</span>}
+                    <span className="mp-badge-payid">ID {rec.mp_payment_id}</span>
+                </div>
+            </div>
+        );
+    }
+
+    if (status === 'ambiguous') {
+        return (
+            <div className="mp-badge mp-badge--warn">
+                <strong>⚠ Múltiples candidatos en MP</strong>
+                <div className="mp-badge-detail">Encontramos {candidates.length} pagos con el mismo monto en la ventana. Elegí el correcto:</div>
+                <div className="mp-candidates">
+                    {candidates.map(c => (
+                        <button key={`${c.cuenta}-${c.payment_id}`} className="mp-candidate-btn"
+                            onClick={() => onPickMatch(c.payment_id, c.cuenta)}>
+                            <span className="mp-cand-cuenta">{cuentaLabel(c.cuenta)}</span>
+                            <span className="mp-cand-fecha">{c.date_approved ? new Date(c.date_approved).toLocaleString('es-AR') : '?'}</span>
+                            {c.payer_email && <span className="mp-cand-email">{c.payer_email}</span>}
+                            <span className="mp-cand-id">ID {c.payment_id}</span>
+                        </button>
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
+    if (status === 'not_found') {
+        return (
+            <div className="mp-badge mp-badge--warn">
+                <strong>⚠ No encontrado en MP</strong>
+                <div className="mp-badge-detail">
+                    Reintentando cada 5 min (ventana 24h) · {rec.mp_lookup_attempts ?? 0} intentos
+                </div>
+                {isBackoffice && (
+                    <button className="mp-badge-btn" onClick={onReverify}>Re-verificar ahora</button>
+                )}
+            </div>
+        );
+    }
+
+    if (status === 'error') {
+        return (
+            <div className="mp-badge mp-badge--err">
+                <strong>✗ Error consultando MP</strong>
+                {isBackoffice && (
+                    <button className="mp-badge-btn" onClick={onReverify}>Reintentar</button>
+                )}
+            </div>
+        );
+    }
+
+    // pending o null
+    return (
+        <div className="mp-badge mp-badge--pending">
+            <strong>⏳ Buscando en MercadoPago...</strong>
+        </div>
+    );
+}
+
 function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: string; isBackoffice: boolean; clientNameByCod: Map<string, string>; onBack: () => void }) {
     const [rec, setRec] = useState<ReciboRow | null>(null);
     const [loading, setLoading] = useState(true);
@@ -488,6 +591,32 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
             setFacturas(data.facturas ?? []);
         } catch (e: any) { setMsg({ kind: 'err', text: e.message }); }
         finally { setLoadingFacturas(false); }
+    };
+
+    const reverificarMPHandler = async () => {
+        if (!rec) return;
+        try {
+            const res = await fetch(`/api/recibos/${rec.id}/reverificar-mp`, { method: 'POST', headers: authHeaders() });
+            const data = await res.json();
+            if (!data.ok) { setMsg({ kind: 'err', text: data.error ?? 'error' }); return; }
+            setMsg({ kind: 'ok', text: `MP: ${data.result?.status ?? 'ok'}` });
+            await loadRecibo();
+        } catch (e: any) { setMsg({ kind: 'err', text: e.message }); }
+    };
+
+    const elegirMatchHandler = async (payment_id: string, cuenta: string) => {
+        if (!rec) return;
+        try {
+            const res = await fetch(`/api/recibos/${rec.id}/elegir-match`, {
+                method: 'POST',
+                headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({ payment_id, cuenta }),
+            });
+            const data = await res.json();
+            if (!data.ok) { setMsg({ kind: 'err', text: data.error ?? 'error' }); return; }
+            setMsg({ kind: 'ok', text: 'Match asignado' });
+            await loadRecibo();
+        } catch (e: any) { setMsg({ kind: 'err', text: e.message }); }
     };
     useEffect(() => { if (isBackoffice && rec) loadFacturas(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [rec?.id, codEmpresa]);
 
@@ -600,6 +729,10 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                         {rec.motivo_rechazo && <><dt>Motivo rechazo</dt><dd>{rec.motivo_rechazo}</dd></>}
                         {rec.error_msg && <><dt>Error</dt><dd>{rec.error_msg}</dd></>}
                     </dl>
+
+                    <MPBadge rec={rec} isBackoffice={isBackoffice}
+                        onReverify={reverificarMPHandler}
+                        onPickMatch={elegirMatchHandler} />
 
                     {isBackoffice && (rec.status === 'pendiente_revision' || rec.status === 'error') && (
                         <div className="rec-approval">
