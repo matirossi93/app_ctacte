@@ -305,7 +305,7 @@ export const VendorShell = ({ onLogout }: Props) => {
             <header className="vs-top">
                 <div className="vs-brand">
                     <div className="vs-mark">
-                        <svg viewBox="0 0 24 24" fill="none"><path d="M12 2C7 7 5 10 5 14a7 7 0 0 0 14 0c0-4-2-7-7-12Z" fill="currentColor" /><path d="M9 13c1.5-2 2.5-3 3-6M10 17c1-1 2-2 2-3" stroke="#06652F" strokeWidth="1.4" strokeLinecap="round" /></svg>
+                        <img src="/logo.png" alt="Semillero El Manantial" />
                     </div>
                     <div className="vs-brand-text">
                         <span className="eyebrow">SEMILLERO</span>
