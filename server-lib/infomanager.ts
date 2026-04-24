@@ -156,3 +156,35 @@ export async function fetchPlanCuentas(): Promise<PlanCuenta[]> {
     nombre: String(r.nombre ?? r.descripcion ?? ''),
   }));
 }
+
+export interface ClienteIM {
+  cod_cliente: number;
+  razon_social?: string;
+  telefono?: string | null;
+  whatsapp?: string | null;
+  [k: string]: any;
+}
+
+/**
+ * Trae la lista de clientes desde InfoManager. Sin doc formal del shape, soportamos
+ * varios nombres comunes de columna (telefono/tel_fijo/tel, celular/whatsapp/movil)
+ * y normalizamos a `{telefono, whatsapp}`. Si InfoManager no trae contactos, devuelve
+ * nulls graciosamente.
+ */
+export async function fetchClientesIM(): Promise<ClienteIM[]> {
+  const cli = await imClient();
+  const { data } = await cli.get('/clientes');
+  const rows = Array.isArray(data) ? data : (data?.results ?? data?.clientes ?? []);
+  return rows.map((r: any) => {
+    const cod = Number(r.cod_cliente ?? r.codigo ?? r.id ?? r.cod ?? 0);
+    const telFijo = r.telefono ?? r.tel_fijo ?? r.tel ?? r.telefonos ?? null;
+    const cel = r.celular ?? r.whatsapp ?? r.movil ?? r.cel ?? null;
+    return {
+      ...r,
+      cod_cliente: cod,
+      razon_social: r.razon_social ?? r.nombre ?? '',
+      telefono: telFijo ? String(telFijo) : null,
+      whatsapp: cel ? String(cel) : (telFijo ? String(telFijo) : null),
+    };
+  }).filter((c: ClienteIM) => c.cod_cliente > 0);
+}

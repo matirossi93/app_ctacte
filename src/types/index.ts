@@ -48,6 +48,22 @@ export interface ClientDBType {
     'Razon Social'?: string;
     Localidad?: string;
     Frecuencia?: string; // e.g. 'SEMANAL', 'QUINCENAL', 'MENSUAL'
+    // Campos extra del maestro Supabase (client_operational) — opcionales
+    direccion?: string | null;
+    dia_visita?: string | null;
+    visita?: string | null;           // 'SI'/'NO'
+    hoja_ruta?: string | null;
+    repartidor?: string | null;
+    dia_entrega?: string | null;
+    cond_pago?: string | null;
+    tipo_abc?: string | null;
+    notas?: string | null;
+    fact_mes_pasado?: number | null;
+    fact_prom_3m?: number | null;
+    saldo_cta_cte?: number | null;
+    // Contacto desde InfoManager /clientes (Q3)
+    telefono?: string | null;
+    whatsapp?: string | null;
     [key: string]: any;
 }
 

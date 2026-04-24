@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
-    DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, Settings2
+    DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, Settings2, MapPin
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser } from '../utils/auth';
 import { RecibosApp } from './RecibosApp';
@@ -37,6 +37,7 @@ interface ClientAgg {
     maxDias: number;
     invoices: Invoice[];
     lastPayDate: string | null;
+    db?: Record<string, any>; // ref a clientDbMap[cod] para acceso a direccion, dia_visita, repartidor, ABC, histórico, etc.
 }
 
 interface GoalData {
@@ -256,6 +257,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                     maxDias: 0,
                     invoices: [],
                     lastPayDate: null,
+                    db: clientDbMap[cod] ?? undefined,
                 });
             }
             const c = map.get(cod)!;
@@ -550,8 +552,12 @@ function CobranzasView({ clients, search, setSearch, bucket, setBucket, buckets,
 function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: ClientAgg; isOpen: boolean; onToggle: () => void; onUploadPago: () => void }) {
     const bucket = client.maxDias <= 7 ? 'reciente' : client.maxDias <= 15 ? 'medio' : 'vencido';
     const bucketLabel = `${client.maxDias}d`;
-    const phoneHref = `tel:`; // a futuro: obtener teléfono de InfoManager client detail
-    const waHref = `https://wa.me/`;
+    const db = client.db ?? {};
+    const visitaHoy = isVisitaHoy(db.dia_visita);
+    const tel = telHref(db.telefono);
+    const wa = waHref(db.whatsapp ?? db.telefono); // fallback a teléfono si no hay celular separado
+    const hasHistorico = db.fact_mes_pasado != null || db.fact_prom_3m != null;
+    const hasInfoComercial = db.direccion || db.tipo_abc || db.cond_pago || db.hoja_ruta || db.repartidor || db.notas;
 
     return (
         <div className={`vs-client ${isOpen ? 'is-open' : ''}`}>
@@ -565,6 +571,7 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
                                 <span>{client.localidad || 'Sin localidad'}</span>
                                 <span className="sep" />
                                 <span>Cod {client.cod}</span>
+                                {db.tipo_abc && <><span className="sep" /><span className="vs-abc-tag">ABC {db.tipo_abc}</span></>}
                             </div>
                         </div>
                         <div className="vs-client-saldo">{formatMoney(client.totalSaldo)}</div>
@@ -573,16 +580,25 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
                         <span className={`vs-bucket-pill bucket-${bucket}`}>
                             <span className="dot-b" />{bucketLabel}
                         </span>
+                        {visitaHoy && <span className="vs-visita-hoy"><Calendar size={11} /> VISITA HOY</span>}
+                        {db.dia_visita && !visitaHoy && <span className="vs-client-docs">📅 {db.dia_visita}</span>}
                         <span className="vs-client-docs">{client.invoices.length} comprob.</span>
                     </div>
                 </div>
             </div>
 
             <div className="vs-quick-actions">
-                <a className="vs-qa call" href={phoneHref} onClick={e => e.stopPropagation()}>
+                <a className={`vs-qa call ${tel ? '' : 'is-disabled'}`}
+                   href={tel ?? undefined}
+                   onClick={e => { e.stopPropagation(); if (!tel) e.preventDefault(); }}
+                   title={tel ? 'Llamar' : 'Sin teléfono en InfoManager'}>
                     <Phone size={18} /><span>Llamar</span>
                 </a>
-                <a className="vs-qa wa" href={waHref} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>
+                <a className={`vs-qa wa ${wa ? '' : 'is-disabled'}`}
+                   href={wa ?? undefined}
+                   target={wa ? '_blank' : undefined} rel="noreferrer"
+                   onClick={e => { e.stopPropagation(); if (!wa) e.preventDefault(); }}
+                   title={wa ? 'WhatsApp' : 'Sin teléfono en InfoManager'}>
                     <MessageSquare size={18} /><span>WhatsApp</span>
                 </a>
                 <button className="vs-qa note" onClick={e => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('vs-open-activity', { detail: { cod_cliente: client.cod, name: client.name } })); }}>
@@ -595,6 +611,32 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
 
             {isOpen && (
                 <div className="vs-timeline">
+                    {hasInfoComercial && (
+                        <div className="vs-client-info-comercial">
+                            <h4>Info comercial</h4>
+                            {db.direccion && <div className="vs-info-row"><MapPin size={13} /><span>{db.direccion}</span></div>}
+                            {db.repartidor && <div className="vs-info-row"><Truck size={13} /><span>Repartidor: <strong>{db.repartidor}</strong>{db.hoja_ruta ? ` · ruta ${db.hoja_ruta}` : ''}{db.dia_entrega ? ` · entrega ${db.dia_entrega}` : ''}</span></div>}
+                            {(db.cond_pago || client.db?.Frecuencia) && (
+                                <div className="vs-info-row"><DollarSign size={13} /><span>{db.cond_pago ? `Pago: ${db.cond_pago}` : ''}{db.cond_pago && client.db?.Frecuencia ? ' · ' : ''}{client.db?.Frecuencia ? `Frec: ${client.db.Frecuencia}` : ''}</span></div>
+                            )}
+                            {db.notas && <div className="vs-info-notes">💬 {db.notas}</div>}
+                        </div>
+                    )}
+
+                    {hasHistorico && (
+                        <div className="vs-client-historico">
+                            {db.fact_mes_pasado != null && (
+                                <div><span className="k">Mes pasado</span><strong>{formatMoney(db.fact_mes_pasado)}</strong></div>
+                            )}
+                            {db.fact_prom_3m != null && (
+                                <div><span className="k">Prom. 3m</span><strong>{formatMoney(db.fact_prom_3m)}</strong></div>
+                            )}
+                            {db.saldo_cta_cte != null && (
+                                <div><span className="k">Saldo ctacte</span><strong>{formatMoney(db.saldo_cta_cte)}</strong></div>
+                            )}
+                        </div>
+                    )}
+
                     <h4>Facturas pendientes</h4>
                     {client.invoices.slice(0, 12).map(inv => (
                         <div key={inv.ID} className="vs-tl-item">
@@ -625,6 +667,7 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
 function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTick }: { selectedVendor: number | null; cods: string; isAdmin: boolean; showInactivos: boolean; reloadTick: number }) {
     const [g, setG] = useState<GoalData | null>(null);
     const [meta, setMeta] = useState<GoalsMeta | null>(null);
+    const [rankingItems, setRankingItems] = useState<any[]>([]);
     const [clientes, setClientes] = useState<ClienteObjetivo[]>([]);
     const [clientesStats, setClientesStats] = useState<ClientesResponse['stats'] | null>(null);
     const [seleccion, setSeleccion] = useState<Seleccion | null>(null);
@@ -703,6 +746,7 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                 year: gr.year,
                 month: gr.month,
             });
+            setRankingItems(gr.items ?? []);
             setClientes(cr.items || []);
             setClientesStats(cr.stats);
             setSeleccion(cr.seleccion ?? null);
@@ -927,6 +971,11 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                 </button>
             </div>
 
+            {/* ─── Ranking equipo (admin sin filtro) ─── */}
+            {isAdmin && selectedVendor == null && !isLocFilter && rankingItems.length > 0 && (
+                <RankingEquipo items={rankingItems} />
+            )}
+
             {/* ─── Objetivos por cliente ─── */}
             <div className="vs-clientes-obj">
                 <div className="vs-clientes-obj-head">
@@ -1033,6 +1082,78 @@ function ClienteObjetivoCard({ c }: { c: ClienteObjetivo }) {
                     Avance: <strong>{formatMoney(c.avance)}</strong> ({c.num_comprobantes} comprob.)
                 </div>
             )}
+        </div>
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RANKING EQUIPO (admin)
+// ═══════════════════════════════════════════════════════════════════════════
+function RankingEquipo({ items }: { items: any[] }) {
+    const { ranked, sinTarget } = useMemo(() => {
+        const activos = items.filter((i: any) => i.activo !== false);
+        const conTarget = activos
+            .filter((i: any) => i.target_neto && i.target_neto > 0)
+            .sort((a: any, b: any) => (b.pct_cumplimiento ?? 0) - (a.pct_cumplimiento ?? 0));
+        const sin = activos.filter((i: any) => !i.target_neto || i.target_neto <= 0);
+        return { ranked: conTarget, sinTarget: sin };
+    }, [items]);
+
+    if (ranked.length === 0 && sinTarget.length === 0) return null;
+
+    const medals = ['🥇', '🥈', '🥉'];
+
+    return (
+        <div className="vs-ranking">
+            <div className="vs-ranking-head">
+                <h2>Ranking del equipo</h2>
+                <p>Ordenado por % de cumplimiento · sólo vendedores activos</p>
+            </div>
+
+            <div className="vs-ranking-list">
+                {ranked.map((v: any, idx: number) => {
+                    const pct = v.pct_cumplimiento ?? 0;
+                    const pctPct = Math.min(200, pct * 100);
+                    const barPct = Math.min(100, pct * 100);
+                    const colorClass = pct >= 0.9 ? 'ok' : pct >= 0.5 ? 'mid' : 'low';
+                    const medal = idx < 3 ? medals[idx] : null;
+                    return (
+                        <div key={v.cod_vendedor} className={`vs-ranking-row vs-ranking-row--${colorClass}`}>
+                            <div className="vs-ranking-pos">
+                                {medal ? <span className="medal">{medal}</span> : <span className="num">#{idx + 1}</span>}
+                            </div>
+                            <div className="vs-ranking-body">
+                                <div className="vs-ranking-row1">
+                                    <strong>{v.nombre}</strong>
+                                    <span className="vs-ranking-pct">{Math.round(pctPct)}%</span>
+                                </div>
+                                <div className="vs-ranking-bar">
+                                    <div className="vs-ranking-bar-fill" style={{ width: `${barPct}%` }} />
+                                </div>
+                                <div className="vs-ranking-row2">
+                                    <span>{formatMoney(v.avance)} / {formatMoney(v.target_neto)}</span>
+                                    <span className="vs-ranking-proy">proy {formatMoney(v.proyeccion)}</span>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })}
+
+                {sinTarget.map((v: any) => (
+                    <div key={v.cod_vendedor} className="vs-ranking-row vs-ranking-row--notarget">
+                        <div className="vs-ranking-pos"><span className="num">—</span></div>
+                        <div className="vs-ranking-body">
+                            <div className="vs-ranking-row1">
+                                <strong>{v.nombre}</strong>
+                                <span className="vs-ranking-notarget">sin target</span>
+                            </div>
+                            <div className="vs-ranking-row2">
+                                <span>{formatMoney(v.avance)} vendidos · {v.num_comprobantes} comp.</span>
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
         </div>
     );
 }
@@ -1336,4 +1457,42 @@ function formatTime(iso: string): string {
 }
 function monthName(m: number): string {
     return ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][m - 1];
+}
+
+// Normaliza un día de visita del maestro ("LUN", "Lunes", "lu", "l") al weekday actual (0=Dom..6=Sáb).
+// Devuelve true si matchea hoy.
+function isVisitaHoy(diaVisita: string | null | undefined): boolean {
+    if (!diaVisita) return false;
+    const raw = diaVisita.trim().toLowerCase();
+    if (!raw) return false;
+    const daysArg = ['dom', 'lun', 'mar', 'mie', 'jue', 'vie', 'sab'];
+    const todayWeekday = new Date().getDay();
+    // Acepta "lun", "lunes", "l", "lu", también palabras separadas por coma/espacio.
+    const tokens = raw.split(/[\s,;/]+/).filter(Boolean);
+    return tokens.some(tok => {
+        const n = tok.replace(/[áéíóú]/g, (c) => ({ á: 'a', é: 'e', í: 'i', ó: 'o', ú: 'u' }[c] ?? c));
+        const norm = n.slice(0, 3);
+        const idx = daysArg.indexOf(norm);
+        return idx === todayWeekday;
+    });
+}
+
+// Extrae un número de teléfono normalizado para `tel:` (strip non-digits, prefija +54 si falta).
+function telHref(raw: string | null | undefined): string | null {
+    if (!raw) return null;
+    const digits = String(raw).replace(/\D/g, '');
+    if (digits.length < 8) return null;
+    const withCC = digits.startsWith('54') ? digits : `54${digits}`;
+    return `tel:+${withCC}`;
+}
+
+// Igual pero para wa.me (requiere 54 9 + número, sin "+").
+function waHref(raw: string | null | undefined): string | null {
+    if (!raw) return null;
+    const digits = String(raw).replace(/\D/g, '');
+    if (digits.length < 8) return null;
+    // ARG móvil: asegura "54 9 <area> <num>".
+    let base = digits.startsWith('54') ? digits.slice(2) : digits;
+    if (!base.startsWith('9')) base = `9${base}`;
+    return `https://wa.me/54${base}`;
 }

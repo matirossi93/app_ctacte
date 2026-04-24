@@ -17,7 +17,7 @@ import {
   requireAdmin,
   type JwtPayload
 } from './server-lib/auth.js';
-import { hasSupabase } from './server-lib/supabase.js';
+import { hasSupabase, sb, TENANT_ID } from './server-lib/supabase.js';
 import { syncVentasMesActual } from './server-lib/syncVentas.js';
 import {
   uploadRecibo, listRecibos, facturasCandidatas, aprobarRecibo, rechazarRecibo, cuentasDebug, cuentasRefresh
@@ -140,6 +140,85 @@ async function getIMToken(): Promise<string> {
     return imTokenPromise;
 }
 
+// ─── Cache de /clientes de InfoManager (contactos) ──────────────────────────
+// TTL largo: los teléfonos no cambian frecuentemente y el fetch puede traer
+// miles de filas. Refresco cada 1h.
+const IM_CLIENTES_TTL = 60 * 60 * 1000;
+let imClientesCache: { data: any[]; timestamp: number } | null = null;
+let imClientesPromise: Promise<any[]> | null = null;
+
+async function getIMClientesCached(): Promise<any[]> {
+    if (imClientesCache && Date.now() - imClientesCache.timestamp < IM_CLIENTES_TTL) {
+        return imClientesCache.data;
+    }
+    if (imClientesPromise) return imClientesPromise;
+    const { fetchClientesIM } = await import('./server-lib/infomanager.js');
+    imClientesPromise = fetchClientesIM()
+        .then(rows => { imClientesCache = { data: rows, timestamp: Date.now() }; return rows; })
+        .catch(err => { console.error('[getIMClientesCached]', err?.message ?? err); return imClientesCache?.data ?? []; })
+        .finally(() => { imClientesPromise = null; });
+    return imClientesPromise;
+}
+
+async function enrichClientDbMapFromIM(clientDbMap: Record<string, any>) {
+    try {
+        const clientes = await getIMClientesCached();
+        clientes.forEach((c: any) => {
+            const cod = String(c.cod_cliente);
+            if (!clientDbMap[cod]) return; // solo enriquecer los que ya están en el dataset activo
+            clientDbMap[cod].telefono = c.telefono ?? null;
+            clientDbMap[cod].whatsapp = c.whatsapp ?? c.telefono ?? null;
+        });
+    } catch (err: any) {
+        console.error('[enrichClientDbMapFromIM] exception', err?.message ?? err);
+    }
+}
+
+// ─── Enriquece clientDbMap con datos operativos del maestro (Supabase) ──────
+// Agrega dirección, día visita, frecuencia, repartidor, ABC, notas, histórico,
+// etc. al map existente. Si Supabase no está configurado, skip gracioso.
+async function enrichClientDbMapFromSupabase(clientDbMap: Record<string, any>) {
+    if (!hasSupabase()) return;
+    try {
+        const cods = Object.keys(clientDbMap).map(c => Number(c)).filter(n => Number.isFinite(n) && n > 0);
+        if (cods.length === 0) return;
+        // Supabase tiene un tope de items en .in(); procesamos en chunks de 500.
+        const chunks: number[][] = [];
+        for (let i = 0; i < cods.length; i += 500) chunks.push(cods.slice(i, i + 500));
+        const allRows: any[] = [];
+        for (const chunk of chunks) {
+            const { data, error } = await sb()
+                .from('client_operational')
+                .select('cod_cliente, direccion, dia_visita, visita, frecuencia, hoja_ruta, repartidor, dia_entrega, cond_pago, tipo_abc, notas, fact_mes_pasado, fact_prom_3m, saldo_cta_cte')
+                .eq('tenant_id', TENANT_ID)
+                .in('cod_cliente', chunk);
+            if (error) { console.error('[enrichClientDbMap]', error.message); continue; }
+            if (data) allRows.push(...data);
+        }
+        allRows.forEach((row: any) => {
+            const cod = String(row.cod_cliente);
+            if (!clientDbMap[cod]) clientDbMap[cod] = { Cod: cod };
+            const existing = clientDbMap[cod];
+            existing.direccion = row.direccion ?? null;
+            existing.dia_visita = row.dia_visita ?? null;
+            existing.visita = row.visita ?? null;
+            // Sheet ya puede haber llenado Frecuencia con mayúscula; preferimos ese si existe.
+            if (!existing.Frecuencia && row.frecuencia) existing.Frecuencia = row.frecuencia;
+            existing.hoja_ruta = row.hoja_ruta ?? null;
+            existing.repartidor = row.repartidor ?? null;
+            existing.dia_entrega = row.dia_entrega ?? null;
+            existing.cond_pago = row.cond_pago ?? null;
+            existing.tipo_abc = row.tipo_abc ?? null;
+            existing.notas = row.notas ?? null;
+            existing.fact_mes_pasado = row.fact_mes_pasado != null ? Number(row.fact_mes_pasado) : null;
+            existing.fact_prom_3m = row.fact_prom_3m != null ? Number(row.fact_prom_3m) : null;
+            existing.saldo_cta_cte = row.saldo_cta_cte != null ? Number(row.saldo_cta_cte) : null;
+        });
+    } catch (err: any) {
+        console.error('[enrichClientDbMap] exception', err?.message ?? err);
+    }
+}
+
 // ─── InfoManager Data Fetch ──────────────────────────────────────────────────
 async function fetchIMData(codEmpresa?: number): Promise<NormalizedData> {
     const token = await getIMToken();
@@ -230,6 +309,13 @@ async function fetchIMData(codEmpresa?: number): Promise<NormalizedData> {
         }
         return false; // Sin vendedor asignable → excluir
     });
+
+    // Enriquecer con datos operativos del maestro (Supabase + InfoManager /clientes).
+    // En paralelo: Supabase y IM /clientes son fuentes independientes.
+    await Promise.all([
+        enrichClientDbMapFromSupabase(clientDbMap),
+        enrichClientDbMapFromIM(clientDbMap),
+    ]);
 
     return { invoices: resolvedInvoices, clientDbMap, source: 'infomanager' };
 }
