@@ -625,19 +625,22 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
         setSelFacturas(prev => {
             const next = { ...prev };
             if (next[key] != null) { delete next[key]; return next; }
-            // Autocompletar: saldo disponible, limitado al monto restante del recibo
+            // Autocompletar: saldo disponible, limitado al monto restante del recibo.
+            // Redondeo a 2 decimales: IM a veces devuelve saldos con 3 decimales por
+            // intereses/comisiones y eso descuadraba el balance contra montoFinal entero.
             const saldo = Math.abs(f.saldo ?? f.importe_factura ?? 0);
             const yaImputado = Object.values(prev).reduce((a, b) => a + (b || 0), 0);
             const restante = Math.max(0, Number(montoFinal) - yaImputado);
-            next[key] = restante > 0 ? Math.min(saldo, restante) : saldo;
+            const importe = restante > 0 ? Math.min(saldo, restante) : saldo;
+            next[key] = Math.round(importe * 100) / 100;
             return next;
         });
     };
 
     const setImporteFactura = (key: string, value: number, saldo: number) => {
-        // Cap al saldo de la factura (InfoManager rechaza si supera)
+        // Cap al saldo de la factura (InfoManager rechaza si supera) + redondeo a 2 decimales.
         const capped = Math.max(0, Math.min(value, saldo));
-        setSelFacturas(p => ({ ...p, [key]: capped }));
+        setSelFacturas(p => ({ ...p, [key]: Math.round(capped * 100) / 100 }));
     };
 
     const aprobar = async () => {
@@ -806,9 +809,9 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                             {!esAnticipo && (
                                 <div className="rec-approval-summary">
                                     <span>Total a imputar: <strong>{formatMoney(totalImputado)}</strong> / {formatMoney(Number(montoFinal))}</span>
-                                    {Math.abs(totalImputado - Number(montoFinal)) > 0.01 && (
+                                    {Math.abs(totalImputado - Number(montoFinal)) > 1 && (
                                         <span className="rec-warn">
-                                            ⚠ Diferencia: {formatMoney(Number(montoFinal) - totalImputado)}
+                                            ⚠ Diferencia: ${(Number(montoFinal) - totalImputado).toFixed(2)}
                                         </span>
                                     )}
                                 </div>
@@ -833,9 +836,9 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                                 <button className="btn-primary"
                                     disabled={busy || (esAnticipo
                                         ? !(Number(montoFinal) > 0)
-                                        : (Object.keys(selFacturas).length === 0 || Math.abs(totalImputado - Number(montoFinal)) > 0.01))}
+                                        : (Object.keys(selFacturas).length === 0 || Math.abs(totalImputado - Number(montoFinal)) > 1))}
                                     onClick={aprobar}
-                                    title={!esAnticipo && Math.abs(totalImputado - Number(montoFinal)) > 0.01 ? 'El total a imputar debe coincidir con el monto final' : ''}>
+                                    title={!esAnticipo && Math.abs(totalImputado - Number(montoFinal)) > 1 ? `Diferencia $${(Number(montoFinal) - totalImputado).toFixed(2)} — ajustá monto final o importe imputado` : ''}>
                                     {busy ? <><Loader2 size={14} className="spin" /> Emitiendo…</> : <><Check size={14} /> {esAnticipo ? 'Aprobar como anticipo' : 'Aprobar y emitir recibo'}</>}
                                 </button>
                             </div>
