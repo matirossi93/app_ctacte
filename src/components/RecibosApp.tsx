@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { X, Camera, Upload, Check, AlertCircle, ChevronLeft, Loader2, Search, Clock, FileText, RefreshCw } from 'lucide-react';
+import { X, Camera, Upload, Check, AlertCircle, ChevronLeft, Loader2, Search, Clock, FileText, RefreshCw, ZoomIn, ZoomOut, Download, ExternalLink } from 'lucide-react';
 import { authHeaders, getUser } from '../utils/auth';
 import { MEDIOS_PAGO_UI, DEFAULT_MEDIO_UI, normalizeMedioUI } from '../utils/mediosPago';
 import './RecibosApp.css';
@@ -565,14 +565,37 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
     const [busy, setBusy] = useState(false);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
     const [lightboxOpen, setLightboxOpen] = useState(false);
+    const [lightboxZoom, setLightboxZoom] = useState(false);
 
-    // Cerrar lightbox con ESC
+    // Cerrar lightbox con ESC + reset zoom al cerrar
     useEffect(() => {
-        if (!lightboxOpen) return;
+        if (!lightboxOpen) { setLightboxZoom(false); return; }
         const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setLightboxOpen(false); };
         window.addEventListener('keydown', handler);
         return () => window.removeEventListener('keydown', handler);
     }, [lightboxOpen]);
+
+    // Descarga la foto al disco — fuerza download cross-origin via fetch + blob.
+    // signed URL de Supabase tiene Content-Disposition: inline, asi que el atributo
+    // "download" del <a> es ignorado y abre inline. Esta tecnica lo evita.
+    const downloadFoto = async () => {
+        if (!rec?.foto_signed_url) return;
+        try {
+            const res = await fetch(rec.foto_signed_url);
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const ext = (rec.foto_url?.split('.').pop() ?? 'jpg').toLowerCase();
+            a.download = `comprobante-${rec.cod_cliente}-${rec.id.slice(0, 8)}.${ext}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error('download foto failed', e);
+        }
+    };
 
     const loadRecibo = async () => {
         setLoading(true);
@@ -914,10 +937,49 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                 role="dialog"
                 aria-label="Comprobante ampliado"
             >
-                <button className="rec-lightbox-close" onClick={() => setLightboxOpen(false)} aria-label="Cerrar">
-                    <X size={28} />
-                </button>
-                <img src={rec.foto_signed_url} alt="comprobante ampliado" />
+                <div className="rec-lightbox-toolbar" onClick={e => e.stopPropagation()}>
+                    <button
+                        className="rec-lightbox-btn"
+                        onClick={() => setLightboxZoom(z => !z)}
+                        title={lightboxZoom ? 'Reducir' : 'Zoom 2x'}
+                    >
+                        {lightboxZoom ? <ZoomOut size={20} /> : <ZoomIn size={20} />}
+                        <span>{lightboxZoom ? 'Reducir' : 'Zoom 2x'}</span>
+                    </button>
+                    <a
+                        className="rec-lightbox-btn"
+                        href={rec.foto_signed_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Abrir original en pestaña nueva (visor del browser, zoom infinito)"
+                    >
+                        <ExternalLink size={20} />
+                        <span>Abrir original</span>
+                    </a>
+                    <button
+                        className="rec-lightbox-btn"
+                        onClick={downloadFoto}
+                        title="Descargar al disco para ver con visor de fotos del SO"
+                    >
+                        <Download size={20} />
+                        <span>Descargar</span>
+                    </button>
+                    <button
+                        className="rec-lightbox-btn rec-lightbox-btn--close"
+                        onClick={() => setLightboxOpen(false)}
+                        aria-label="Cerrar"
+                        title="Cerrar (ESC)"
+                    >
+                        <X size={20} />
+                    </button>
+                </div>
+                <div className={`rec-lightbox-stage ${lightboxZoom ? 'is-zoomed' : ''}`}>
+                    <img
+                        src={rec.foto_signed_url}
+                        alt="comprobante ampliado"
+                        onClick={(e) => { e.stopPropagation(); setLightboxZoom(z => !z); }}
+                    />
+                </div>
             </div>
         )}
         </>

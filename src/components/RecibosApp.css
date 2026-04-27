@@ -370,32 +370,65 @@
 
 .rec-lightbox {
     position: fixed; inset: 0; z-index: 9999;
-    background: rgba(0, 0, 0, .92);
-    display: flex; align-items: center; justify-content: center;
-    padding: 24px; cursor: zoom-out;
+    background: rgba(0, 0, 0, .94);
+    display: flex; flex-direction: column;
+    cursor: zoom-out;
     animation: rec-lightbox-in .15s ease-out;
 }
-.rec-lightbox img {
-    max-width: 96vw; max-height: 96vh;
-    object-fit: contain;
+
+.rec-lightbox-toolbar {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    padding: 12px 16px;
+    background: rgba(0, 0, 0, .5);
+    border-bottom: 1px solid rgba(255, 255, 255, .08);
     cursor: default;
+}
+.rec-lightbox-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 14px;
+    background: rgba(255, 255, 255, .08);
+    border: 1px solid rgba(255, 255, 255, .18);
+    color: #fff;
+    border-radius: 8px;
+    font-size: 13px; font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background .15s, border-color .15s;
+}
+.rec-lightbox-btn:hover { background: rgba(255, 255, 255, .18); border-color: rgba(255, 255, 255, .3) }
+.rec-lightbox-btn--close { margin-left: auto; padding: 8px 12px }
+
+.rec-lightbox-stage {
+    flex: 1 1 auto;
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px;
+    overflow: auto;
+}
+.rec-lightbox-stage img {
+    max-width: 96vw; max-height: calc(100vh - 80px);
+    object-fit: contain;
+    cursor: zoom-in;
     box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
     border-radius: 4px;
+    image-rendering: -webkit-optimize-contrast;
+    transition: transform .2s;
 }
-.rec-lightbox-close {
-    position: absolute; top: 16px; right: 16px;
-    width: 44px; height: 44px;
-    background: rgba(255, 255, 255, .12);
-    border: 1px solid rgba(255, 255, 255, .25);
-    color: #fff;
-    border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    cursor: pointer;
-    transition: background .15s;
+.rec-lightbox-stage.is-zoomed {
+    align-items: flex-start; justify-content: flex-start;
 }
-.rec-lightbox-close:hover { background: rgba(255, 255, 255, .22) }
+.rec-lightbox-stage.is-zoomed img {
+    max-width: none; max-height: none;
+    transform: scale(2);
+    transform-origin: top left;
+    cursor: zoom-out;
+}
 
 @keyframes rec-lightbox-in {
     from { opacity: 0 }
     to { opacity: 1 }
+}
+
+@media (max-width: 600px) {
+    .rec-lightbox-btn span { display: none }
+    .rec-lightbox-btn { padding: 8px 10px }
 }
