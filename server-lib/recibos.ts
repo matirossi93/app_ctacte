@@ -95,7 +95,7 @@ export async function uploadRecibo(req: Request & { user?: JwtPayload; file?: an
       cod_cliente: codCliente,
       cod_vendedor: codVendedor,
       monto: monto ?? 0.01,        // placeholder; se corrige en approval
-      fecha_comprobante: ocr?.fecha ?? null,
+      fecha_comprobante: req.body?.fecha_comprobante ?? ocr?.fecha ?? null,
       medio_pago: req.body?.medio_pago ?? ocr?.medio_pago ?? null,
       banco_origen: ocr?.banco_origen ?? null,
       referencia: ocr?.referencia ?? null,
