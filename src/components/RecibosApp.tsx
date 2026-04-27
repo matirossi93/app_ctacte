@@ -487,6 +487,7 @@ function MPBadge({ rec, isBackoffice, onReverify, onPickMatch }: {
                 <strong>✓ Verificado en MercadoPago</strong>
                 <div className="mp-badge-detail">
                     <span>{cuentaLabel(rec.mp_cuenta)}</span>
+                    {c?.amount != null && <span>Monto MP: <strong>{formatMoney(c.amount)}</strong></span>}
                     {c?.date_approved && <span>Acreditado {new Date(c.date_approved).toLocaleString('es-AR')}</span>}
                     {c?.payer_email && <span>Pagador: {c.payer_email}</span>}
                     <span className="mp-badge-payid">ID {rec.mp_payment_id}</span>
@@ -572,7 +573,13 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
             const item: ReciboRow | null = (data.recibos || []).find((r: ReciboRow) => r.id === id) ?? null;
             setRec(item);
             if (item) {
-                setMontoFinal(item.monto?.toString() ?? '');
+                // Auto-fill desde MP si el monto del comprobante es placeholder 0.01 (OCR falló)
+                // y MP ya verificó el pago. Si no aplica, cae al monto original.
+                const mpAuto = item.mp_status === 'verified' && item.mp_candidates
+                    ? item.mp_candidates.find(c => c.payment_id === item.mp_payment_id)?.amount ?? null
+                    : null;
+                const montoSeed = (item.monto && item.monto > 0.01) ? item.monto : (mpAuto ?? item.monto);
+                setMontoFinal(montoSeed?.toString() ?? '');
                 setFechaFinal(item.fecha_comprobante ?? new Date().toISOString().slice(0, 10));
                 // Normaliza recibos legacy ('transferencia', 'otro', 'tarjeta') al canon actual
                 setMedioFinal(normalizeMedioUI(item.medio_pago));
@@ -697,6 +704,26 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
 
     const totalImputado = Object.values(selFacturas).reduce((a, b) => a + (b || 0), 0);
 
+    // Si el OCR falló y el vendedor no cargó monto, comprobantes_pago.monto queda en 0.01.
+    // Cuando MP verificó el pago, mostramos el amount real detectado para no engañar al admin con "$ 0".
+    const mpMatch = rec.mp_status === 'verified' && rec.mp_candidates
+        ? rec.mp_candidates.find(c => c.payment_id === rec.mp_payment_id) ?? null
+        : null;
+    const montoIsPlaceholder = !rec.monto || rec.monto <= 0.01;
+    const montoEffective = !montoIsPlaceholder ? rec.monto : (mpMatch?.amount ?? null);
+
+    // Mensaje exacto que explica por qué el botón aprobar está disabled.
+    const disabledReason = (() => {
+        if (busy) return '';
+        if (esAnticipo) {
+            return !(Number(montoFinal) > 0) ? 'Cargá el monto final del anticipo' : '';
+        }
+        if (Object.keys(selFacturas).length === 0) return 'Seleccioná al menos una factura, o marcá "Es anticipo de cliente"';
+        const diff = Math.abs(totalImputado - Number(montoFinal));
+        if (diff > 1) return `Diferencia $${(Number(montoFinal) - totalImputado).toFixed(2)} — ajustá monto final o importe imputado`;
+        return '';
+    })();
+
     return (
         <div className="rec-detail">
             <button className="rec-back" onClick={onBack}><ChevronLeft size={16} /> Volver</button>
@@ -716,7 +743,14 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                             <p>Cod {rec.cod_cliente} · Vendedor cod {rec.cod_vendedor} · {timeAgo(rec.created_at)}</p>
                         </div>
                         <div className="rec-detail-amount">
-                            {formatMoney(rec.monto)}
+                            {montoEffective != null ? (
+                                <>
+                                    {formatMoney(montoEffective)}
+                                    {montoIsPlaceholder && <small className="rec-amount-source"> (MP)</small>}
+                                </>
+                            ) : (
+                                <span className="rec-amount-empty">Sin monto cargado</span>
+                            )}
                         </div>
                     </div>
 
@@ -838,7 +872,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                                         ? !(Number(montoFinal) > 0)
                                         : (Object.keys(selFacturas).length === 0 || Math.abs(totalImputado - Number(montoFinal)) > 1))}
                                     onClick={aprobar}
-                                    title={!esAnticipo && Math.abs(totalImputado - Number(montoFinal)) > 1 ? `Diferencia $${(Number(montoFinal) - totalImputado).toFixed(2)} — ajustá monto final o importe imputado` : ''}>
+                                    title={disabledReason}>
                                     {busy ? <><Loader2 size={14} className="spin" /> Emitiendo…</> : <><Check size={14} /> {esAnticipo ? 'Aprobar como anticipo' : 'Aprobar y emitir recibo'}</>}
                                 </button>
                             </div>

@@ -209,6 +209,8 @@
 .rec-detail-head h3 { margin: 8px 0 2px; font-size: 18px }
 .rec-detail-head p { margin: 0; font-size: 12px; color: #6e7670 }
 .rec-detail-amount { font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums }
+.rec-amount-empty { color: #888; font-size: 16px; font-weight: 500; font-style: italic }
+.rec-amount-source { color: #888; font-size: 12px; font-weight: 500; margin-left: 4px; vertical-align: middle }
 
 .rec-dl { display: grid; grid-template-columns: 130px 1fr; gap: 4px 12px; margin: 0; font-size: 13px }
 .rec-dl dt { color: #6e7670; font-weight: 600 }
