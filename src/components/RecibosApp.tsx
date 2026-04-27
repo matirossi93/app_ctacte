@@ -573,14 +573,22 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
             const item: ReciboRow | null = (data.recibos || []).find((r: ReciboRow) => r.id === id) ?? null;
             setRec(item);
             if (item) {
-                // Auto-fill desde MP si el monto del comprobante es placeholder 0.01 (OCR falló)
-                // y MP ya verificó el pago. Si no aplica, cae al monto original.
-                const mpAuto = item.mp_status === 'verified' && item.mp_candidates
-                    ? item.mp_candidates.find(c => c.payment_id === item.mp_payment_id)?.amount ?? null
+                // Lookup del payment MP verificado, compartido para auto-fill de monto y fecha.
+                const mpCand = item.mp_status === 'verified' && item.mp_candidates
+                    ? item.mp_candidates.find(c => c.payment_id === item.mp_payment_id) ?? null
                     : null;
-                const montoSeed = (item.monto && item.monto > 0.01) ? item.monto : (mpAuto ?? item.monto);
+
+                // Monto: si el del comprobante es placeholder 0.01, cae a MP. Sino respeta el cargado.
+                const montoSeed = (item.monto && item.monto > 0.01) ? item.monto : (mpCand?.amount ?? item.monto);
                 setMontoFinal(montoSeed?.toString() ?? '');
-                setFechaFinal(item.fecha_comprobante ?? new Date().toISOString().slice(0, 10));
+
+                // Fecha: prioridad vendedor/OCR > MP date_approved (slice ISO directo para no
+                // perder el día por conversión a UTC) > hoy.
+                const fechaSeed = item.fecha_comprobante
+                    ?? (mpCand?.date_approved ? mpCand.date_approved.slice(0, 10) : null)
+                    ?? new Date().toISOString().slice(0, 10);
+                setFechaFinal(fechaSeed);
+
                 // Normaliza recibos legacy ('transferencia', 'otro', 'tarjeta') al canon actual
                 setMedioFinal(normalizeMedioUI(item.medio_pago));
             }
