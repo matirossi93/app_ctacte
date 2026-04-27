@@ -264,27 +264,38 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
       ? `[ANTICIPO] ${detalleBase}`.trim()
       : detalleBase;
 
-    // IM exige balance EXACTO entre sum(pagos.importe) y sum(comprobantes.importe_a_pagar).
-    // El frontend permite diferencias chicas (≤ $5) por redondeos de saldo IM con
-    // 3 decimales o comisiones MP. Acá las absorbemos ajustando pagos[0].importe a
-    // la suma exacta de imputaciones (los pesos sobrantes del pago real quedan
-    // como crédito implícito del cliente, registrado en mp_payment_id + observaciones).
+    // IM tiene un bug/quirk: acepta `pagos.importe` con decimales pero trunca
+    // silenciosamente `comprobantes.importe_a_pagar` a entero, y después valida
+    // que ambas sumas coincidan — el error real visto en producción:
+    //   "El importe total de pagos [895770.25] debe ser igual al
+    //    total abonado de facturas [895770]"
+    // Solución: redondear AMBOS a enteros antes del POST. Para no superar saldo,
+    // usamos Math.floor en comprobantes; pagos se iguala a esa suma.
+    // Diferencias chicas (≤ $5) se absorben — los pesos perdidos quedan como
+    // crédito implícito del cliente. Si excede $5, error claro sin tocar IM.
     if (!esAnticipo && comprobantes.length > 0) {
-      const sumPagos = pagos.reduce((a, p) => a + Number(p.importe), 0);
-      const sumComp = comprobantes.reduce((a, c) => a + Number(c.importe_a_pagar), 0);
-      const diff = Math.round((sumPagos - sumComp) * 100) / 100;
-      if (Math.abs(diff) > 5) {
+      const sumPagosOrig = pagos.reduce((a, p) => a + Number(p.importe), 0);
+      const sumCompOrig = comprobantes.reduce((a, c) => a + Number(c.importe_a_pagar), 0);
+      const diffOrig = Math.round((sumPagosOrig - sumCompOrig) * 100) / 100;
+      if (Math.abs(diffOrig) > 5) {
         res.status(400).json({
-          error: `Diferencia entre pagos ($${sumPagos.toFixed(2)}) y comprobantes ($${sumComp.toFixed(2)}) es $${diff.toFixed(2)}. Excede tolerance $5 — ajustá importes manualmente.`
+          error: `Diferencia entre pagos ($${sumPagosOrig.toFixed(2)}) y comprobantes ($${sumCompOrig.toFixed(2)}) es $${diffOrig.toFixed(2)}. Excede tolerance $5 — ajustá importes manualmente.`
         });
         return;
       }
-      if (Math.abs(diff) > 0.01) {
-        // Ajustar el primer pago restando la diferencia (positiva o negativa).
-        const ajustado = (Number(pagos[0].importe) - diff).toFixed(2);
-        console.log(`[aprobar] balance ajustado: pagos[0] $${pagos[0].importe} -> $${ajustado} (diff $${diff.toFixed(2)})`);
-        pagos[0].importe = ajustado;
-        detalleFinal = `${detalleFinal} [auto-ajuste $${diff.toFixed(2)}]`.trim();
+
+      // Truncar comprobantes a entero (IM los trunca igual; así no superamos saldo).
+      comprobantes.forEach(c => {
+        c.importe_a_pagar = Math.floor(Number(c.importe_a_pagar)).toFixed(2);
+      });
+      // Igualar pagos a la suma de comprobantes truncados (mismos enteros).
+      const sumCompInt = comprobantes.reduce((a, c) => a + Number(c.importe_a_pagar), 0);
+      const pagoOrig = pagos[0].importe;
+      pagos[0].importe = sumCompInt.toFixed(2);
+      const ajusteTotal = Math.round((sumPagosOrig - sumCompInt) * 100) / 100;
+      if (Math.abs(ajusteTotal) > 0.01) {
+        console.log(`[aprobar] redondeo IM: pagos[0] $${pagoOrig} -> $${pagos[0].importe}, comprobantes truncados a entero (ajuste total $${ajusteTotal.toFixed(2)})`);
+        detalleFinal = `${detalleFinal} [auto-ajuste $${ajusteTotal.toFixed(2)}]`.trim();
       }
     }
 
