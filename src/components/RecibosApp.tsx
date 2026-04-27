@@ -153,10 +153,28 @@ export const RecibosApp = ({ onClose, clients = [] }: Props) => {
 // ───────────────────────────────────────────────────────────────────────────
 // LIST
 // ───────────────────────────────────────────────────────────────────────────
+// Mapeo cod_vendedor → nombre legible (basado en seed Supabase, ver
+// project_panel_vendedor_recibos_mvp_20260420.md). Si aparece un cod nuevo
+// no mapeado, mostramos "Vendedor #X".
+const VENDOR_NAMES: Record<number, string> = {
+    1: 'Federico',
+    2: 'Sebastián',
+    3: 'Marcelo',
+    4: 'Julio',
+    5: 'Adolfo',
+    6: 'Andrea',
+    8: 'Robledo',
+    9: 'Darío',
+    10: 'Niño',
+    12: 'Brian',
+};
+const vendorLabel = (cod: number): string => VENDOR_NAMES[cod] ?? `Vendedor #${cod}`;
+
 function RecibosList({ isBackoffice, clientNameByCod, onOpenDetail, onUpload }: { isBackoffice: boolean; clientNameByCod: Map<string, string>; onOpenDetail: (id: string) => void; onUpload: () => void }) {
     const [items, setItems] = useState<ReciboRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState<'pendiente_revision' | 'todos' | 'imputado' | 'rechazado'>(isBackoffice ? 'pendiente_revision' : 'todos');
+    const [vendorFilter, setVendorFilter] = useState<'all' | string>('all');
     const [err, setErr] = useState<string | null>(null);
 
     const load = async () => {
@@ -171,6 +189,19 @@ function RecibosList({ isBackoffice, clientNameByCod, onOpenDetail, onUpload }: 
         finally { setLoading(false); }
     };
     useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter]);
+
+    // Vendedores únicos del set actual (derivados, no hardcoded), ordenados por nombre.
+    const uniqueVendors = useMemo(() => {
+        const set = new Set(items.map(r => r.cod_vendedor));
+        return Array.from(set).sort((a, b) => vendorLabel(a).localeCompare(vendorLabel(b), 'es'));
+    }, [items]);
+
+    // Filtrado client-side por vendedor. No re-fetch — el backend ya trae todo
+    // del status actual y filtramos en memoria.
+    const visibleItems = useMemo(() => {
+        if (vendorFilter === 'all') return items;
+        return items.filter(r => String(r.cod_vendedor) === vendorFilter);
+    }, [items, vendorFilter]);
 
     return (
         <div className="rec-list">
@@ -188,19 +219,39 @@ function RecibosList({ isBackoffice, clientNameByCod, onOpenDetail, onUpload }: 
                 <button className="rec-chip" onClick={load} title="Refrescar"><RefreshCw size={14} /></button>
             </div>
 
+            {/* Filtro vendedor — solo visible para admin/gerente y si hay >1 vendedor en el set */}
+            {isBackoffice && uniqueVendors.length > 1 && (
+                <div className="rec-vendor-filter">
+                    <label>
+                        <span>Vendedor:</span>
+                        <select value={vendorFilter} onChange={e => setVendorFilter(e.target.value)}>
+                            <option value="all">Todos ({items.length})</option>
+                            {uniqueVendors.map(cod => {
+                                const count = items.filter(r => r.cod_vendedor === cod).length;
+                                return (
+                                    <option key={cod} value={String(cod)}>
+                                        {vendorLabel(cod)} ({count})
+                                    </option>
+                                );
+                            })}
+                        </select>
+                    </label>
+                </div>
+            )}
+
             {loading && <div className="rec-loading"><Loader2 size={16} className="spin" /> Cargando…</div>}
             {err && <div className="rec-error"><AlertCircle size={16} /> {err}</div>}
 
-            {!loading && items.length === 0 && (
+            {!loading && visibleItems.length === 0 && (
                 <div className="rec-empty">
                     <FileText size={32} />
-                    <p>Sin comprobantes {filter !== 'todos' ? `en estado "${statusLabel(filter)}"` : 'cargados'}.</p>
+                    <p>Sin comprobantes {filter !== 'todos' ? `en estado "${statusLabel(filter)}"` : 'cargados'}{vendorFilter !== 'all' ? ` de ${vendorLabel(Number(vendorFilter))}` : ''}.</p>
                     {!isBackoffice && <button className="btn-primary" onClick={onUpload}>Cargar el primero</button>}
                 </div>
             )}
 
             <ul className="rec-items">
-                {items.map(r => (
+                {visibleItems.map(r => (
                     <li key={r.id} className="rec-item" onClick={() => onOpenDetail(r.id)}>
                         <div className="rec-item-thumb">
                             {r.foto_signed_url && r.foto_url.toLowerCase().endsWith('.pdf') ? (
@@ -224,6 +275,7 @@ function RecibosList({ isBackoffice, clientNameByCod, onOpenDetail, onUpload }: 
                             <div className="rec-item-row3">
                                 <Clock size={11} />
                                 <span>{timeAgo(r.created_at)}</span>
+                                {isBackoffice && <span className="rec-vendor-tag">{vendorLabel(r.cod_vendedor)}</span>}
                                 {r.ocr_confidence != null && <span className="rec-ocr-badge">OCR {Math.round(r.ocr_confidence * 100)}%</span>}
                             </div>
                         </div>

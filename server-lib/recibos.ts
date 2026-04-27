@@ -28,6 +28,25 @@ function extFromMime(mime: string): string {
   }
 }
 
+// Cache en memoria de signed URLs para evitar pegarle a Supabase Storage en cada
+// listRecibos. Cada signed URL dura 1h; cacheamos hasta 50min antes de regenerar.
+// Sin cache, listar 50 recibos hace 50 round-trips a Supabase ~> 1-2s. Con cache
+// caliente, el listado responde casi instantáneo.
+const SIGNED_URL_TTL_SEC = 3600;
+const SIGNED_URL_REFRESH_BEFORE_MS = 10 * 60 * 1000; // refresh 10min antes de expirar
+const signedUrlCache = new Map<string, { url: string; expiresAt: number }>();
+
+async function getSignedUrlCached(path: string): Promise<string | null> {
+  const cached = signedUrlCache.get(path);
+  if (cached && cached.expiresAt - SIGNED_URL_REFRESH_BEFORE_MS > Date.now()) {
+    return cached.url;
+  }
+  const { data: signed } = await sb().storage.from(BUCKET).createSignedUrl(path, SIGNED_URL_TTL_SEC);
+  if (!signed?.signedUrl) return null;
+  signedUrlCache.set(path, { url: signed.signedUrl, expiresAt: Date.now() + SIGNED_URL_TTL_SEC * 1000 });
+  return signed.signedUrl;
+}
+
 /**
  * POST /api/recibos/upload
  * multipart/form-data: foto (file), cod_cliente, monto?, medio_pago?, observaciones?
@@ -148,16 +167,16 @@ export async function listRecibos(req: Request & { user?: JwtPayload }, res: Res
     if (req.query.status) q = q.eq('status', String(req.query.status));
     if (req.query.cod_cliente) q = q.eq('cod_cliente', Number(req.query.cod_cliente));
     if (req.query.cod_vendedor && user.rol !== 'vendedor') q = q.eq('cod_vendedor', Number(req.query.cod_vendedor));
-    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const limit = Math.min(Number(req.query.limit) || 30, 200);
     q = q.order('created_at', { ascending: false }).limit(limit);
     const { data, error } = await q;
     if (error) { res.status(500).json({ error: error.message }); return; }
 
-    // Generar signed URLs para las fotos (1h)
+    // Signed URLs con cache en memoria (50min). Acelera mucho la lista de recibos.
     const withUrls = await Promise.all((data ?? []).map(async (r: any) => {
       if (!r.foto_url) return r;
-      const { data: signed } = await sb().storage.from(BUCKET).createSignedUrl(r.foto_url, 3600);
-      return { ...r, foto_signed_url: signed?.signedUrl ?? null };
+      const url = await getSignedUrlCached(r.foto_url);
+      return { ...r, foto_signed_url: url };
     }));
 
     res.json({ ok: true, recibos: withUrls });

@@ -45,6 +45,30 @@
 
 /* LIST */
 .rec-filter-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px }
+
+.rec-vendor-filter { margin-bottom: 14px }
+.rec-vendor-filter label { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: #4a534b; }
+.rec-vendor-filter span { font-weight: 600 }
+.rec-vendor-filter select {
+    padding: 6px 28px 6px 10px;
+    border: 1px solid rgba(20,24,20,.12);
+    border-radius: 8px;
+    background: #fff;
+    font-size: 13px;
+    cursor: pointer;
+    min-width: 200px;
+}
+
+.rec-vendor-tag {
+    display: inline-block;
+    padding: 1px 8px;
+    background: rgba(6, 101, 47, .08);
+    color: #06652f;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 600;
+    margin-left: 4px;
+}
 .rec-chip {
     height: 30px; padding: 0 12px; border-radius: 25px;
     background: rgba(20,24,20,.05);
