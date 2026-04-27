@@ -25,7 +25,10 @@ export async function imClient(): Promise<AxiosInstance> {
   const t = await imToken();
   return axios.create({
     baseURL: BASE,
-    timeout: 60000,
+    // 25s para fallar antes que el reverse-proxy de EasyPanel corte a ~30s.
+    // Si IM no responde en ese tiempo, axios tira error y el backend puede
+    // responder JSON estructurado en lugar de quedar colgado y devolver HTML 502.
+    timeout: 25000,
     headers: { Authorization: `Bearer ${t}` }
   });
 }

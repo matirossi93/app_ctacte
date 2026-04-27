@@ -288,6 +288,16 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
       }
     }
 
+    console.log('[aprobar] payload IM:', JSON.stringify({
+      cod_empresa: String(codEmpresa),
+      cod_cliente: String(comp.cod_cliente),
+      fecha,
+      centro_costo: centroCosto,
+      usuario,
+      pagos: pagos.map(p => ({ importe: p.importe, cod_cuenta: p.cod_cuenta, forma_pago: p.forma_pago })),
+      comprobantes
+    }));
+
     const imRes = await crearRecibo({
       cod_empresa: String(codEmpresa),
       fecha,
@@ -302,6 +312,7 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
     });
 
     if (!imRes.ok) {
+      console.error('[aprobar] IM rechazo:', imRes.error, '| raw:', JSON.stringify(imRes.raw));
       // Enriquecer error_msg con detalles del raw IM (suele tener un array `detalles`
       // con la regla violada — útil para debug en el modal admin).
       const detalleIM = imRes.raw?.detalles
