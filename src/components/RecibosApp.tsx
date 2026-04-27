@@ -690,6 +690,25 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
         setSelFacturas(p => ({ ...p, [key]: Math.round(capped * 100) / 100 }));
     };
 
+    // Parser robusto: si el reverse-proxy de EasyPanel timeout-ea o el backend
+    // cae mientras procesa, la respuesta llega como HTML (página de error de
+    // nginx) en lugar de JSON. Antes esto crasheaba el frontend con
+    // "Unexpected token '<'". Ahora devolvemos un objeto con .error legible.
+    const parseRes = async (res: Response): Promise<any> => {
+        const text = await res.text();
+        try {
+            return text ? JSON.parse(text) : {};
+        } catch {
+            const looksHtml = text.trim().toLowerCase().startsWith('<');
+            return {
+                ok: false,
+                error: looksHtml
+                    ? `Timeout o error del servidor (HTTP ${res.status}). Reintentá en unos segundos.`
+                    : `Respuesta inesperada (HTTP ${res.status}): ${text.slice(0, 200)}`,
+            };
+        }
+    };
+
     const aprobar = async () => {
         if (!rec) return;
         setBusy(true); setMsg(null);
@@ -711,7 +730,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                     es_anticipo: esAnticipo,
                 })
             });
-            const data = await res.json();
+            const data = await parseRes(res);
             if (!res.ok || !data.ok) {
                 setMsg({ kind: 'err', text: `Error: ${data.error}${data.raw ? ' — ' + JSON.stringify(data.raw).slice(0, 200) : ''}` });
                 return;
@@ -731,7 +750,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                 headers: { 'Content-Type': 'application/json', ...authHeaders() },
                 body: JSON.stringify({ motivo: motivoRechazo })
             });
-            const data = await res.json();
+            const data = await parseRes(res);
             if (!res.ok || !data.ok) { setMsg({ kind: 'err', text: data.error }); return; }
             setMsg({ kind: 'ok', text: 'Rechazado' });
             setTimeout(onBack, 1200);

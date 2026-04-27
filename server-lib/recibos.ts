@@ -260,9 +260,33 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
     }
 
     const detalleBase = body.observaciones ?? comp.observaciones ?? comp.referencia ?? '';
-    const detalleFinal = esAnticipo
+    let detalleFinal = esAnticipo
       ? `[ANTICIPO] ${detalleBase}`.trim()
       : detalleBase;
+
+    // IM exige balance EXACTO entre sum(pagos.importe) y sum(comprobantes.importe_a_pagar).
+    // El frontend permite diferencias chicas (≤ $5) por redondeos de saldo IM con
+    // 3 decimales o comisiones MP. Acá las absorbemos ajustando pagos[0].importe a
+    // la suma exacta de imputaciones (los pesos sobrantes del pago real quedan
+    // como crédito implícito del cliente, registrado en mp_payment_id + observaciones).
+    if (!esAnticipo && comprobantes.length > 0) {
+      const sumPagos = pagos.reduce((a, p) => a + Number(p.importe), 0);
+      const sumComp = comprobantes.reduce((a, c) => a + Number(c.importe_a_pagar), 0);
+      const diff = Math.round((sumPagos - sumComp) * 100) / 100;
+      if (Math.abs(diff) > 5) {
+        res.status(400).json({
+          error: `Diferencia entre pagos ($${sumPagos.toFixed(2)}) y comprobantes ($${sumComp.toFixed(2)}) es $${diff.toFixed(2)}. Excede tolerance $5 — ajustá importes manualmente.`
+        });
+        return;
+      }
+      if (Math.abs(diff) > 0.01) {
+        // Ajustar el primer pago restando la diferencia (positiva o negativa).
+        const ajustado = (Number(pagos[0].importe) - diff).toFixed(2);
+        console.log(`[aprobar] balance ajustado: pagos[0] $${pagos[0].importe} -> $${ajustado} (diff $${diff.toFixed(2)})`);
+        pagos[0].importe = ajustado;
+        detalleFinal = `${detalleFinal} [auto-ajuste $${diff.toFixed(2)}]`.trim();
+      }
+    }
 
     const imRes = await crearRecibo({
       cod_empresa: String(codEmpresa),
@@ -278,14 +302,20 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
     });
 
     if (!imRes.ok) {
+      // Enriquecer error_msg con detalles del raw IM (suele tener un array `detalles`
+      // con la regla violada — útil para debug en el modal admin).
+      const detalleIM = imRes.raw?.detalles
+        ? ` | detalles: ${JSON.stringify(imRes.raw.detalles).slice(0, 300)}`
+        : '';
+      const errorMsg = `${imRes.error}${detalleIM}`;
       await sb().from('comprobantes_pago').update({
         status: 'error',
-        error_msg: imRes.error,
+        error_msg: errorMsg,
         infomanager_response: imRes.raw ?? null,
         reviewed_by: user.sub,
         reviewed_at: new Date().toISOString()
       }).eq('id', comp.id);
-      res.status(502).json({ ok: false, error: imRes.error, raw: imRes.raw });
+      res.status(502).json({ ok: false, error: errorMsg, raw: imRes.raw });
       return;
     }
 
