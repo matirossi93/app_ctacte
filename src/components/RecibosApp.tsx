@@ -564,6 +564,15 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
     const [esAnticipo, setEsAnticipo] = useState(false);
     const [busy, setBusy] = useState(false);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+    const [lightboxOpen, setLightboxOpen] = useState(false);
+
+    // Cerrar lightbox con ESC
+    useEffect(() => {
+        if (!lightboxOpen) return;
+        const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setLightboxOpen(false); };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, [lightboxOpen]);
 
     const loadRecibo = async () => {
         setLoading(true);
@@ -733,6 +742,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
     })();
 
     return (
+        <>
         <div className="rec-detail">
             <button className="rec-back" onClick={onBack}><ChevronLeft size={16} /> Volver</button>
 
@@ -740,7 +750,15 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                 <div className="rec-detail-photo">
                     {rec.foto_signed_url && rec.foto_url.toLowerCase().endsWith('.pdf')
                         ? <a href={rec.foto_signed_url} target="_blank" rel="noreferrer" className="rec-pdf-link"><FileText size={32} /> Ver PDF</a>
-                        : rec.foto_signed_url ? <img src={rec.foto_signed_url} alt="comprobante" /> : <div>Sin foto</div>}
+                        : rec.foto_signed_url
+                            ? <img
+                                src={rec.foto_signed_url}
+                                alt="comprobante"
+                                className="rec-photo-zoomable"
+                                title="Click para ampliar"
+                                onClick={() => setLightboxOpen(true)}
+                            />
+                            : <div>Sin foto</div>}
                 </div>
 
                 <div className="rec-detail-info">
@@ -889,6 +907,20 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                 </div>
             </div>
         </div>
+        {lightboxOpen && rec.foto_signed_url && (
+            <div
+                className="rec-lightbox"
+                onClick={(e) => { if (e.target === e.currentTarget) setLightboxOpen(false); }}
+                role="dialog"
+                aria-label="Comprobante ampliado"
+            >
+                <button className="rec-lightbox-close" onClick={() => setLightboxOpen(false)} aria-label="Cerrar">
+                    <X size={28} />
+                </button>
+                <img src={rec.foto_signed_url} alt="comprobante ampliado" />
+            </div>
+        )}
+        </>
     );
 }
 

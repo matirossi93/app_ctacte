@@ -363,3 +363,39 @@
     .rec-dl dt { margin-top: 4px }
     .mp-candidate-btn { grid-template-columns: 1fr; gap: 2px; }
 }
+
+/* Lightbox para ver foto del comprobante en grande */
+.rec-photo-zoomable { cursor: zoom-in; transition: opacity .15s }
+.rec-photo-zoomable:hover { opacity: .88 }
+
+.rec-lightbox {
+    position: fixed; inset: 0; z-index: 9999;
+    background: rgba(0, 0, 0, .92);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; cursor: zoom-out;
+    animation: rec-lightbox-in .15s ease-out;
+}
+.rec-lightbox img {
+    max-width: 96vw; max-height: 96vh;
+    object-fit: contain;
+    cursor: default;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
+    border-radius: 4px;
+}
+.rec-lightbox-close {
+    position: absolute; top: 16px; right: 16px;
+    width: 44px; height: 44px;
+    background: rgba(255, 255, 255, .12);
+    border: 1px solid rgba(255, 255, 255, .25);
+    color: #fff;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: background .15s;
+}
+.rec-lightbox-close:hover { background: rgba(255, 255, 255, .22) }
+
+@keyframes rec-lightbox-in {
+    from { opacity: 0 }
+    to { opacity: 1 }
+}
