@@ -720,7 +720,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
         }
         if (Object.keys(selFacturas).length === 0) return 'Seleccioná al menos una factura, o marcá "Es anticipo de cliente"';
         const diff = Math.abs(totalImputado - Number(montoFinal));
-        if (diff > 1) return `Diferencia $${(Number(montoFinal) - totalImputado).toFixed(2)} — ajustá monto final o importe imputado`;
+        if (diff > 5) return `Diferencia $${(Number(montoFinal) - totalImputado).toFixed(2)} — ajustá monto final o importe imputado`;
         return '';
     })();
 
@@ -843,7 +843,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                             {!esAnticipo && (
                                 <div className="rec-approval-summary">
                                     <span>Total a imputar: <strong>{formatMoney(totalImputado)}</strong> / {formatMoney(Number(montoFinal))}</span>
-                                    {Math.abs(totalImputado - Number(montoFinal)) > 1 && (
+                                    {Math.abs(totalImputado - Number(montoFinal)) > 5 && (
                                         <span className="rec-warn">
                                             ⚠ Diferencia: ${(Number(montoFinal) - totalImputado).toFixed(2)}
                                         </span>
@@ -870,7 +870,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                                 <button className="btn-primary"
                                     disabled={busy || (esAnticipo
                                         ? !(Number(montoFinal) > 0)
-                                        : (Object.keys(selFacturas).length === 0 || Math.abs(totalImputado - Number(montoFinal)) > 1))}
+                                        : (Object.keys(selFacturas).length === 0 || Math.abs(totalImputado - Number(montoFinal)) > 5))}
                                     onClick={aprobar}
                                     title={disabledReason}>
                                     {busy ? <><Loader2 size={14} className="spin" /> Emitiendo…</> : <><Check size={14} /> {esAnticipo ? 'Aprobar como anticipo' : 'Aprobar y emitir recibo'}</>}
