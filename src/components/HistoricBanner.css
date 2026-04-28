@@ -79,9 +79,12 @@
     }
 }
 
-/* Desktop ≥900px: dejar libre el sidebar lateral (.vs-nav left:18px width:92px). */
+/* Desktop ≥900px: dejar libre el sidebar lateral (.vs-nav left:18px top:100px width:92px).
+   Margin (no padding) es lo que mueve el área amarilla; padding solo desplazaba
+   el contenido manteniendo el fondo amarillo encima del sidebar. */
 @media (min-width: 900px) {
     .hb-wrap {
-        padding-left: 130px;
+        margin-left: 122px;
+        border-bottom-left-radius: 8px;
     }
 }
