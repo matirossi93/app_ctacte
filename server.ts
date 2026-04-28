@@ -19,6 +19,7 @@ import {
 } from './server-lib/auth.js';
 import { hasSupabase, sb, TENANT_ID } from './server-lib/supabase.js';
 import { syncVentasMesActual, syncVentasMeses } from './server-lib/syncVentas.js';
+import { getMonthlyVentasRaw } from './server-lib/snapshotCache.js';
 import {
   uploadRecibo, listRecibos, facturasCandidatas, aprobarRecibo, rechazarRecibo, cuentasDebug, cuentasRefresh,
   reverificarMP, elegirMatchMP, procesarColaMP
@@ -884,6 +885,40 @@ setTimeout(() => {
     import('./server-lib/cuentasResolver.js').then(m => m.prewarmCuentasCache());
 }, 3000);
 console.log('Cron pre-warm /api/data: */4 * * * *');
+
+// Pre-warm del snapshotCache: trae las ventas crudas de los últimos 3 meses
+// a RAM para que el primer corte intra-mes que solicite el usuario sea
+// instantáneo (sin esperar 3-5s por el fetch a InfoManager).
+//
+// TTL del snapshotCache es 5min para mes actual y 1h para histórico. Boot
+// warm + cron horario mantienen siempre fresco lo histórico; el mes actual
+// se reganará por demanda igualmente (tiene TTL corto a propósito).
+async function prewarmSnapshotCache() {
+    const now = new Date();
+    const meses: Array<{ year: number; month: number }> = [];
+    for (let i = 0; i < 3; i++) {
+        let m = now.getUTCMonth() + 1 - i;
+        let y = now.getUTCFullYear();
+        while (m <= 0) { m += 12; y -= 1; }
+        meses.push({ year: y, month: m });
+    }
+    for (const { year, month } of meses) {
+        try {
+            const t0 = Date.now();
+            // force:true para refrescar incluso si el TTL todavía no expiró
+            // (mantiene el cache caliente sin huecos).
+            const r = await getMonthlyVentasRaw(year, month, { force: true });
+            console.log(`[snapshot prewarm] ${year}-${String(month).padStart(2, '0')}: ${r.ventas.length} ventas en ${Date.now() - t0}ms`);
+        } catch (e: any) {
+            console.warn(`[snapshot prewarm] ${year}-${String(month).padStart(2, '0')} fail: ${e?.message ?? e}`);
+        }
+    }
+}
+// Boot warm con delay 12s para no competir con el resto del startup.
+setTimeout(() => { prewarmSnapshotCache().catch(() => { }); }, 12000);
+// Cron horario en el minuto 5 (después del posible cron 0 4 * * * que re-syncea).
+cron.schedule('5 * * * *', () => { prewarmSnapshotCache().catch(() => { }); });
+console.log('Cron snapshot prewarm: 5 * * * *');
 
 // MP verification — reintenta comprobantes MP pendientes/no encontrados en ventana 24h
 cron.schedule('*/5 * * * *', async () => {
