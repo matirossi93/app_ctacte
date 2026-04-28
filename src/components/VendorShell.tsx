@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
@@ -1048,6 +1048,18 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
     const [showPrint, setShowPrint] = useState(false);
     const [totales, setTotales] = useState<any>(null);
 
+    // Cache local de respuestas {gr, cr} keyed por filtros. Vive la sesión y se
+    // limpia cuando reloadTick cambia (tras import/sync). Stale-while-revalidate:
+    // si hay hit, mostrar inmediatamente y refresh en background.
+    const cacheRef = useRef<Map<string, { gr: any; cr: any }>>(new Map());
+    // AbortController para cancelar requests viejos cuando el usuario cambia
+    // rápido entre meses/cortes y evitar race conditions.
+    const abortRef = useRef<AbortController | null>(null);
+
+    // Limpiar cache local cuando el padre dispara un reload (tras import Maestro
+    // o sync-now). Sin esto, la mutación se vería con delay del lado cliente.
+    useEffect(() => { cacheRef.current.clear(); }, [reloadTick]);
+
     // Reset localidad + search al cambiar de vendedor
     useEffect(() => { setLocalidad(''); setSearchClientes(''); }, [selectedVendor]);
     useEffect(() => { setSearchClientes(''); }, [localidad]);
@@ -1062,8 +1074,62 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
         );
     }, [clientes, searchClientes]);
 
+    // Helper: aplica una respuesta {gr, cr} al state. Reutilizado para cache hit
+    // y para fetch fresh, evitando lógica duplicada.
+    const applyData = (gr: any, cr: any) => {
+        let goal: GoalData | null = null;
+        if (isAdmin && selectedVendor != null) {
+            goal = (gr.items ?? []).find((i: any) => i.cod_vendedor === selectedVendor) ?? null;
+        } else if (isAdmin) {
+            const allItems = gr.items ?? [];
+            const items = allItems.filter((i: any) => i.activo);
+            const sumTarget = items.reduce((a: number, i: any) => a + (i.target_neto ?? 0), 0);
+            const sumAvance = items.reduce((a: number, i: any) => a + (i.avance ?? 0), 0);
+            const first = items[0] ?? allItems[0];
+            goal = first ? {
+                ...first,
+                cod_vendedor: 0,
+                nombre: 'Equipo completo',
+                target_neto: sumTarget || null,
+                avance: sumAvance,
+                num_comprobantes: items.reduce((a: number, i: any) => a + (i.num_comprobantes ?? 0), 0),
+                pct_cumplimiento: sumTarget > 0 ? sumAvance / sumTarget : null,
+                proyeccion: items.reduce((a: number, i: any) => a + (i.proyeccion ?? 0), 0),
+                necesario_por_dia: sumTarget && first.dias_restantes > 0 ? Math.max(0, (sumTarget - sumAvance) / first.dias_restantes) : null,
+            } : null;
+        } else {
+            goal = gr.items?.[0] ?? null;
+        }
+        setG(goal);
+        setMeta({ holidays: gr.holidays ?? [], dias_habiles_source: gr.dias_habiles_source ?? 'auto', year: gr.year, month: gr.month });
+        setRankingItems(gr.items ?? []);
+        setTotales(gr.totales ?? null);
+        setClientes(cr.items || []);
+        setClientesStats(cr.stats);
+        setSeleccion(cr.seleccion ?? null);
+    };
+
     const load = async () => {
-        setLoading(true); setErr(null);
+        const cacheKey = JSON.stringify({
+            y: viewPeriod.year, m: viewPeriod.month, d: viewPeriod.asOfDay ?? null,
+            sv: selectedVendor, c: cods, f: filter, l: localidad, si: showInactivos,
+        });
+        const cached = cacheRef.current.get(cacheKey);
+
+        if (cached) {
+            // Stale-while-revalidate: pintar inmediatamente, refresh en background.
+            applyData(cached.gr, cached.cr);
+            setErr(null);
+        } else {
+            setLoading(true); setErr(null);
+        }
+
+        // Cancelar request anterior: si el usuario cambia rápido entre meses,
+        // los fetches viejos no van a pisar la UI con datos desactualizados.
+        abortRef.current?.abort();
+        const ctrl = new AbortController();
+        abortRef.current = ctrl;
+
         try {
             const useSnapshot = viewPeriod.asOfDay != null;
             let gr: any, cr: any;
@@ -1078,7 +1144,7 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                 if (showInactivos || (isAdmin && selectedVendor != null)) sp.set('incluir_inactivos', 'true');
                 if (isAdmin && selectedVendor != null) sp.set('cod_vendedor', String(selectedVendor));
                 else if (isAdmin && cods) sp.set('cods', cods);
-                const snap = await fetch(`/api/goals/snapshot?${sp.toString()}`, { headers: authHeaders() }).then(r => r.json());
+                const snap = await fetch(`/api/goals/snapshot?${sp.toString()}`, { headers: authHeaders(), signal: ctrl.signal }).then(r => r.json());
                 if (!snap.ok) throw new Error(snap.error);
                 // Adapta el response del snapshot al shape que usa el resto del componente.
                 gr = snap;
@@ -1158,52 +1224,27 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                 goalsParams.set('month', String(viewPeriod.month));
                 if (showInactivos || (isAdmin && selectedVendor != null)) goalsParams.set('incluir_inactivos', 'true');
                 [gr, cr] = await Promise.all([
-                    fetch(`/api/goals?${goalsParams.toString()}`, { headers: authHeaders() }).then(r => r.json()),
-                    fetch(`/api/goals/clientes?${qs.toString()}`, { headers: authHeaders() }).then(r => r.json()),
+                    fetch(`/api/goals?${goalsParams.toString()}`, { headers: authHeaders(), signal: ctrl.signal }).then(r => r.json()),
+                    fetch(`/api/goals/clientes?${qs.toString()}`, { headers: authHeaders(), signal: ctrl.signal }).then(r => r.json()),
                 ]);
                 if (!gr.ok) throw new Error(gr.error);
                 if (!cr.ok) throw new Error(cr.error);
             }
-            // Admin + selectedVendor: mostrar goal específico del vendedor. Sin selección: agregar todos.
-            let goal: GoalData | null = null;
-            if (isAdmin && selectedVendor != null) {
-                goal = (gr.items ?? []).find((i: any) => i.cod_vendedor === selectedVendor) ?? null;
-            } else if (isAdmin) {
-                // Vista agregada: solo vendedores activos (mismo criterio que backend totales).
-                // Andrea/Dario/Federico estan en la lista para filtrar pero no suman al equipo.
-                const allItems = gr.items ?? [];
-                const items = allItems.filter((i: any) => i.activo);
-                const sumTarget = items.reduce((a: number, i: any) => a + (i.target_neto ?? 0), 0);
-                const sumAvance = items.reduce((a: number, i: any) => a + (i.avance ?? 0), 0);
-                const first = items[0] ?? allItems[0];
-                goal = first ? {
-                    ...first,
-                    cod_vendedor: 0,
-                    nombre: 'Equipo completo',
-                    target_neto: sumTarget || null,
-                    avance: sumAvance,
-                    num_comprobantes: items.reduce((a: number, i: any) => a + (i.num_comprobantes ?? 0), 0),
-                    pct_cumplimiento: sumTarget > 0 ? sumAvance / sumTarget : null,
-                    proyeccion: items.reduce((a: number, i: any) => a + (i.proyeccion ?? 0), 0),
-                    necesario_por_dia: sumTarget && first.dias_restantes > 0 ? Math.max(0, (sumTarget - sumAvance) / first.dias_restantes) : null,
-                } : null;
-            } else {
-                goal = gr.items?.[0] ?? null;
-            }
-            setG(goal);
-            setMeta({
-                holidays: gr.holidays ?? [],
-                dias_habiles_source: gr.dias_habiles_source ?? 'auto',
-                year: gr.year,
-                month: gr.month,
-            });
-            setRankingItems(gr.items ?? []);
-            setTotales(gr.totales ?? null);
-            setClientes(cr.items || []);
-            setClientesStats(cr.stats);
-            setSeleccion(cr.seleccion ?? null);
-        } catch (e: any) { setErr(e.message); }
-        finally { setLoading(false); }
+            // Si el request fue cancelado mientras esperábamos, descartamos
+            // este resultado para no pisar la UI con un período viejo.
+            if (ctrl.signal.aborted) return;
+            cacheRef.current.set(cacheKey, { gr, cr });
+            applyData(gr, cr);
+        } catch (e: any) {
+            // Aborts no son errores reales, solo indican que el usuario
+            // cambió de período antes que terminara el fetch.
+            if (e?.name === 'AbortError' || ctrl.signal.aborted) return;
+            // Solo mostramos error si no había cache: con cache, el usuario ya
+            // ve datos válidos (aunque viejos) y el error de red es transitorio.
+            if (!cached) setErr(e.message);
+        } finally {
+            if (!ctrl.signal.aborted) setLoading(false);
+        }
     };
     useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, localidad, selectedVendor, cods, showInactivos, reloadTick, viewPeriod.year, viewPeriod.month, viewPeriod.asOfDay]);
 

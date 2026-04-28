@@ -1,6 +1,7 @@
 import { fetchVentas } from './infomanager.js';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import { computeVentaNeta, monthKey } from '../src/utils/ventas.js';
+import { invalidateAll as invalidateGoalsCache } from './goalsResponseCache.js';
 
 export interface SyncResult {
   ok: boolean;
@@ -173,12 +174,16 @@ async function syncVentasRango(opts: {
  * Wrapper sobre syncVentasRango.
  */
 export async function syncVentasMesActual(opts?: { codEmpresa?: number }): Promise<SyncResult> {
-  return syncVentasRango({
+  const r = await syncVentasRango({
     desde: ymdMonthStart(),
     hasta: ymdToday(),
     codEmpresa: opts?.codEmpresa,
     label: 'mes-actual',
   });
+  // El cron */30 actualiza vendor/client_sales_monthly del mes actual:
+  // invalidar cache de Objetivos para que la próxima carga vea el nuevo avance.
+  if (r.ok) invalidateGoalsCache();
+  return r;
 }
 
 /**
@@ -215,5 +220,8 @@ export async function syncVentasMeses(n: number, opts?: { codEmpresa?: number })
     const r = await syncVentasMes(y, m, opts);
     results.push(r);
   }
+  // Tras sync masivo (cron diario o backfill manual), invalidar cache de
+  // respuestas: los próximos /api/goals reflejan los nuevos avances.
+  invalidateGoalsCache();
   return results;
 }

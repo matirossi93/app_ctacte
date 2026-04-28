@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import XLSX from 'xlsx';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import type { JwtPayload } from './auth.js';
+import { invalidateAll as invalidateGoalsCache } from './goalsResponseCache.js';
 
 const DEFAULT_SHEET_NAME = 'mes actual';
 const SHEET_ID = '1k7B8Phi5QDn_6mFWiAfYBcqqisEWT6nqUwgmhE54Zy8';
@@ -167,6 +168,10 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
       imported_by: user.sub,
     });
   } catch { /* log best-effort */ }
+
+  // Invalidar cache de respuestas de Objetivos: los nuevos objetivos por
+  // cliente / vendedor entran a las próximas queries.
+  invalidateGoalsCache();
 
   res.json({
     ok: errores.length === 0,

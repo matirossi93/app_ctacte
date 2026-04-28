@@ -4,6 +4,7 @@ import { fetchVendedores, fetchVentas } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
 import { computeVentaNeta, monthKey } from '../src/utils/ventas.js';
 import { getMonthlyVentasRaw } from './snapshotCache.js';
+import { getCached as getResponseCached, setCached as setResponseCached, invalidateAll as invalidateResponseCache } from './goalsResponseCache.js';
 
 function normLoc(s: string | null | undefined): string {
   if (!s) return '';
@@ -84,6 +85,16 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
     const t = today();
     const year = Number(req.query.year) || t.year;
     const month = Number(req.query.month) || t.month;
+
+    // Cache hit: el response final ya está armado para esta combinación
+    // (year, month, rol, cod_vendedor opcional, incluir_inactivos). TTL 3min.
+    const cacheKey = `goals:${year}-${month}:${user.rol}:${user.cod_vendedor ?? ''}:${req.query.incluir_inactivos ?? ''}`;
+    const cached = getResponseCached(cacheKey);
+    if (cached) {
+      res.setHeader('X-Cache', 'HIT');
+      res.json(cached);
+      return;
+    }
 
     // Fetch goals + ventas caches + vendedores IM + month_config en paralelo
     const [goalsRes, salesRes, vendedoresIM, monthCfgRes] = await Promise.all([
@@ -199,7 +210,7 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
       };
     }
 
-    res.json({
+    const responseBody = {
       ok: true,
       year, month,
       is_historic: !isCurrentMonth,
@@ -212,7 +223,10 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
       holidays,
       items: visible,
       totales,
-    });
+    };
+    setResponseCached(cacheKey, responseBody);
+    res.setHeader('X-Cache', 'MISS');
+    res.json(responseBody);
   } catch (err: any) {
     console.error('listGoals error:', err);
     res.status(500).json({ error: err?.message ?? 'error' });
@@ -246,6 +260,7 @@ export async function setGoal(req: Request & { user?: JwtPayload }, res: Respons
       updated_at: new Date().toISOString()
     }, { onConflict: 'tenant_id,cod_vendedor,year,month' }).select().single();
     if (error) { res.status(500).json({ error: error.message }); return; }
+    invalidateResponseCache();
     res.json({ ok: true, goal: data });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'error' });
@@ -273,6 +288,16 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
     const month = Number(req.query.month) || t.month;
     const isCurrent = year === t.year && month === t.month;
 
+    // Cache hit: response final ya armado para combinación de filtros. TTL 3min.
+    // Se invalida ante cualquier mutation de goals/sheet/sync.
+    const cacheKey = `clientes:${year}-${month}:${user.rol}:${user.cod_vendedor ?? ''}:${req.query.cod_vendedor ?? ''}:${req.query.cods ?? ''}:${req.query.filter ?? ''}:${req.query.localidad ?? ''}`;
+    const cached = getResponseCached(cacheKey);
+    if (cached) {
+      res.setHeader('X-Cache', 'HIT');
+      res.json(cached);
+      return;
+    }
+
     let codVend: number | null = null;
     let codsList: number[] | null = null;
     if (user.rol === 'vendedor') {
@@ -285,61 +310,75 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
       if (parsed.length) codsList = parsed;
     }
 
-    // ─── Snapshot histórico de objetivos cuando year/month != actual ──────────
-    // Mantiene un map cod_cliente → { objetivo_mes, cod_vendedor, fact_*, tipo_abc }
-    // para hidratar luego sobre la metadata operacional.
+    // ─── Lanzar las 3 queries Supabase en paralelo ──────────────────────────
+    // Antes el flow histórico era secuencial: history → operational filtrado
+    // por .in(cod_cliente) → sales. Cada espera sumaba latencia.
+    // Ahora las 3 corren juntas; el filtrado por snapshot histórico se hace
+    // en RAM tras el Promise.all. client_operational tiene ~1000 rows así
+    // que traer todos sin filtro y descartar en JS es más rápido que
+    // esperar al primer fetch para encadenar el segundo.
     type HistRow = { cod_cliente: number; cod_vendedor: number | null; objetivo_mes: number | null; fact_mes_pasado: number | null; fact_prom_3m: number | null; tipo_abc: string | null };
-    const histByCliente = new Map<number, HistRow>();
-    if (!isCurrent) {
-      let qH = sb().from('client_objectives_history')
-        .select('cod_cliente, cod_vendedor, objetivo_mes, fact_mes_pasado, fact_prom_3m, tipo_abc')
-        .eq('tenant_id', TENANT_ID)
-        .eq('year', year).eq('month', month);
-      if (codVend != null) qH = qH.eq('cod_vendedor', codVend);
-      else if (codsList) qH = qH.in('cod_vendedor', codsList);
-      qH = qH.limit(5000);
-      const { data: histRows, error: errH } = await qH;
-      if (errH) { res.status(500).json({ error: `history: ${errH.message}` }); return; }
-      (histRows ?? []).forEach((h: any) => histByCliente.set(h.cod_cliente, h));
-    }
 
-    // ─── Metadata operacional ────────────────────────────────────────────────
-    // En histórico filtramos por los cod_cliente que aparecen en el snapshot.
-    // En mes actual filtramos por cod_vendedor como antes.
-    let q = sb().from('client_operational').select('cod_cliente, cod_vendedor, razon_social, localidad, frecuencia, dia_visita, tipo_abc, direccion, repartidor, hoja_ruta, dia_entrega, cond_pago, notas, objetivo_mes, objetivo_year, objetivo_month, fact_mes_pasado, fact_prom_3m, saldo_cta_cte').eq('tenant_id', TENANT_ID);
+    const histPromise = (!isCurrent
+      ? (() => {
+          let qH = sb().from('client_objectives_history')
+            .select('cod_cliente, cod_vendedor, objetivo_mes, fact_mes_pasado, fact_prom_3m, tipo_abc')
+            .eq('tenant_id', TENANT_ID)
+            .eq('year', year).eq('month', month);
+          if (codVend != null) qH = qH.eq('cod_vendedor', codVend);
+          else if (codsList) qH = qH.in('cod_vendedor', codsList);
+          return qH.limit(5000);
+        })()
+      : Promise.resolve({ data: [] as HistRow[], error: null as any })
+    );
+
+    let opQuery = sb().from('client_operational')
+      .select('cod_cliente, cod_vendedor, razon_social, localidad, frecuencia, dia_visita, tipo_abc, direccion, repartidor, hoja_ruta, dia_entrega, cond_pago, notas, objetivo_mes, objetivo_year, objetivo_month, fact_mes_pasado, fact_prom_3m, saldo_cta_cte')
+      .eq('tenant_id', TENANT_ID);
+    // En mes actual filtramos por vendedor en la query (más eficiente);
+    // en histórico el filtro se aplica luego con histByCliente.
     if (isCurrent) {
-      if (codVend != null) q = q.eq('cod_vendedor', codVend);
-      else if (codsList) q = q.in('cod_vendedor', codsList);
-    } else {
-      const codClientes = Array.from(histByCliente.keys());
-      if (codClientes.length === 0) {
-        // No hay snapshot para este mes (no se importó Maestro o pre-migración).
-        // Devolvemos lista vacía con stats en 0 — el frontend mostrará el banner
-        // "sin datos históricos para este mes".
-        res.json({
-          ok: true, year, month, items: [], seleccion: { localidad: null, total_clientes: 0, con_objetivo: 0, total_objetivo: 0, total_avance: 0, num_comprobantes: 0, pct: null },
-          stats: { total_clientes: 0, con_objetivo: 0, completados: 0, parciales: 0, sin_compras: 0, sin_objetivo: 0, total_objetivo: 0, total_avance: 0, pct_equipo: null, localidades: [] },
-          historic_empty: true,
-        });
-        return;
-      }
-      // Postgres `in` con muchos valores: en lotes de 1000 para evitar URL gigante.
-      // En la práctica nunca pasamos de ~1000 clientes así que un solo .in() basta.
-      q = q.in('cod_cliente', codClientes);
+      if (codVend != null) opQuery = opQuery.eq('cod_vendedor', codVend);
+      else if (codsList) opQuery = opQuery.in('cod_vendedor', codsList);
     }
-    q = q.order('objetivo_mes', { ascending: false, nullsFirst: false }).limit(5000);
-    const { data: clientes, error: errC } = await q;
-    if (errC) { res.status(500).json({ error: errC.message }); return; }
+    opQuery = opQuery.order('objetivo_mes', { ascending: false, nullsFirst: false }).limit(5000);
 
-    // Avance por cliente del mes consultado
-    const { data: salesMes, error: errS } = await sb().from('client_sales_monthly')
+    const salesQuery = sb().from('client_sales_monthly')
       .select('cod_cliente, neto, num_comprobantes')
       .eq('tenant_id', TENANT_ID)
       .eq('year', year)
       .eq('month', month);
-    if (errS) { res.status(500).json({ error: errS.message }); return; }
+
+    const [histRes, opRes, salesRes] = await Promise.all([histPromise, opQuery, salesQuery]);
+    if ((histRes as any).error) { res.status(500).json({ error: `history: ${(histRes as any).error.message}` }); return; }
+    if (opRes.error) { res.status(500).json({ error: opRes.error.message }); return; }
+    if (salesRes.error) { res.status(500).json({ error: salesRes.error.message }); return; }
+
+    const histByCliente = new Map<number, HistRow>();
+    ((histRes.data as HistRow[] | null) ?? []).forEach(h => histByCliente.set(h.cod_cliente, h));
+
+    // En histórico, si no hay snapshot, devolvemos lista vacía con flag.
+    if (!isCurrent && histByCliente.size === 0) {
+      const emptyBody = {
+        ok: true, year, month, is_historic: true, items: [],
+        seleccion: { localidad: null, total_clientes: 0, con_objetivo: 0, total_objetivo: 0, total_avance: 0, num_comprobantes: 0, pct: null },
+        stats: { total_clientes: 0, con_objetivo: 0, completados: 0, parciales: 0, sin_compras: 0, sin_objetivo: 0, total_objetivo: 0, total_avance: 0, pct_equipo: null, localidades: [] },
+        historic_empty: true,
+      };
+      setResponseCached(cacheKey, emptyBody);
+      res.setHeader('X-Cache', 'MISS');
+      res.json(emptyBody);
+      return;
+    }
+
+    // Filtrar operational por snapshot histórico cuando aplica.
+    let clientes = opRes.data ?? [];
+    if (!isCurrent) {
+      clientes = clientes.filter((c: any) => histByCliente.has(c.cod_cliente));
+    }
+
     const salesByCliente = new Map<number, { neto: number; num: number }>();
-    (salesMes ?? []).forEach((s: any) => salesByCliente.set(s.cod_cliente, { neto: Number(s.neto) || 0, num: s.num_comprobantes || 0 }));
+    (salesRes.data ?? []).forEach((s: any) => salesByCliente.set(s.cod_cliente, { neto: Number(s.neto) || 0, num: s.num_comprobantes || 0 }));
 
     const items = (clientes ?? []).map((c: any) => {
       const sale = salesByCliente.get(c.cod_cliente);
@@ -466,7 +505,10 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
       pct: selObjetivo > 0 ? selAvance / selObjetivo : null,
     };
 
-    res.json({ ok: true, year, month, is_historic: !isCurrent, items: filtered, stats, seleccion });
+    const responseBody = { ok: true, year, month, is_historic: !isCurrent, items: filtered, stats, seleccion };
+    setResponseCached(cacheKey, responseBody);
+    res.setHeader('X-Cache', 'MISS');
+    res.json(responseBody);
   } catch (err: any) {
     console.error('listClientesObjetivo error:', err);
     res.status(500).json({ error: err?.message ?? 'error' });
@@ -524,6 +566,7 @@ export async function setMonthConfig(req: Request & { user?: JwtPayload }, res: 
 
     const { data, error } = await sb().from('month_config').upsert(payload, { onConflict: 'tenant_id,year,month' }).select().single();
     if (error) { res.status(500).json({ error: error.message }); return; }
+    invalidateResponseCache();
     res.json({ ok: true, config: data });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'error' });
@@ -539,6 +582,7 @@ export async function syncVentasNow(req: Request & { user?: JwtPayload }, res: R
     if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
     const { syncVentasMesActual } = await import('./syncVentas.js');
     const result = await syncVentasMesActual();
+    invalidateResponseCache();
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'error' });

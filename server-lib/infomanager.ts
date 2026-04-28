@@ -135,11 +135,27 @@ export async function fetchComprobPendientes(codEmpresa: number, codCliente?: nu
   return Array.isArray(data) ? data : (data?.results ?? []);
 }
 
+// Cache RAM de /vendedores: la lista cambia con muy baja frecuencia (Matías
+// agrega un vendedor cada varios meses) y se llamaba en cada /api/goals,
+// gastando ~800ms de latencia IM por request. TTL 1h. Reinicia el container
+// para forzar refresh inmediato si hace falta.
+let vendedoresCache: { data: Array<{ cod_vendedor: number; nombre: string }>; fetchedAt: number } | null = null;
+const VENDEDORES_TTL_MS = 60 * 60 * 1000;
+
 export async function fetchVendedores(): Promise<Array<{ cod_vendedor: number; nombre: string }>> {
+  const now = Date.now();
+  if (vendedoresCache && (now - vendedoresCache.fetchedAt) < VENDEDORES_TTL_MS) {
+    return vendedoresCache.data;
+  }
   const cli = await imClient();
   const { data } = await cli.get('/vendedores');
-  return Array.isArray(data) ? data : (data?.results ?? []);
+  const rows = Array.isArray(data) ? data : (data?.results ?? []);
+  vendedoresCache = { data: rows, fetchedAt: now };
+  return rows;
 }
+
+/** Force-invalidate (uso testing o por endpoint admin si hace falta). */
+export function invalidateVendedoresCache(): void { vendedoresCache = null; }
 
 export interface PlanCuenta {
   cod_cuenta: string;
