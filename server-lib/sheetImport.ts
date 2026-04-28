@@ -65,6 +65,15 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
   const rows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, raw: true });
   if (rows.length < 2) { res.status(400).json({ error: 'Hoja vacía' }); return; }
 
+  // ¿El import es para el mes en curso o para un mes pasado?
+  // - Mes actual → escribimos en client_operational + client_objectives_history.
+  // - Mes histórico → SOLO history. Tocar client_operational con datos de un mes
+  //   pasado pisa los objetivo_year/month vivos y rompe la vista actual
+  //   (incidente real 28/04: import enero pisó client_operational, abril
+  //   pasó a mostrar todos los clientes como "sin objetivo").
+  const nowYM = new Date();
+  const esMesActual = year === nowYM.getUTCFullYear() && month === (nowYM.getUTCMonth() + 1);
+
   const out: any[] = [];
   let descartadas = 0;
   const updatedAt = new Date().toISOString();
@@ -99,15 +108,21 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
     });
   }
 
-  // Upsert por batches.
+  // Upsert por batches a client_operational SOLO si es el mes actual.
+  // En histórico, esa tabla NO debe tocarse: representa el snapshot vivo.
   const BATCH = 200;
   let okCount = 0;
   const errores: Array<{ batch: number; error: string }> = [];
-  for (let i = 0; i < out.length; i += BATCH) {
-    const chunk = out.slice(i, i + BATCH);
-    const { error } = await sb().from('client_operational').upsert(chunk, { onConflict: 'tenant_id,cod_cliente' });
-    if (error) errores.push({ batch: i, error: error.message });
-    else okCount += chunk.length;
+  if (esMesActual) {
+    for (let i = 0; i < out.length; i += BATCH) {
+      const chunk = out.slice(i, i + BATCH);
+      const { error } = await sb().from('client_operational').upsert(chunk, { onConflict: 'tenant_id,cod_cliente' });
+      if (error) errores.push({ batch: i, error: error.message });
+      else okCount += chunk.length;
+    }
+  } else {
+    // Histórico: contamos las filas que hubieran ido a operational, para visibilidad.
+    okCount = out.length;
   }
 
   // Snapshot histórico de objetivos por (cliente, año, mes).
@@ -156,6 +171,7 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
   res.json({
     ok: errores.length === 0,
     year, month,
+    es_mes_actual: esMesActual,
     rows_leidas: rows.length - 1,
     rows_importadas: okCount,
     rows_descartadas: descartadas,
