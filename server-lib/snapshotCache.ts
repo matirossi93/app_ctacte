@@ -21,9 +21,15 @@ import { fetchVentas, type VentaRaw } from './infomanager.js';
 interface CachedDataset {
     ventas: VentaRaw[];
     fetchedAt: number;
+    isHistoric: boolean;
 }
 
-const TTL_MS = 5 * 60 * 1000; // 5 min
+// Mes actual: TTL corto. Cambia continuamente (nuevas ventas, NCs).
+// Mes pasado: TTL largo. Sólo cambia ante NCs tardías que el cron 0 4 * * *
+//   regenera al re-syncear los últimos 6 meses; para el rango entre crons,
+//   el dataset es estable.
+const TTL_CURRENT_MS = 5 * 60 * 1000;       // 5 min mes actual
+const TTL_HISTORIC_MS = 60 * 60 * 1000;     // 1 hora meses pasados
 const cache = new Map<string, CachedDataset>();
 
 function makeKey(year: number, month: number, codEmpresa?: number): string {
@@ -46,8 +52,11 @@ export async function getMonthlyVentasRaw(
 ): Promise<{ ventas: VentaRaw[]; cached: boolean; cacheAge: number }> {
     const key = makeKey(year, month, opts?.codEmpresa);
     const now = Date.now();
+    const nowD = new Date();
+    const isCurrent = year === nowD.getUTCFullYear() && month === (nowD.getUTCMonth() + 1);
+    const ttl = isCurrent ? TTL_CURRENT_MS : TTL_HISTORIC_MS;
     const existing = cache.get(key);
-    if (!opts?.force && existing && (now - existing.fetchedAt) < TTL_MS) {
+    if (!opts?.force && existing && (now - existing.fetchedAt) < ttl) {
         return { ventas: existing.ventas, cached: true, cacheAge: now - existing.fetchedAt };
     }
 
@@ -56,7 +65,7 @@ export async function getMonthlyVentasRaw(
     const ventas = await fetchVentas(desde, hasta, { codEmpresa: opts?.codEmpresa });
 
     if (!opts?.nocache) {
-        cache.set(key, { ventas, fetchedAt: now });
+        cache.set(key, { ventas, fetchedAt: now, isHistoric: !isCurrent });
     }
     return { ventas, cached: false, cacheAge: 0 };
 }

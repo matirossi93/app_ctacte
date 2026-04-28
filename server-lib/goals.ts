@@ -724,6 +724,18 @@ export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res
       res.status(400).json({ error: 'asOfDate debe tener formato YYYY-MM-DD' }); return;
     }
 
+    // Cache hit del response final: misma combinación (year, month, asOfDate,
+    // rol, vendor) puede repetirse en una reunión cuando se vuelve a un corte
+    // ya consultado. Sin esto, aunque el snapshotCache tenga el dataset crudo,
+    // hay que filtrar y agregar de nuevo. TTL 3min.
+    const snapshotCacheKey = `snapshot:${year}-${month}:${asOfDateRaw}:${user.rol}:${user.cod_vendedor ?? ''}:${req.query.cod_vendedor ?? ''}:${req.query.cods ?? ''}:${req.query.incluir_inactivos ?? ''}`;
+    const cachedSnap = getResponseCached(snapshotCacheKey);
+    if (cachedSnap) {
+      res.setHeader('X-Cache', 'HIT');
+      res.json(cachedSnap);
+      return;
+    }
+
     const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
     const lastDay = new Date(year, month, 0).getDate();
     const monthEnd = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
@@ -991,7 +1003,7 @@ export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res
       };
     });
 
-    res.json({
+    const snapshotBody = {
       ok: true,
       year, month,
       asOfDate,
@@ -1010,7 +1022,10 @@ export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res
       items: visible,
       totales,
       clientes: clientesItems,
-    });
+    };
+    setResponseCached(snapshotCacheKey, snapshotBody);
+    res.setHeader('X-Cache', 'MISS');
+    res.json(snapshotBody);
   } catch (err: any) {
     console.error('getGoalsSnapshot error:', err);
     res.status(500).json({ error: err?.message ?? 'error' });
