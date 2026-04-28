@@ -743,15 +743,14 @@ export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res
       res.status(400).json({ error: `asOfDate ${asOfDateRaw} fuera del mes ${year}-${String(month).padStart(2, '0')} (rango ${monthStart}..${monthEnd})` });
       return;
     }
-    // Clamp a hoy si futuro (mes en curso). En meses pasados, asOfDate ya es válido.
-    const todayIso = new Date().toISOString().slice(0, 10);
+    // En Semillero a veces se factura con fecha posterior al día calendario
+    // (ej. hoy 28/04 cargan facturas con fa_fecha=29/04). Permitimos asOfDate
+    // hasta el último día del mes en curso para que esos cortes "anticipados"
+    // sean visibles. La validación de "dentro del mes" arriba ya garantiza
+    // que no se pidan fechas absurdas.
     const isCurrentMonth = year === t.year && month === t.month;
-    let asOfDate = asOfDateRaw;
-    let clamped = false;
-    if (isCurrentMonth && asOfDateRaw > todayIso) {
-      asOfDate = todayIso;
-      clamped = true;
-    }
+    const asOfDate = asOfDateRaw;
+    const clamped = false;
     const isHistoric = !isCurrentMonth;
     const asOfDay = parseInt(asOfDate.slice(8, 10), 10);
 

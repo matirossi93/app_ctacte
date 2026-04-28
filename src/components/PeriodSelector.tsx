@@ -68,8 +68,10 @@ export function PeriodSelector({ value, onChange, monthsBack = 12 }: Props) {
     const isCurrentMonthSelected = value.year === today.year && value.month === today.month;
     const miercoles = useMemo(() => miercolesDelMes(value.year, value.month), [value.year, value.month]);
     const lastDay = lastDayOfMonth(value.year, value.month);
-    // En mes actual, el corte máximo es hoy. En meses pasados, es el último día del mes.
-    const maxDay = isCurrentMonthSelected ? today.day : lastDay;
+    // Permitir días futuros dentro del mes en curso: en Semillero se factura
+    // con fa_fecha posterior a hoy y esas ventas deben poder verse en el corte.
+    // El backend valida que asOfDate esté dentro del mes elegido.
+    const maxDay = lastDay;
     const minDate = `${value.year}-${pad2(value.month)}-01`;
     const maxDate = `${value.year}-${pad2(value.month)}-${pad2(maxDay)}`;
 
