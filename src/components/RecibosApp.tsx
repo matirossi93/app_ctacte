@@ -67,7 +67,11 @@ interface FacturaCandidata {
 export const RecibosApp = ({ onClose, clients = [] }: Props) => {
     const user = getUser();
     const isBackoffice = user?.rol === 'admin' || user?.rol === 'gerente';
-    const [view, setView] = useState<'list' | 'upload' | 'detail'>(isBackoffice ? 'list' : 'upload');
+    // Todos arrancan en 'list': vendedores también necesitan ver el histórico de
+    // sus comprobantes (aprobados/rechazados/imputados) sin tener que pasar antes
+    // por upload. Si quieren cargar uno nuevo, el botón "Cargar nuevo" está en
+    // el header derecho cuando view === 'list'.
+    const [view, setView] = useState<'list' | 'upload' | 'detail'>('list');
     const [selectedId, setSelectedId] = useState<string | null>(null);
 
     // Maestro completo: incluye clientes sin saldo (p.ej. adelantos de dinero).
@@ -175,6 +179,7 @@ function RecibosList({ isBackoffice, clientNameByCod, onOpenDetail, onUpload }: 
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState<'pendiente_revision' | 'todos' | 'imputado' | 'rechazado'>(isBackoffice ? 'pendiente_revision' : 'todos');
     const [vendorFilter, setVendorFilter] = useState<'all' | string>('all');
+    const [search, setSearch] = useState('');
     const [err, setErr] = useState<string | null>(null);
 
     const load = async () => {
@@ -196,12 +201,22 @@ function RecibosList({ isBackoffice, clientNameByCod, onOpenDetail, onUpload }: 
         return Array.from(set).sort((a, b) => vendorLabel(a).localeCompare(vendorLabel(b), 'es'));
     }, [items]);
 
-    // Filtrado client-side por vendedor. No re-fetch — el backend ya trae todo
-    // del status actual y filtramos en memoria.
+    // Filtrado client-side por vendedor + buscador por cliente. No re-fetch — el
+    // backend ya trae todo del status actual y filtramos en memoria.
     const visibleItems = useMemo(() => {
-        if (vendorFilter === 'all') return items;
-        return items.filter(r => String(r.cod_vendedor) === vendorFilter);
-    }, [items, vendorFilter]);
+        let arr = items;
+        if (vendorFilter !== 'all') {
+            arr = arr.filter(r => String(r.cod_vendedor) === vendorFilter);
+        }
+        const q = search.trim().toLowerCase();
+        if (q) {
+            arr = arr.filter(r => {
+                const name = (clientNameByCod.get(String(r.cod_cliente)) ?? '').toLowerCase();
+                return name.includes(q) || String(r.cod_cliente).includes(q);
+            });
+        }
+        return arr;
+    }, [items, vendorFilter, search, clientNameByCod]);
 
     return (
         <div className="rec-list">
@@ -239,14 +254,39 @@ function RecibosList({ isBackoffice, clientNameByCod, onOpenDetail, onUpload }: 
                 </div>
             )}
 
+            {/* Buscador por cliente — client-side, filtra el set actual sin re-fetch */}
+            <div className="rec-list-search">
+                <Search size={14} />
+                <input
+                    type="text"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    placeholder="Buscar por cliente (nombre o código)…"
+                />
+                {search && (
+                    <button type="button" className="rec-list-search-clear"
+                        onClick={() => setSearch('')} aria-label="Limpiar búsqueda">
+                        <X size={14} />
+                    </button>
+                )}
+            </div>
+
             {loading && <div className="rec-loading"><Loader2 size={16} className="spin" /> Cargando…</div>}
             {err && <div className="rec-error"><AlertCircle size={16} /> {err}</div>}
 
             {!loading && visibleItems.length === 0 && (
                 <div className="rec-empty">
                     <FileText size={32} />
-                    <p>Sin comprobantes {filter !== 'todos' ? `en estado "${statusLabel(filter)}"` : 'cargados'}{vendorFilter !== 'all' ? ` de ${vendorLabel(Number(vendorFilter))}` : ''}.</p>
-                    {!isBackoffice && <button className="btn-primary" onClick={onUpload}>Cargar el primero</button>}
+                    <p>
+                        Sin comprobantes
+                        {filter !== 'todos' ? ` en estado "${statusLabel(filter)}"` : ' cargados'}
+                        {vendorFilter !== 'all' ? ` de ${vendorLabel(Number(vendorFilter))}` : ''}
+                        {search.trim() ? ` que coincidan con "${search.trim()}"` : ''}
+                        .
+                    </p>
+                    {!isBackoffice && !search.trim() && filter === 'todos' && (
+                        <button className="btn-primary" onClick={onUpload}>Cargar el primero</button>
+                    )}
                 </div>
             )}
 
