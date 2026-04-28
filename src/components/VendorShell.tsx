@@ -1320,7 +1320,7 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                     ) : (
                         <span className="vs-holidays-empty">Ninguno configurado</span>
                     )}
-                    {isAdmin && !editingHolidays && !isHistoricMode && (
+                    {isAdmin && !editingHolidays && (
                         <button className="vs-holidays-edit" onClick={() => setEditingHolidays(true)} title="Editar feriados del mes">
                             <Edit3 size={12} />
                         </button>
@@ -1396,10 +1396,10 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                             ) : (
                                 <span className="v">
                                     {formatMoney(heroTarget)}
-                                    {isAdmin && selectedVendor != null && !isLocFilter && !isHistoricMode && (
+                                    {isAdmin && selectedVendor != null && !isLocFilter && (
                                         <button className="vs-target-edit-btn"
                                             onClick={() => { setTargetInput(String(heroTarget ?? 0)); setEditingTarget(true); }}
-                                            title="Editar target">
+                                            title={isHistoricMode ? `Editar target de ${monthName(viewPeriod.month)} ${viewPeriod.year}` : 'Editar target'}>
                                             <Edit3 size={11} />
                                         </button>
                                     )}
