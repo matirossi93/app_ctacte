@@ -1,9 +1,3 @@
-.ps-wrap {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-}
-
 .ps-pill {
     display: inline-flex;
     align-items: center;
@@ -49,6 +43,15 @@
     margin-left: 2px;
 }
 
+.ps-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    /* Sube el stacking context del wrap así el popover supera al HistoricBanner
+       (z-index:30) sin pelearse con el sticky positioning del banner. */
+    z-index: 1000;
+}
+
 .ps-popover {
     position: absolute;
     top: calc(100% + 6px);
@@ -60,7 +63,7 @@
     border: 1px solid rgba(0, 0, 0, 0.08);
     border-radius: 12px;
     box-shadow: 0 16px 42px rgba(0, 0, 0, 0.16);
-    z-index: 200;
+    z-index: 1001;
     display: flex;
     flex-direction: column;
     overflow: hidden;

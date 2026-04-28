@@ -100,12 +100,6 @@ export function PeriodSelector({ value, onChange, monthsBack = 12 }: Props) {
         setOpen(false);
     };
 
-    const goToCurrent = () => {
-        const t = nowYM();
-        onChange({ year: t.year, month: t.month, asOfDay: null });
-        setOpen(false);
-    };
-
     return (
         <div className={`ps-wrap ${historic ? 'is-historic' : ''}`} ref={ref}>
             <button
@@ -124,11 +118,7 @@ export function PeriodSelector({ value, onChange, monthsBack = 12 }: Props) {
                 <div className="ps-popover" role="dialog">
                     <div className="ps-popover-header">
                         <strong>Período</strong>
-                        {historic && (
-                            <button type="button" className="ps-jump-current" onClick={goToCurrent}>
-                                Volver al actual
-                            </button>
-                        )}
+                        {/* "Volver al actual" ya vive en el HistoricBanner — no duplicar acá. */}
                     </div>
 
                     <div className="ps-tabs" role="tablist">
