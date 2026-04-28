@@ -78,3 +78,10 @@
         display: none;
     }
 }
+
+/* Desktop ≥900px: dejar libre el sidebar lateral (.vs-nav left:18px width:92px). */
+@media (min-width: 900px) {
+    .hb-wrap {
+        padding-left: 130px;
+    }
+}

@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Printer, Download } from 'lucide-react';
 import type { ViewPeriod } from './PeriodSelector';
 import { generateAvanceReport, type AvanceReportData } from '../utils/pdfAvanceReport';
@@ -67,7 +68,10 @@ export function PrintAvanceView(props: Props) {
         .filter(v => v.activo !== false)
         .sort((a, b) => (b.pct_cumplimiento ?? -1) - (a.pct_cumplimiento ?? -1));
 
-    return (
+    // Portal a document.body: escapa de cualquier stacking context creado por
+    // .vs-view / .vs-main / .vs-shell. Sin esto, el sidebar fixed en desktop
+    // (z-index 20 dentro de su contexto) se superponía visualmente al modal.
+    return createPortal((
         <div className="pav-overlay" role="dialog" aria-modal="true">
             {/* Toolbar — sólo visible en pantalla, oculta al imprimir */}
             <div className="pav-toolbar pav-no-print">
@@ -213,5 +217,5 @@ export function PrintAvanceView(props: Props) {
                 </footer>
             </div>
         </div>
-    );
+    ), document.body);
 }
