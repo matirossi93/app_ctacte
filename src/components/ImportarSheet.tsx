@@ -14,7 +14,11 @@ export const ImportarSheet = ({ onClose, onImported }: Props) => {
     const [file, setFile] = useState<File | null>(null);
     const [saving, setSaving] = useState(false);
     const [err, setErr] = useState<string | null>(null);
-    const [result, setResult] = useState<{ rows_importadas: number; rows_descartadas: number; rows_leidas: number } | null>(null);
+    const [result, setResult] = useState<{ rows_importadas: number; rows_descartadas: number; rows_leidas: number; history_imported?: number } | null>(null);
+    // Modo histórico: permite elegir qué hoja del XLSX importar (ej. "ENERO" para
+    // poblar el snapshot histórico del enero 2026). Si está off, usa "mes actual".
+    const [modoHist, setModoHist] = useState(false);
+    const [hoja, setHoja] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
 
     const submit = async () => {
@@ -25,6 +29,7 @@ export const ImportarSheet = ({ onClose, onImported }: Props) => {
             fd.append('file', file);
             fd.append('year', String(year));
             fd.append('month', String(month));
+            if (modoHist && hoja.trim()) fd.append('hoja', hoja.trim());
             const res = await fetch('/api/sheet-import/maestro-clientes', {
                 method: 'POST',
                 headers: { ...authHeaders() },
@@ -57,15 +62,19 @@ export const ImportarSheet = ({ onClose, onImported }: Props) => {
                         <ul>
                             <li><strong>{result.rows_importadas}</strong> clientes actualizados</li>
                             <li><strong>{result.rows_descartadas}</strong> descartados (sin código)</li>
+                            {result.history_imported != null && (
+                                <li><strong>{result.history_imported}</strong> snapshots guardados en histórico</li>
+                            )}
                             <li>Total filas leídas: {result.rows_leidas}</li>
                         </ul>
                         <p className="is-ok-hint">Los objetivos ya están cargados para <strong>{MONTH_NAMES[month - 1]} {year}</strong>. El avance del equipo se está recalculando en background.</p>
-                        <button className="is-btn-primary" onClick={onClose}>Listo</button>
+                        <button className="is-btn-primary" onClick={() => { setResult(null); setFile(null); setHoja(''); }}>Importar otro mes</button>
+                        <button className="is-btn-sec" onClick={onClose}>Cerrar</button>
                     </div>
                 ) : (
                     <>
                         <p className="is-intro">
-                            Descargá el sheet <strong>Maestro Clientes</strong> → hoja <code>mes actual</code> como <code>.xlsx</code> y subilo acá. Los objetivos y metadata operativa se actualizan para el mes seleccionado.
+                            Descargá el sheet <strong>Maestro Clientes</strong> como <code>.xlsx</code> y subilo acá. Los objetivos y metadata operativa se actualizan para el mes seleccionado.
                         </p>
 
                         <div className="is-row">
@@ -82,6 +91,27 @@ export const ImportarSheet = ({ onClose, onImported }: Props) => {
                                 </select>
                             </label>
                         </div>
+
+                        <label className="is-hist-toggle">
+                            <input type="checkbox" checked={modoHist} onChange={e => setModoHist(e.target.checked)} />
+                            <span>Import histórico (elegir hoja del XLSX)</span>
+                        </label>
+                        {modoHist && (
+                            <div className="is-hist-row">
+                                <label>
+                                    <span>Hoja del XLSX</span>
+                                    <input
+                                        type="text"
+                                        placeholder="ej. ENERO, FEBRERO, marzo"
+                                        value={hoja}
+                                        onChange={e => setHoja(e.target.value)}
+                                    />
+                                </label>
+                                <p className="is-hist-hint">
+                                    Por default lee la hoja <code>mes actual</code>. Para enero/febrero/marzo poné el nombre exacto de esa hoja en el sheet Maestro Clientes.
+                                </p>
+                            </div>
+                        )}
 
                         <div className="is-file-wrap">
                             <input ref={inputRef} type="file" accept=".xlsx,.xls"

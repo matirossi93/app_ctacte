@@ -3,7 +3,7 @@ import XLSX from 'xlsx';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import type { JwtPayload } from './auth.js';
 
-const SHEET_NAME = 'mes actual';
+const DEFAULT_SHEET_NAME = 'mes actual';
 const SHEET_ID = '1k7B8Phi5QDn_6mFWiAfYBcqqisEWT6nqUwgmhE54Zy8';
 const SHEET_GID = '145678139';
 
@@ -43,6 +43,10 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
   if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
     res.status(400).json({ error: 'year/month inválidos' }); return;
   }
+  // Hoja del XLSX a leer. Default "mes actual" para imports del mes en curso.
+  // Para imports históricos (Enero, Febrero, marzo) se pasa el nombre de la hoja
+  // del Maestro Clientes que tiene ese snapshot mensual.
+  const hojaName = String(req.body?.hoja ?? DEFAULT_SHEET_NAME).trim() || DEFAULT_SHEET_NAME;
 
   let wb: XLSX.WorkBook;
   try {
@@ -51,9 +55,11 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
     res.status(400).json({ error: `XLSX inválido: ${err?.message ?? err}` }); return;
   }
 
-  const ws = wb.Sheets[SHEET_NAME];
+  // Match case-insensitive de la hoja para tolerar "marzo" vs "Marzo" vs "MARZO".
+  const sheetKey = wb.SheetNames.find(n => n.toLowerCase().trim() === hojaName.toLowerCase().trim()) ?? hojaName;
+  const ws = wb.Sheets[sheetKey];
   if (!ws) {
-    res.status(400).json({ error: `Hoja "${SHEET_NAME}" no encontrada. Hojas: ${wb.SheetNames.join(', ')}` });
+    res.status(400).json({ error: `Hoja "${hojaName}" no encontrada. Hojas disponibles: ${wb.SheetNames.join(', ')}` });
     return;
   }
   const rows = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, raw: true });
@@ -136,7 +142,7 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
       tenant_id: TENANT_ID,
       sheet_id: SHEET_ID,
       gid: SHEET_GID,
-      hoja: SHEET_NAME,
+      hoja: sheetKey,
       year, month,
       rows_leidas: rows.length - 1,
       rows_importadas: okCount,
