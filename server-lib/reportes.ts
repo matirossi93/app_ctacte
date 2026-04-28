@@ -14,6 +14,11 @@ function today(): { year: number; month: number } {
   return { year: d.getFullYear(), month: d.getMonth() + 1 };
 }
 
+function isHistoric(year: number, month: number): boolean {
+  const t = today();
+  return !(year === t.year && month === t.month);
+}
+
 async function vendorNameMap(): Promise<Map<number, string>> {
   const { data } = await sb().from('usuarios')
     .select('cod_vendedor, nombre')
@@ -27,36 +32,85 @@ async function vendorNameMap(): Promise<Map<number, string>> {
 }
 
 /**
+ * Mapa cod_cliente → objetivo del mes consultado.
+ * Para mes en curso lee client_operational (con rollover guard).
+ * Para mes histórico lee client_objectives_history.
+ */
+type ObjetivoRow = { objetivo_mes: number; cod_vendedor: number | null; fact_mes_pasado: number | null; fact_prom_3m: number | null; tipo_abc: string | null };
+async function getObjetivosPorCliente(year: number, month: number): Promise<Map<number, ObjetivoRow>> {
+  const m = new Map<number, ObjetivoRow>();
+  if (isHistoric(year, month)) {
+    const { data } = await sb().from('client_objectives_history')
+      .select('cod_cliente, cod_vendedor, objetivo_mes, fact_mes_pasado, fact_prom_3m, tipo_abc')
+      .eq('tenant_id', TENANT_ID)
+      .eq('year', year).eq('month', month)
+      .limit(5000);
+    (data ?? []).forEach((r: any) => {
+      m.set(Number(r.cod_cliente), {
+        objetivo_mes: Number(r.objetivo_mes ?? 0),
+        cod_vendedor: r.cod_vendedor ?? null,
+        fact_mes_pasado: r.fact_mes_pasado != null ? Number(r.fact_mes_pasado) : null,
+        fact_prom_3m: r.fact_prom_3m != null ? Number(r.fact_prom_3m) : null,
+        tipo_abc: r.tipo_abc ?? null,
+      });
+    });
+  } else {
+    const { data } = await sb().from('client_operational')
+      .select('cod_cliente, cod_vendedor, objetivo_mes, objetivo_year, objetivo_month, fact_mes_pasado, fact_prom_3m, tipo_abc')
+      .eq('tenant_id', TENANT_ID)
+      .limit(5000);
+    (data ?? []).forEach((r: any) => {
+      const matches = r.objetivo_year === year && r.objetivo_month === month;
+      m.set(Number(r.cod_cliente), {
+        objetivo_mes: matches ? Number(r.objetivo_mes ?? 0) : 0,
+        cod_vendedor: r.cod_vendedor ?? null,
+        fact_mes_pasado: r.fact_mes_pasado != null ? Number(r.fact_mes_pasado) : null,
+        fact_prom_3m: r.fact_prom_3m != null ? Number(r.fact_prom_3m) : null,
+        tipo_abc: r.tipo_abc ?? null,
+      });
+    });
+  }
+  return m;
+}
+
+/**
  * Clientes con objetivo $0 (o sin objetivo seteado) para el mes indicado.
- * Incluye: objetivo_mes = 0, null, o con año/mes distinto (rollover no aplicado).
+ * Incluye: objetivo_mes = 0, null, o (mes en curso) con año/mes distinto.
+ *
+ * Para meses históricos lee objetivos desde client_objectives_history.
+ * El saldo_cta_cte siempre es del presente (no se historiza) y solo se incluye
+ * para el mes en curso; para histórico se reporta null.
  */
 async function reporteTargetCero(year: number, month: number): Promise<Sheet> {
+  const histo = isHistoric(year, month);
   const { data, error } = await sb().from('client_operational')
-    .select('cod_cliente, razon_social, localidad, cod_vendedor, tipo_abc, frecuencia, dia_visita, objetivo_mes, objetivo_year, objetivo_month, fact_mes_pasado, fact_prom_3m, saldo_cta_cte')
+    .select('cod_cliente, razon_social, localidad, cod_vendedor, tipo_abc, frecuencia, dia_visita, saldo_cta_cte')
     .eq('tenant_id', TENANT_ID)
     .limit(5000);
   if (error) throw new Error(error.message);
-  const vmap = await vendorNameMap();
+  const [vmap, objMap] = await Promise.all([vendorNameMap(), getObjetivosPorCliente(year, month)]);
 
   const rows: (string | number | null)[][] = [];
   for (const c of data ?? []) {
-    const matches = c.objetivo_year === year && c.objetivo_month === month;
-    const obj = matches ? Number(c.objetivo_mes ?? 0) : 0;
+    const o = objMap.get(Number(c.cod_cliente));
+    const obj = o?.objetivo_mes ?? 0;
     if (obj > 0) continue;
+    const codVend = o?.cod_vendedor ?? c.cod_vendedor ?? null;
     rows.push([
       c.cod_cliente,
       c.razon_social ?? '',
       c.localidad ?? '',
-      c.cod_vendedor ?? null,
-      vmap.get(Number(c.cod_vendedor)) ?? '',
-      c.tipo_abc ?? '',
+      codVend,
+      codVend != null ? (vmap.get(Number(codVend)) ?? '') : '',
+      o?.tipo_abc ?? c.tipo_abc ?? '',
       c.frecuencia ?? '',
       c.dia_visita ?? '',
-      matches ? Number(c.objetivo_mes ?? 0) : 0,
-      c.fact_mes_pasado != null ? Number(c.fact_mes_pasado) : null,
-      c.fact_prom_3m != null ? Number(c.fact_prom_3m) : null,
-      c.saldo_cta_cte != null ? Number(c.saldo_cta_cte) : null,
-      matches ? 'objetivo_cero' : 'objetivo_sin_setear',
+      obj,
+      o?.fact_mes_pasado ?? null,
+      o?.fact_prom_3m ?? null,
+      // saldo cta cte solo aplica al mes en curso
+      histo ? null : (c.saldo_cta_cte != null ? Number(c.saldo_cta_cte) : null),
+      o ? 'objetivo_cero' : 'objetivo_sin_setear',
     ]);
   }
   rows.sort((a: any, b: any) => (b[11] ?? 0) - (a[11] ?? 0)); // por saldo desc
@@ -69,27 +123,31 @@ async function reporteTargetCero(year: number, month: number): Promise<Sheet> {
 /**
  * Matriz target vs real por cliente del mes. Incluye todos los clientes con
  * target > 0 o con facturacion > 0 en el mes. diff = real - target. pct = real/target.
+ *
+ * Para meses históricos: target sale de client_objectives_history; vendedor
+ * efectivo también se toma del snapshot histórico (puede haber cambiado).
  */
 async function reporteMatrizTargetReal(year: number, month: number): Promise<Sheet> {
-  const [{ data: clientes, error: eC }, { data: sales, error: eS }] = await Promise.all([
+  const [{ data: clientes, error: eC }, { data: sales, error: eS }, vmap, objMap] = await Promise.all([
     sb().from('client_operational')
-      .select('cod_cliente, razon_social, localidad, cod_vendedor, tipo_abc, objetivo_mes, objetivo_year, objetivo_month')
+      .select('cod_cliente, razon_social, localidad, cod_vendedor, tipo_abc')
       .eq('tenant_id', TENANT_ID)
       .limit(5000),
     sb().from('client_sales_monthly')
       .select('cod_cliente, neto, num_comprobantes')
       .eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month),
+    vendorNameMap(),
+    getObjetivosPorCliente(year, month),
   ]);
   if (eC) throw new Error(eC.message);
   if (eS) throw new Error(eS.message);
-  const vmap = await vendorNameMap();
   const salesBy = new Map<number, { neto: number; num: number }>();
   (sales ?? []).forEach((s: any) => salesBy.set(s.cod_cliente, { neto: Number(s.neto) || 0, num: s.num_comprobantes || 0 }));
 
   const rows: (string | number | null)[][] = [];
   for (const c of clientes ?? []) {
-    const matches = c.objetivo_year === year && c.objetivo_month === month;
-    const target = matches ? Number(c.objetivo_mes ?? 0) : 0;
+    const o = objMap.get(Number(c.cod_cliente));
+    const target = o?.objetivo_mes ?? 0;
     const s = salesBy.get(c.cod_cliente);
     const real = s?.neto ?? 0;
     if (target === 0 && real === 0) continue;
@@ -99,13 +157,14 @@ async function reporteMatrizTargetReal(year: number, month: number): Promise<She
       : real === 0 ? 'sin_compras'
       : real >= target ? 'completado'
       : 'parcial';
+    const codVend = o?.cod_vendedor ?? c.cod_vendedor ?? null;
     rows.push([
       c.cod_cliente,
       c.razon_social ?? '',
       c.localidad ?? '',
-      c.cod_vendedor ?? null,
-      vmap.get(Number(c.cod_vendedor)) ?? '',
-      c.tipo_abc ?? '',
+      codVend,
+      codVend != null ? (vmap.get(Number(codVend)) ?? '') : '',
+      o?.tipo_abc ?? c.tipo_abc ?? '',
       target,
       real,
       diff,
@@ -125,12 +184,17 @@ async function reporteMatrizTargetReal(year: number, month: number): Promise<She
  * Clientes sin actividad registrada en los ultimos 30 dias.
  * Considera activity (nota/llamada/promesa/pago/visita) + sales_monthly (compras).
  * Filtra a los "que importan": target > 0 o saldo > 1000 o facturacion historica > 0.
+ *
+ * Nota: este reporte es contextual al "ahora" — la ventana de 30 días siempre
+ * mira los últimos 30 días corridos. Para year/month históricos lo que cambia
+ * es el target y el cruce con compras del mes consultado.
  */
 async function reporteSinActividad30d(year: number, month: number): Promise<Sheet> {
+  const histo = isHistoric(year, month);
   const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
-  const [{ data: clientes, error: eC }, { data: actividad, error: eA }, { data: sales, error: eS }] = await Promise.all([
+  const [{ data: clientes, error: eC }, { data: actividad, error: eA }, { data: sales, error: eS }, vmap, objMap] = await Promise.all([
     sb().from('client_operational')
-      .select('cod_cliente, razon_social, localidad, cod_vendedor, tipo_abc, objetivo_mes, objetivo_year, objetivo_month, fact_mes_pasado, fact_prom_3m, saldo_cta_cte')
+      .select('cod_cliente, razon_social, localidad, cod_vendedor, tipo_abc, saldo_cta_cte')
       .eq('tenant_id', TENANT_ID)
       .limit(5000),
     sb().from('vendor_activity')
@@ -140,11 +204,12 @@ async function reporteSinActividad30d(year: number, month: number): Promise<Shee
     sb().from('client_sales_monthly')
       .select('cod_cliente, neto')
       .eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month),
+    vendorNameMap(),
+    getObjetivosPorCliente(year, month),
   ]);
   if (eC) throw new Error(eC.message);
   if (eA) throw new Error(eA.message);
   if (eS) throw new Error(eS.message);
-  const vmap = await vendorNameMap();
   const ultimaActPorCliente = new Map<number, string>();
   (actividad ?? []).forEach((a: any) => {
     if (a.cod_cliente == null) return;
@@ -156,27 +221,27 @@ async function reporteSinActividad30d(year: number, month: number): Promise<Shee
 
   const rows: (string | number | null)[][] = [];
   for (const c of clientes ?? []) {
-    const matches = c.objetivo_year === year && c.objetivo_month === month;
-    const target = matches ? Number(c.objetivo_mes ?? 0) : 0;
+    const o = objMap.get(Number(c.cod_cliente));
+    const target = o?.objetivo_mes ?? 0;
     const saldo = Number(c.saldo_cta_cte ?? 0);
-    const factProm = Number(c.fact_prom_3m ?? 0);
+    const factProm = o?.fact_prom_3m ?? 0;
     // Filtra los "que importan"
     if (target <= 0 && saldo <= 1000 && factProm <= 0) continue;
-    // Si tuvo actividad reciente, skip
     if (ultimaActPorCliente.has(c.cod_cliente)) continue;
-    // Si tuvo compras en el mes actual, tambien skip (aunque no haya nota)
     if ((salesBy.get(c.cod_cliente) ?? 0) > 0) continue;
+    const codVend = o?.cod_vendedor ?? c.cod_vendedor ?? null;
     rows.push([
       c.cod_cliente,
       c.razon_social ?? '',
       c.localidad ?? '',
-      c.cod_vendedor ?? null,
-      vmap.get(Number(c.cod_vendedor)) ?? '',
-      c.tipo_abc ?? '',
+      codVend,
+      codVend != null ? (vmap.get(Number(codVend)) ?? '') : '',
+      o?.tipo_abc ?? c.tipo_abc ?? '',
       target,
-      saldo,
+      // saldo solo aplica al ahora; en histórico no es del corte.
+      histo ? null : saldo,
       factProm,
-      c.fact_mes_pasado != null ? Number(c.fact_mes_pasado) : null,
+      o?.fact_mes_pasado ?? null,
     ]);
   }
   // Orden: por factProm desc (los mas importantes arriba)

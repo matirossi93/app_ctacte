@@ -104,6 +104,32 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
     else okCount += chunk.length;
   }
 
+  // Snapshot histórico de objetivos por (cliente, año, mes).
+  // client_operational guarda solo el mes en curso — se sobrescribe al importar
+  // el siguiente mes. Esta tabla preserva el objetivo de cada cliente para
+  // poder consultar meses pasados desde reportes/ObjetivosView.
+  const historyRows = out.map(r => ({
+    tenant_id: TENANT_ID,
+    cod_cliente: r.cod_cliente,
+    year, month,
+    cod_vendedor: r.cod_vendedor,
+    objetivo_mes: r.objetivo_mes,
+    objetivo_source: 'sheet' as const,
+    fact_mes_pasado: r.fact_mes_pasado,
+    fact_prom_3m: r.fact_prom_3m,
+    tipo_abc: r.tipo_abc,
+    imported_by: user.sub,
+  }));
+  let historyOk = 0;
+  for (let i = 0; i < historyRows.length; i += BATCH) {
+    const chunk = historyRows.slice(i, i + BATCH);
+    const { error } = await sb()
+      .from('client_objectives_history')
+      .upsert(chunk, { onConflict: 'tenant_id,cod_cliente,year,month' });
+    if (error) errores.push({ batch: i, error: `history: ${error.message}` });
+    else historyOk += chunk.length;
+  }
+
   // Log del import.
   try {
     await sb().from('sheet_import_log').insert({
@@ -127,6 +153,7 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
     rows_leidas: rows.length - 1,
     rows_importadas: okCount,
     rows_descartadas: descartadas,
+    history_imported: historyOk,
     errores: errores.length ? errores : undefined,
   });
 }

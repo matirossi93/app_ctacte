@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { X, Download, Loader2, AlertCircle } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
+import type { ViewPeriod } from './PeriodSelector';
 import './ReportesModal.css';
 
 interface Props {
     onClose: () => void;
+    /** Período activo (mes a exportar). Viene del state global viewPeriod del VendorShell. */
+    period: ViewPeriod;
 }
 
 interface Reporte {
@@ -31,17 +34,12 @@ const REPORTES: Reporte[] = [
     },
 ];
 
-function now(): { year: number; month: number } {
-    const d = new Date();
-    return { year: d.getFullYear(), month: d.getMonth() + 1 };
-}
-
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
-export function ReportesModal({ onClose }: Props) {
-    const hoy = now();
-    const [year, setYear] = useState(hoy.year);
-    const [month, setMonth] = useState(hoy.month);
+export function ReportesModal({ onClose, period }: Props) {
+    // Período controlado externamente desde VendorShell (PeriodSelector global).
+    const year = period.year;
+    const month = period.month;
     const [busy, setBusy] = useState<string | null>(null);
     const [err, setErr] = useState<string | null>(null);
 
@@ -77,8 +75,6 @@ export function ReportesModal({ onClose }: Props) {
         }
     };
 
-    const years = [hoy.year, hoy.year - 1, hoy.year - 2];
-
     return (
         <div className="rep-overlay" onClick={onClose}>
             <div className="rep-modal" onClick={e => e.stopPropagation()}>
@@ -87,21 +83,10 @@ export function ReportesModal({ onClose }: Props) {
                     <button className="rep-close" onClick={onClose} aria-label="Cerrar"><X size={20} /></button>
                 </header>
 
-                <div className="rep-period">
-                    <label>
-                        <span>Mes</span>
-                        <select value={month} onChange={e => setMonth(Number(e.target.value))}>
-                            {MESES.map((m, i) => (
-                                <option key={i} value={i + 1}>{m}</option>
-                            ))}
-                        </select>
-                    </label>
-                    <label>
-                        <span>Año</span>
-                        <select value={year} onChange={e => setYear(Number(e.target.value))}>
-                            {years.map(y => <option key={y} value={y}>{y}</option>)}
-                        </select>
-                    </label>
+                <div className="rep-period rep-period-readonly">
+                    <span className="rep-period-label">Período:</span>
+                    <strong>{MESES[month - 1]} {year}</strong>
+                    <span className="rep-period-hint">cambialo con el selector de período</span>
                 </div>
 
                 {err && <div className="rep-error"><AlertCircle size={16} /> {err}</div>}

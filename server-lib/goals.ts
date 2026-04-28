@@ -3,6 +3,7 @@ import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import { fetchVendedores, fetchVentas } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
 import { computeVentaNeta, monthKey } from '../src/utils/ventas.js';
+import { getMonthlyVentasRaw } from './snapshotCache.js';
 
 function normLoc(s: string | null | undefined): string {
   if (!s) return '';
@@ -201,6 +202,7 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
     res.json({
       ok: true,
       year, month,
+      is_historic: !isCurrentMonth,
       dias_habiles_total: diasTotal,
       dias_habiles_auto: diasAuto,
       dias_habiles_con_feriados: diasConFeriados,
@@ -254,6 +256,13 @@ export async function setGoal(req: Request & { user?: JwtPayload }, res: Respons
  * GET /api/goals/clientes?year=&month=&cod_vendedor=&filter=
  * Devuelve clientes del vendedor con objetivo mes vs avance real.
  * Vendedor ve solo sus clientes. Admin/gerente puede pasar cod_vendedor o ver todos.
+ *
+ * Fuente de datos del objetivo:
+ *  - Mes en curso → client_operational (single-row por cliente, último import).
+ *  - Mes histórico → client_objectives_history (snapshot por (cliente, año, mes)).
+ *    Metadata (razón social, localidad, frecuencia, etc.) se merge desde
+ *    client_operational en ambos casos. Solo objetivo y vendedor del corte
+ *    salen del snapshot histórico cuando aplica.
  */
 export async function listClientesObjetivo(req: Request & { user?: JwtPayload }, res: Response) {
   try {
@@ -262,6 +271,7 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
     const t = today();
     const year = Number(req.query.year) || t.year;
     const month = Number(req.query.month) || t.month;
+    const isCurrent = year === t.year && month === t.month;
 
     let codVend: number | null = null;
     let codsList: number[] | null = null;
@@ -275,15 +285,53 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
       if (parsed.length) codsList = parsed;
     }
 
-    // Clientes del vendedor (o todos si admin sin filtro)
+    // ─── Snapshot histórico de objetivos cuando year/month != actual ──────────
+    // Mantiene un map cod_cliente → { objetivo_mes, cod_vendedor, fact_*, tipo_abc }
+    // para hidratar luego sobre la metadata operacional.
+    type HistRow = { cod_cliente: number; cod_vendedor: number | null; objetivo_mes: number | null; fact_mes_pasado: number | null; fact_prom_3m: number | null; tipo_abc: string | null };
+    const histByCliente = new Map<number, HistRow>();
+    if (!isCurrent) {
+      let qH = sb().from('client_objectives_history')
+        .select('cod_cliente, cod_vendedor, objetivo_mes, fact_mes_pasado, fact_prom_3m, tipo_abc')
+        .eq('tenant_id', TENANT_ID)
+        .eq('year', year).eq('month', month);
+      if (codVend != null) qH = qH.eq('cod_vendedor', codVend);
+      else if (codsList) qH = qH.in('cod_vendedor', codsList);
+      qH = qH.limit(5000);
+      const { data: histRows, error: errH } = await qH;
+      if (errH) { res.status(500).json({ error: `history: ${errH.message}` }); return; }
+      (histRows ?? []).forEach((h: any) => histByCliente.set(h.cod_cliente, h));
+    }
+
+    // ─── Metadata operacional ────────────────────────────────────────────────
+    // En histórico filtramos por los cod_cliente que aparecen en el snapshot.
+    // En mes actual filtramos por cod_vendedor como antes.
     let q = sb().from('client_operational').select('cod_cliente, cod_vendedor, razon_social, localidad, frecuencia, dia_visita, tipo_abc, direccion, repartidor, hoja_ruta, dia_entrega, cond_pago, notas, objetivo_mes, objetivo_year, objetivo_month, fact_mes_pasado, fact_prom_3m, saldo_cta_cte').eq('tenant_id', TENANT_ID);
-    if (codVend != null) q = q.eq('cod_vendedor', codVend);
-    else if (codsList) q = q.in('cod_vendedor', codsList);
-    q = q.order('objetivo_mes', { ascending: false, nullsFirst: false }).limit(2000);
+    if (isCurrent) {
+      if (codVend != null) q = q.eq('cod_vendedor', codVend);
+      else if (codsList) q = q.in('cod_vendedor', codsList);
+    } else {
+      const codClientes = Array.from(histByCliente.keys());
+      if (codClientes.length === 0) {
+        // No hay snapshot para este mes (no se importó Maestro o pre-migración).
+        // Devolvemos lista vacía con stats en 0 — el frontend mostrará el banner
+        // "sin datos históricos para este mes".
+        res.json({
+          ok: true, year, month, items: [], seleccion: { localidad: null, total_clientes: 0, con_objetivo: 0, total_objetivo: 0, total_avance: 0, num_comprobantes: 0, pct: null },
+          stats: { total_clientes: 0, con_objetivo: 0, completados: 0, parciales: 0, sin_compras: 0, sin_objetivo: 0, total_objetivo: 0, total_avance: 0, pct_equipo: null, localidades: [] },
+          historic_empty: true,
+        });
+        return;
+      }
+      // Postgres `in` con muchos valores: en lotes de 1000 para evitar URL gigante.
+      // En la práctica nunca pasamos de ~1000 clientes así que un solo .in() basta.
+      q = q.in('cod_cliente', codClientes);
+    }
+    q = q.order('objetivo_mes', { ascending: false, nullsFirst: false }).limit(5000);
     const { data: clientes, error: errC } = await q;
     if (errC) { res.status(500).json({ error: errC.message }); return; }
 
-    // Avance por cliente mes actual
+    // Avance por cliente del mes consultado
     const { data: salesMes, error: errS } = await sb().from('client_sales_monthly')
       .select('cod_cliente, neto, num_comprobantes')
       .eq('tenant_id', TENANT_ID)
@@ -296,10 +344,28 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
     const items = (clientes ?? []).map((c: any) => {
       const sale = salesByCliente.get(c.cod_cliente);
       const avance = sale?.neto ?? 0;
-      // Rollover: si el objetivo_mes del cliente corresponde a otro mes/año,
-      // lo ignoramos. El vendedor tiene que re-importar el Maestro del mes en curso.
-      const objetivoMatches = c.objetivo_year === year && c.objetivo_month === month;
-      const objetivo = (objetivoMatches && c.objetivo_mes != null) ? Number(c.objetivo_mes) : null;
+      // Objetivo: para mes actual viene de client_operational (con rollover guard).
+      // Para mes histórico viene del snapshot client_objectives_history.
+      let objetivo: number | null;
+      let codVendedorEfectivo: number | null;
+      let factMesPasado: number | null;
+      let factProm3m: number | null;
+      let tipoAbc: string | null;
+      if (isCurrent) {
+        const objetivoMatches = c.objetivo_year === year && c.objetivo_month === month;
+        objetivo = (objetivoMatches && c.objetivo_mes != null) ? Number(c.objetivo_mes) : null;
+        codVendedorEfectivo = c.cod_vendedor ?? null;
+        factMesPasado = c.fact_mes_pasado != null ? Number(c.fact_mes_pasado) : null;
+        factProm3m = c.fact_prom_3m != null ? Number(c.fact_prom_3m) : null;
+        tipoAbc = c.tipo_abc ?? null;
+      } else {
+        const h = histByCliente.get(c.cod_cliente);
+        objetivo = h?.objetivo_mes != null ? Number(h.objetivo_mes) : null;
+        codVendedorEfectivo = h?.cod_vendedor ?? c.cod_vendedor ?? null;
+        factMesPasado = h?.fact_mes_pasado != null ? Number(h.fact_mes_pasado) : null;
+        factProm3m = h?.fact_prom_3m != null ? Number(h.fact_prom_3m) : null;
+        tipoAbc = h?.tipo_abc ?? c.tipo_abc ?? null;
+      }
       const pct = objetivo && objetivo > 0 ? avance / objetivo : null;
       const falta = objetivo != null ? Math.max(0, objetivo - avance) : null;
       const sobrante = objetivo != null && avance > objetivo ? avance - objetivo : 0;
@@ -311,13 +377,13 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
       const locNorm = normLoc(c.localidad);
       return {
         cod_cliente: c.cod_cliente,
-        cod_vendedor: c.cod_vendedor,
+        cod_vendedor: codVendedorEfectivo,
         razon_social: c.razon_social,
         localidad: locNorm ? prettyLoc(locNorm) : c.localidad,
         localidad_norm: locNorm,
         frecuencia: c.frecuencia,
         dia_visita: c.dia_visita,
-        tipo_abc: c.tipo_abc,
+        tipo_abc: tipoAbc,
         direccion: c.direccion ?? null,
         repartidor: c.repartidor ?? null,
         hoja_ruta: c.hoja_ruta ?? null,
@@ -325,9 +391,10 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
         cond_pago: c.cond_pago ?? null,
         notas: c.notas ?? null,
         objetivo_mes: objetivo,
-        fact_mes_pasado: c.fact_mes_pasado != null ? Number(c.fact_mes_pasado) : null,
-        fact_prom_3m: c.fact_prom_3m != null ? Number(c.fact_prom_3m) : null,
-        saldo_cta_cte: c.saldo_cta_cte != null ? Number(c.saldo_cta_cte) : null,
+        fact_mes_pasado: factMesPasado,
+        fact_prom_3m: factProm3m,
+        // saldo_cta_cte vive en el presente; en histórico no aplica al corte.
+        saldo_cta_cte: isCurrent && c.saldo_cta_cte != null ? Number(c.saldo_cta_cte) : null,
         avance,
         num_comprobantes: sale?.num ?? 0,
         pct_cumplimiento: pct,
@@ -399,7 +466,7 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
       pct: selObjetivo > 0 ? selAvance / selObjetivo : null,
     };
 
-    res.json({ ok: true, year, month, items: filtered, stats, seleccion });
+    res.json({ ok: true, year, month, is_historic: !isCurrent, items: filtered, stats, seleccion });
   } catch (err: any) {
     console.error('listClientesObjetivo error:', err);
     res.status(500).json({ error: err?.message ?? 'error' });
@@ -577,6 +644,331 @@ export async function debugClienteAvance(req: Request & { user?: JwtPayload }, r
     });
   } catch (err: any) {
     console.error('debugClienteAvance error:', err);
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
+ * GET /api/goals/snapshot?year=&month=&asOfDate=YYYY-MM-DD&cod_vendedor=&cods=
+ *
+ * Calcula avance del equipo + clientes con corte arbitrario al asOfDate.
+ * Pensado para reuniones donde se quiere ver el avance "al miércoles X".
+ *
+ * Mecanismo: usa el cache RAM del dataset crudo del mes (TTL 5min). El primer
+ * fetch al mes tarda ~3-5s; cambios sucesivos de asOfDate dentro del mismo
+ * mes son <100ms (filter en memoria, sin red).
+ *
+ * Validaciones:
+ *  - asOfDate dentro del mes (`YYYY-MM-01` ≤ asOfDate ≤ último día del mes)
+ *  - asOfDate futuro: clamp a today() y se devuelve el ajustado
+ *  - asOfDate fuera del mes: 400 con mensaje explicando
+ *  - Si asOfDate == último día del mes en curso, devuelve los mismos números
+ *    que /api/goals (la única diferencia es que no se persiste el agregado).
+ */
+export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    if (!hasSupabase()) { res.status(500).json({ error: 'Supabase no configurado' }); return; }
+    const user = req.user!;
+    const t = today();
+    const year = Number(req.query.year);
+    const month = Number(req.query.month);
+    const asOfDateRaw = String(req.query.asOfDate ?? '').trim();
+    if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+      res.status(400).json({ error: 'year/month obligatorios y válidos' }); return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(asOfDateRaw)) {
+      res.status(400).json({ error: 'asOfDate debe tener formato YYYY-MM-DD' }); return;
+    }
+
+    const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    const monthEnd = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    if (asOfDateRaw < monthStart || asOfDateRaw > monthEnd) {
+      res.status(400).json({ error: `asOfDate ${asOfDateRaw} fuera del mes ${year}-${String(month).padStart(2, '0')} (rango ${monthStart}..${monthEnd})` });
+      return;
+    }
+    // Clamp a hoy si futuro (mes en curso). En meses pasados, asOfDate ya es válido.
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const isCurrentMonth = year === t.year && month === t.month;
+    let asOfDate = asOfDateRaw;
+    let clamped = false;
+    if (isCurrentMonth && asOfDateRaw > todayIso) {
+      asOfDate = todayIso;
+      clamped = true;
+    }
+    const isHistoric = !isCurrentMonth;
+    const asOfDay = parseInt(asOfDate.slice(8, 10), 10);
+
+    const codEmpresa = req.query.codEmpresa ? Number(req.query.codEmpresa) : undefined;
+
+    // ─── Fetch crudo del mes (con cache RAM) ─────────────────────────────────
+    const t0 = Date.now();
+    const { ventas, cached, cacheAge } = await getMonthlyVentasRaw(year, month, { codEmpresa });
+    const fetchMs = Date.now() - t0;
+
+    // ─── Filtrar por asOfDate y agregar ──────────────────────────────────────
+    const ventasHasta = ventas.filter(v => {
+      const f = String(v.fa_fecha ?? v.fecha ?? '').slice(0, 10);
+      return f && f <= asOfDate;
+    });
+
+    const byCliente = new Map<number, { neto: number; num: number }>();
+    const byVendedor = new Map<number, { neto: number; num: number }>();
+    const clientToVendor = new Map<number, number>();
+    for (const v of ventasHasta) {
+      if (v.cod_cliente != null && v.cod_vendedor != null && v.cod_vendedor !== 0) {
+        if (!clientToVendor.has(v.cod_cliente)) clientToVendor.set(v.cod_cliente, v.cod_vendedor);
+      }
+    }
+    for (const v of ventasHasta) {
+      const neto = computeVentaNeta(v);
+      if (neto === 0) continue;
+      const k = monthKey(v.fa_fecha ?? v.fecha);
+      if (!k || k.year !== year || k.month !== month) continue;
+      if (v.cod_cliente != null) {
+        const cur = byCliente.get(v.cod_cliente) ?? { neto: 0, num: 0 };
+        cur.neto += neto; cur.num += 1;
+        byCliente.set(v.cod_cliente, cur);
+      }
+      let codVend = v.cod_vendedor != null && v.cod_vendedor !== 0 ? v.cod_vendedor : null;
+      if (codVend == null && v.cod_cliente != null) {
+        codVend = clientToVendor.get(v.cod_cliente) ?? null;
+      }
+      if (codVend != null) {
+        const cur = byVendedor.get(codVend) ?? { neto: 0, num: 0 };
+        cur.neto += neto; cur.num += 1;
+        byVendedor.set(codVend, cur);
+      }
+    }
+
+    // ─── Filtros por rol/vendedor para clientes (replica listClientesObjetivo) ──
+    let codVendFilter: number | null = null;
+    let codsListFilter: number[] | null = null;
+    if (user.rol === 'vendedor') {
+      codVendFilter = user.cod_vendedor ?? -1;
+    } else if (req.query.cod_vendedor) {
+      codVendFilter = Number(req.query.cod_vendedor);
+    } else if (req.query.cods) {
+      const parsed = String(req.query.cods)
+        .split(',').map(s => Number(s.trim())).filter(n => Number.isInteger(n) && n > 0);
+      if (parsed.length) codsListFilter = parsed;
+    }
+
+    // ─── Cargar metadata en paralelo (goals, vendedores, month_config, history) ──
+    const [goalsRes, vendedoresIM, monthCfgRes] = await Promise.all([
+      sb().from('vendor_goals').select('cod_vendedor, target_neto, dias_habiles, set_by, updated_at').eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month),
+      fetchVendedores().catch(() => []),
+      sb().from('month_config').select('dias_habiles, holidays').eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month).maybeSingle(),
+    ]);
+    if (goalsRes.error) { res.status(500).json({ error: `goals: ${goalsRes.error.message}` }); return; }
+
+    const { data: usuariosRows } = await sb().from('usuarios')
+      .select('id, email, cod_vendedor, vendedor_key, nombre, activo')
+      .eq('tenant_id', TENANT_ID)
+      .not('cod_vendedor', 'is', null);
+    const usuariosByCod = new Map<number, any>();
+    (usuariosRows ?? []).forEach((u: any) => { if (u.cod_vendedor != null) usuariosByCod.set(u.cod_vendedor, u); });
+
+    const goalsByCod = new Map<number, any>();
+    (goalsRes.data ?? []).forEach((g: any) => goalsByCod.set(g.cod_vendedor, g));
+
+    const cfg = monthCfgRes.data as any;
+    const holidays: number[] = (Array.isArray(cfg?.holidays) ? cfg.holidays : [])
+      .map((d: any) => Number(d))
+      .filter((d: number) => Number.isInteger(d) && d >= 1 && d <= 31);
+    const diasTotal = cfg?.dias_habiles ?? businessDaysInMonth(year, month, holidays);
+    const diasTrans = businessDaysElapsed(year, month, asOfDay, holidays);
+    const diasRestantes = Math.max(0, diasTotal - diasTrans);
+
+    // ─── Whitelist de vendedores visibles (mismo criterio que listGoals) ──
+    const COD_VENDEDORES_VISIBLES = new Set([2, 3, 4, 6, 12]);
+    const incluirInactivos = String(req.query.incluir_inactivos ?? '') === 'true';
+    const vendedoresValidos = (vendedoresIM ?? []).filter((v: any) => {
+      const n = String(v?.nombre ?? '').toUpperCase();
+      if (n.includes('SUCURSAL') || n.includes('CONSUMO')) return false;
+      if (!COD_VENDEDORES_VISIBLES.has(Number(v.cod_vendedor))) return false;
+      if (incluirInactivos) return true;
+      const u = usuariosByCod.get(v.cod_vendedor);
+      return !u || u.activo !== false;
+    });
+
+    const items: GoalItem[] = vendedoresValidos.map((v: any) => {
+      const cod = v.cod_vendedor;
+      const goal = goalsByCod.get(cod);
+      const sale = byVendedor.get(cod);
+      const u = usuariosByCod.get(cod);
+      const target = goal?.target_neto != null ? Number(goal.target_neto) : null;
+      const avance = sale?.neto ?? 0;
+      const pct = target && target > 0 ? avance / target : null;
+      const proyeccion = diasTrans > 0 ? avance * (diasTotal / diasTrans) : avance;
+      const necesarioDia = target && diasRestantes > 0 ? Math.max(0, (target - avance) / diasRestantes) : null;
+      return {
+        cod_vendedor: cod,
+        nombre: u?.nombre ?? v.nombre,
+        vendedor_key: u?.vendedor_key ?? null,
+        email: u?.email ?? null,
+        activo: !!(u && u.activo !== false),
+        year, month,
+        target_neto: target,
+        avance: Number(avance.toFixed(2)),
+        num_comprobantes: sale?.num ?? 0,
+        pct_cumplimiento: pct,
+        proyeccion: Number(proyeccion.toFixed(2)),
+        necesario_por_dia: necesarioDia != null ? Number(necesarioDia.toFixed(2)) : null,
+        dias_habiles_total: diasTotal,
+        dias_habiles_transcurridos: diasTrans,
+        dias_restantes: diasRestantes,
+        goal_set_by_email: null,
+        goal_updated_at: goal?.updated_at ?? null,
+      };
+    });
+
+    const visible = user.rol === 'vendedor'
+      ? items.filter(it => it.cod_vendedor === user.cod_vendedor)
+      : items;
+
+    let totales: any = null;
+    if (user.rol !== 'vendedor') {
+      const equipo = visible.filter(i => i.activo);
+      const tgt = equipo.reduce((a, i) => a + (i.target_neto ?? 0), 0);
+      const av = equipo.reduce((a, i) => a + i.avance, 0);
+      totales = {
+        target: tgt,
+        avance: av,
+        pct: tgt > 0 ? av / tgt : null,
+        proyeccion: equipo.reduce((a, i) => a + i.proyeccion, 0),
+        vendedores_con_target: equipo.filter(i => i.target_neto != null).length,
+        vendedores_total: equipo.length,
+      };
+    }
+
+    // ─── Clientes: avance al corte por cada cliente con objetivo ─────────────
+    // Mismo patrón que listClientesObjetivo pero el avance viene del agregado
+    // en RAM (byCliente), no del cache mensual de Supabase.
+    type HistRow = { cod_cliente: number; cod_vendedor: number | null; objetivo_mes: number | null; fact_mes_pasado: number | null; fact_prom_3m: number | null; tipo_abc: string | null };
+    const histByCliente = new Map<number, HistRow>();
+    if (isHistoric) {
+      let qH = sb().from('client_objectives_history')
+        .select('cod_cliente, cod_vendedor, objetivo_mes, fact_mes_pasado, fact_prom_3m, tipo_abc')
+        .eq('tenant_id', TENANT_ID)
+        .eq('year', year).eq('month', month);
+      if (codVendFilter != null) qH = qH.eq('cod_vendedor', codVendFilter);
+      else if (codsListFilter) qH = qH.in('cod_vendedor', codsListFilter);
+      qH = qH.limit(5000);
+      const { data: histRows } = await qH;
+      (histRows ?? []).forEach((h: any) => histByCliente.set(h.cod_cliente, h));
+    }
+
+    let qC = sb().from('client_operational')
+      .select('cod_cliente, cod_vendedor, razon_social, localidad, frecuencia, dia_visita, tipo_abc, direccion, repartidor, hoja_ruta, dia_entrega, cond_pago, notas, objetivo_mes, objetivo_year, objetivo_month, fact_mes_pasado, fact_prom_3m, saldo_cta_cte')
+      .eq('tenant_id', TENANT_ID);
+    if (isHistoric) {
+      const codClientes = Array.from(histByCliente.keys());
+      if (codClientes.length === 0) {
+        // Sin snapshot histórico → devolver clientes vacío (igual que listClientesObjetivo).
+        res.json({
+          ok: true, year, month, asOfDate,
+          asOfBusinessDay: diasTrans, asOfDayClamped: clamped,
+          is_historic: isHistoric,
+          dias_habiles_total: diasTotal, dias_habiles_transcurridos: diasTrans, dias_restantes: diasRestantes,
+          holidays, cached, cacheAge_ms: cacheAge,
+          ventas_procesadas: ventasHasta.length, ventas_descartadas_por_fecha: ventas.length - ventasHasta.length,
+          fetch_ms: fetchMs,
+          items: visible, totales,
+          clientes: [], historic_empty: true,
+        });
+        return;
+      }
+      qC = qC.in('cod_cliente', codClientes);
+    } else {
+      if (codVendFilter != null) qC = qC.eq('cod_vendedor', codVendFilter);
+      else if (codsListFilter) qC = qC.in('cod_vendedor', codsListFilter);
+    }
+    qC = qC.limit(5000);
+    const { data: clientes } = await qC;
+
+    const clientesItems = (clientes ?? []).map((c: any) => {
+      const sale = byCliente.get(c.cod_cliente);
+      const avance = sale?.neto ?? 0;
+      let objetivo: number | null;
+      let codVendedorEfectivo: number | null;
+      let factMesPasado: number | null;
+      let factProm3m: number | null;
+      let tipoAbc: string | null;
+      if (isHistoric) {
+        const h = histByCliente.get(c.cod_cliente);
+        objetivo = h?.objetivo_mes != null ? Number(h.objetivo_mes) : null;
+        codVendedorEfectivo = h?.cod_vendedor ?? c.cod_vendedor ?? null;
+        factMesPasado = h?.fact_mes_pasado != null ? Number(h.fact_mes_pasado) : null;
+        factProm3m = h?.fact_prom_3m != null ? Number(h.fact_prom_3m) : null;
+        tipoAbc = h?.tipo_abc ?? c.tipo_abc ?? null;
+      } else {
+        const matches = c.objetivo_year === year && c.objetivo_month === month;
+        objetivo = (matches && c.objetivo_mes != null) ? Number(c.objetivo_mes) : null;
+        codVendedorEfectivo = c.cod_vendedor ?? null;
+        factMesPasado = c.fact_mes_pasado != null ? Number(c.fact_mes_pasado) : null;
+        factProm3m = c.fact_prom_3m != null ? Number(c.fact_prom_3m) : null;
+        tipoAbc = c.tipo_abc ?? null;
+      }
+      const pct = objetivo && objetivo > 0 ? avance / objetivo : null;
+      const falta = objetivo != null ? Math.max(0, objetivo - avance) : null;
+      const sobrante = objetivo != null && avance > objetivo ? avance - objetivo : 0;
+      const status = objetivo == null
+        ? 'sin_objetivo'
+        : avance >= objetivo ? 'completado'
+        : avance > 0 ? 'parcial'
+        : 'sin_compras';
+      const locNorm = normLoc(c.localidad);
+      return {
+        cod_cliente: c.cod_cliente,
+        cod_vendedor: codVendedorEfectivo,
+        razon_social: c.razon_social,
+        localidad: locNorm ? prettyLoc(locNorm) : c.localidad,
+        localidad_norm: locNorm,
+        frecuencia: c.frecuencia,
+        dia_visita: c.dia_visita,
+        tipo_abc: tipoAbc,
+        direccion: c.direccion ?? null,
+        repartidor: c.repartidor ?? null,
+        hoja_ruta: c.hoja_ruta ?? null,
+        dia_entrega: c.dia_entrega ?? null,
+        cond_pago: c.cond_pago ?? null,
+        notas: c.notas ?? null,
+        objetivo_mes: objetivo,
+        fact_mes_pasado: factMesPasado,
+        fact_prom_3m: factProm3m,
+        saldo_cta_cte: isHistoric ? null : (c.saldo_cta_cte != null ? Number(c.saldo_cta_cte) : null),
+        avance: Number(avance.toFixed(2)),
+        num_comprobantes: sale?.num ?? 0,
+        pct_cumplimiento: pct,
+        falta,
+        sobrante,
+        status,
+      };
+    });
+
+    res.json({
+      ok: true,
+      year, month,
+      asOfDate,
+      asOfBusinessDay: diasTrans,
+      asOfDayClamped: clamped,
+      is_historic: isHistoric,
+      dias_habiles_total: diasTotal,
+      dias_habiles_transcurridos: diasTrans,
+      dias_restantes: diasRestantes,
+      holidays,
+      cached,
+      cacheAge_ms: cacheAge,
+      ventas_procesadas: ventasHasta.length,
+      ventas_descartadas_por_fecha: ventas.length - ventasHasta.length,
+      fetch_ms: fetchMs,
+      items: visible,
+      totales,
+      clientes: clientesItems,
+    });
+  } catch (err: any) {
+    console.error('getGoalsSnapshot error:', err);
     res.status(500).json({ error: err?.message ?? 'error' });
   }
 }

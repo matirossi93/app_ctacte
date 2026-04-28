@@ -11,7 +11,27 @@ import { CambiarPassword } from './CambiarPassword';
 import { UsuariosAdmin } from './UsuariosAdmin';
 import { ImportarSheet } from './ImportarSheet';
 import { ReportesModal } from './ReportesModal';
+import { PeriodSelector, type ViewPeriod } from './PeriodSelector';
+import { HistoricBanner } from './HistoricBanner';
+import { PrintAvanceView } from './PrintAvanceView';
 import './VendorShell.css';
+
+const VIEW_PERIOD_KEY = 'vs_view_period';
+function loadInitialPeriod(): ViewPeriod {
+    const t = new Date();
+    const fallback: ViewPeriod = { year: t.getUTCFullYear(), month: t.getUTCMonth() + 1, asOfDay: null };
+    try {
+        const raw = sessionStorage.getItem(VIEW_PERIOD_KEY);
+        if (!raw) return fallback;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed.year !== 'number' || typeof parsed.month !== 'number') return fallback;
+        return { year: parsed.year, month: parsed.month, asOfDay: parsed.asOfDay ?? null };
+    } catch { return fallback; }
+}
+function isCurrentPeriod(p: ViewPeriod): boolean {
+    const t = new Date();
+    return p.year === t.getUTCFullYear() && p.month === t.getUTCMonth() + 1 && (p.asOfDay == null);
+}
 
 type Tab = 'hoy' | 'cobranzas' | 'objetivos' | 'actividad';
 
@@ -65,6 +85,7 @@ interface GoalsMeta {
 
 interface ClienteObjetivo {
     cod_cliente: number;
+    cod_vendedor: number | null;
     razon_social: string | null;
     localidad: string | null;
     frecuencia: string | null;
@@ -158,6 +179,20 @@ export const VendorShell = ({ onLogout }: Props) => {
     const [showImportSheet, setShowImportSheet] = useState(false);
     const [showReportes, setShowReportes] = useState(false);
     const [reloadObjetivosTick, setReloadObjetivosTick] = useState(0);
+
+    // Período visible para tabs Objetivos y Reportes. Default = mes actual.
+    // Persiste en sessionStorage (se resetea al cerrar pestaña — minimiza
+    // confusión "¿por qué veo otro mes?" en próxima sesión).
+    // Tabs Hoy y Cobranzas siempre operan sobre la fecha real, ignoran este state.
+    const [viewPeriod, setViewPeriod] = useState<ViewPeriod>(loadInitialPeriod);
+    useEffect(() => {
+        sessionStorage.setItem(VIEW_PERIOD_KEY, JSON.stringify(viewPeriod));
+    }, [viewPeriod]);
+    const isHistoricView = !isCurrentPeriod(viewPeriod);
+    const resetPeriod = () => {
+        const t = new Date();
+        setViewPeriod({ year: t.getUTCFullYear(), month: t.getUTCMonth() + 1, asOfDay: null });
+    };
 
     // Listener global para 'vs-open-activity' — switchea al tab Actividad y pasa el cliente.
     useEffect(() => {
@@ -395,6 +430,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                     </div>
                 </div>
                 <div className="vs-top-actions">
+                    <PeriodSelector value={viewPeriod} onChange={setViewPeriod} />
                     <button className="vs-icon-btn" onClick={() => loadData(true)} title="Refrescar" disabled={loading}>
                         {loading ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
                     </button>
@@ -439,6 +475,9 @@ export const VendorShell = ({ onLogout }: Props) => {
                 </div>
             </header>
 
+            {/* Banner amarillo cuando se está viendo un período histórico (≠ mes actual). */}
+            {isHistoricView && <HistoricBanner period={viewPeriod} onReset={resetPeriod} />}
+
             {/* ═══════════ TAB CONTENT ═══════════ */}
             <main className="vs-main">
                 {err && <div className="vs-error"><AlertCircle size={16} /> {err}</div>}
@@ -472,7 +511,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                     />
                 )}
 
-                {tab === 'objetivos' && <ObjetivosView selectedVendor={selectedVendor} cods={codsQs} isAdmin={isAdmin} showInactivos={showInactivos} reloadTick={reloadObjetivosTick} />}
+                {tab === 'objetivos' && <ObjetivosView selectedVendor={selectedVendor} cods={codsQs} isAdmin={isAdmin} showInactivos={showInactivos} reloadTick={reloadObjetivosTick} viewPeriod={viewPeriod} />}
 
                 {tab === 'actividad' && <ActividadView
                     vendedorKey={user?.vendedor_key ?? null}
@@ -520,7 +559,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                 onClose={() => setShowImportSheet(false)}
                 onImported={() => setReloadObjetivosTick(t => t + 1)}
             />}
-            {showReportes && <ReportesModal onClose={() => setShowReportes(false)} />}
+            {showReportes && <ReportesModal onClose={() => setShowReportes(false)} period={viewPeriod} />}
         </div>
     );
 };
@@ -984,7 +1023,10 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
 // ═══════════════════════════════════════════════════════════════════════════
 // OBJETIVOS VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTick }: { selectedVendor: number | null; cods: string; isAdmin: boolean; showInactivos: boolean; reloadTick: number }) {
+function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTick, viewPeriod }: { selectedVendor: number | null; cods: string; isAdmin: boolean; showInactivos: boolean; reloadTick: number; viewPeriod: ViewPeriod }) {
+    // En modo histórico O con corte asOfDay, las acciones de edición (target, feriados,
+    // sync, holidays) se deshabilitan: la data viene de un snapshot fijo, no debería mutar.
+    const isHistoricMode = !isCurrentPeriod(viewPeriod);
     const [g, setG] = useState<GoalData | null>(null);
     const [meta, setMeta] = useState<GoalsMeta | null>(null);
     const [rankingItems, setRankingItems] = useState<any[]>([]);
@@ -1003,6 +1045,8 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
     const [savingTarget, setSavingTarget] = useState(false);
     const [searchClientes, setSearchClientes] = useState('');
     const [openCliObj, setOpenCliObj] = useState<number | null>(null);
+    const [showPrint, setShowPrint] = useState(false);
+    const [totales, setTotales] = useState<any>(null);
 
     // Reset localidad + search al cambiar de vendedor
     useEffect(() => { setLocalidad(''); setSearchClientes(''); }, [selectedVendor]);
@@ -1021,19 +1065,105 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
     const load = async () => {
         setLoading(true); setErr(null);
         try {
-            const qs = new URLSearchParams({ filter });
-            if (localidad) qs.set('localidad', localidad);
-            if (isAdmin && selectedVendor != null) qs.set('cod_vendedor', String(selectedVendor));
-            else if (isAdmin && cods) qs.set('cods', cods);
-            // Forzar inactivos cuando se filtra un vendedor específico: así el .find siempre encuentra,
-            // aunque el vendedor esté marcado inactivo y el toggle "Ver inactivos" esté apagado.
-            const goalsQs = (showInactivos || (isAdmin && selectedVendor != null)) ? '?incluir_inactivos=true' : '';
-            const [gr, cr] = await Promise.all([
-                fetch(`/api/goals${goalsQs}`, { headers: authHeaders() }).then(r => r.json()),
-                fetch(`/api/goals/clientes?${qs.toString()}`, { headers: authHeaders() }).then(r => r.json()),
-            ]);
-            if (!gr.ok) throw new Error(gr.error);
-            if (!cr.ok) throw new Error(cr.error);
+            const useSnapshot = viewPeriod.asOfDay != null;
+            let gr: any, cr: any;
+            if (useSnapshot) {
+                // Snapshot intra-mes: 1 sola llamada que devuelve items + clientes ya con corte aplicado.
+                const day = viewPeriod.asOfDay!;
+                const asOfDate = `${viewPeriod.year}-${String(viewPeriod.month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const sp = new URLSearchParams();
+                sp.set('year', String(viewPeriod.year));
+                sp.set('month', String(viewPeriod.month));
+                sp.set('asOfDate', asOfDate);
+                if (showInactivos || (isAdmin && selectedVendor != null)) sp.set('incluir_inactivos', 'true');
+                if (isAdmin && selectedVendor != null) sp.set('cod_vendedor', String(selectedVendor));
+                else if (isAdmin && cods) sp.set('cods', cods);
+                const snap = await fetch(`/api/goals/snapshot?${sp.toString()}`, { headers: authHeaders() }).then(r => r.json());
+                if (!snap.ok) throw new Error(snap.error);
+                // Adapta el response del snapshot al shape que usa el resto del componente.
+                gr = snap;
+                // Stats client-side (el snapshot no las calcula)
+                const items = snap.clientes ?? [];
+                const normLocClient = (s: string | null | undefined): string => {
+                    if (!s) return '';
+                    return String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toUpperCase().replace(/\s+/g, ' ');
+                };
+                const prettyLocClient = (s: string): string => {
+                    return s.toLowerCase().replace(/(^|\s|-)(\w)/g, (_m: string, pre: string, ch: string) => pre + ch.toUpperCase());
+                };
+                const localidades: any[] = [];
+                const locMap = new Map<string, any>();
+                items.forEach((it: any) => {
+                    const key = it.localidad_norm || '__sin_localidad__';
+                    const display = it.localidad_norm ? prettyLocClient(it.localidad_norm) : 'Sin localidad';
+                    if (!locMap.has(key)) locMap.set(key, { localidad: display, count: 0, total_objetivo: 0, total_avance: 0, completados: 0 });
+                    const l = locMap.get(key)!;
+                    l.count++;
+                    l.total_objetivo += it.objetivo_mes ?? 0;
+                    l.total_avance += it.avance;
+                    if (it.status === 'completado') l.completados++;
+                });
+                Array.from(locMap.values()).sort((a, b) => b.total_objetivo - a.total_objetivo).forEach(l => localidades.push(l));
+                const totalObjetivo = items.reduce((a: number, i: any) => a + (i.objetivo_mes ?? 0), 0);
+                const totalAvance = items.reduce((a: number, i: any) => a + i.avance, 0);
+                const stats = {
+                    total_clientes: items.length,
+                    con_objetivo: items.filter((i: any) => i.objetivo_mes != null).length,
+                    completados: items.filter((i: any) => i.status === 'completado').length,
+                    parciales: items.filter((i: any) => i.status === 'parcial').length,
+                    sin_compras: items.filter((i: any) => i.status === 'sin_compras').length,
+                    sin_objetivo: items.filter((i: any) => i.status === 'sin_objetivo').length,
+                    total_objetivo: totalObjetivo,
+                    total_avance: totalAvance,
+                    pct_equipo: totalObjetivo > 0 ? totalAvance / totalObjetivo : null,
+                    localidades,
+                };
+                // Filtros client-side (status + localidad)
+                const locFilterNorm = normLocClient(localidad);
+                const selObjetivo = items.filter((i: any) => !locFilterNorm || i.localidad_norm === locFilterNorm).reduce((a: number, i: any) => a + (i.objetivo_mes ?? 0), 0);
+                const selAvance = items.filter((i: any) => !locFilterNorm || i.localidad_norm === locFilterNorm).reduce((a: number, i: any) => a + i.avance, 0);
+                const selNumComp = items.filter((i: any) => !locFilterNorm || i.localidad_norm === locFilterNorm).reduce((a: number, i: any) => a + (i.num_comprobantes ?? 0), 0);
+                const filteredItems = items.filter((it: any) => {
+                    if (locFilterNorm && it.localidad_norm !== locFilterNorm) return false;
+                    if (filter === 'completado') return it.status === 'completado';
+                    if (filter === 'bajo_objetivo') return it.status === 'sin_compras' || it.status === 'parcial';
+                    if (filter === 'sin_compras') return it.status === 'sin_compras';
+                    if (filter === 'sin_objetivo') return it.status === 'sin_objetivo';
+                    return true;
+                });
+                cr = {
+                    ok: true,
+                    items: filteredItems,
+                    stats,
+                    seleccion: {
+                        localidad: locFilterNorm ? prettyLocClient(locFilterNorm) : null,
+                        total_clientes: filteredItems.length,
+                        con_objetivo: filteredItems.filter((i: any) => i.objetivo_mes != null).length,
+                        total_objetivo: selObjetivo,
+                        total_avance: selAvance,
+                        num_comprobantes: selNumComp,
+                        pct: selObjetivo > 0 ? selAvance / selObjetivo : null,
+                    },
+                };
+            } else {
+                // Mes completo (sin corte intra-mes): camino tradicional con 2 endpoints.
+                const qs = new URLSearchParams({ filter });
+                qs.set('year', String(viewPeriod.year));
+                qs.set('month', String(viewPeriod.month));
+                if (localidad) qs.set('localidad', localidad);
+                if (isAdmin && selectedVendor != null) qs.set('cod_vendedor', String(selectedVendor));
+                else if (isAdmin && cods) qs.set('cods', cods);
+                const goalsParams = new URLSearchParams();
+                goalsParams.set('year', String(viewPeriod.year));
+                goalsParams.set('month', String(viewPeriod.month));
+                if (showInactivos || (isAdmin && selectedVendor != null)) goalsParams.set('incluir_inactivos', 'true');
+                [gr, cr] = await Promise.all([
+                    fetch(`/api/goals?${goalsParams.toString()}`, { headers: authHeaders() }).then(r => r.json()),
+                    fetch(`/api/goals/clientes?${qs.toString()}`, { headers: authHeaders() }).then(r => r.json()),
+                ]);
+                if (!gr.ok) throw new Error(gr.error);
+                if (!cr.ok) throw new Error(cr.error);
+            }
             // Admin + selectedVendor: mostrar goal específico del vendedor. Sin selección: agregar todos.
             let goal: GoalData | null = null;
             if (isAdmin && selectedVendor != null) {
@@ -1068,13 +1198,14 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                 month: gr.month,
             });
             setRankingItems(gr.items ?? []);
+            setTotales(gr.totales ?? null);
             setClientes(cr.items || []);
             setClientesStats(cr.stats);
             setSeleccion(cr.seleccion ?? null);
         } catch (e: any) { setErr(e.message); }
         finally { setLoading(false); }
     };
-    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, localidad, selectedVendor, cods, showInactivos, reloadTick]);
+    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, localidad, selectedVendor, cods, showInactivos, reloadTick, viewPeriod.year, viewPeriod.month, viewPeriod.asOfDay]);
 
     const syncNow = async () => {
         setSyncing(true);
@@ -1159,7 +1290,22 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
         <div className="vs-view">
             <div className="vs-view-title">
                 <h1>Mis <em>Objetivos</em></h1>
-                <p><span className="dot" /> {monthName(new Date().getUTCMonth() + 1)} · {g.dias_habiles_transcurridos}/{g.dias_habiles_total} días · {g.dias_restantes} restantes</p>
+                <p>
+                    <span className="dot" /> {monthName(viewPeriod.month)} {viewPeriod.year}
+                    {viewPeriod.asOfDay
+                        ? <> · <strong>corte al día {viewPeriod.asOfDay}</strong> · día hábil {g.dias_habiles_transcurridos} de {g.dias_habiles_total}</>
+                        : isHistoricMode
+                            ? <> · <strong>cierre histórico</strong></>
+                            : <> · {g.dias_habiles_transcurridos}/{g.dias_habiles_total} días · {g.dias_restantes} restantes</>}
+                </p>
+                <button
+                    type="button"
+                    className="vs-print-btn"
+                    onClick={() => setShowPrint(true)}
+                    title="Vista para imprimir / Descargar PDF"
+                >
+                    <FileText size={14} /> Imprimir / PDF
+                </button>
             </div>
 
             {/* Feriados del mes */}
@@ -1174,7 +1320,7 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                     ) : (
                         <span className="vs-holidays-empty">Ninguno configurado</span>
                     )}
-                    {isAdmin && !editingHolidays && (
+                    {isAdmin && !editingHolidays && !isHistoricMode && (
                         <button className="vs-holidays-edit" onClick={() => setEditingHolidays(true)} title="Editar feriados del mes">
                             <Edit3 size={12} />
                         </button>
@@ -1250,7 +1396,7 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                             ) : (
                                 <span className="v">
                                     {formatMoney(heroTarget)}
-                                    {isAdmin && selectedVendor != null && !isLocFilter && (
+                                    {isAdmin && selectedVendor != null && !isLocFilter && !isHistoricMode && (
                                         <button className="vs-target-edit-btn"
                                             onClick={() => { setTargetInput(String(heroTarget ?? 0)); setEditingTarget(true); }}
                                             title="Editar target">
@@ -1287,9 +1433,11 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                     </div>
                 </div>
 
-                <button className="vs-goal-refresh" onClick={syncNow} disabled={syncing}>
-                    {syncing ? <><Loader2 size={12} className="spin" /> Sincronizando…</> : <><RefreshCw size={12} /> Actualizar avance</>}
-                </button>
+                {!isHistoricMode && (
+                    <button className="vs-goal-refresh" onClick={syncNow} disabled={syncing}>
+                        {syncing ? <><Loader2 size={12} className="spin" /> Sincronizando…</> : <><RefreshCw size={12} /> Actualizar avance</>}
+                    </button>
+                )}
             </div>
 
             {/* ─── Ranking equipo (admin sin filtro) ─── */}
@@ -1359,6 +1507,55 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                     ))}
                 </div>
             </div>
+
+            {showPrint && (
+                <PrintAvanceView
+                    period={viewPeriod}
+                    isHistoric={isHistoricMode}
+                    diasHabilesTotal={g.dias_habiles_total}
+                    diasHabilesTranscurridos={g.dias_habiles_transcurridos}
+                    diasRestantes={g.dias_restantes}
+                    totales={totales ? {
+                        target: Number(totales.target) || 0,
+                        avance: Number(totales.avance) || 0,
+                        pct: totales.pct ?? null,
+                        proyeccion: Number(totales.proyeccion) || 0,
+                        vendedoresConTarget: totales.vendedores_con_target ?? 0,
+                        vendedoresTotal: totales.vendedores_total ?? rankingItems.length,
+                    } : null}
+                    vendedores={rankingItems.map((it: any) => ({
+                        cod_vendedor: it.cod_vendedor,
+                        nombre: it.nombre,
+                        target_neto: it.target_neto,
+                        avance: it.avance,
+                        pct_cumplimiento: it.pct_cumplimiento,
+                        proyeccion: it.proyeccion,
+                        necesario_por_dia: it.necesario_por_dia,
+                        num_comprobantes: it.num_comprobantes,
+                        activo: it.activo,
+                    }))}
+                    clientesTop={clientes
+                        .filter(c => c.objetivo_mes != null && c.objetivo_mes > 0)
+                        .sort((a, b) => (b.objetivo_mes ?? 0) - (a.objetivo_mes ?? 0))
+                        .slice(0, 30)
+                        .map(c => ({
+                            cod_cliente: c.cod_cliente,
+                            razon_social: c.razon_social ?? null,
+                            localidad: c.localidad ?? null,
+                            cod_vendedor: c.cod_vendedor ?? null,
+                            objetivo_mes: c.objetivo_mes,
+                            avance: c.avance,
+                            pct_cumplimiento: c.pct_cumplimiento,
+                            status: c.status,
+                        }))}
+                    filtroLabel={
+                        isAdmin && selectedVendor != null
+                            ? `Vendedor cod ${selectedVendor}`
+                            : (localidad ? `Localidad: ${localidad}` : null)
+                    }
+                    onClose={() => setShowPrint(false)}
+                />
+            )}
         </div>
     );
 }

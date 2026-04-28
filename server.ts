@@ -18,12 +18,12 @@ import {
   type JwtPayload
 } from './server-lib/auth.js';
 import { hasSupabase, sb, TENANT_ID } from './server-lib/supabase.js';
-import { syncVentasMesActual } from './server-lib/syncVentas.js';
+import { syncVentasMesActual, syncVentasMeses } from './server-lib/syncVentas.js';
 import {
   uploadRecibo, listRecibos, facturasCandidatas, aprobarRecibo, rechazarRecibo, cuentasDebug, cuentasRefresh,
   reverificarMP, elegirMatchMP, procesarColaMP
 } from './server-lib/recibos.js';
-import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance } from './server-lib/goals.js';
+import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot } from './server-lib/goals.js';
 import { listClientesLookup } from './server-lib/clientes.js';
 import { listActivity, createActivity, deleteActivity } from './server-lib/activity.js';
 import {
@@ -476,9 +476,36 @@ app.post('/api/cuentas/refresh', requireJwt, (req: any, res) => cuentasRefresh(r
 app.get('/api/goals', requireJwt, (req: any, res) => listGoals(req, res));
 app.post('/api/goals', requireJwt, (req: any, res) => setGoal(req, res));
 app.post('/api/goals/sync-now', requireJwt, (req: any, res) => syncVentasNow(req, res));
+app.post('/api/goals/backfill', requireJwt, requireAdmin, async (req: any, res) => {
+    try {
+        const months = Math.max(1, Math.min(24, Number(req.body?.months) || 6));
+        const sync = req.query.sync === '1' || req.body?.sync === true;
+        if (sync) {
+            // Modo síncrono: útil para CLI o smoke test. Bloquea hasta terminar.
+            const results = await syncVentasMeses(months);
+            res.json({ ok: results.every(r => r.ok), months, results });
+            return;
+        }
+        // Por default: arranca en background, responde enseguida.
+        // Logs del progreso quedan en console del server.
+        setImmediate(async () => {
+            console.log(`[backfill] arrancando ${months} meses…`);
+            const t0 = Date.now();
+            const results = await syncVentasMeses(months);
+            const ok = results.filter(r => r.ok).length;
+            const fail = results.filter(r => !r.ok).length;
+            const totComp = results.reduce((a, r) => a + (r.comprobantes || 0), 0);
+            console.log(`[backfill] terminado en ${Date.now() - t0}ms · ${ok} ok / ${fail} fail · ${totComp} comprob procesados`);
+        });
+        res.json({ ok: true, started: true, months, message: 'Backfill arrancado en background. Mirá los logs del server para el progreso.' });
+    } catch (err: any) {
+        res.status(500).json({ error: err?.message ?? 'error' });
+    }
+});
 app.post('/api/month-config', requireJwt, (req: any, res) => setMonthConfig(req, res));
 app.get('/api/goals/clientes', requireJwt, (req: any, res) => listClientesObjetivo(req, res));
 app.get('/api/goals/debug-cliente/:cod', requireJwt, requireAdmin, (req: any, res) => debugClienteAvance(req, res));
+app.get('/api/goals/snapshot', requireJwt, (req: any, res) => getGoalsSnapshot(req, res));
 
 // ─── Clientes lookup (maestro completo, con y sin deuda) ─────────────────────
 app.get('/api/clientes/lookup', requireJwt, (req: any, res) => listClientesLookup(req, res));
@@ -813,6 +840,26 @@ if (hasSupabase()) {
         syncVentasMesActual().then(r => console.log('[sync on start]', r));
     }
     console.log('Cron syncVentasMesActual: */30 * * * *');
+
+    // Cron diario 4am: re-sync últimos 6 meses (mes actual + 5 anteriores).
+    // Captura NCs tardías que afectan meses cerrados — sin esto, una NC del 30/04
+    // que se carga el 02/05 nunca actualizaría el row de abril en vendor_sales_monthly.
+    cron.schedule('0 4 * * *', async () => {
+        try {
+            const t0 = Date.now();
+            const results = await syncVentasMeses(6);
+            const ok = results.filter(r => r.ok).length;
+            const fail = results.filter(r => !r.ok).length;
+            const totComp = results.reduce((a, r) => a + (r.comprobantes || 0), 0);
+            console.log(`[cron syncVentasMeses(6)] ${ok} ok / ${fail} fail · ${totComp} comprob · ${Date.now() - t0}ms`);
+            if (fail > 0) {
+                results.filter(r => !r.ok).forEach(r => console.error(`  fail ${r.label}: ${r.error}`));
+            }
+        } catch (err: any) {
+            console.error(`[cron syncVentasMeses(6)] FAIL: ${err?.message ?? err}`);
+        }
+    });
+    console.log('Cron syncVentasMeses(6): 0 4 * * *');
 } else {
     console.log('Cron deshabilitado (Supabase no configurado)');
 }

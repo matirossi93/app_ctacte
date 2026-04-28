@@ -1,0 +1,243 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   PrintAvanceView — modal vista print + descargar PDF.
+   - En pantalla: overlay full-screen con toolbar arriba y contenido scrollable.
+   - Al imprimir (window.print): el body recibe .pav-print-active y CSS @media
+     print oculta TODO menos .pav-print-root.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.pav-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(20, 30, 25, 0.65);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+}
+
+.pav-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 16px;
+    background: #fff;
+    border-bottom: 1px solid #e0e0e0;
+    flex-shrink: 0;
+}
+
+[data-theme="dark"] .pav-toolbar {
+    background: #1f2521;
+    border-bottom-color: #2a322c;
+    color: #f0f0e8;
+}
+
+.pav-toolbar-left {
+    font: 600 13px/1.2 'Poppins', system-ui, sans-serif;
+    text-transform: capitalize;
+    color: #06652f;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+[data-theme="dark"] .pav-toolbar-left { color: #eec045; }
+
+.pav-toolbar-actions {
+    display: inline-flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.pav-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #f3f4f0;
+    color: #1d2520;
+    border: 1px solid #d4d8d0;
+    padding: 7px 12px;
+    border-radius: 8px;
+    font: 600 12px/1 'Poppins', system-ui, sans-serif;
+    cursor: pointer;
+}
+.pav-btn:hover { background: #e9ecde; }
+.pav-btn-primary {
+    background: linear-gradient(180deg, #08773a 0%, #06652f 100%);
+    color: #fff;
+    border-color: transparent;
+}
+.pav-btn-primary:hover { filter: brightness(1.08); }
+.pav-btn-icon {
+    padding: 7px 9px;
+    background: transparent;
+    border-color: transparent;
+}
+.pav-btn-icon:hover { background: #efefef; }
+
+[data-theme="dark"] .pav-btn { background: #2a322c; border-color: #3a423c; color: #f0f0e8; }
+[data-theme="dark"] .pav-btn:hover { background: #364038; }
+[data-theme="dark"] .pav-btn-icon:hover { background: #2a322c; }
+
+.pav-print-root {
+    flex: 1;
+    overflow-y: auto;
+    background: #fff;
+    color: #1e120c;
+    padding: 24px 32px;
+    font: 400 12px/1.5 'Poppins', system-ui, sans-serif;
+}
+
+[data-theme="dark"] .pav-print-root {
+    background: #fff;
+    color: #1e120c;
+    /* Mantener fondo blanco — para reflejar fielmente cómo va a imprimirse. */
+}
+
+.pav-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 3px solid #06652f;
+    padding-bottom: 12px;
+    margin-bottom: 20px;
+}
+
+.pav-head-brand h1 {
+    margin: 0;
+    font: 700 18px/1.2 'Poppins', system-ui, sans-serif;
+    color: #06652f;
+    letter-spacing: 0.04em;
+}
+.pav-head-brand p {
+    margin: 4px 0 0;
+    font: 500 13px/1.2 'Poppins', system-ui, sans-serif;
+    color: #1e120c;
+    text-transform: capitalize;
+}
+.pav-head-meta {
+    text-align: right;
+    font: 500 11px/1.4 'Poppins', system-ui, sans-serif;
+    color: #6e6358;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.pav-print-root h2 {
+    font: 700 13px/1.2 'Poppins', system-ui, sans-serif;
+    color: #06652f;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin: 18px 0 10px;
+}
+
+.pav-resumen-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.pav-resumen-cell {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #e0d6c0;
+    border-radius: 8px;
+    padding: 8px 10px;
+    background: #f9efe3;
+}
+.pav-resumen-cell .k {
+    font-size: 10px;
+    color: #6e6358;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+}
+.pav-resumen-cell strong {
+    font-size: 14px;
+    color: #1e120c;
+    text-transform: capitalize;
+    margin-top: 2px;
+}
+.pav-resumen-cell .pav-gold { color: #b58829; }
+
+.pav-print-root table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 16px;
+    font-size: 11px;
+}
+.pav-print-root thead th {
+    background: #06652f;
+    color: #fff;
+    text-align: left;
+    padding: 6px 8px;
+    font: 700 10px/1.2 'Poppins', system-ui, sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.pav-print-root tbody td {
+    padding: 5px 8px;
+    border-bottom: 1px solid #f0e6d4;
+    color: #1e120c;
+}
+.pav-print-root tbody tr:nth-child(even) td {
+    background: #faf3e6;
+}
+.pav-print-root th.r,
+.pav-print-root td.r { text-align: right; }
+.pav-print-root th.c,
+.pav-print-root td.c { text-align: center; }
+
+.pav-pct-ok { color: #06652f; font-weight: 700; }
+.pav-pct-mid { color: #b58829; font-weight: 700; }
+.pav-pct-low { color: #a83e2b; font-weight: 700; }
+
+.pav-foot {
+    margin-top: 22px;
+    padding-top: 10px;
+    border-top: 1px dashed #c8b89a;
+    font: 400 10px/1.3 'Poppins', system-ui, sans-serif;
+    color: #6e6358;
+    text-transform: capitalize;
+}
+
+.pav-no-print {
+    /* nada en pantalla */
+}
+
+@media (max-width: 700px) {
+    .pav-print-root { padding: 16px 14px; }
+    .pav-head { flex-direction: column; align-items: flex-start; }
+    .pav-head-meta { text-align: left; }
+    .pav-resumen-grid { grid-template-columns: repeat(2, 1fr); }
+    .pav-print-root table { font-size: 10px; }
+    .pav-print-root thead th { font-size: 9px; padding: 4px 5px; }
+    .pav-print-root tbody td { padding: 4px 5px; }
+}
+
+/* ─── PRINT MODE ─── Al imprimir, ocultamos todo menos esta vista. */
+@media print {
+    /* Body con .pav-print-active: ocultar todos los hijos directos
+       excepto el overlay. Y dentro del overlay, ocultar el toolbar. */
+    body.pav-print-active > *:not(.pav-overlay) { display: none !important; }
+    .pav-overlay {
+        position: static !important;
+        background: #fff !important;
+        display: block !important;
+    }
+    .pav-no-print { display: none !important; }
+    .pav-print-root {
+        overflow: visible !important;
+        padding: 0 !important;
+    }
+    .pav-head { page-break-inside: avoid; }
+    .pav-resumen { page-break-inside: avoid; }
+    .pav-print-root table { page-break-inside: auto; }
+    .pav-print-root tr { page-break-inside: avoid; page-break-after: auto; }
+    .pav-print-root thead { display: table-header-group; }
+    @page {
+        size: A4;
+        margin: 12mm 14mm;
+    }
+}

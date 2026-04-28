@@ -51,6 +51,31 @@
     border-bottom: 1px solid #eee;
     background: #fafafa;
 }
+.rep-period-readonly {
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.rep-period-readonly .rep-period-label {
+    font-size: 11px;
+    color: #666;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+}
+.rep-period-readonly strong {
+    text-transform: capitalize;
+    color: #06652f;
+    font-weight: 700;
+}
+.rep-period-readonly .rep-period-hint {
+    margin-left: auto;
+    font-size: 11px;
+    color: #888;
+    font-style: italic;
+}
+[data-theme="dark"] .rep-period-readonly strong { color: #eec045; }
+[data-theme="dark"] .rep-period-readonly .rep-period-hint { color: #888; }
 .rep-period label {
     display: flex;
     flex-direction: column;

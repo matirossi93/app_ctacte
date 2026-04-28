@@ -197,6 +197,22 @@
     width: 6px; height: 6px; border-radius: 50%; background: #06652F;
     box-shadow: 0 0 0 3px #E6F0E8;
 }
+.vs-print-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    margin-top: 4px;
+    padding: 6px 12px;
+    background: #f3f4f0;
+    color: #06652F;
+    border: 1px solid #d4d8d0;
+    border-radius: 999px;
+    font: 600 11px/1 'Poppins', system-ui, sans-serif;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.vs-print-btn:hover { background: #e9ecde; border-color: #06652F; }
+[data-theme="dark"] .vs-print-btn { background: #2a322c; border-color: #3a423c; color: #eec045; }
+[data-theme="dark"] .vs-print-btn:hover { background: #364038; }
 
 .vs-loading, .vs-error, .vs-empty {
     display: flex; flex-direction: column; align-items: center; gap: 10px;

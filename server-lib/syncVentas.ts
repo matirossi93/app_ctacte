@@ -1,4 +1,4 @@
-import { fetchVentas, type VentaRaw } from './infomanager.js';
+import { fetchVentas } from './infomanager.js';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import { computeVentaNeta, monthKey } from '../src/utils/ventas.js';
 
@@ -8,6 +8,9 @@ export interface SyncResult {
   clientes: number;
   vendedores: number;
   elapsedMs: number;
+  desde?: string;
+  hasta?: string;
+  label?: string;
   error?: string;
 }
 
@@ -19,19 +22,31 @@ function ymdMonthStart(date = new Date()): string {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-01`;
 }
 
+function ymdMonthEnd(year: number, month: number): string {
+  const lastDay = new Date(year, month, 0).getDate();
+  return `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+}
+
 /**
- * Sync del mes actual: consulta /ventas del 1 al hoy,
- * agrega por cliente+mes y vendedor+mes, upserta en Supabase.
+ * Sync de ventas para un rango arbitrario de fechas.
+ * Consulta /ventas, agrega por cliente+mes y vendedor+mes, upsertea en Supabase.
+ *
+ * El UPSERT por PK (tenant, cod, year, month) hace seguro re-correr para captar
+ * NCs tardías o backfills históricos: sobrescribe el row existente, no duplica.
  */
-export async function syncVentasMesActual(opts?: { codEmpresa?: number }): Promise<SyncResult> {
+async function syncVentasRango(opts: {
+  desde: string;
+  hasta: string;
+  codEmpresa?: number;
+  label?: string;
+}): Promise<SyncResult> {
   const t0 = Date.now();
+  const { desde, hasta, codEmpresa, label } = opts;
   if (!hasSupabase()) {
-    return { ok: false, comprobantes: 0, clientes: 0, vendedores: 0, elapsedMs: 0, error: 'Supabase no configurado' };
+    return { ok: false, comprobantes: 0, clientes: 0, vendedores: 0, elapsedMs: 0, desde, hasta, label, error: 'Supabase no configurado' };
   }
   try {
-    const desde = ymdMonthStart();
-    const hasta = ymdToday();
-    const ventas = await fetchVentas(desde, hasta, { codEmpresa: opts?.codEmpresa });
+    const ventas = await fetchVentas(desde, hasta, { codEmpresa });
 
     const byCliente = new Map<string, { cod_cliente: number; year: number; month: number; neto: number; num: number }>();
     const byVendedor = new Map<string, { cod_vendedor: number; year: number; month: number; neto: number; num: number }>();
@@ -54,7 +69,7 @@ export async function syncVentasMesActual(opts?: { codEmpresa?: number }): Promi
     for (const v of ventas) {
       const tipo = String((v as any).tipo ?? (v as any).tipo_comprobante ?? '').toUpperCase();
       const neto = computeVentaNeta(v);
-      const total = Number(v.fa_total ?? v.total ?? 0) || 0;
+      const total = Number(v.fa_total ?? (v as any).total ?? 0) || 0;
       const t = byTipo.get(tipo) ?? { count: 0, sumTotal: 0, sumNeto: 0 };
       t.count++;
       t.sumTotal += total;
@@ -87,13 +102,15 @@ export async function syncVentasMesActual(opts?: { codEmpresa?: number }): Promi
       }
     }
 
+    const tag = label ? `[syncVentas:${label}]` : '[syncVentas]';
+
     // Log del breakdown — útil para auditar discrepancias en el avance.
     const tipoSummary = Array.from(byTipo.entries())
       .sort((a, b) => b[1].count - a[1].count)
       .map(([t, s]) => `${t || '(vacío)'}: ${s.count} comp, $${Math.round(s.sumTotal).toLocaleString('es-AR')} total, $${Math.round(s.sumNeto).toLocaleString('es-AR')} neto`)
       .join(' | ');
-    console.log(`[syncVentas] Breakdown por tipo: ${tipoSummary}`);
-    console.log(`[syncVentas] Comprobantes c/neto=0 (ND/RC/RE/PR/anuladas): ${comprobantesCero}. Reasignados cod_vendedor=0→cliente: ${reasignados}`);
+    console.log(`${tag} Breakdown por tipo (${desde}→${hasta}): ${tipoSummary}`);
+    console.log(`${tag} Comprobantes c/neto=0 (ND/RC/RE/PR/anuladas): ${comprobantesCero}. Reasignados cod_vendedor=0→cliente: ${reasignados}`);
 
     // Top 5 clientes por neto acumulado — permite al admin cross-checkear.
     const topClientes = Array.from(byCliente.values())
@@ -101,11 +118,10 @@ export async function syncVentasMesActual(opts?: { codEmpresa?: number }): Promi
       .slice(0, 5)
       .map(c => `cli ${c.cod_cliente}: $${Math.round(c.neto).toLocaleString('es-AR')} (${c.num} comp)`)
       .join(' | ');
-    console.log(`[syncVentas] Top 5 clientes del mes: ${topClientes}`);
+    console.log(`${tag} Top 5 clientes del rango: ${topClientes}`);
 
-    // Totales globales — reconciliación con el cruce de Matías.
     const totalNetoGlobal = Array.from(byCliente.values()).reduce((a, c) => a + c.neto, 0);
-    console.log(`[syncVentas] TOTAL NETO mes actual: $${Math.round(totalNetoGlobal).toLocaleString('es-AR')} sobre ${byCliente.size} clientes y ${byVendedor.size} vendedores. ${ventas.length} ventas procesadas.`);
+    console.log(`${tag} TOTAL NETO rango: $${Math.round(totalNetoGlobal).toLocaleString('es-AR')} sobre ${byCliente.size} clientes y ${byVendedor.size} vendedores. ${ventas.length} ventas procesadas.`);
 
     const clientRows = Array.from(byCliente.values()).map(r => ({
       tenant_id: TENANT_ID,
@@ -144,9 +160,60 @@ export async function syncVentasMesActual(opts?: { codEmpresa?: number }): Promi
       comprobantes: ventas.length,
       clientes: clientRows.length,
       vendedores: vendorRows.length,
-      elapsedMs: Date.now() - t0
+      elapsedMs: Date.now() - t0,
+      desde, hasta, label,
     };
   } catch (err: any) {
-    return { ok: false, comprobantes: 0, clientes: 0, vendedores: 0, elapsedMs: Date.now() - t0, error: err?.message ?? String(err) };
+    return { ok: false, comprobantes: 0, clientes: 0, vendedores: 0, elapsedMs: Date.now() - t0, desde, hasta, label, error: err?.message ?? String(err) };
   }
+}
+
+/**
+ * Sync del mes actual: del 1 al hoy.
+ * Wrapper sobre syncVentasRango.
+ */
+export async function syncVentasMesActual(opts?: { codEmpresa?: number }): Promise<SyncResult> {
+  return syncVentasRango({
+    desde: ymdMonthStart(),
+    hasta: ymdToday(),
+    codEmpresa: opts?.codEmpresa,
+    label: 'mes-actual',
+  });
+}
+
+/**
+ * Sync de un mes específico (entero, día 1 al último).
+ * Si es el mes en curso, recorta `hasta` a hoy.
+ */
+export async function syncVentasMes(year: number, month: number, opts?: { codEmpresa?: number }): Promise<SyncResult> {
+  const now = new Date();
+  const isCurrent = now.getUTCFullYear() === year && (now.getUTCMonth() + 1) === month;
+  const desde = `${year}-${String(month).padStart(2, '0')}-01`;
+  const hasta = isCurrent ? ymdToday() : ymdMonthEnd(year, month);
+  return syncVentasRango({
+    desde, hasta,
+    codEmpresa: opts?.codEmpresa,
+    label: `${year}-${String(month).padStart(2, '0')}`,
+  });
+}
+
+/**
+ * Sync de los últimos N meses (incluyendo el actual).
+ * Itera mes por mes hacia atrás. Útil para backfill inicial y captura de NCs
+ * tardías que afectan meses cerrados.
+ */
+export async function syncVentasMeses(n: number, opts?: { codEmpresa?: number }): Promise<SyncResult[]> {
+  const results: SyncResult[] = [];
+  const now = new Date();
+  const baseYear = now.getUTCFullYear();
+  const baseMonth = now.getUTCMonth() + 1;
+  for (let i = 0; i < n; i++) {
+    // i=0 → mes actual; i=1 → mes anterior; etc.
+    let m = baseMonth - i;
+    let y = baseYear;
+    while (m <= 0) { m += 12; y -= 1; }
+    const r = await syncVentasMes(y, m, opts);
+    results.push(r);
+  }
+  return results;
 }
