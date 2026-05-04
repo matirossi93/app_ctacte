@@ -21,7 +21,7 @@ import { hasSupabase, sb, TENANT_ID } from './server-lib/supabase.js';
 import { syncVentasMesActual, syncVentasMeses } from './server-lib/syncVentas.js';
 import { getMonthlyVentasRaw } from './server-lib/snapshotCache.js';
 import {
-  uploadRecibo, listRecibos, facturasCandidatas, aprobarRecibo, rechazarRecibo, cuentasDebug, cuentasRefresh,
+  uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, cuentasDebug, cuentasRefresh,
   reverificarMP, elegirMatchMP, procesarColaMP
 } from './server-lib/recibos.js';
 import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot } from './server-lib/goals.js';
@@ -462,6 +462,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 
 app.post('/api/recibos/upload', requireJwt, upload.single('foto'), (req: any, res) => uploadRecibo(req, res));
 app.get('/api/recibos', requireJwt, (req: any, res) => listRecibos(req, res));
+app.get('/api/recibos/:id', requireJwt, (req: any, res) => getReciboById(req, res));
 app.get('/api/recibos/:id/facturas-candidatas', requireJwt, (req: any, res) => facturasCandidatas(req, res));
 app.post('/api/recibos/:id/aprobar', requireJwt, (req: any, res) => aprobarRecibo(req, res));
 app.post('/api/recibos/:id/rechazar', requireJwt, (req: any, res) => rechazarRecibo(req, res));

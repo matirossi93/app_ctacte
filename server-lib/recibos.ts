@@ -30,21 +30,43 @@ function extFromMime(mime: string): string {
 
 // Cache en memoria de signed URLs para evitar pegarle a Supabase Storage en cada
 // listRecibos. Cada signed URL dura 1h; cacheamos hasta 50min antes de regenerar.
-// Sin cache, listar 50 recibos hace 50 round-trips a Supabase ~> 1-2s. Con cache
-// caliente, el listado responde casi instantáneo.
 const SIGNED_URL_TTL_SEC = 3600;
 const SIGNED_URL_REFRESH_BEFORE_MS = 10 * 60 * 1000; // refresh 10min antes de expirar
 const signedUrlCache = new Map<string, { url: string; expiresAt: number }>();
 
-async function getSignedUrlCached(path: string): Promise<string | null> {
-  const cached = signedUrlCache.get(path);
-  if (cached && cached.expiresAt - SIGNED_URL_REFRESH_BEFORE_MS > Date.now()) {
-    return cached.url;
+// Firma N URLs en una sola llamada batch a Supabase Storage. Antes hacíamos un
+// Promise.all con N round-trips secuenciales — para listas de 30-50 recibos eso
+// era 1-2s solo en signing, sobre todo post-deploy cuando el cache estaba frío.
+// createSignedUrls (plural) firma todo el batch en una sola request.
+async function getSignedUrlsCached(paths: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const now = Date.now();
+  const toSign: string[] = [];
+  for (const p of paths) {
+    if (!p) continue;
+    const cached = signedUrlCache.get(p);
+    if (cached && cached.expiresAt - SIGNED_URL_REFRESH_BEFORE_MS > now) {
+      out.set(p, cached.url);
+    } else {
+      toSign.push(p);
+    }
   }
-  const { data: signed } = await sb().storage.from(BUCKET).createSignedUrl(path, SIGNED_URL_TTL_SEC);
-  if (!signed?.signedUrl) return null;
-  signedUrlCache.set(path, { url: signed.signedUrl, expiresAt: Date.now() + SIGNED_URL_TTL_SEC * 1000 });
-  return signed.signedUrl;
+  if (toSign.length === 0) return out;
+  const { data: signed } = await sb().storage.from(BUCKET).createSignedUrls(toSign, SIGNED_URL_TTL_SEC);
+  if (!signed) return out;
+  const expiresAt = Date.now() + SIGNED_URL_TTL_SEC * 1000;
+  for (const item of signed) {
+    if (item.path && item.signedUrl) {
+      signedUrlCache.set(item.path, { url: item.signedUrl, expiresAt });
+      out.set(item.path, item.signedUrl);
+    }
+  }
+  return out;
+}
+
+async function getSignedUrlCached(path: string): Promise<string | null> {
+  const map = await getSignedUrlsCached([path]);
+  return map.get(path) ?? null;
 }
 
 /**
@@ -154,6 +176,11 @@ export async function uploadRecibo(req: Request & { user?: JwtPayload; file?: an
   }
 }
 
+// Columnas mínimas que necesita la UI para renderizar una fila en la lista.
+// Excluimos JSONs grandes (ocr_raw, mp_candidates, infomanager_response) que solo
+// se consumen en el detalle y agregaban cientos de KB al payload sin uso visible.
+const LIST_COLUMNS = 'id,cod_cliente,cod_vendedor,monto,fecha_comprobante,medio_pago,status,foto_url,ocr_confidence,created_at';
+
 /**
  * GET /api/recibos — listar
  * Query: status?, cod_cliente?, cod_vendedor?, limit?=50
@@ -162,7 +189,7 @@ export async function uploadRecibo(req: Request & { user?: JwtPayload; file?: an
 export async function listRecibos(req: Request & { user?: JwtPayload }, res: Response) {
   try {
     const user = req.user!;
-    let q = sb().from('comprobantes_pago').select('*').eq('tenant_id', TENANT_ID);
+    let q = sb().from('comprobantes_pago').select(LIST_COLUMNS).eq('tenant_id', TENANT_ID);
     if (user.rol === 'vendedor') q = q.eq('cod_vendedor', user.cod_vendedor ?? -1);
     if (req.query.status) q = q.eq('status', String(req.query.status));
     if (req.query.cod_cliente) q = q.eq('cod_cliente', Number(req.query.cod_cliente));
@@ -172,14 +199,37 @@ export async function listRecibos(req: Request & { user?: JwtPayload }, res: Res
     const { data, error } = await q;
     if (error) { res.status(500).json({ error: error.message }); return; }
 
-    // Signed URLs con cache en memoria (50min). Acelera mucho la lista de recibos.
-    const withUrls = await Promise.all((data ?? []).map(async (r: any) => {
-      if (!r.foto_url) return r;
-      const url = await getSignedUrlCached(r.foto_url);
-      return { ...r, foto_signed_url: url };
+    const rows = data ?? [];
+    const paths = rows.map((r: any) => r.foto_url).filter(Boolean);
+    const urlMap = await getSignedUrlsCached(paths);
+    const withUrls = rows.map((r: any) => ({
+      ...r,
+      foto_signed_url: r.foto_url ? (urlMap.get(r.foto_url) ?? null) : null,
     }));
 
     res.json({ ok: true, recibos: withUrls });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
+ * GET /api/recibos/:id — detalle completo de UN recibo (con todos los JSONs).
+ * Antes el frontend pedía toda la lista (limit=200) para encontrar uno solo,
+ * lo que duplicaba el costo cada vez que se abría un detalle.
+ * Vendedor solo ve los suyos; admin/gerente ven cualquiera.
+ */
+export async function getReciboById(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    let q = sb().from('comprobantes_pago').select('*')
+      .eq('id', req.params.id).eq('tenant_id', TENANT_ID);
+    if (user.rol === 'vendedor') q = q.eq('cod_vendedor', user.cod_vendedor ?? -1);
+    const { data, error } = await q.maybeSingle();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    if (!data) { res.status(404).json({ error: 'Comprobante no encontrado' }); return; }
+    const foto_signed_url = data.foto_url ? await getSignedUrlCached(data.foto_url) : null;
+    res.json({ ok: true, recibo: { ...data, foto_signed_url } });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'error' });
   }

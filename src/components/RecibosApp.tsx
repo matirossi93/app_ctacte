@@ -692,9 +692,9 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
     const loadRecibo = async () => {
         setLoading(true);
         try {
-            const res = await fetch(`/api/recibos?limit=200`, { headers: authHeaders() });
+            const res = await fetch(`/api/recibos/${id}`, { headers: authHeaders() });
             const data = await res.json();
-            const item: ReciboRow | null = (data.recibos || []).find((r: ReciboRow) => r.id === id) ?? null;
+            const item: ReciboRow | null = data.recibo ?? null;
             setRec(item);
             if (item) {
                 // Lookup del payment MP verificado, compartido para auto-fill de monto y fecha.
