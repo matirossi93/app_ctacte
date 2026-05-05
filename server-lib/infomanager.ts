@@ -80,6 +80,91 @@ export async function fetchVentas(desde: string, hasta: string, opts?: { codEmpr
 }
 
 /**
+ * Item (línea) de venta. Shape mínimo confirmado:
+ *  - id, id_comprobante, cod_articulo, cantidad
+ * Otros campos posibles según uso en proyectos hermanos:
+ *  - precio, importe (uno de los dos suele venir).
+ * Si ninguno viene, comisiones.ts hace fallback prorrateando fa_total.
+ */
+export interface VentaItem {
+  id?: string | number;
+  id_comprobante: number;
+  cod_articulo: number | string;
+  cantidad: number | string;
+  precio?: number | string;
+  importe?: number | string;
+}
+
+/**
+ * GET /api/v1/ventas/items — paginado por rango de fechas.
+ * Devuelve TODAS las líneas de las ventas del rango (1 fila por línea).
+ */
+export async function fetchVentasItems(desde: string, hasta: string, opts?: { codEmpresa?: number; limit?: number }): Promise<VentaItem[]> {
+  const cli = await imClient();
+  const limit = opts?.limit ?? 500;
+  const all: VentaItem[] = [];
+  let page = 1;
+  while (true) {
+    const params: Record<string, string | number> = { fechaDesde: desde, fechaHasta: hasta, page, limit };
+    if (opts?.codEmpresa) params.codEmpresa = opts.codEmpresa;
+    const { data } = await cli.get('/ventas/items', { params });
+    const rows: VentaItem[] = data?.results ?? data?.items ?? (Array.isArray(data) ? data : []);
+    all.push(...rows);
+    const totalItems = data?.totalItems ?? null;
+    const nextPage = data?.nextPage ?? null;
+    if (!rows.length || !nextPage) break;
+    if (totalItems != null && all.length >= totalItems) break;
+    page += 1;
+    if (page > 200) {
+      console.warn(`fetchVentasItems: safety break en page ${page}, total=${all.length}`);
+      break;
+    }
+  }
+  return all;
+}
+
+/**
+ * Catálogo mini de artículos cacheado en memoria (TTL 1h).
+ * Devuelve Map<cod_articulo, { cod_rubro, descripcion }>.
+ *
+ * Lo usamos para resolver el rubro de cada línea al calcular comisión.
+ * Usa `/articulos/stock` que devuelve TODOS los artículos en una sola
+ * request (~3-5s) — mucho más rápido que paginar `/articulos` (>25s con
+ * riesgo de timeout, según experiencia documentada en proyecto-alerta-stock).
+ * Los hits siguientes son <1ms desde el cache.
+ */
+interface ArticuloMini { cod_rubro: number | null; descripcion: string }
+let _articulosCache: { map: Map<number, ArticuloMini>; fetchedAt: number } | null = null;
+const ARTICULOS_TTL_MS = 60 * 60 * 1000;
+
+export async function fetchArticulosCatalogo(force = false): Promise<Map<number, ArticuloMini>> {
+  if (!force && _articulosCache && (Date.now() - _articulosCache.fetchedAt) < ARTICULOS_TTL_MS) {
+    return _articulosCache.map;
+  }
+  const cli = await imClient();
+  const map = new Map<number, ArticuloMini>();
+  // /articulos/stock devuelve consolidado de las 3 sucursales, 1 fila por
+  // (artículo, depósito). Solo necesitamos cod_articulo → cod_rubro, los
+  // duplicados se sobrescriben sin problema (todos comparten rubro).
+  const { data } = await cli.get('/articulos/stock');
+  const rows: any[] = data?.results ?? data?.articulos ?? (Array.isArray(data) ? data : []);
+  for (const r of rows) {
+    const cod = Number(r.cod_articulo ?? r.cod ?? r.codigo);
+    if (!Number.isFinite(cod)) continue;
+    const codRubroRaw = r.cod_rubro ?? r.codRubro ?? r.rubro_cod;
+    const codRubro = codRubroRaw != null ? Number(codRubroRaw) : null;
+    map.set(cod, {
+      cod_rubro: Number.isFinite(codRubro as number) ? codRubro : null,
+      descripcion: String(r.descripcion ?? r.nombre ?? '').trim(),
+    });
+  }
+  _articulosCache = { map, fetchedAt: Date.now() };
+  return map;
+}
+
+export function invalidateArticulosCatalogo(): void { _articulosCache = null; }
+
+/**
  * POST /api/v1/recibo — emitir recibo en InfoManager.
  * Shape exacto del swagger (todos strings, patterns obligatorios).
  */

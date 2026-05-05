@@ -1,4 +1,4 @@
-import { fetchVentas, type VentaRaw } from './infomanager.js';
+import { fetchVentas, fetchVentasItems, type VentaRaw, type VentaItem } from './infomanager.js';
 
 /**
  * Cache RAM del dataset CRUDO de ventas por mes calendario completo.
@@ -82,4 +82,46 @@ export function snapshotCacheStats() {
         items: v.ventas.length,
         age_seconds: Math.round((now - v.fetchedAt) / 1000),
     }));
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Items (líneas) de ventas — cache paralelo.
+// Usado por /api/comisiones para calcular comisión por artículo/rubro.
+// Mismo TTL diferenciado que ventas crudas. Key separada con prefijo "items-".
+// ══════════════════════════════════════════════════════════════════════════
+
+interface CachedItemsDataset { items: VentaItem[]; fetchedAt: number; isHistoric: boolean }
+const itemsCache = new Map<string, CachedItemsDataset>();
+
+function makeItemsKey(year: number, month: number, codEmpresa?: number): string {
+    return `items-${year}-${String(month).padStart(2, '0')}-emp${codEmpresa ?? 'all'}`;
+}
+
+export async function getMonthlyItemsRaw(
+    year: number,
+    month: number,
+    opts?: { codEmpresa?: number; force?: boolean; nocache?: boolean }
+): Promise<{ items: VentaItem[]; cached: boolean; cacheAge: number }> {
+    const key = makeItemsKey(year, month, opts?.codEmpresa);
+    const now = Date.now();
+    const nowD = new Date();
+    const isCurrent = year === nowD.getUTCFullYear() && month === (nowD.getUTCMonth() + 1);
+    const ttl = isCurrent ? TTL_CURRENT_MS : TTL_HISTORIC_MS;
+    const existing = itemsCache.get(key);
+    if (!opts?.force && existing && (now - existing.fetchedAt) < ttl) {
+        return { items: existing.items, cached: true, cacheAge: now - existing.fetchedAt };
+    }
+
+    const desde = `${year}-${String(month).padStart(2, '0')}-01`;
+    const hasta = ymdMonthEnd(year, month);
+    const items = await fetchVentasItems(desde, hasta, { codEmpresa: opts?.codEmpresa });
+
+    if (!opts?.nocache) {
+        itemsCache.set(key, { items, fetchedAt: now, isHistoric: !isCurrent });
+    }
+    return { items, cached: false, cacheAge: 0 };
+}
+
+export function invalidateItemsMonth(year: number, month: number, codEmpresa?: number): void {
+    itemsCache.delete(makeItemsKey(year, month, codEmpresa));
 }

@@ -14,6 +14,7 @@ import { ReportesModal } from './ReportesModal';
 import { PeriodSelector, type ViewPeriod } from './PeriodSelector';
 import { HistoricBanner } from './HistoricBanner';
 import { PrintAvanceView } from './PrintAvanceView';
+import { ComisionesView } from './ComisionesView';
 import './VendorShell.css';
 
 const VIEW_PERIOD_KEY = 'vs_view_period';
@@ -33,7 +34,7 @@ function isCurrentPeriod(p: ViewPeriod): boolean {
     return p.year === t.getUTCFullYear() && p.month === t.getUTCMonth() + 1 && (p.asOfDay == null);
 }
 
-type Tab = 'hoy' | 'cobranzas' | 'objetivos' | 'actividad';
+type Tab = 'hoy' | 'cobranzas' | 'objetivos' | 'comisiones' | 'actividad';
 
 interface Invoice {
     ID: string;
@@ -513,6 +514,8 @@ export const VendorShell = ({ onLogout }: Props) => {
 
                 {tab === 'objetivos' && <ObjetivosView selectedVendor={selectedVendor} cods={codsQs} isAdmin={isAdmin} showInactivos={showInactivos} reloadTick={reloadObjetivosTick} viewPeriod={viewPeriod} />}
 
+                {tab === 'comisiones' && <ComisionesView isAdmin={isAdmin} viewPeriod={viewPeriod} userCodVendedor={user?.cod_vendedor ?? null} />}
+
                 {tab === 'actividad' && <ActividadView
                     vendedorKey={user?.vendedor_key ?? null}
                     clientNameMap={clientDbMap}
@@ -538,6 +541,10 @@ export const VendorShell = ({ onLogout }: Props) => {
                 <button className={`vs-nav-btn ${tab === 'objetivos' ? 'is-active' : ''}`} onClick={() => setTab('objetivos')}>
                     <Target size={22} />
                     <span>Objetivos</span>
+                </button>
+                <button className={`vs-nav-btn ${tab === 'comisiones' ? 'is-active' : ''}`} onClick={() => setTab('comisiones')}>
+                    <DollarSign size={22} />
+                    <span>Comisiones</span>
                 </button>
                 <button className={`vs-nav-btn ${tab === 'actividad' ? 'is-active' : ''}`} onClick={() => setTab('actividad')}>
                     <ActivityIcon size={22} />
