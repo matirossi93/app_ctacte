@@ -19,7 +19,8 @@ import {
 } from './server-lib/auth.js';
 import { hasSupabase, sb, TENANT_ID } from './server-lib/supabase.js';
 import { syncVentasMesActual, syncVentasMeses } from './server-lib/syncVentas.js';
-import { getMonthlyVentasRaw } from './server-lib/snapshotCache.js';
+import { getMonthlyVentasRaw, getMonthlyItemsRaw } from './server-lib/snapshotCache.js';
+import { fetchArticulosCatalogo } from './server-lib/infomanager.js';
 import {
   uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, cuentasDebug, cuentasRefresh,
   reverificarMP, elegirMatchMP, procesarColaMP
@@ -913,11 +914,24 @@ async function prewarmSnapshotCache() {
             const t0 = Date.now();
             // force:true para refrescar incluso si el TTL todavía no expiró
             // (mantiene el cache caliente sin huecos).
-            const r = await getMonthlyVentasRaw(year, month, { force: true });
-            console.log(`[snapshot prewarm] ${year}-${String(month).padStart(2, '0')}: ${r.ventas.length} ventas en ${Date.now() - t0}ms`);
+            // Ventas + items en paralelo: items son necesarios para /api/comisiones
+            // y la primera carga de un mes es lenta (varios miles de líneas).
+            const [r, ri] = await Promise.all([
+                getMonthlyVentasRaw(year, month, { force: true }),
+                getMonthlyItemsRaw(year, month, { force: true }),
+            ]);
+            console.log(`[snapshot prewarm] ${year}-${String(month).padStart(2, '0')}: ${r.ventas.length} ventas + ${ri.items.length} items en ${Date.now() - t0}ms`);
         } catch (e: any) {
             console.warn(`[snapshot prewarm] ${year}-${String(month).padStart(2, '0')} fail: ${e?.message ?? e}`);
         }
+    }
+    // Catálogo de artículos (precio_venta + cod_rubro) para comisiones.
+    try {
+        const t0 = Date.now();
+        const m = await fetchArticulosCatalogo(true);
+        console.log(`[snapshot prewarm] articulos catalogo: ${m.size} en ${Date.now() - t0}ms`);
+    } catch (e: any) {
+        console.warn(`[snapshot prewarm] articulos catalogo fail: ${e?.message ?? e}`);
     }
 }
 // Boot warm con delay 12s para no competir con el resto del startup.

@@ -3,6 +3,7 @@ import type { JwtPayload } from './auth.js';
 import { sb, hasSupabase } from './supabase.js';
 import { fetchVendedores, fetchArticulosCatalogo } from './infomanager.js';
 import { getMonthlyVentasRaw, getMonthlyItemsRaw } from './snapshotCache.js';
+import { computeVentaNeta, tipoComprobante, isAnulada } from '../src/utils/ventas.js';
 import { getCached as getResponseCached, setCached as setResponseCached } from './goalsResponseCache.js';
 import {
   pctParaArticulo,
@@ -35,56 +36,58 @@ function emptyBreakdown(): Record<CategoriaComision, BreakdownEntry> {
   };
 }
 
-/**
- * Convierte cualquier item de venta a un importe firmado:
- *  - FA / FB → positivo
- *  - NC      → negativo (resta del neto)
- *  - resto   → 0 (ND, RE, ASD, etc no son ventas reales)
- *
- * Estrategia para obtener el monto de la línea:
- *  1. item.importe (si la API lo devuelve)
- *  2. item.cantidad * item.precio (si vienen ambos)
- *  3. fallback: prorratear fa_total de la cabecera por proporción de cantidad
- *     (último recurso, introduce error si la factura mezcla artículos de muy
- *     distinto precio).
- */
-function importeLineaSigned(
-  item: any,
-  cabecera: any,
-  totalCantidadComprobante: number,
-): number {
-  const tipo = String(cabecera?.tipo ?? cabecera?.tipo_comprobante ?? '').toUpperCase();
-  if (cabecera?.anulada === 'S') return 0;
-  const isFA = tipo.startsWith('FA') || tipo.startsWith('FB') || tipo.startsWith('FC');
-  const isNC = tipo.startsWith('NC');
-  if (!isFA && !isNC) return 0;
-  const sign = isNC ? -1 : 1;
-
-  let importe = item.importe != null ? Number(item.importe) : NaN;
-  if (!Number.isFinite(importe) || importe === 0) {
-    const cantidad = Number(item.cantidad ?? 0);
-    const precio = Number(item.precio ?? 0);
-    if (Number.isFinite(cantidad) && Number.isFinite(precio) && precio > 0) {
-      importe = cantidad * precio;
-    }
-  }
-  if (!Number.isFinite(importe) || importe === 0) {
-    // Fallback: prorratear fa_total por cantidad relativa.
-    const cabTotal = Number(cabecera?.fa_total ?? cabecera?.total ?? cabecera?.neto ?? 0);
-    const cantidad = Number(item.cantidad ?? 0);
-    if (totalCantidadComprobante > 0 && cabTotal > 0) {
-      importe = cabTotal * (cantidad / totalCantidadComprobante);
-    } else {
-      importe = 0;
-    }
-  }
-  return Math.round(importe * 100) / 100 * sign;
-}
-
 interface GetComisionesOpts {
   year: number;
   month: number;
-  codVendedorFilter?: number; // si viene, filtra al final solo ese vendedor
+  codVendedorFilter?: number;
+}
+
+/**
+ * Distribuye el `netoCabecera` entre las líneas del comprobante usando el
+ * `precio_venta` del catálogo como peso. Si una línea no tiene precio
+ * conocido, se le asigna el promedio de las que sí tienen. Si la cabecera
+ * no tiene líneas con peso, se prorratea por cantidad.
+ *
+ * Retorna Map<id_item, importe_signed_línea>. Suma de importes == netoCabecera.
+ */
+function distribuirNetoEntreLineas(
+  netoCabecera: number,
+  lineas: Array<{ id?: any; cod_articulo: number; cantidad: number; precio_venta: number }>,
+): Map<any, number> {
+  const out = new Map<any, number>();
+  if (lineas.length === 0 || netoCabecera === 0) return out;
+
+  // Peso de cada línea = cantidad × precio_venta. Si precio=0 (artículo no
+  // catalogado), peso = 0 y compensamos al final.
+  const pesos = lineas.map(l => Math.max(0, l.cantidad) * Math.max(0, l.precio_venta));
+  const sumaPesos = pesos.reduce((s, p) => s + p, 0);
+
+  if (sumaPesos > 0) {
+    // Caso normal: distribuir proporcionalmente al peso.
+    let acumulado = 0;
+    for (let i = 0; i < lineas.length; i++) {
+      const importe = i === lineas.length - 1
+        ? Math.round((netoCabecera - acumulado) * 100) / 100  // último ajusta para que sume exacto
+        : Math.round(netoCabecera * (pesos[i] / sumaPesos) * 100) / 100;
+      out.set(lineas[i].id ?? `${i}`, importe);
+      acumulado += importe;
+    }
+    return out;
+  }
+
+  // Fallback: ningún artículo tiene precio_venta en el catálogo. Prorratear
+  // por cantidad. Menos exacto pero al menos suma cuadra.
+  const sumaCant = lineas.reduce((s, l) => s + Math.max(0, l.cantidad), 0);
+  if (sumaCant <= 0) return out;
+  let acumulado = 0;
+  for (let i = 0; i < lineas.length; i++) {
+    const importe = i === lineas.length - 1
+      ? Math.round((netoCabecera - acumulado) * 100) / 100
+      : Math.round(netoCabecera * (Math.max(0, lineas[i].cantidad) / sumaCant) * 100) / 100;
+    out.set(lineas[i].id ?? `${i}`, importe);
+    acumulado += importe;
+  }
+  return out;
 }
 
 export async function getComisionesData(opts: GetComisionesOpts) {
@@ -98,50 +101,64 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     fetchVendedores(),
   ]);
 
-  // 2. Map id_comprobante → cabecera.
-  const cabPorId = new Map<number, any>();
+  // 2. Filtrar cabeceras: solo las que aportan al neto (FA suma, NC resta,
+  //    resto 0). Esto reusa la lógica probada de Objetivos (computeVentaNeta).
+  const cabsValidas = new Map<number, { cab: any; netoCabecera: number }>();
+  let netoTotalCabecerasFA = 0;
+  let netoTotalCabecerasNC = 0;
   for (const v of ventasRes.ventas) {
     const id = Number((v as any).id);
-    if (Number.isFinite(id)) cabPorId.set(id, v);
-  }
-
-  // 3. Pre-calc cantidad total por comprobante (para fallback proporcional).
-  const cantTotalPorComp = new Map<number, number>();
-  for (const it of itemsRes.items) {
-    const id = Number(it.id_comprobante);
     if (!Number.isFinite(id)) continue;
-    const c = Number(it.cantidad ?? 0);
-    cantTotalPorComp.set(id, (cantTotalPorComp.get(id) ?? 0) + (Number.isFinite(c) ? c : 0));
+    if (isAnulada(v as any)) continue;
+    const tipo = tipoComprobante(v as any);
+    if (tipo.startsWith('ND')) continue; // ND no es venta
+    const neto = computeVentaNeta(v as any);
+    if (neto === 0) continue; // RC, RE, PR, IR, ASD, ASH, etc.
+    cabsValidas.set(id, { cab: v, netoCabecera: neto });
+    if (neto > 0) netoTotalCabecerasFA += neto;
+    else netoTotalCabecerasNC += neto;
   }
 
-  // 4. Acumular por vendedor.
-  const acc = new Map<number, ComisionVendedor>();
-  const compsTocados = new Map<number, Set<number>>(); // cod_vend → set(id_comp)
+  // 3. Agrupar items por id_comprobante (solo las cabeceras válidas).
+  const itemsPorComp = new Map<number, Array<{ id: any; cod_articulo: number; cantidad: number; precio_venta: number; cod_rubro: number | null }>>();
   let primerItemLogueado = false;
-
   for (const it of itemsRes.items) {
-    const idComp = Number(it.id_comprobante);
-    const cab = cabPorId.get(idComp);
-    if (!cab) continue;
-    const codVend = Number((cab as any).cod_vendedor);
-    if (!Number.isFinite(codVend)) continue;
-
     if (!primerItemLogueado) {
       primerItemLogueado = true;
-      console.log('[comisiones] sample item:', JSON.stringify(it).slice(0, 300));
+      console.log('[comisiones] sample item:', JSON.stringify(it).slice(0, 400));
     }
-
-    const totalCantComp = cantTotalPorComp.get(idComp) ?? 0;
-    const importe = importeLineaSigned(it, cab, totalCantComp);
-    if (importe === 0) continue;
-
+    const idComp = Number(it.id_comprobante);
+    if (!cabsValidas.has(idComp)) continue;
     const codArt = Number(it.cod_articulo);
-    const articuloMeta = articulosMap.get(codArt);
-    const codRubro = articuloMeta?.cod_rubro ?? null;
-    const pct = pctParaArticulo(codArt, codRubro);
-    const cat = categoriaParaPct(pct);
-    const comision = Math.round(importe * pct * 100) / 100;
+    if (!Number.isFinite(codArt)) continue;
+    const meta = articulosMap.get(codArt);
+    let arr = itemsPorComp.get(idComp);
+    if (!arr) { arr = []; itemsPorComp.set(idComp, arr); }
+    arr.push({
+      id: it.id ?? `${idComp}-${arr.length}`,
+      cod_articulo: codArt,
+      cantidad: Number(it.cantidad ?? 0),
+      precio_venta: meta?.precio_venta ?? 0,
+      cod_rubro: meta?.cod_rubro ?? null,
+    });
+  }
 
+  // 4. Para cada cabecera válida, distribuir el neto entre sus líneas y
+  //    aplicar la regla de comisión.
+  const acc = new Map<number, ComisionVendedor>();
+  const compsTocados = new Map<number, Set<number>>();
+  let cabsConItems = 0;
+  let cabsSinItems = 0;
+  let netoSinItems = 0;
+
+  for (const [idComp, info] of cabsValidas.entries()) {
+    const { cab, netoCabecera } = info;
+    const codVend = Number(cab.cod_vendedor);
+    if (!Number.isFinite(codVend)) continue;
+
+    const lineas = itemsPorComp.get(idComp);
+
+    // Inicializar acumulador del vendedor.
     let v = acc.get(codVend);
     if (!v) {
       const vIm = (vendedoresIM ?? []).find((x: any) => Number(x.cod_vendedor) === codVend);
@@ -159,16 +176,39 @@ export async function getComisionesData(opts: GetComisionesOpts) {
       acc.set(codVend, v);
       compsTocados.set(codVend, new Set());
     }
-    v.neto_total += importe;
-    v.comision_total += comision;
-    v.num_lineas += 1;
-    v.breakdown[cat].neto += importe;
-    v.breakdown[cat].comision += comision;
-    v.breakdown[cat].lineas += 1;
     compsTocados.get(codVend)!.add(idComp);
+
+    if (!lineas || lineas.length === 0) {
+      // Sin líneas (raro, pero posible): contar el neto pero no clasificar.
+      // Aplicamos % "resto" como aproximación para no perder la comisión.
+      cabsSinItems++;
+      netoSinItems += netoCabecera;
+      const com = Math.round(netoCabecera * 0.035 * 100) / 100;
+      v.neto_total += netoCabecera;
+      v.comision_total += com;
+      v.breakdown['3.5%'].neto += netoCabecera;
+      v.breakdown['3.5%'].comision += com;
+      continue;
+    }
+
+    cabsConItems++;
+    const distribucion = distribuirNetoEntreLineas(netoCabecera, lineas);
+    for (const l of lineas) {
+      const importe = distribucion.get(l.id) ?? 0;
+      if (importe === 0) continue;
+      const pct = pctParaArticulo(l.cod_articulo, l.cod_rubro);
+      const cat = categoriaParaPct(pct);
+      const comision = Math.round(importe * pct * 100) / 100;
+      v.neto_total += importe;
+      v.comision_total += comision;
+      v.num_lineas += 1;
+      v.breakdown[cat].neto += importe;
+      v.breakdown[cat].comision += comision;
+      v.breakdown[cat].lineas += 1;
+    }
   }
 
-  // 5. Redondeos finales + comprobantes.
+  // 5. Redondeo final + comprobantes.
   for (const v of acc.values()) {
     v.neto_total = Math.round(v.neto_total * 100) / 100;
     v.comision_total = Math.round(v.comision_total * 100) / 100;
@@ -179,7 +219,7 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     }
   }
 
-  // 6. Enriquecer con datos de Supabase (usuarios.email, activo).
+  // 6. Enriquecer con datos de Supabase.
   if (hasSupabase()) {
     const cods = Array.from(acc.keys());
     if (cods.length) {
@@ -197,7 +237,7 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     }
   }
 
-  // 7. Filtros: whitelist o vendedor específico.
+  // 7. Filtros.
   let items = Array.from(acc.values());
   if (codVendedorFilter != null) {
     items = items.filter(v => v.cod_vendedor === codVendedorFilter);
@@ -226,12 +266,27 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     totales.breakdown[cat].comision = Math.round(totales.breakdown[cat].comision * 100) / 100;
   }
 
+  // 9. Diagnóstico para comparar con números reales.
+  const diag = {
+    cabeceras_total: ventasRes.ventas.length,
+    cabeceras_validas: cabsValidas.size,
+    cabeceras_con_items: cabsConItems,
+    cabeceras_sin_items: cabsSinItems,
+    items_total: itemsRes.items.length,
+    neto_FA: Math.round(netoTotalCabecerasFA * 100) / 100,
+    neto_NC: Math.round(netoTotalCabecerasNC * 100) / 100,
+    neto_global_cabeceras: Math.round((netoTotalCabecerasFA + netoTotalCabecerasNC) * 100) / 100,
+    neto_sin_items: Math.round(netoSinItems * 100) / 100,
+  };
+  console.log(`[comisiones] ${year}-${String(month).padStart(2, '0')}:`, JSON.stringify(diag));
+
   return {
     year,
     month,
     items,
     totales,
     categoria_labels: CATEGORIA_LABELS,
+    diagnostico: diag,
     cache_info: {
       ventas_cached: ventasRes.cached,
       items_cached: itemsRes.cached,

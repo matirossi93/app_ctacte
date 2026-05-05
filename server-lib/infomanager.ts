@@ -133,7 +133,7 @@ export async function fetchVentasItems(desde: string, hasta: string, opts?: { co
  * riesgo de timeout, según experiencia documentada en proyecto-alerta-stock).
  * Los hits siguientes son <1ms desde el cache.
  */
-interface ArticuloMini { cod_rubro: number | null; descripcion: string }
+interface ArticuloMini { cod_rubro: number | null; descripcion: string; precio_venta: number }
 let _articulosCache: { map: Map<number, ArticuloMini>; fetchedAt: number } | null = null;
 const ARTICULOS_TTL_MS = 60 * 60 * 1000;
 
@@ -153,9 +153,12 @@ export async function fetchArticulosCatalogo(force = false): Promise<Map<number,
     if (!Number.isFinite(cod)) continue;
     const codRubroRaw = r.cod_rubro ?? r.codRubro ?? r.rubro_cod;
     const codRubro = codRubroRaw != null ? Number(codRubroRaw) : null;
+    const precioRaw = r.precio_venta ?? r.precioVenta ?? r.precio ?? 0;
+    const precio = Number(precioRaw);
     map.set(cod, {
       cod_rubro: Number.isFinite(codRubro as number) ? codRubro : null,
       descripcion: String(r.descripcion ?? r.nombre ?? '').trim(),
+      precio_venta: Number.isFinite(precio) ? precio : 0,
     });
   }
   _articulosCache = { map, fetchedAt: Date.now() };
