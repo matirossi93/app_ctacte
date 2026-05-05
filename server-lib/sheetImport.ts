@@ -43,8 +43,10 @@ const FIELD_ALIASES: Record<string, string[]> = {
   cod_vendedor:    ['cod vend', 'cod vendedor', 'codigo vendedor'],
   razon_social:    ['razon social', 'razonsocial', 'cliente razon social'],
   direccion:       ['direccion', 'domicilio'],
-  dia_visita:      ['visita', 'dia visita', 'dia de visita'],
-  visita:          ['estado visita'],  // legacy, raramente presente
+  // dia_visita: aliases más específicos primero — sino "visita" matchea la
+  // columna "VISITA" (estado) en vez de "Dia de visita" cuando ambas existen.
+  dia_visita:      ['dia de visita', 'dia visita'],
+  visita:          ['visita', 'estado visita'],
   frecuencia:      ['frecuencia'],
   localidad:       ['localidad'],
   hoja_ruta:       ['hr', 'hoja ruta', 'hoja de ruta'],
@@ -55,7 +57,10 @@ const FIELD_ALIASES: Record<string, string[]> = {
   saldo_cta_cte:   ['saldo', 'saldo cta cte', 'saldo cuenta corriente'],
   fact_prom_3m:    ['fact prom 3m', 'prom 3m', 'promedio 3m'],
   fact_mes_pasado: ['fact mes pasado', 'mes pasado'],
-  objetivo_mes:    ['objetivo o', 'objetivo', 'objetivo mes', 'objetivo mensual', 'objetivo original'],
+  // objetivo_mes acepta variantes: "OBJETIVO OK", "OBJETIVO O", "Objetivo Mes",
+  // "Objetivo Original", etc. Si nada matchea por alias, se aplica fallback:
+  // primer header que empiece con "objetivo" (ver buildFieldIndex).
+  objetivo_mes:    ['objetivo ok', 'objetivo o', 'objetivo', 'objetivo mes', 'objetivo mensual', 'objetivo original'],
 };
 
 // Construye un map { campo_logico: indexColumna }. Sólo incluye campos cuyo
@@ -70,6 +75,12 @@ function buildFieldIndex(headerRow: any[]): Record<string, number> {
       const i = headerNorm.indexOf(normHeader(alias));
       if (i !== -1) { idx[field] = i; break; }
     }
+  }
+  // Fallback para objetivo_mes: si ningún alias matchea, tomar el primer
+  // header que empiece con "objetivo" (tolera renames futuros como "OBJETIVO X").
+  if (idx.objetivo_mes == null) {
+    const i = headerNorm.findIndex(h => h.startsWith('objetivo'));
+    if (i !== -1) idx.objetivo_mes = i;
   }
   return idx;
 }
