@@ -14,7 +14,7 @@ export const ImportarSheet = ({ onClose, onImported }: Props) => {
     const [file, setFile] = useState<File | null>(null);
     const [saving, setSaving] = useState(false);
     const [err, setErr] = useState<string | null>(null);
-    const [result, setResult] = useState<{ rows_importadas: number; rows_descartadas: number; rows_leidas: number; history_imported?: number } | null>(null);
+    const [result, setResult] = useState<{ rows_importadas: number; rows_descartadas: number; rows_leidas: number; rows_con_objetivo?: number; history_imported?: number; warning?: string; headers_detectados?: string[] } | null>(null);
     // Modo histórico: permite elegir qué hoja del XLSX importar (ej. "ENERO" para
     // poblar el snapshot histórico del enero 2026). Si está off, usa "mes actual".
     const [modoHist, setModoHist] = useState(false);
@@ -61,12 +61,18 @@ export const ImportarSheet = ({ onClose, onImported }: Props) => {
                         <h4>Importación completada</h4>
                         <ul>
                             <li><strong>{result.rows_importadas}</strong> clientes actualizados</li>
+                            {result.rows_con_objetivo != null && (
+                                <li><strong>{result.rows_con_objetivo}</strong> con objetivo cargado en el sheet</li>
+                            )}
                             <li><strong>{result.rows_descartadas}</strong> descartados (sin código)</li>
                             {result.history_imported != null && (
                                 <li><strong>{result.history_imported}</strong> snapshots guardados en histórico</li>
                             )}
                             <li>Total filas leídas: {result.rows_leidas}</li>
                         </ul>
+                        {result.warning && (
+                            <div className="is-warning"><AlertCircle size={14} /> {result.warning}</div>
+                        )}
                         <p className="is-ok-hint">Los objetivos ya están cargados para <strong>{MONTH_NAMES[month - 1]} {year}</strong>. El avance del equipo se está recalculando en background.</p>
                         <button className="is-btn-primary" onClick={() => { setResult(null); setFile(null); setHoja(''); }}>Importar otro mes</button>
                         <button className="is-btn-sec" onClick={onClose}>Cerrar</button>

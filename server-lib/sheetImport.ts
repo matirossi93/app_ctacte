@@ -24,6 +24,56 @@ function toStr(v: any): string | null {
   return s || null;
 }
 
+// Normaliza un header de columna del XLSX para matching tolerante:
+// "OBJETIVO O" → "objetivoo", "Razón Social" → "razon social", "  HR " → "hr".
+function normHeader(s: any): string {
+  if (s == null) return '';
+  return String(s)
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')  // sin tildes
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Mapeo de nuestros campos lógicos → posibles nombres de header en el sheet.
+// Si el sheet usa otro alias razonable, agregarlo acá. Sólo el primer match
+// que aparezca en la fila 1 se usa.
+const FIELD_ALIASES: Record<string, string[]> = {
+  cod_cliente:     ['cod', 'cod cliente', 'codigo', 'codigo cliente', 'cliente'],
+  cod_vendedor:    ['cod vend', 'cod vendedor', 'codigo vendedor'],
+  razon_social:    ['razon social', 'razonsocial', 'cliente razon social'],
+  direccion:       ['direccion', 'domicilio'],
+  dia_visita:      ['visita', 'dia visita', 'dia de visita'],
+  visita:          ['estado visita'],  // legacy, raramente presente
+  frecuencia:      ['frecuencia'],
+  localidad:       ['localidad'],
+  hoja_ruta:       ['hr', 'hoja ruta', 'hoja de ruta'],
+  repartidor:      ['repartidor'],
+  dia_entrega:     ['dia de entrega', 'dia entrega'],
+  cond_pago:       ['cond pago', 'condicion de pago', 'condicion pago'],
+  tipo_abc:        ['tipo', 'tipo abc', 'abc'],
+  saldo_cta_cte:   ['saldo', 'saldo cta cte', 'saldo cuenta corriente'],
+  fact_prom_3m:    ['fact prom 3m', 'prom 3m', 'promedio 3m'],
+  fact_mes_pasado: ['fact mes pasado', 'mes pasado'],
+  objetivo_mes:    ['objetivo o', 'objetivo', 'objetivo mes', 'objetivo mensual', 'objetivo original'],
+};
+
+// Construye un map { campo_logico: indexColumna }. Sólo incluye campos cuyo
+// header esté presente en la fila 1 — los ausentes se omiten del upsert para
+// no sobrescribir con NULL columnas que ahora se cargan desde otra fuente
+// (ej: saldo_cta_cte / fact_prom_3m / fact_mes_pasado vienen de syncVentas).
+function buildFieldIndex(headerRow: any[]): Record<string, number> {
+  const headerNorm = headerRow.map(normHeader);
+  const idx: Record<string, number> = {};
+  for (const [field, aliases] of Object.entries(FIELD_ALIASES)) {
+    for (const alias of aliases) {
+      const i = headerNorm.indexOf(normHeader(alias));
+      if (i !== -1) { idx[field] = i; break; }
+    }
+  }
+  return idx;
+}
+
 /**
  * POST /api/sheet-import/maestro-clientes
  * Multipart: file=<xlsx>, year?, month?
@@ -75,38 +125,63 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
   const nowYM = new Date();
   const esMesActual = year === nowYM.getUTCFullYear() && month === (nowYM.getUTCMonth() + 1);
 
+  // Construir map { campo: indexColumna } leyendo la fila 1 del sheet.
+  // Si una columna no aparece en el header, su campo se omite del upsert
+  // (no se sobrescribe el valor previo en client_operational con NULL).
+  const fieldIdx = buildFieldIndex(rows[0] || []);
+  if (fieldIdx.cod_cliente == null) {
+    res.status(400).json({
+      error: 'No encontré la columna "Cod" (cod_cliente) en la fila 1 del sheet. Headers detectados: '
+        + (rows[0] || []).map((h: any) => String(h).trim()).filter(Boolean).join(', '),
+    });
+    return;
+  }
+  if (fieldIdx.objetivo_mes == null) {
+    res.status(400).json({
+      error: 'No encontré columna de objetivo (busqué: OBJETIVO, OBJETIVO O, Objetivo Mes). Headers detectados: '
+        + (rows[0] || []).map((h: any) => String(h).trim()).filter(Boolean).join(', '),
+    });
+    return;
+  }
+
+  // Helpers para leer un campo del row r tomando el índice del map dinámico.
+  const getStr = (r: any[], field: string): string | null =>
+    fieldIdx[field] != null ? toStr(r[fieldIdx[field]]) : null;
+  const getInt = (r: any[], field: string): number | null =>
+    fieldIdx[field] != null ? toInt(r[fieldIdx[field]]) : null;
+  const getNum = (r: any[], field: string): number | null =>
+    fieldIdx[field] != null ? toNum(r[fieldIdx[field]]) : null;
+
+  // Lista de campos string/num/int que vamos a copiar SOLO si la columna existe.
+  const STR_FIELDS: string[] = ['razon_social', 'direccion', 'dia_visita', 'visita', 'frecuencia', 'localidad', 'hoja_ruta', 'repartidor', 'dia_entrega', 'cond_pago', 'tipo_abc'];
+  const NUM_FIELDS: string[] = ['saldo_cta_cte', 'fact_prom_3m', 'fact_mes_pasado'];
+
   const out: any[] = [];
   let descartadas = 0;
+  let conObjetivo = 0;
   const updatedAt = new Date().toISOString();
 
   for (let i = 1; i < rows.length; i++) {
     const r: any[] = rows[i] || [];
-    const cod = toInt(r[0]);
+    const cod = getInt(r, 'cod_cliente');
     if (!cod) { descartadas++; continue; }
-    out.push({
+    const objetivoMes = getNum(r, 'objetivo_mes');
+    if (objetivoMes != null) conObjetivo++;
+    const row: any = {
       tenant_id: TENANT_ID,
       cod_cliente: cod,
-      cod_vendedor: toInt(r[1]),
-      razon_social: toStr(r[3]),
-      direccion: toStr(r[4]),
-      dia_visita: toStr(r[5]),
-      visita: toStr(r[6]),
-      frecuencia: toStr(r[7]),
-      localidad: toStr(r[8]),
-      hoja_ruta: toStr(r[9]),
-      repartidor: toStr(r[10]),
-      dia_entrega: toStr(r[11]),
-      cond_pago: toStr(r[12]),
-      tipo_abc: toStr(r[13]),
-      saldo_cta_cte: toNum(r[14]),
-      fact_prom_3m: toNum(r[15]),
-      fact_mes_pasado: toNum(r[16]),
-      objetivo_mes: toNum(r[17]),
+      objetivo_mes: objetivoMes,
       objetivo_source: 'sheet',
       objetivo_year: year,
       objetivo_month: month,
       updated_at: updatedAt,
-    });
+    };
+    // cod_vendedor sólo si está presente.
+    if (fieldIdx.cod_vendedor != null) row.cod_vendedor = getInt(r, 'cod_vendedor');
+    // Campos string/num: incluir sólo si la columna está en el sheet.
+    for (const f of STR_FIELDS) if (fieldIdx[f] != null) row[f] = getStr(r, f);
+    for (const f of NUM_FIELDS) if (fieldIdx[f] != null) row[f] = getNum(r, f);
+    out.push(row);
   }
 
   // Upsert por batches a client_operational SOLO si es el mes actual.
@@ -173,6 +248,14 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
   // cliente / vendedor entran a las próximas queries.
   invalidateGoalsCache();
 
+  // Warning si vienen muchos rows sin objetivo: el sheet probablemente perdió
+  // la columna o se desplazó. El import no falla pero la UI puede avisar para
+  // que Matías corrija el sheet antes de la reunión.
+  let warning: string | undefined;
+  if (out.length > 0 && conObjetivo / out.length < 0.20) {
+    warning = `Sólo ${conObjetivo} de ${out.length} clientes tienen objetivo cargado en el sheet. Revisá la columna "OBJETIVO" en la hoja "${sheetKey}" antes de seguir.`;
+  }
+
   res.json({
     ok: errores.length === 0,
     year, month,
@@ -180,7 +263,10 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
     rows_leidas: rows.length - 1,
     rows_importadas: okCount,
     rows_descartadas: descartadas,
+    rows_con_objetivo: conObjetivo,
     history_imported: historyOk,
+    headers_detectados: Object.keys(fieldIdx),
+    warning,
     errores: errores.length ? errores : undefined,
   });
 }

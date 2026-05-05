@@ -101,6 +101,16 @@
     font-size: 12px; font-weight: 600;
 }
 
+.is-warning {
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(238, 192, 69, .18); color: #6b4f00;
+    padding: 10px 12px; border-radius: 10px;
+    font-size: 12px; font-weight: 600;
+    text-align: left; line-height: 1.4;
+    border-left: 3px solid #EEC045;
+}
+[data-theme="dark"] .is-warning { background: rgba(238, 192, 69, .12); color: #f5d56a; }
+
 .is-actions { display: flex; justify-content: flex-end; gap: 8px }
 .is-btn-sec {
     background: #fff; color: #141814;
