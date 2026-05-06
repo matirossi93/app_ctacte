@@ -12,7 +12,10 @@ import {
   type CategoriaComision,
 } from './comisionesRules.js';
 
-const COD_VENDEDORES_VISIBLES = new Set([2, 3, 4, 6, 12]);
+// Mati confirmó 06/05: Andrea (cod=6, backoffice) no entra en el cálculo
+// manual de comisiones aunque tenga ventas asignadas. Solo los 4 vendedores
+// de calle. Si en el futuro se decide incluirla, agregar 6 al set.
+const COD_VENDEDORES_VISIBLES = new Set([2, 3, 4, 12]);
 
 // Clientes internos = sucursales propias. Las "ventas" a estos clientes son
 // transferencias entre depósitos, no ventas comerciales. NO se les paga
@@ -469,6 +472,136 @@ export async function topArticulos(req: Request & { user?: JwtPayload }, res: Re
     res.json({ ok: true, year, month, top: topN, top_por_categoria: porCategoria, categoria_labels: CATEGORIA_LABELS });
   } catch (err: any) {
     console.error('topArticulos error:', err);
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
+ * GET /api/comisiones/facturas-vendedor?year=&month=&cod_vendedor=  (admin)
+ *
+ * Lista TODAS las facturas (cabeceras + total por categoría de comisión) de
+ * un vendedor específico para que Mati pueda comparar contra su Excel
+ * manual y encontrar discrepancias (facturas duplicadas, asignación
+ * incorrecta a un vendedor, etc.).
+ */
+export async function facturasVendedor(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') {
+      res.status(403).json({ error: 'Requiere admin/gerente' }); return;
+    }
+    const t = new Date();
+    const year = Number(req.query.year) || t.getUTCFullYear();
+    const month = Number(req.query.month) || (t.getUTCMonth() + 1);
+    const codVend = Number(req.query.cod_vendedor);
+    if (!Number.isFinite(codVend)) {
+      res.status(400).json({ error: 'cod_vendedor requerido' }); return;
+    }
+
+    const [ventasRes, itemsRes, articulosMap] = await Promise.all([
+      getMonthlyVentasRaw(year, month),
+      getMonthlyItemsRaw(year, month),
+      fetchArticulosCatalogo(),
+    ]);
+
+    // Solo cabeceras de Casa Central, válidas (FA/NC), no clientes internos,
+    // y del vendedor pedido.
+    const cabsValidas = new Map<number, any>();
+    for (const v of ventasRes.ventas) {
+      const id = Number((v as any).id);
+      if (!Number.isFinite(id)) continue;
+      const codEmp = Number((v as any).cod_empresa);
+      if (Number.isFinite(codEmp) && codEmp !== COD_EMPRESA_CASA_CENTRAL) continue;
+      const clase = clasificarCabecera(v);
+      if (!clase) continue;
+      const cVend = Number((v as any).cod_vendedor);
+      if (cVend !== codVend) continue;
+      const codCli = Number((v as any).cod_cliente);
+      if (Number.isFinite(codCli) && COD_CLIENTES_INTERNOS.has(codCli)) continue;
+      cabsValidas.set(id, { cab: v, sign: clase === 'NC' ? -1 : 1 });
+    }
+
+    // Acumular por id_comprobante.
+    interface FactDetail {
+      id: number;
+      tipo: string;
+      tipo_factura: string;
+      numero: number;
+      punto_de_venta: number;
+      fecha: string;
+      cod_cliente: number;
+      neto_calculado: number;        // suma de items × signo
+      neto_cabecera: number;         // del campo `neto`/`fa_total` de la cabecera
+      breakdown: Record<CategoriaComision, number>;  // monto neto por categoría
+      lineas: number;
+    }
+    const facturas: FactDetail[] = [];
+    for (const [idComp, info] of cabsValidas.entries()) {
+      const { cab, sign } = info;
+      const fd: FactDetail = {
+        id: idComp,
+        tipo: String(cab.tipo_comprobante ?? cab.tipo ?? ''),
+        tipo_factura: String(cab.tipo_factura ?? ''),
+        numero: Number(cab.numero ?? 0),
+        punto_de_venta: Number(cab.punto_de_venta ?? 0),
+        fecha: String(cab.fecha ?? ''),
+        cod_cliente: Number(cab.cod_cliente ?? 0),
+        neto_calculado: 0,
+        neto_cabecera: Math.round((Number(cab.neto ?? cab.total ?? cab.fa_total ?? 0) * sign) * 100) / 100,
+        breakdown: { '5.5%': 0, '4%': 0, '3.5%': 0, '1%': 0 },
+        lineas: 0,
+      };
+      facturas.push(fd);
+    }
+
+    // Indexar items por id_comprobante.
+    const itemsPorComp = new Map<number, any[]>();
+    for (const it of itemsRes.items) {
+      const idC = Number(it.id_comprobante);
+      if (!cabsValidas.has(idC)) continue;
+      let arr = itemsPorComp.get(idC);
+      if (!arr) { arr = []; itemsPorComp.set(idC, arr); }
+      arr.push(it);
+    }
+
+    // Calcular breakdown por factura.
+    for (const fd of facturas) {
+      const lineas = itemsPorComp.get(fd.id) ?? [];
+      const sign = cabsValidas.get(fd.id)!.sign;
+      for (const it of lineas) {
+        const importeAbs = Number(it.importe ?? 0);
+        if (!Number.isFinite(importeAbs) || importeAbs === 0) continue;
+        const importe = importeAbs * sign;
+        const codArt = Number(it.cod_articulo);
+        if (!Number.isFinite(codArt)) continue;
+        const am = articulosMap.get(codArt);
+        const codRubro = am?.cod_rubro ?? null;
+        const detalle = String((it as any).detalle ?? am?.descripcion ?? '');
+        const pct = pctParaArticulo(codArt, codRubro, detalle);
+        const cat = categoriaParaPct(pct);
+        fd.breakdown[cat] += importe;
+        fd.neto_calculado += importe;
+        fd.lineas++;
+      }
+      // Redondeos
+      fd.neto_calculado = Math.round(fd.neto_calculado * 100) / 100;
+      for (const k of Object.keys(fd.breakdown) as CategoriaComision[]) {
+        fd.breakdown[k] = Math.round(fd.breakdown[k] * 100) / 100;
+      }
+    }
+    facturas.sort((a, b) => Math.abs(b.neto_calculado) - Math.abs(a.neto_calculado));
+
+    const totalNeto = facturas.reduce((s, f) => s + f.neto_calculado, 0);
+
+    res.json({
+      ok: true,
+      year, month, cod_vendedor: codVend,
+      total_facturas: facturas.length,
+      total_neto: Math.round(totalNeto * 100) / 100,
+      facturas,
+    });
+  } catch (err: any) {
+    console.error('facturasVendedor error:', err);
     res.status(500).json({ error: err?.message ?? 'error' });
   }
 }

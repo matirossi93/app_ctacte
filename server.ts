@@ -26,7 +26,7 @@ import {
   reverificarMP, elegirMatchMP, procesarColaMP
 } from './server-lib/recibos.js';
 import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot } from './server-lib/goals.js';
-import { listComisiones, probeVenta, comisionesSample, topArticulos } from './server-lib/comisiones.js';
+import { listComisiones, probeVenta, comisionesSample, topArticulos, facturasVendedor } from './server-lib/comisiones.js';
 import { listClientesLookup } from './server-lib/clientes.js';
 import { listActivity, createActivity, deleteActivity } from './server-lib/activity.js';
 import {
@@ -517,6 +517,7 @@ app.get('/api/comisiones', requireJwt, (req: any, res) => listComisiones(req, re
 app.get('/api/comisiones/probe-venta/:id', requireJwt, requireAdmin, (req: any, res) => probeVenta(req, res));
 app.get('/api/comisiones/sample', requireJwt, requireAdmin, (req: any, res) => comisionesSample(req, res));
 app.get('/api/comisiones/top-articulos', requireJwt, requireAdmin, (req: any, res) => topArticulos(req, res));
+app.get('/api/comisiones/facturas-vendedor', requireJwt, requireAdmin, (req: any, res) => facturasVendedor(req, res));
 
 // ─── Clientes lookup (maestro completo, con y sin deuda) ─────────────────────
 app.get('/api/clientes/lookup', requireJwt, (req: any, res) => listClientesLookup(req, res));
