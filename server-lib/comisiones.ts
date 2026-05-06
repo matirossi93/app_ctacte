@@ -23,6 +23,11 @@ const COD_VENDEDORES_VISIBLES = new Set([2, 3, 4, 6, 12]);
 //   861 = sucursal adicional
 const COD_CLIENTES_INTERNOS = new Set([1, 652, 666, 861]);
 
+// Solo Casa Central (cod_empresa=1) cuenta para comisiones del equipo de
+// vendedores Casa Central. Las sucursales tienen sus propios vendedores y
+// estructura de comisión independiente. Confirmado por Mati 06/05/2026.
+const COD_EMPRESA_CASA_CENTRAL = 1;
+
 interface BreakdownEntry { neto: number; comision: number; lineas: number }
 interface ComisionVendedor {
   cod_vendedor: number;
@@ -82,10 +87,17 @@ export async function getComisionesData(opts: GetComisionesOpts) {
   // Solo cabeceras válidas. Las inválidas (PR, ND, anuladas) quedan fuera y
   // sus items se descartan automáticamente en el loop.
   const cabPorId = new Map<number, { sign: 1 | -1; cod_vendedor: number; tipo: string }>();
-  let nFA = 0, nNC = 0, nDescartadas = 0, nClientesInternos = 0;
+  let nFA = 0, nNC = 0, nDescartadas = 0, nClientesInternos = 0, nOtraEmpresa = 0;
   for (const v of ventasRes.ventas) {
     const id = Number((v as any).id);
     if (!Number.isFinite(id)) { nDescartadas++; continue; }
+    // Filtrar empresas: solo Casa Central (cod_empresa=1) suma a estas
+    // comisiones. Sucursales tienen su propia estructura.
+    const codEmp = Number((v as any).cod_empresa);
+    if (Number.isFinite(codEmp) && codEmp !== COD_EMPRESA_CASA_CENTRAL) {
+      nOtraEmpresa++;
+      continue;
+    }
     const clase = clasificarCabecera(v);
     if (!clase) { nDescartadas++; continue; }
     const codVend = Number((v as any).cod_vendedor);
@@ -136,7 +148,9 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     if (!Number.isFinite(codArt)) { itemsDescartados++; continue; }
     const articuloMeta = articulosMap.get(codArt);
     const codRubro = articuloMeta?.cod_rubro ?? null;
-    const pct = pctParaArticulo(codArt, codRubro);
+    // Detalle viene en el item directo; si no, fallback al catálogo.
+    const detalle = String((it as any).detalle ?? articuloMeta?.descripcion ?? '');
+    const pct = pctParaArticulo(codArt, codRubro, detalle);
     const cat = categoriaParaPct(pct);
     const comision = Math.round(importe * pct * 100) / 100;
 
@@ -234,6 +248,7 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     cabeceras_NC: nNC,
     cabeceras_descartadas: nDescartadas,
     cabeceras_clientes_internos_excluidas: nClientesInternos,
+    cabeceras_otra_empresa_excluidas: nOtraEmpresa,
     items_total: itemsRes.items.length,
     items_procesados: itemsProcesados,
     items_descartados_sin_cabecera: itemsDescartados,
@@ -386,8 +401,10 @@ export async function topArticulos(req: Request & { user?: JwtPayload }, res: Re
     for (const v of ventasRes.ventas) {
       const id = Number((v as any).id);
       const clase = clasificarCabecera(v);
+      const codEmp = Number((v as any).cod_empresa);
       const codCli = Number((v as any).cod_cliente);
       if (!Number.isFinite(id) || !clase) continue;
+      if (Number.isFinite(codEmp) && codEmp !== COD_EMPRESA_CASA_CENTRAL) continue;
       if (Number.isFinite(codCli) && COD_CLIENTES_INTERNOS.has(codCli)) continue;
       cabPorId.set(id, { sign: clase === 'NC' ? -1 : 1 });
     }
@@ -414,7 +431,8 @@ export async function topArticulos(req: Request & { user?: JwtPayload }, res: Re
       if (!Number.isFinite(codArt)) continue;
       const am = articulosMap.get(codArt);
       const codRubro = am?.cod_rubro ?? null;
-      const pct = pctParaArticulo(codArt, codRubro);
+      const detalle = String((it as any).detalle ?? am?.descripcion ?? '');
+      const pct = pctParaArticulo(codArt, codRubro, detalle);
       const cat = categoriaParaPct(pct);
       let a = acc.get(codArt);
       if (!a) {

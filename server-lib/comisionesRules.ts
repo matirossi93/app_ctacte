@@ -25,7 +25,16 @@ export const COMISION_1PCT_CODES = new Set<number>([
   5, 6, 7, 24, 25,
   // FULL CAT
   281,
+  // FLECKY (Mati confirmó 06/05/2026 — masivo de balanceado)
+  165,
 ]);
+
+// Prefijos de descripción que disparan 1% aunque el cod no esté en la lista.
+// Útil para capturar variantes de líneas (ej: FLECKY CACHORRO, FLECKY GATO,
+// etc.) sin tener que mantener la lista de cods exactos.
+export const COMISION_1PCT_DESC_PREFIXES: string[] = [
+  'FLECKY',
+];
 
 export const COMISION_55PCT_CODES = new Set<number>([
   // EXACT PREMIUM
@@ -44,13 +53,23 @@ export const COMISION_LISTA_1PCT = 0.01;
 /**
  * Devuelve el % aplicable a una línea según prioridad:
  *  1. Código en lista EXACT (5.5%)
- *  2. Código en lista 1%
+ *  2. Código en lista 1% o descripción matchea prefijo 1% (FLECKY *)
  *  3. Rubro = Accesorios y Venenos (4%)
  *  4. Resto (3.5%)
  */
-export function pctParaArticulo(codArticulo: number, codRubro: number | null | undefined): number {
+export function pctParaArticulo(
+  codArticulo: number,
+  codRubro: number | null | undefined,
+  descripcion?: string | null,
+): number {
   if (COMISION_55PCT_CODES.has(codArticulo)) return COMISION_EXACT;
   if (COMISION_1PCT_CODES.has(codArticulo)) return COMISION_LISTA_1PCT;
+  if (descripcion) {
+    const descUpper = descripcion.toUpperCase().trim();
+    for (const pref of COMISION_1PCT_DESC_PREFIXES) {
+      if (descUpper.startsWith(pref)) return COMISION_LISTA_1PCT;
+    }
+  }
   if (codRubro === RUBRO_ACCESORIOS_VENENOS) return COMISION_ACCESORIOS;
   return COMISION_RESTO;
 }
