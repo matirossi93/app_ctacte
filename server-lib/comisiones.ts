@@ -618,6 +618,94 @@ export async function facturasVendedor(req: Request & { user?: JwtPayload }, res
   }
 }
 
+/**
+ * GET /api/comisiones/diagnose-articulo/:cod  (admin)
+ *
+ * Devuelve: catálogo del artículo + categoría que se le asigna + cuánto
+ * sumó en el mes pedido.
+ */
+export async function diagnoseArticulo(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') {
+      res.status(403).json({ error: 'Requiere admin/gerente' }); return;
+    }
+    const cod = Number(req.params.cod);
+    if (!Number.isFinite(cod)) { res.status(400).json({ error: 'cod inválido' }); return; }
+    const t = new Date();
+    const year = Number(req.query.year) || t.getUTCFullYear();
+    const month = Number(req.query.month) || (t.getUTCMonth() + 1);
+
+    const [articulosMap, ventasRes, itemsRes] = await Promise.all([
+      fetchArticulosCatalogo(),
+      getMonthlyVentasRaw(year, month),
+      getMonthlyItemsRaw(year, month),
+    ]);
+
+    const meta = articulosMap.get(cod) ?? null;
+    const cabPorId = new Map<number, { sign: 1 | -1 }>();
+    for (const v of ventasRes.ventas) {
+      const id = Number((v as any).id);
+      const codEmp = Number((v as any).cod_empresa);
+      const codCli = Number((v as any).cod_cliente);
+      const clase = clasificarCabecera(v);
+      if (!Number.isFinite(id) || !clase) continue;
+      if (Number.isFinite(codEmp) && codEmp !== COD_EMPRESA_CASA_CENTRAL) continue;
+      if (Number.isFinite(codCli) && COD_CLIENTES_INTERNOS.has(codCli)) continue;
+      cabPorId.set(id, { sign: clase === 'NC' ? -1 : 1 });
+    }
+    let totalNeto = 0, lineas = 0;
+    let ejemploDetalle = '';
+    for (const it of itemsRes.items) {
+      if (Number(it.cod_articulo) !== cod) continue;
+      const m = cabPorId.get(Number(it.id_comprobante));
+      if (!m) continue;
+      const importeAbs = Number(it.importe ?? 0);
+      if (!Number.isFinite(importeAbs) || importeAbs === 0) continue;
+      totalNeto += importeAbs * m.sign;
+      lineas++;
+      if (!ejemploDetalle) ejemploDetalle = String((it as any).detalle ?? '');
+    }
+    const codRubroResuelto = meta?.cod_rubro ?? null;
+    const detalleResuelto = ejemploDetalle || meta?.descripcion || '';
+    const pct = pctParaArticulo(cod, codRubroResuelto, detalleResuelto);
+    const cat = categoriaParaPct(pct);
+
+    res.json({
+      ok: true,
+      cod_articulo: cod,
+      year, month,
+      en_catalogo: meta != null,
+      catalogo: meta,
+      ejemplo_detalle_de_factura: ejemploDetalle,
+      categoria_aplicada: cat,
+      pct_aplicado: pct,
+      label: CATEGORIA_LABELS[cat],
+      neto_mes: Math.round(totalNeto * 100) / 100,
+      lineas_mes: lineas,
+      reglas_aplicadas: {
+        en_lista_55pct: false,  // ya no existe esta categoría
+        en_lista_5pct_EXACT: COMISION_55PCT_CODES_HAS(cod),
+        en_lista_1pct_MASIVO: COMISION_1PCT_CODES_HAS(cod),
+        match_descripcion_1pct: detalleMatcheaPrefijo1pct(detalleResuelto),
+        rubro_es_11_accesorios: codRubroResuelto === 11,
+      },
+    });
+  } catch (err: any) {
+    console.error('diagnoseArticulo error:', err);
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+// Helpers para reflejar el estado de las reglas en diagnoseArticulo.
+const COMISION_55PCT_CODES_HAS = (cod: number) =>
+  new Set([232, 231, 233, 234, 235, 236]).has(cod);
+const COMISION_1PCT_CODES_HAS = (cod: number) =>
+  new Set([134, 135, 136, 150, 151, 185, 130, 138, 140, 131, 137, 995, 1009, 5, 6, 7, 24, 25, 281, 165]).has(cod);
+function detalleMatcheaPrefijo1pct(detalle: string): boolean {
+  return detalle.toUpperCase().trim().startsWith('FLECKY');
+}
+
 /** GET /api/comisiones */
 export async function listComisiones(req: Request & { user?: JwtPayload }, res: Response) {
   try {
