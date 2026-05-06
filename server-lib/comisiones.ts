@@ -294,6 +294,61 @@ export async function getComisionesData(opts: GetComisionesOpts) {
   };
 }
 
+/**
+ * GET /api/comisiones/probe-venta/:id  (admin)
+ *
+ * Devuelve cabecera + items + detalle (/ventas/{id}) de UNA venta específica.
+ * Es un debug temporal para confirmar qué shape de líneas con precio expone IM.
+ * El plan es eliminarlo cuando el cálculo de comisiones esté validado contra
+ * los números manuales de Matías.
+ */
+export async function probeVenta(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') {
+      res.status(403).json({ error: 'Requiere admin/gerente' }); return;
+    }
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) { res.status(400).json({ error: 'id inválido' }); return; }
+    const { imClient } = await import('./infomanager.js');
+    const cli = await imClient();
+
+    // 1. Detalle directo de la venta.
+    let detalle: any = null;
+    let detalleErr: string | null = null;
+    try {
+      const r = await cli.get(`/ventas/${id}`);
+      detalle = r.data;
+    } catch (e: any) {
+      detalleErr = e?.response?.status ? `HTTP ${e.response.status}` : String(e?.message ?? e);
+    }
+
+    // 2. Items asociados (filtramos del cache si está, sino fetch chico).
+    const t = new Date();
+    const year = Number(req.query.year) || t.getUTCFullYear();
+    const month = Number(req.query.month) || (t.getUTCMonth() + 1);
+    const itemsRes = await getMonthlyItemsRaw(year, month);
+    const itemsDeEstaVenta = itemsRes.items.filter(i => Number(i.id_comprobante) === id);
+
+    // 3. Cabecera del mismo dataset.
+    const ventasRes = await getMonthlyVentasRaw(year, month);
+    const cab = ventasRes.ventas.find((v: any) => Number(v.id) === id) ?? null;
+
+    res.json({
+      ok: true,
+      id_venta: id,
+      cabecera: cab,
+      items_de_esta_venta_via_ventas_items: itemsDeEstaVenta,
+      detalle_via_ventas_id: detalle,
+      detalle_error: detalleErr,
+      hint: 'Mirá si "detalle_via_ventas_id" tiene líneas con precio o importe. Si sí, lo usamos como fuente exacta. Si no, vemos otro endpoint.',
+    });
+  } catch (err: any) {
+    console.error('probeVenta error:', err);
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
 /** GET /api/comisiones */
 export async function listComisiones(req: Request & { user?: JwtPayload }, res: Response) {
   try {

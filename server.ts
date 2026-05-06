@@ -26,7 +26,7 @@ import {
   reverificarMP, elegirMatchMP, procesarColaMP
 } from './server-lib/recibos.js';
 import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot } from './server-lib/goals.js';
-import { listComisiones } from './server-lib/comisiones.js';
+import { listComisiones, probeVenta } from './server-lib/comisiones.js';
 import { listClientesLookup } from './server-lib/clientes.js';
 import { listActivity, createActivity, deleteActivity } from './server-lib/activity.js';
 import {
@@ -514,6 +514,7 @@ app.get('/api/goals/snapshot', requireJwt, (req: any, res) => getGoalsSnapshot(r
 // ─── Comisiones por vendedor (calculadas desde /ventas + /ventas/items) ──────
 // Vendedor: ve solo la suya. Admin/gerente: ve todas (whitelist 5 visibles).
 app.get('/api/comisiones', requireJwt, (req: any, res) => listComisiones(req, res));
+app.get('/api/comisiones/probe-venta/:id', requireJwt, requireAdmin, (req: any, res) => probeVenta(req, res));
 
 // ─── Clientes lookup (maestro completo, con y sin deuda) ─────────────────────
 app.get('/api/clientes/lookup', requireJwt, (req: any, res) => listClientesLookup(req, res));
