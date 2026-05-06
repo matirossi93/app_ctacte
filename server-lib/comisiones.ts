@@ -295,6 +295,64 @@ export async function getComisionesData(opts: GetComisionesOpts) {
 }
 
 /**
+ * GET /api/comisiones/sample?year=&month=  (admin)
+ *
+ * Devuelve las primeras 3 cabeceras + primeros 5 items del cache crudo y un
+ * intento de pegar `/ventas/{id}` con el id de la primera cabecera. Sirve
+ * para confirmar shape real de la API IM sin tener que conocer IDs internos.
+ */
+export async function comisionesSample(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') {
+      res.status(403).json({ error: 'Requiere admin/gerente' }); return;
+    }
+    const t = new Date();
+    const year = Number(req.query.year) || t.getUTCFullYear();
+    const month = Number(req.query.month) || (t.getUTCMonth() + 1);
+
+    const [ventasRes, itemsRes] = await Promise.all([
+      getMonthlyVentasRaw(year, month),
+      getMonthlyItemsRaw(year, month),
+    ]);
+
+    const sampleCabs = ventasRes.ventas.slice(0, 3);
+    const sampleItems = itemsRes.items.slice(0, 5);
+
+    // Intentar pegar /ventas/{id} con la primera cabecera para ver detalle.
+    let detalle: any = null;
+    let detalleErr: string | null = null;
+    let probedId: any = null;
+    if (sampleCabs.length > 0) {
+      probedId = (sampleCabs[0] as any).id;
+      try {
+        const { imClient } = await import('./infomanager.js');
+        const cli = await imClient();
+        const r = await cli.get(`/ventas/${probedId}`);
+        detalle = r.data;
+      } catch (e: any) {
+        detalleErr = e?.response?.status ? `HTTP ${e.response.status}: ${JSON.stringify(e.response.data ?? '').slice(0, 200)}` : String(e?.message ?? e);
+      }
+    }
+
+    res.json({
+      ok: true,
+      year, month,
+      cabeceras_total: ventasRes.ventas.length,
+      items_total: itemsRes.items.length,
+      sample_cabeceras: sampleCabs,
+      sample_items: sampleItems,
+      probed_id_para_detalle: probedId,
+      detalle_via_ventas_id: detalle,
+      detalle_error: detalleErr,
+    });
+  } catch (err: any) {
+    console.error('comisionesSample error:', err);
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
  * GET /api/comisiones/probe-venta/:id  (admin)
  *
  * Devuelve cabecera + items + detalle (/ventas/{id}) de UNA venta específica.
