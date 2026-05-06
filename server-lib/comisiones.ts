@@ -14,6 +14,15 @@ import {
 
 const COD_VENDEDORES_VISIBLES = new Set([2, 3, 4, 6, 12]);
 
+// Clientes internos = sucursales propias. Las "ventas" a estos clientes son
+// transferencias entre depósitos, no ventas comerciales. NO se les paga
+// comisión. Lista alineada con `semillero-existencias/src/lib/infomanager.ts`.
+//   1   = Casa Central
+//   652 = San Martín (sucursal)
+//   666 = Santo Cristo (sucursal)
+//   861 = sucursal adicional
+const COD_CLIENTES_INTERNOS = new Set([1, 652, 666, 861]);
+
 interface BreakdownEntry { neto: number; comision: number; lineas: number }
 interface ComisionVendedor {
   cod_vendedor: number;
@@ -73,7 +82,7 @@ export async function getComisionesData(opts: GetComisionesOpts) {
   // Solo cabeceras válidas. Las inválidas (PR, ND, anuladas) quedan fuera y
   // sus items se descartan automáticamente en el loop.
   const cabPorId = new Map<number, { sign: 1 | -1; cod_vendedor: number; tipo: string }>();
-  let nFA = 0, nNC = 0, nDescartadas = 0;
+  let nFA = 0, nNC = 0, nDescartadas = 0, nClientesInternos = 0;
   for (const v of ventasRes.ventas) {
     const id = Number((v as any).id);
     if (!Number.isFinite(id)) { nDescartadas++; continue; }
@@ -81,6 +90,12 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     if (!clase) { nDescartadas++; continue; }
     const codVend = Number((v as any).cod_vendedor);
     if (!Number.isFinite(codVend)) { nDescartadas++; continue; }
+    // Excluir transferencias entre sucursales — no son ventas comerciales.
+    const codCli = Number((v as any).cod_cliente);
+    if (Number.isFinite(codCli) && COD_CLIENTES_INTERNOS.has(codCli)) {
+      nClientesInternos++;
+      continue;
+    }
     cabPorId.set(id, {
       sign: clase === 'NC' ? -1 : 1,
       cod_vendedor: codVend,
@@ -218,6 +233,7 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     cabeceras_FA: nFA,
     cabeceras_NC: nNC,
     cabeceras_descartadas: nDescartadas,
+    cabeceras_clientes_internos_excluidas: nClientesInternos,
     items_total: itemsRes.items.length,
     items_procesados: itemsProcesados,
     items_descartados_sin_cabecera: itemsDescartados,
@@ -337,6 +353,104 @@ export async function probeVenta(req: Request & { user?: JwtPayload }, res: Resp
     });
   } catch (err: any) {
     console.error('probeVenta error:', err);
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
+ * GET /api/comisiones/top-articulos?year=&month=&top=10  (admin)
+ *
+ * Devuelve los TOP N artículos por neto, agrupados por categoría de comisión.
+ * Sirve para detectar artículos mal clasificados (ej: accesorios que caen en
+ * "resto" porque su cod_rubro no es 11).
+ */
+export async function topArticulos(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') {
+      res.status(403).json({ error: 'Requiere admin/gerente' }); return;
+    }
+    const t = new Date();
+    const year = Number(req.query.year) || t.getUTCFullYear();
+    const month = Number(req.query.month) || (t.getUTCMonth() + 1);
+    const topN = Math.min(50, Math.max(5, Number(req.query.top) || 10));
+
+    const [ventasRes, itemsRes, articulosMap] = await Promise.all([
+      getMonthlyVentasRaw(year, month),
+      getMonthlyItemsRaw(year, month),
+      fetchArticulosCatalogo(),
+    ]);
+
+    // Misma lógica de filtro de cabeceras que getComisionesData.
+    const cabPorId = new Map<number, { sign: 1 | -1 }>();
+    for (const v of ventasRes.ventas) {
+      const id = Number((v as any).id);
+      const clase = clasificarCabecera(v);
+      const codCli = Number((v as any).cod_cliente);
+      if (!Number.isFinite(id) || !clase) continue;
+      if (Number.isFinite(codCli) && COD_CLIENTES_INTERNOS.has(codCli)) continue;
+      cabPorId.set(id, { sign: clase === 'NC' ? -1 : 1 });
+    }
+
+    // Agregar por (cod_articulo, categoría).
+    interface ArtAcc {
+      cod_articulo: number;
+      detalle: string;
+      cod_rubro: number | null;
+      categoria: CategoriaComision;
+      pct: number;
+      neto: number;
+      cantidad_total: number;
+      lineas: number;
+    }
+    const acc = new Map<number, ArtAcc>();
+    for (const it of itemsRes.items) {
+      const meta = cabPorId.get(Number(it.id_comprobante));
+      if (!meta) continue;
+      const importeAbs = Number(it.importe ?? 0);
+      if (!Number.isFinite(importeAbs) || importeAbs === 0) continue;
+      const importe = importeAbs * meta.sign;
+      const codArt = Number(it.cod_articulo);
+      if (!Number.isFinite(codArt)) continue;
+      const am = articulosMap.get(codArt);
+      const codRubro = am?.cod_rubro ?? null;
+      const pct = pctParaArticulo(codArt, codRubro);
+      const cat = categoriaParaPct(pct);
+      let a = acc.get(codArt);
+      if (!a) {
+        a = {
+          cod_articulo: codArt,
+          detalle: String((it as any).detalle ?? am?.descripcion ?? '').trim(),
+          cod_rubro: codRubro,
+          categoria: cat,
+          pct,
+          neto: 0, cantidad_total: 0, lineas: 0,
+        };
+        acc.set(codArt, a);
+      }
+      a.neto += importe;
+      a.cantidad_total += Number(it.cantidad ?? 0);
+      a.lineas += 1;
+    }
+
+    // Por categoría, top N por neto.
+    const porCategoria: Record<CategoriaComision, ArtAcc[]> = {
+      '5.5%': [], '4%': [], '3.5%': [], '1%': [],
+    };
+    for (const a of acc.values()) {
+      porCategoria[a.categoria].push(a);
+    }
+    for (const cat of Object.keys(porCategoria) as CategoriaComision[]) {
+      porCategoria[cat].sort((x, y) => Math.abs(y.neto) - Math.abs(x.neto));
+      porCategoria[cat] = porCategoria[cat].slice(0, topN).map(a => ({
+        ...a,
+        neto: Math.round(a.neto * 100) / 100,
+      }));
+    }
+
+    res.json({ ok: true, year, month, top: topN, top_por_categoria: porCategoria, categoria_labels: CATEGORIA_LABELS });
+  } catch (err: any) {
+    console.error('topArticulos error:', err);
     res.status(500).json({ error: err?.message ?? 'error' });
   }
 }
