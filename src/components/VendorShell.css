@@ -45,13 +45,13 @@
 .vs-brand-text .eyebrow { font-size: 9px; font-weight: 600; letter-spacing: 1.5px; color: #6e7670 }
 .vs-brand-text .name { font-size: 15px; font-weight: 700; margin-top: 3px }
 .vs-vendor-select {
-    font-family: inherit; font-size: 14px; font-weight: 700;
+    font-family: inherit; font-size: 13px; font-weight: 700;
     color: #06652F; background: transparent;
     border: 0; padding: 2px 18px 2px 0; cursor: pointer;
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%2306652F' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
     background-repeat: no-repeat; background-position: right center;
     appearance: none; -webkit-appearance: none;
-    max-width: 190px; text-overflow: ellipsis;
+    max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .vs-vendor-select:focus { outline: none }
 .vs-inactivos-toggle {
@@ -184,7 +184,7 @@
 /* Main scroll */
 .vs-main {
     flex: 1; overflow-y: auto; overflow-x: hidden;
-    padding: 14px 18px 140px;
+    padding: 14px 18px 180px;
     position: relative; z-index: 1;
     scroll-behavior: smooth;
 }
@@ -365,8 +365,11 @@
 .vs-hero-goal-head h2 { font-size: 22px; font-weight: 800; letter-spacing: -.5px; margin: 4px 0 0 }
 .vs-goal-badge { font-size: 10px; font-weight: 700; padding: 5px 10px; border-radius: 10px; background: rgba(238,192,69,.2); color: #EEC045; border: 1px solid rgba(238,192,69,.35) }
 
-.vs-goal-main { display: flex; gap: 16px; margin-top: 18px; position: relative; z-index: 2; align-items: center }
-.vs-goal-ring { width: 128px; height: 128px; position: relative; flex-shrink: 0 }
+.vs-goal-main { display: flex; gap: 14px; margin-top: 18px; position: relative; z-index: 2; align-items: center; min-width: 0 }
+.vs-goal-ring { width: 96px; height: 96px; position: relative; flex-shrink: 0 }
+@media (min-width: 720px) {
+    .vs-goal-ring { width: 128px; height: 128px }
+}
 .vs-goal-ring svg { width: 100%; height: 100%; transform: rotate(-90deg) }
 .vs-goal-ring .track { fill: none; stroke: rgba(255,255,255,.14); stroke-width: 8 }
 .vs-goal-ring .fill {
@@ -379,11 +382,16 @@
 .vs-goal-ring-center .pct span { font-size: 13px; font-weight: 600; margin-left: 1px }
 .vs-goal-ring-center .sub { font-size: 9px; opacity: .7; margin-top: 3px; font-weight: 600; letter-spacing: .3px }
 
-.vs-goal-figs { flex: 1; display: flex; flex-direction: column; gap: 8px }
-.vs-goal-figs > div { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 7px; border-bottom: 1px solid rgba(255,255,255,.12) }
+.vs-goal-figs { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px }
+.vs-goal-figs > div { display: flex; flex-direction: column; align-items: stretch; gap: 1px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,.12); min-width: 0 }
 .vs-goal-figs > div:last-child { border-bottom: 0 }
-.vs-goal-figs .k { font-size: 10px; letter-spacing: .8px; text-transform: uppercase; opacity: .65; font-weight: 600 }
-.vs-goal-figs .v { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 6px }
+.vs-goal-figs .k { font-size: 9.5px; letter-spacing: .8px; text-transform: uppercase; opacity: .65; font-weight: 600; flex-shrink: 0 }
+.vs-goal-figs .v { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: clip }
+@media (min-width: 720px) {
+    .vs-goal-figs > div { flex-direction: row; justify-content: space-between; align-items: baseline; gap: 8px; padding-bottom: 7px }
+    .vs-goal-figs .k { font-size: 10px }
+    .vs-goal-figs .v { font-size: 14px; text-align: right; justify-content: flex-end }
+}
 .vs-target-edit-btn {
     background: rgba(238,192,69,.18); color: #EEC045;
     border: 0; border-radius: 6px;
@@ -520,8 +528,8 @@
 
 /* FAB global (Recibos) */
 .vs-fab {
-    position: absolute; bottom: 110px; right: 18px;
-    width: 56px; height: 56px; border-radius: 20px;
+    position: absolute; bottom: 96px; right: 14px;
+    width: 50px; height: 50px; border-radius: 18px;
     background: linear-gradient(145deg, #06652F 0%, #03481F 100%);
     color: #EEC045; border: 0; cursor: pointer;
     display: grid; place-items: center;
@@ -536,14 +544,14 @@
 .vs-nav {
     position: absolute; left: 14px; right: 14px; bottom: 14px;
     height: 68px; padding: 6px;
-    background: rgba(20,24,20,.92); border-radius: 24px;
+    background: rgba(20,24,20,.985); border-radius: 24px;
     backdrop-filter: blur(16px);
     display: flex; z-index: 20;
     box-shadow: 0 18px 40px -10px rgba(20,24,20,.5), inset 0 1px 0 rgba(255,255,255,.06);
 }
 .vs-nav-pill {
     position: absolute; top: 6px; bottom: 6px;
-    width: calc(25% - 4px);
+    width: calc(20% - 4px);
     background: linear-gradient(135deg, #EEC045 0%, #FFD971 100%);
     border-radius: 18px;
     transition: left .35s cubic-bezier(.4,1.4,.5,1);
@@ -552,17 +560,20 @@
     left: 6px;
 }
 .vs-nav[data-tab="hoy"] .vs-nav-pill { left: 6px }
-.vs-nav[data-tab="cobranzas"] .vs-nav-pill { left: calc(25% + 4px) }
-.vs-nav[data-tab="objetivos"] .vs-nav-pill { left: calc(50% + 4px) }
-.vs-nav[data-tab="actividad"] .vs-nav-pill { left: calc(75% + 2px) }
+.vs-nav[data-tab="cobranzas"] .vs-nav-pill { left: calc(20% + 3px) }
+.vs-nav[data-tab="objetivos"] .vs-nav-pill { left: calc(40% + 2px) }
+.vs-nav[data-tab="comisiones"] .vs-nav-pill { left: calc(60% + 1px) }
+.vs-nav[data-tab="actividad"] .vs-nav-pill { left: calc(80% - 2px) }
 .vs-nav-btn {
-    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
     background: transparent; border: 0; cursor: pointer;
     color: rgba(255,255,255,.55); font-family: inherit;
     position: relative; z-index: 2;
     transition: color .2s ease;
+    padding: 0 2px;
 }
-.vs-nav-btn span { font-size: 10px; font-weight: 600; letter-spacing: .3px }
+.vs-nav-btn span { font-size: 10px; font-weight: 600; letter-spacing: .2px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .vs-nav-btn.is-active { color: #141814 }
 
 /* ─── Feriados del mes ─── */

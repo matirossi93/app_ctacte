@@ -369,7 +369,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                                         onChange={e => setSelectedVendor(e.target.value ? Number(e.target.value) : null)}>
                                         <option value="">
                                             {showCustomBadge
-                                                ? `Todos los vendedores (${visibleCods.size} de ${vendedores.length})`
+                                                ? `Todos (${visibleCods.size} de ${vendedores.length})`
                                                 : 'Todos los vendedores'}
                                         </option>
                                         {vendedores.map(v => (
