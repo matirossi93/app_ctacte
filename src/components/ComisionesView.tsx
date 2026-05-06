@@ -61,6 +61,13 @@ export const ComisionesView = ({ isAdmin, viewPeriod, userCodVendedor }: Props) 
             const params = new URLSearchParams();
             params.set('year', String(viewPeriod.year));
             params.set('month', String(viewPeriod.month));
+            // asOfDay del PeriodSelector → corte hasta esa fecha (incluida).
+            // Si no hay asOfDay, el endpoint trae todo el mes (incluyendo
+            // facturas con fecha futura del mismo mes).
+            if (viewPeriod.asOfDay != null) {
+                const asOfDate = `${viewPeriod.year}-${String(viewPeriod.month).padStart(2, '0')}-${String(viewPeriod.asOfDay).padStart(2, '0')}`;
+                params.set('asOfDate', asOfDate);
+            }
             const res = await fetch(`/api/comisiones?${params.toString()}`, {
                 headers: authHeaders(), signal: ctrl.signal,
             });
@@ -77,9 +84,11 @@ export const ComisionesView = ({ isAdmin, viewPeriod, userCodVendedor }: Props) 
         load();
         return () => { if (abortRef.current) abortRef.current.abort(); };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [viewPeriod.year, viewPeriod.month]);
+    }, [viewPeriod.year, viewPeriod.month, viewPeriod.asOfDay]);
 
-    const monthLabel = `${MONTH_NAMES[viewPeriod.month - 1]} ${viewPeriod.year}`;
+    const monthLabel = viewPeriod.asOfDay != null
+        ? `${MONTH_NAMES[viewPeriod.month - 1]} ${viewPeriod.year} · al ${String(viewPeriod.asOfDay).padStart(2, '0')}/${String(viewPeriod.month).padStart(2, '0')}`
+        : `${MONTH_NAMES[viewPeriod.month - 1]} ${viewPeriod.year}`;
 
     // Si vendedor, su única fila. Si admin, ranking + totales.
     const ownItem = !isAdmin && data

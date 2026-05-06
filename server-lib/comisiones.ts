@@ -57,6 +57,7 @@ interface GetComisionesOpts {
   year: number;
   month: number;
   codVendedorFilter?: number;
+  asOfDate?: string; // 'YYYY-MM-DD' — incluir cabeceras con fecha <= asOfDate
 }
 
 /**
@@ -76,7 +77,8 @@ function clasificarCabecera(cab: any): 'FA' | 'NC' | null {
 }
 
 export async function getComisionesData(opts: GetComisionesOpts) {
-  const { year, month, codVendedorFilter } = opts;
+  const { year, month, codVendedorFilter, asOfDate } = opts;
+  const asOfValid = asOfDate && /^\d{4}-\d{2}-\d{2}$/.test(asOfDate) ? asOfDate : null;
 
   // 1. Datos crudos paralelos.
   const [ventasRes, itemsRes, articulosMap, vendedoresIM] = await Promise.all([
@@ -90,7 +92,7 @@ export async function getComisionesData(opts: GetComisionesOpts) {
   // Solo cabeceras válidas. Las inválidas (PR, ND, anuladas) quedan fuera y
   // sus items se descartan automáticamente en el loop.
   const cabPorId = new Map<number, { sign: 1 | -1; cod_vendedor: number; tipo: string }>();
-  let nFA = 0, nNC = 0, nDescartadas = 0, nClientesInternos = 0, nOtraEmpresa = 0;
+  let nFA = 0, nNC = 0, nDescartadas = 0, nClientesInternos = 0, nOtraEmpresa = 0, nFueraCorte = 0;
   for (const v of ventasRes.ventas) {
     const id = Number((v as any).id);
     if (!Number.isFinite(id)) { nDescartadas++; continue; }
@@ -100,6 +102,14 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     if (Number.isFinite(codEmp) && codEmp !== COD_EMPRESA_CASA_CENTRAL) {
       nOtraEmpresa++;
       continue;
+    }
+    // Filtrar por fecha de corte (asOfDate). Si la fecha de la cabecera
+    // es posterior al corte, no se incluye. Útil para comparar contra
+    // un cierre manual o para que cada vendedor vea solo lo facturado a
+    // hoy sin las facturas con fecha futura del mismo mes.
+    if (asOfValid) {
+      const fechaCab = String((v as any).fecha ?? '').slice(0, 10);
+      if (fechaCab && fechaCab > asOfValid) { nFueraCorte++; continue; }
     }
     const clase = clasificarCabecera(v);
     if (!clase) { nDescartadas++; continue; }
@@ -252,6 +262,8 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     cabeceras_descartadas: nDescartadas,
     cabeceras_clientes_internos_excluidas: nClientesInternos,
     cabeceras_otra_empresa_excluidas: nOtraEmpresa,
+    cabeceras_fuera_corte: nFueraCorte,
+    asOfDate: asOfValid,
     items_total: itemsRes.items.length,
     items_procesados: itemsProcesados,
     items_descartados_sin_cabecera: itemsDescartados,
@@ -631,11 +643,14 @@ export async function listComisiones(req: Request & { user?: JwtPayload }, res: 
       if (Number.isFinite(c)) codVendedorFilter = c;
     }
 
-    const cacheKey = `comisiones:${year}-${month}:${codVendedorFilter ?? 'all'}`;
+    const asOfDateRaw = String(req.query.asOfDate ?? '').trim();
+    const asOfDate = /^\d{4}-\d{2}-\d{2}$/.test(asOfDateRaw) ? asOfDateRaw : undefined;
+
+    const cacheKey = `comisiones:${year}-${month}:${codVendedorFilter ?? 'all'}:${asOfDate ?? 'full'}`;
     const hit = getResponseCached(cacheKey);
     if (hit) { res.set('X-Cache', 'HIT').json(hit); return; }
 
-    const data = await getComisionesData({ year, month, codVendedorFilter });
+    const data = await getComisionesData({ year, month, codVendedorFilter, asOfDate });
     const body = { ok: true, ...data };
     setResponseCached(cacheKey, body);
     res.set('X-Cache', 'MISS').json(body);
