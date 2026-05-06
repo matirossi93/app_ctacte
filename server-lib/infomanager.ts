@@ -56,7 +56,7 @@ export interface VentaRaw {
  */
 export async function fetchVentas(desde: string, hasta: string, opts?: { codEmpresa?: number; limit?: number }): Promise<VentaRaw[]> {
   const cli = await imClient();
-  const limit = opts?.limit ?? 500;
+  const limit = opts?.limit ?? 5000;
   const all: VentaRaw[] = [];
   let page = 1;
   while (true) {
@@ -66,10 +66,9 @@ export async function fetchVentas(desde: string, hasta: string, opts?: { codEmpr
     const { data } = await cli.get('/ventas', { params });
     const rows: VentaRaw[] = data?.results ?? data?.ventas ?? (Array.isArray(data) ? data : []);
     all.push(...rows);
-    const totalItems = data?.totalItems ?? null;
-    const nextPage = data?.nextPage ?? null;
-    if (!rows.length || !nextPage) break;
-    if (totalItems != null && all.length >= totalItems) break;
+    // Si la página vino llena (== limit), asumimos que hay más. Si vino
+    // incompleta, terminamos. nextPage de IM no es confiable.
+    if (rows.length < limit) break;
     page += 1;
     if (page > 200) {
       console.warn(`fetchVentas: safety break en page ${page}, total=${all.length}`);
@@ -101,7 +100,9 @@ export interface VentaItem {
  */
 export async function fetchVentasItems(desde: string, hasta: string, opts?: { codEmpresa?: number; limit?: number }): Promise<VentaItem[]> {
   const cli = await imClient();
-  const limit = opts?.limit ?? 500;
+  // limit alto para minimizar requests. semillerobi-next y semillero-existencias
+  // usan limit=10000 con éxito en /ventas y /ventas/items.
+  const limit = opts?.limit ?? 5000;
   const all: VentaItem[] = [];
   let page = 1;
   while (true) {
@@ -110,10 +111,10 @@ export async function fetchVentasItems(desde: string, hasta: string, opts?: { co
     const { data } = await cli.get('/ventas/items', { params });
     const rows: VentaItem[] = data?.results ?? data?.items ?? (Array.isArray(data) ? data : []);
     all.push(...rows);
-    const totalItems = data?.totalItems ?? null;
-    const nextPage = data?.nextPage ?? null;
-    if (!rows.length || !nextPage) break;
-    if (totalItems != null && all.length >= totalItems) break;
+    // Estrategia robusta: si la página vino llena (== limit), asumimos que
+    // hay más. Si vino incompleta, terminamos. No confío en data.nextPage
+    // porque no siempre está documentado y varía entre endpoints de IM.
+    if (rows.length < limit) break;
     page += 1;
     if (page > 200) {
       console.warn(`fetchVentasItems: safety break en page ${page}, total=${all.length}`);
