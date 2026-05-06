@@ -47,7 +47,9 @@ export const RUBRO_ACCESORIOS_VENENOS = 11;
 
 export const COMISION_RESTO = 0.035;
 export const COMISION_ACCESORIOS = 0.04;
-export const COMISION_EXACT = 0.055;
+// Mati confirmó 06/05/2026: el COMISIONES.xlsx decía 5.5% pero el cálculo
+// manual real usa 5.0% para EXACT (PREMIUM + CRIADORES).
+export const COMISION_EXACT = 0.05;
 export const COMISION_LISTA_1PCT = 0.01;
 
 /**
@@ -74,17 +76,17 @@ export function pctParaArticulo(
   return COMISION_RESTO;
 }
 
-export type CategoriaComision = '5.5%' | '4%' | '3.5%' | '1%';
+export type CategoriaComision = '5%' | '4%' | '3.5%' | '1%';
 
 export function categoriaParaPct(pct: number): CategoriaComision {
-  if (pct === COMISION_EXACT) return '5.5%';
+  if (pct === COMISION_EXACT) return '5%';
   if (pct === COMISION_ACCESORIOS) return '4%';
   if (pct === COMISION_LISTA_1PCT) return '1%';
   return '3.5%';
 }
 
 export const CATEGORIA_LABELS: Record<CategoriaComision, string> = {
-  '5.5%': 'EXACT (5.5%)',
+  '5%': 'EXACT (5%)',
   '4%': 'Accesorios y Venenos (4%)',
   '3.5%': 'Resto (3.5%)',
   '1%': 'BELCAN/ZIMPI/GC/Piedras/Conejo (1%)',
