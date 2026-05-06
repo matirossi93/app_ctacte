@@ -28,7 +28,7 @@ import {
 import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot } from './server-lib/goals.js';
 import { listComisiones, probeVenta, comisionesSample, topArticulos, facturasVendedor, diagnoseArticulo } from './server-lib/comisiones.js';
 import { listClientesLookup } from './server-lib/clientes.js';
-import { listActivity, createActivity, deleteActivity } from './server-lib/activity.js';
+import { listActivity, createActivity, updateActivity, deleteActivity } from './server-lib/activity.js';
 import {
   listUsuarios, createUsuario, updateUsuario, deleteUsuario, changePassword
 } from './server-lib/usuarios.js';
@@ -564,6 +564,7 @@ app.get('/api/debug/im-clientes-sample', requireJwt, requireAdmin, async (req: a
 // ─── Actividad ───────────────────────────────────────────────────────────────
 app.get('/api/activity', requireJwt, (req: any, res) => listActivity(req, res));
 app.post('/api/activity', requireJwt, (req: any, res) => createActivity(req, res));
+app.put('/api/activity/:id', requireJwt, (req: any, res) => updateActivity(req, res));
 app.delete('/api/activity/:id', requireJwt, (req: any, res) => deleteActivity(req, res));
 
 // ─── Gestión de usuarios ─────────────────────────────────────────────────────

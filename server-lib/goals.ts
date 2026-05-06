@@ -137,11 +137,11 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
     const diasTrans = isCurrentMonth ? businessDaysElapsed(year, month, t.day, holidays) : diasTotal;
     const diasRestantes = Math.max(0, diasTotal - diasTrans);
 
-    // Whitelist de cod_vendedor que nos interesa mostrar. InfoManager trae históricos
-    // (Federico=1, Adolfo=5, Robledo=8, Dario=9, Niño=10) que no operan más — no los queremos.
-    // Si se incorpora alguien nuevo, agregar su cod_vendedor acá.
-    // 2=Sebastián, 3=Marcelo, 4=Julio, 6=Andrea (backoffice), 12=Brian.
-    const COD_VENDEDORES_VISIBLES = new Set([2, 3, 4, 6, 12]);
+    // Whitelist de cod_vendedor comerciales. Mismo set que comisiones.ts —
+    // sin esto el "avance" de Objetivos sumaba a Andrea (backoffice) y daba
+    // un total mayor al ranking de Comisiones, que la excluye.
+    // 2=Sebastián, 3=Marcelo, 4=Julio, 12=Brian.
+    const COD_VENDEDORES_VISIBLES = new Set([2, 3, 4, 12]);
 
     const incluirInactivos = String(req.query.incluir_inactivos ?? '') === 'true';
     const vendedoresValidos = (vendedoresIM ?? []).filter((v: any) => {

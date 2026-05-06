@@ -3,7 +3,7 @@ import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
     DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, Settings2, MapPin,
-    Sun, ChevronRight, AlertTriangle, Download
+    Sun, ChevronRight, AlertTriangle, Download, Trash2, Pencil
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser } from '../utils/auth';
 import { RecibosApp } from './RecibosApp';
@@ -154,6 +154,7 @@ interface ActivityItem {
     monto: number | null;
     fecha_promesa: string | null;
     created_at: string;
+    created_by_email?: string | null;
     created_by_nombre?: string | null;
 }
 
@@ -1777,6 +1778,9 @@ function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendo
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
     const [showNew, setShowNew] = useState<{ cod_cliente?: string; name?: string } | null>(null);
+    const [editing, setEditing] = useState<ActivityItem | null>(null);
+    const me = getUser();
+    const myEmail = me?.email ?? '';
 
     const load = async () => {
         setLoading(true); setErr(null);
@@ -1802,6 +1806,16 @@ function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendo
         }
         /* eslint-disable-next-line react-hooks/exhaustive-deps */
     }, [pendingNew]);
+
+    const deleteItem = async (id: string) => {
+        if (!confirm('¿Borrar esta actividad?')) return;
+        const res = await fetch(`/api/activity/${id}`, { method: 'DELETE', headers: authHeaders() });
+        if (res.ok) load();
+        else {
+            const j = await res.json().catch(() => ({}));
+            alert(j.error || 'Error al borrar');
+        }
+    };
 
     const byDay = useMemo(() => {
         const map = new Map<string, ActivityItem[]>();
@@ -1839,9 +1853,16 @@ function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendo
                         <span className="when">{formatDay(day)}</span>
                         <span className="bar" />
                     </div>
-                    {list.map(it => (
-                        <FeedItem key={it.id} item={it} clientName={it.cod_cliente ? clientNameMap[String(it.cod_cliente)]?.['Razon Social'] : null} />
-                    ))}
+                    {list.map(it => {
+                        const canMutate = isAdmin || (it.created_by_email != null && it.created_by_email === myEmail);
+                        return (
+                            <FeedItem key={it.id} item={it}
+                                clientName={it.cod_cliente ? clientNameMap[String(it.cod_cliente)]?.['Razon Social'] : null}
+                                onEdit={canMutate ? () => setEditing(it) : undefined}
+                                onDelete={canMutate ? () => deleteItem(it.id) : undefined}
+                            />
+                        );
+                    })}
                 </div>
             ))}
 
@@ -1850,17 +1871,32 @@ function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendo
                 <Plus size={22} />
             </button>
 
-            {showNew && <NewActivityInline
+            {showNew && <ActivityFormInline
+                mode="new"
                 defaultClientCod={showNew.cod_cliente ?? ''}
                 defaultClientName={showNew.name ?? ''}
                 onClose={() => setShowNew(null)}
-                onCreated={() => { setShowNew(null); load(); }}
+                onSaved={() => { setShowNew(null); load(); }}
+            />}
+
+            {editing && <ActivityFormInline
+                mode="edit"
+                initial={editing}
+                defaultClientName={editing.cod_cliente ? clientNameMap[String(editing.cod_cliente)]?.['Razon Social'] : ''}
+                onClose={() => setEditing(null)}
+                onSaved={() => { setEditing(null); load(); }}
             />}
         </div>
     );
 }
 
-function FeedItem({ item, clientName }: { item: ActivityItem; clientName: string | null }) {
+function FeedItem({ item, clientName, onEdit, onDelete }:
+    {
+        item: ActivityItem;
+        clientName: string | null;
+        onEdit?: () => void;
+        onDelete?: () => void;
+    }) {
     const iconProps: Record<ActivityItem['tipo'], { Icon: any; color: string; label: string }> = {
         nota: { Icon: FileText, color: 'ochre', label: 'Nota' },
         llamada: { Icon: Phone, color: 'green', label: 'Llamada' },
@@ -1887,27 +1923,56 @@ function FeedItem({ item, clientName }: { item: ActivityItem; clientName: string
                 )}
                 {item.contenido && <div className="vs-feed-text">{item.contenido}</div>}
             </div>
+            {(onEdit || onDelete) && (
+                <div className="vs-feed-actions">
+                    {onEdit && (
+                        <button className="vs-feed-edit-btn" onClick={onEdit} aria-label="Editar" title="Editar">
+                            <Pencil size={14} />
+                        </button>
+                    )}
+                    {onDelete && (
+                        <button className="vs-feed-del-btn" onClick={onDelete} aria-label="Borrar" title="Borrar">
+                            <Trash2 size={14} />
+                        </button>
+                    )}
+                </div>
+            )}
         </div>
     );
 }
 
-function NewActivityInline({ defaultClientCod, defaultClientName, onClose, onCreated }:
-    { defaultClientCod: string; defaultClientName: string; onClose: () => void; onCreated: () => void }) {
-    const [tipo, setTipo] = useState<ActivityItem['tipo']>('nota');
-    const [contenido, setContenido] = useState('');
-    const [monto, setMonto] = useState('');
-    const [fechaPromesa, setFechaPromesa] = useState('');
+function ActivityFormInline({ mode, initial, defaultClientCod, defaultClientName, onClose, onSaved }:
+    {
+        mode: 'new' | 'edit';
+        initial?: ActivityItem;
+        defaultClientCod?: string;
+        defaultClientName?: string;
+        onClose: () => void;
+        onSaved: () => void;
+    }) {
+    const [tipo, setTipo] = useState<ActivityItem['tipo']>(initial?.tipo ?? 'nota');
+    const [contenido, setContenido] = useState(initial?.contenido ?? '');
+    const [monto, setMonto] = useState(initial?.monto != null ? String(initial.monto) : '');
+    const [fechaPromesa, setFechaPromesa] = useState(initial?.fecha_promesa ?? '');
     const [saving, setSaving] = useState(false);
     const [err, setErr] = useState<string | null>(null);
 
     const submit = async () => {
         setSaving(true); setErr(null);
         try {
-            const body: any = { tipo, cod_cliente: defaultClientCod || null, contenido: contenido || null, monto: monto ? Number(monto) : null, fecha_promesa: fechaPromesa || null };
-            const res = await fetch('/api/activity', { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(body) });
+            const body: any = {
+                tipo,
+                contenido: contenido || null,
+                monto: monto ? Number(monto) : null,
+                fecha_promesa: fechaPromesa || null,
+            };
+            if (mode === 'new') body.cod_cliente = defaultClientCod || null;
+            const url = mode === 'edit' ? `/api/activity/${initial!.id}` : '/api/activity';
+            const method = mode === 'edit' ? 'PUT' : 'POST';
+            const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(body) });
             const j = await res.json();
             if (!res.ok || !j.ok) throw new Error(j.error);
-            onCreated();
+            onSaved();
         } catch (e: any) { setErr(e.message); }
         finally { setSaving(false); }
     };
@@ -1925,7 +1990,7 @@ function NewActivityInline({ defaultClientCod, defaultClientName, onClose, onCre
         <div className="vs-newact-backdrop" onClick={onClose}>
             <div className="vs-newact" onClick={e => e.stopPropagation()}>
                 <header>
-                    <h3>Nueva actividad</h3>
+                    <h3>{mode === 'edit' ? 'Editar actividad' : 'Nueva actividad'}</h3>
                     <button onClick={onClose}><span aria-hidden>×</span></button>
                 </header>
                 {defaultClientName && <div className="vs-newact-cliente">Cliente: <strong>{defaultClientName}</strong></div>}
@@ -1953,7 +2018,7 @@ function NewActivityInline({ defaultClientCod, defaultClientName, onClose, onCre
                 <div className="vs-newact-actions">
                     <button className="vs-btn-sec" onClick={onClose} disabled={saving}>Cancelar</button>
                     <button className="vs-btn-primary" onClick={submit} disabled={saving}>
-                        {saving ? <><Loader2 size={14} className="spin" /> Guardando…</> : 'Guardar'}
+                        {saving ? <><Loader2 size={14} className="spin" /> Guardando…</> : (mode === 'edit' ? 'Guardar cambios' : 'Guardar')}
                     </button>
                 </div>
             </div>

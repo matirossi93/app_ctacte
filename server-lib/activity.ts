@@ -102,6 +102,58 @@ export async function createActivity(req: Request & { user?: JwtPayload }, res: 
   }
 }
 
+/** PUT /api/activity/:id — edita (solo propia o admin/gerente) */
+export async function updateActivity(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    if (!hasSupabase()) { res.status(500).json({ error: 'Supabase no configurado' }); return; }
+    const user = req.user!;
+    const body = req.body ?? {};
+
+    const { data: row } = await sb()
+      .from('vendor_activity')
+      .select('created_by, cod_vendedor')
+      .eq('id', req.params.id)
+      .eq('tenant_id', TENANT_ID)
+      .maybeSingle();
+    if (!row) { res.status(404).json({ error: 'No encontrado' }); return; }
+    if (user.rol === 'vendedor' && row.created_by !== user.sub) {
+      res.status(403).json({ error: 'No podés editar actividad de otro usuario' });
+      return;
+    }
+
+    const patch: Record<string, any> = {};
+    if (body.tipo !== undefined) {
+      if (!TIPOS.includes(body.tipo)) { res.status(400).json({ error: `tipo inválido: ${body.tipo}` }); return; }
+      patch.tipo = body.tipo;
+    }
+    if (body.contenido !== undefined) patch.contenido = body.contenido || null;
+    if (body.monto !== undefined) patch.monto = body.monto != null && body.monto !== '' ? Number(body.monto) : null;
+    if (body.fecha_promesa !== undefined) patch.fecha_promesa = body.fecha_promesa || null;
+    if (body.cod_cliente !== undefined) patch.cod_cliente = body.cod_cliente ? Number(body.cod_cliente) : null;
+    // cod_vendedor sólo lo cambia admin/gerente.
+    if (body.cod_vendedor !== undefined && user.rol !== 'vendedor') {
+      patch.cod_vendedor = Number(body.cod_vendedor) || row.cod_vendedor;
+    }
+
+    if (Object.keys(patch).length === 0) {
+      res.status(400).json({ error: 'Nada para actualizar' });
+      return;
+    }
+
+    const { data, error } = await sb()
+      .from('vendor_activity')
+      .update(patch)
+      .eq('id', req.params.id)
+      .eq('tenant_id', TENANT_ID)
+      .select()
+      .single();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true, item: data });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
 /** DELETE /api/activity/:id — borra (solo propia o admin) */
 export async function deleteActivity(req: Request & { user?: JwtPayload }, res: Response) {
   try {

@@ -455,7 +455,22 @@
     display: flex; gap: 12px; margin-bottom: 8px;
     border: 1px solid rgba(20,24,20,.05);
     box-shadow: 0 2px 0 rgba(20,24,20,.04), 0 6px 16px -8px rgba(20,24,20,.14);
+    position: relative;
 }
+.vs-feed-actions {
+    display: flex; flex-direction: column; gap: 4px;
+    align-self: flex-start;
+    flex-shrink: 0;
+}
+.vs-feed-edit-btn, .vs-feed-del-btn {
+    width: 28px; height: 28px; border-radius: 8px;
+    background: rgba(20,24,20,.04); border: 1px solid rgba(20,24,20,.06);
+    display: grid; place-items: center; cursor: pointer;
+    color: #6e7670; padding: 0;
+    transition: background .15s ease, color .15s ease;
+}
+.vs-feed-edit-btn:hover { background: rgba(6,101,47,.08); color: #06652F }
+.vs-feed-del-btn:hover { background: rgba(168,62,43,.08); color: #A83E2B }
 .vs-feed-icon { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; flex-shrink: 0 }
 .vs-feed-icon.ochre { background: #FAECC2; color: #B58829 }
 .vs-feed-icon.green { background: #E4EDE5; color: #03481F }

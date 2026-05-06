@@ -3,6 +3,15 @@ import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import { computeVentaNeta, monthKey } from '../src/utils/ventas.js';
 import { invalidateAll as invalidateGoalsCache } from './goalsResponseCache.js';
 
+// Casa Central. Filtramos para alinear con Comisiones (que ya excluye sucursales
+// y traspasos internos). Sin esto, Goals sumaba ventas de empresas hermanas y
+// el "avance" no cuadraba con el "facturado neto" del panel Comisiones.
+const COD_EMPRESA_DEFAULT = 1;
+
+// Clientes internos (sucursales propias / consumo) que NO son ventas comerciales.
+// Mismo set que comisiones.ts. Si Comisiones los excluye, Objetivos también.
+const COD_CLIENTES_INTERNOS = new Set<number>([1, 652, 666, 861]);
+
 export interface SyncResult {
   ok: boolean;
   comprobantes: number;
@@ -67,6 +76,7 @@ async function syncVentasRango(opts: {
     let comprobantesCero = 0;
     let reasignados = 0;
 
+    let internosExcluidos = 0;
     for (const v of ventas) {
       const tipo = String((v as any).tipo ?? (v as any).tipo_comprobante ?? '').toUpperCase();
       const neto = computeVentaNeta(v);
@@ -76,6 +86,12 @@ async function syncVentasRango(opts: {
       t.sumTotal += total;
       t.sumNeto += neto;
       byTipo.set(tipo, t);
+
+      // Excluir traspasos a sucursales propias — no son ventas comerciales.
+      if (v.cod_cliente != null && COD_CLIENTES_INTERNOS.has(Number(v.cod_cliente))) {
+        internosExcluidos++;
+        continue;
+      }
 
       if (neto === 0) { comprobantesCero++; continue; }
       const k = monthKey(v.fa_fecha ?? v.fecha);
@@ -111,7 +127,7 @@ async function syncVentasRango(opts: {
       .map(([t, s]) => `${t || '(vacío)'}: ${s.count} comp, $${Math.round(s.sumTotal).toLocaleString('es-AR')} total, $${Math.round(s.sumNeto).toLocaleString('es-AR')} neto`)
       .join(' | ');
     console.log(`${tag} Breakdown por tipo (${desde}→${hasta}): ${tipoSummary}`);
-    console.log(`${tag} Comprobantes c/neto=0 (ND/RC/RE/PR/anuladas): ${comprobantesCero}. Reasignados cod_vendedor=0→cliente: ${reasignados}`);
+    console.log(`${tag} Comprobantes c/neto=0 (ND/RC/RE/PR/anuladas): ${comprobantesCero}. Reasignados cod_vendedor=0→cliente: ${reasignados}. Clientes internos excluidos: ${internosExcluidos}.`);
 
     // Top 5 clientes por neto acumulado — permite al admin cross-checkear.
     const topClientes = Array.from(byCliente.values())
@@ -177,7 +193,7 @@ export async function syncVentasMesActual(opts?: { codEmpresa?: number }): Promi
   const r = await syncVentasRango({
     desde: ymdMonthStart(),
     hasta: ymdToday(),
-    codEmpresa: opts?.codEmpresa,
+    codEmpresa: opts?.codEmpresa ?? COD_EMPRESA_DEFAULT,
     label: 'mes-actual',
   });
   // El cron */30 actualiza vendor/client_sales_monthly del mes actual:
@@ -197,7 +213,7 @@ export async function syncVentasMes(year: number, month: number, opts?: { codEmp
   const hasta = isCurrent ? ymdToday() : ymdMonthEnd(year, month);
   return syncVentasRango({
     desde, hasta,
-    codEmpresa: opts?.codEmpresa,
+    codEmpresa: opts?.codEmpresa ?? COD_EMPRESA_DEFAULT,
     label: `${year}-${String(month).padStart(2, '0')}`,
   });
 }
