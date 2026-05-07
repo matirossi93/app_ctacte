@@ -24,10 +24,6 @@ export interface SyncResult {
   error?: string;
 }
 
-function ymdToday(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 function ymdMonthStart(date = new Date()): string {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-01`;
 }
@@ -216,13 +212,17 @@ async function syncVentasRango(opts: {
 }
 
 /**
- * Sync del mes actual: del 1 al hoy.
- * Wrapper sobre syncVentasRango.
+ * Sync del mes actual: del 1 al último día del mes (incluye facturas con
+ * `fa_fecha` futura del mes en curso). Antes recortaba a hoy y dejaba afuera
+ * las facturas anticipadas, generando diff residual con Comisiones (que
+ * consulta el mes entero). Cada corrida del cron */30 vuelve a refrescar
+ * el rango y los días futuros aparecen automáticamente cuando IM los tiene.
  */
 export async function syncVentasMesActual(opts?: { codEmpresa?: number }): Promise<SyncResult> {
+  const now = new Date();
   const r = await syncVentasRango({
     desde: ymdMonthStart(),
-    hasta: ymdToday(),
+    hasta: ymdMonthEnd(now.getUTCFullYear(), now.getUTCMonth() + 1),
     codEmpresa: opts?.codEmpresa ?? COD_EMPRESA_DEFAULT,
     label: 'mes-actual',
   });
@@ -233,14 +233,13 @@ export async function syncVentasMesActual(opts?: { codEmpresa?: number }): Promi
 }
 
 /**
- * Sync de un mes específico (entero, día 1 al último).
- * Si es el mes en curso, recorta `hasta` a hoy.
+ * Sync de un mes específico (entero, día 1 al último día). Para el mes en
+ * curso incluye facturas con `fa_fecha` futura del mismo mes (ventas
+ * anticipadas) — el cron lo refresca cada media hora.
  */
 export async function syncVentasMes(year: number, month: number, opts?: { codEmpresa?: number }): Promise<SyncResult> {
-  const now = new Date();
-  const isCurrent = now.getUTCFullYear() === year && (now.getUTCMonth() + 1) === month;
   const desde = `${year}-${String(month).padStart(2, '0')}-01`;
-  const hasta = isCurrent ? ymdToday() : ymdMonthEnd(year, month);
+  const hasta = ymdMonthEnd(year, month);
   return syncVentasRango({
     desde, hasta,
     codEmpresa: opts?.codEmpresa ?? COD_EMPRESA_DEFAULT,
