@@ -5,6 +5,10 @@
     backdrop-filter: blur(8px);
     display: flex; align-items: stretch; justify-content: center;
     padding: 12px;
+    /* Respetar la safe-area del notch / status bar en iOS para que el
+       header del modal no quede tapado por el reloj y la batería. */
+    padding-top: max(12px, env(safe-area-inset-top));
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
     animation: rec-fade-in .2s ease;
 }
 @keyframes rec-fade-in { from { opacity: 0 } to { opacity: 1 } }
