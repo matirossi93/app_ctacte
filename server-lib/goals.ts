@@ -73,6 +73,36 @@ export interface GoalItem {
 }
 
 /**
+ * GET /api/goals/raw-rows?year=&month=  (admin)
+ * Debug: devuelve los rows tal cual están en `vendor_sales_monthly` para
+ * (year, month) sin pasar por el cache, con `updated_at` incluido. Sirve para
+ * confirmar si el último sync efectivamente upserteó los datos esperados.
+ */
+export async function rawRows(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') {
+      res.status(403).json({ error: 'Requiere admin/gerente' }); return;
+    }
+    if (!hasSupabase()) { res.status(500).json({ error: 'Supabase no configurado' }); return; }
+    const t = today();
+    const year = Number(req.query.year) || t.year;
+    const month = Number(req.query.month) || t.month;
+    const { data, error } = await sb()
+      .from('vendor_sales_monthly')
+      .select('cod_vendedor, neto, num_comprobantes, updated_at')
+      .eq('tenant_id', TENANT_ID)
+      .eq('year', year)
+      .eq('month', month)
+      .order('neto', { ascending: false });
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true, year, month, rows: data });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
  * GET /api/goals?year=&month=
  * Admin/gerente: TODOS los vendedores con goals + avance.
  * Vendedor: solo el suyo.
