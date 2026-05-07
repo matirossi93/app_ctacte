@@ -194,7 +194,11 @@ export async function listRecibos(req: Request & { user?: JwtPayload }, res: Res
     if (req.query.status) q = q.eq('status', String(req.query.status));
     if (req.query.cod_cliente) q = q.eq('cod_cliente', Number(req.query.cod_cliente));
     if (req.query.cod_vendedor && user.rol !== 'vendedor') q = q.eq('cod_vendedor', Number(req.query.cod_vendedor));
-    const limit = Math.min(Number(req.query.limit) || 30, 200);
+    // Default 200 (max). Antes era 30 y los recibos más viejos del mes
+    // desaparecían cuando se acumulaban nuevos. 200 cubre 1-2 meses de
+    // carga típica del equipo; si en el futuro hay más, agregar paginación
+    // o filtro por rango de fecha.
+    const limit = Math.min(Number(req.query.limit) || 200, 500);
     q = q.order('created_at', { ascending: false }).limit(limit);
     const { data, error } = await q;
     if (error) { res.status(500).json({ error: error.message }); return; }
