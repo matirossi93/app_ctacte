@@ -25,8 +25,8 @@ import {
   uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, cuentasDebug, cuentasRefresh,
   reverificarMP, elegirMatchMP, procesarColaMP
 } from './server-lib/recibos.js';
-import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot, rawRows } from './server-lib/goals.js';
-import { listComisiones, probeVenta, comisionesSample, topArticulos, facturasVendedor, diagnoseArticulo, diffGoalsVsComisiones } from './server-lib/comisiones.js';
+import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot } from './server-lib/goals.js';
+import { listComisiones, probeVenta, comisionesSample, topArticulos, facturasVendedor, diagnoseArticulo } from './server-lib/comisiones.js';
 import { listClientesLookup } from './server-lib/clientes.js';
 import { listActivity, createActivity, updateActivity, deleteActivity } from './server-lib/activity.js';
 import {
@@ -478,7 +478,6 @@ app.post('/api/cuentas/refresh', requireJwt, (req: any, res) => cuentasRefresh(r
 
 // ─── Objetivos ───────────────────────────────────────────────────────────────
 app.get('/api/goals', requireJwt, (req: any, res) => listGoals(req, res));
-app.get('/api/goals/raw-rows', requireJwt, requireAdmin, (req: any, res) => rawRows(req, res));
 app.post('/api/goals', requireJwt, (req: any, res) => setGoal(req, res));
 app.post('/api/goals/sync-now', requireJwt, (req: any, res) => syncVentasNow(req, res));
 app.post('/api/goals/backfill', requireJwt, requireAdmin, async (req: any, res) => {
@@ -520,7 +519,6 @@ app.get('/api/comisiones/sample', requireJwt, requireAdmin, (req: any, res) => c
 app.get('/api/comisiones/top-articulos', requireJwt, requireAdmin, (req: any, res) => topArticulos(req, res));
 app.get('/api/comisiones/facturas-vendedor', requireJwt, requireAdmin, (req: any, res) => facturasVendedor(req, res));
 app.get('/api/comisiones/diagnose-articulo/:cod', requireJwt, requireAdmin, (req: any, res) => diagnoseArticulo(req, res));
-app.get('/api/comisiones/diff-goals', requireJwt, requireAdmin, (req: any, res) => diffGoalsVsComisiones(req, res));
 
 // ─── Clientes lookup (maestro completo, con y sin deuda) ─────────────────────
 app.get('/api/clientes/lookup', requireJwt, (req: any, res) => listClientesLookup(req, res));

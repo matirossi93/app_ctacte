@@ -2,15 +2,10 @@ import { fetchVentas, fetchVentasItems } from './infomanager.js';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import { computeVentaNeta, monthKey } from '../src/utils/ventas.js';
 import { invalidateAll as invalidateGoalsCache } from './goalsResponseCache.js';
-
-// Casa Central. Filtramos para alinear con Comisiones (que ya excluye sucursales
-// y traspasos internos). Sin esto, Goals sumaba ventas de empresas hermanas y
-// el "avance" no cuadraba con el "facturado neto" del panel Comisiones.
-const COD_EMPRESA_DEFAULT = 1;
-
-// Clientes internos (sucursales propias / consumo) que NO son ventas comerciales.
-// Mismo set que comisiones.ts. Si Comisiones los excluye, Objetivos también.
-const COD_CLIENTES_INTERNOS = new Set<number>([1, 652, 666, 861]);
+import {
+  COD_EMPRESA_CASA_CENTRAL as COD_EMPRESA_DEFAULT,
+  COD_CLIENTES_INTERNOS,
+} from './comisionesShared.js';
 
 export interface SyncResult {
   ok: boolean;

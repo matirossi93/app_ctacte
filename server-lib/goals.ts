@@ -5,11 +5,11 @@ import type { JwtPayload } from './auth.js';
 import { computeVentaNeta, monthKey } from '../src/utils/ventas.js';
 import { getMonthlyVentasRaw, getMonthlyItemsRaw } from './snapshotCache.js';
 import { getCached as getResponseCached, setCached as setResponseCached, invalidateAll as invalidateResponseCache } from './goalsResponseCache.js';
-
-// Mismo set de filtros que comisiones.ts y syncVentas.ts. Si Comisiones
-// excluye estos, Objetivos también — sin esto los dos paneles divergen.
-const COD_EMPRESA_GOALS_DEFAULT = 1; // Casa Central
-const COD_CLIENTES_INTERNOS_GOALS = new Set<number>([1, 652, 666, 861]);
+import {
+  COD_EMPRESA_CASA_CENTRAL as COD_EMPRESA_GOALS_DEFAULT,
+  COD_CLIENTES_INTERNOS as COD_CLIENTES_INTERNOS_GOALS,
+  COD_VENDEDORES_VISIBLES as COD_VENDEDORES_VISIBLES_SHARED,
+} from './comisionesShared.js';
 
 function normLoc(s: string | null | undefined): string {
   if (!s) return '';
@@ -78,36 +78,6 @@ export interface GoalItem {
 }
 
 /**
- * GET /api/goals/raw-rows?year=&month=  (admin)
- * Debug: devuelve los rows tal cual están en `vendor_sales_monthly` para
- * (year, month) sin pasar por el cache, con `updated_at` incluido. Sirve para
- * confirmar si el último sync efectivamente upserteó los datos esperados.
- */
-export async function rawRows(req: Request & { user?: JwtPayload }, res: Response) {
-  try {
-    const user = req.user!;
-    if (user.rol !== 'admin' && user.rol !== 'gerente') {
-      res.status(403).json({ error: 'Requiere admin/gerente' }); return;
-    }
-    if (!hasSupabase()) { res.status(500).json({ error: 'Supabase no configurado' }); return; }
-    const t = today();
-    const year = Number(req.query.year) || t.year;
-    const month = Number(req.query.month) || t.month;
-    const { data, error } = await sb()
-      .from('vendor_sales_monthly')
-      .select('cod_vendedor, neto, num_comprobantes, updated_at')
-      .eq('tenant_id', TENANT_ID)
-      .eq('year', year)
-      .eq('month', month)
-      .order('neto', { ascending: false });
-    if (error) { res.status(500).json({ error: error.message }); return; }
-    res.json({ ok: true, year, month, rows: data });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message ?? 'error' });
-  }
-}
-
-/**
  * GET /api/goals?year=&month=
  * Admin/gerente: TODOS los vendedores con goals + avance.
  * Vendedor: solo el suyo.
@@ -172,11 +142,7 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
     const diasTrans = isCurrentMonth ? businessDaysElapsed(year, month, t.day, holidays) : diasTotal;
     const diasRestantes = Math.max(0, diasTotal - diasTrans);
 
-    // Whitelist de cod_vendedor comerciales. Mismo set que comisiones.ts —
-    // sin esto el "avance" de Objetivos sumaba a Andrea (backoffice) y daba
-    // un total mayor al ranking de Comisiones, que la excluye.
-    // 2=Sebastián, 3=Marcelo, 4=Julio, 12=Brian.
-    const COD_VENDEDORES_VISIBLES = new Set([2, 3, 4, 12]);
+    const COD_VENDEDORES_VISIBLES = COD_VENDEDORES_VISIBLES_SHARED;
 
     const incluirInactivos = String(req.query.incluir_inactivos ?? '') === 'true';
     const vendedoresValidos = (vendedoresIM ?? []).filter((v: any) => {
@@ -891,9 +857,7 @@ export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res
     const diasTrans = businessDaysElapsed(year, month, asOfDay, holidays);
     const diasRestantes = Math.max(0, diasTotal - diasTrans);
 
-    // ─── Whitelist de vendedores visibles (mismo criterio que listGoals) ──
-    // Andrea (cod=6) está excluida por decisión de Mati 06/05.
-    const COD_VENDEDORES_VISIBLES = new Set([2, 3, 4, 12]);
+    const COD_VENDEDORES_VISIBLES = COD_VENDEDORES_VISIBLES_SHARED;
     const incluirInactivos = String(req.query.incluir_inactivos ?? '') === 'true';
     const vendedoresValidos = (vendedoresIM ?? []).filter((v: any) => {
       const n = String(v?.nombre ?? '').toUpperCase();
