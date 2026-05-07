@@ -78,7 +78,15 @@ function clasificarCabecera(cab: any): 'FA' | 'NC' | null {
 
 export async function getComisionesData(opts: GetComisionesOpts) {
   const { year, month, codVendedorFilter, asOfDate } = opts;
-  const asOfValid = asOfDate && /^\d{4}-\d{2}-\d{2}$/.test(asOfDate) ? asOfDate : null;
+  const asOfExplicit = asOfDate && /^\d{4}-\d{2}-\d{2}$/.test(asOfDate) ? asOfDate : null;
+  // Default cuando no se pasa corte explícito:
+  // - Mes en curso → recortar a hoy (la comisión "del momento" no incluye
+  //   facturas con fa_fecha futura, que sí van al avance de Objetivos).
+  // - Mes histórico → mes entero (último día del mes).
+  const nowD = new Date();
+  const isCurrentMonth = year === nowD.getUTCFullYear() && month === (nowD.getUTCMonth() + 1);
+  const todayYmd = nowD.toISOString().slice(0, 10);
+  const asOfValid = asOfExplicit ?? (isCurrentMonth ? todayYmd : null);
 
   // 1. Datos crudos paralelos.
   const [ventasRes, itemsRes, articulosMap, vendedoresIM] = await Promise.all([
@@ -264,6 +272,8 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     cabeceras_otra_empresa_excluidas: nOtraEmpresa,
     cabeceras_fuera_corte: nFueraCorte,
     asOfDate: asOfValid,
+    asOfDate_explicit: asOfExplicit,
+    asOfDate_default_to_today: !asOfExplicit && isCurrentMonth,
     items_total: itemsRes.items.length,
     items_procesados: itemsProcesados,
     items_descartados_sin_cabecera: itemsDescartados,
