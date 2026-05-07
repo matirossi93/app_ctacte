@@ -3,8 +3,13 @@ import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import { fetchVendedores, fetchVentas } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
 import { computeVentaNeta, monthKey } from '../src/utils/ventas.js';
-import { getMonthlyVentasRaw } from './snapshotCache.js';
+import { getMonthlyVentasRaw, getMonthlyItemsRaw } from './snapshotCache.js';
 import { getCached as getResponseCached, setCached as setResponseCached, invalidateAll as invalidateResponseCache } from './goalsResponseCache.js';
+
+// Mismo set de filtros que comisiones.ts y syncVentas.ts. Si Comisiones
+// excluye estos, Objetivos también — sin esto los dos paneles divergen.
+const COD_EMPRESA_GOALS_DEFAULT = 1; // Casa Central
+const COD_CLIENTES_INTERNOS_GOALS = new Set<number>([1, 652, 666, 861]);
 
 function normLoc(s: string | null | undefined): string {
   if (!s) return '';
@@ -785,13 +790,32 @@ export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res
     const asOfDay = parseInt(asOfDate.slice(8, 10), 10);
 
     const codEmpresa = req.query.codEmpresa ? Number(req.query.codEmpresa) : undefined;
+    const codEmpresaTarget = codEmpresa ?? COD_EMPRESA_GOALS_DEFAULT;
 
-    // ─── Fetch crudo del mes (con cache RAM) ─────────────────────────────────
+    // ─── Fetch crudo del mes (con cache RAM) — ventas + items en paralelo ───
+    // Items se necesita para que el neto sea suma(items.importe) × signo de la
+    // cabecera, idéntico al cálculo de comisiones.ts. Con `fa_total` (cabecera)
+    // los dos paneles divergían por IVA y redondeos.
     const t0 = Date.now();
-    const { ventas, cached, cacheAge } = await getMonthlyVentasRaw(year, month, { codEmpresa });
+    const [ventasResRaw, itemsRes] = await Promise.all([
+      getMonthlyVentasRaw(year, month, { codEmpresa }),
+      getMonthlyItemsRaw(year, month, { codEmpresa }),
+    ]);
+    const { ventas, cached, cacheAge } = ventasResRaw;
     const fetchMs = Date.now() - t0;
 
-    // ─── Filtrar por asOfDate y agregar ──────────────────────────────────────
+    // Importe por id_comprobante (suma de líneas).
+    const importeByComprob = new Map<number, number>();
+    for (const it of itemsRes.items) {
+      const id = Number((it as any).id_comprobante);
+      if (!Number.isFinite(id)) continue;
+      const cur = importeByComprob.get(id) ?? 0;
+      importeByComprob.set(id, cur + (Number((it as any).importe ?? 0) || 0));
+    }
+
+    // ─── Filtrar por asOfDate y agregar — misma lógica que syncVentas ──────
+    // Filtros idénticos a comisiones: empresa, clientes internos, mostrador
+    // descartado (no reasignar), neto desde items × signo cabecera.
     const ventasHasta = ventas.filter(v => {
       const f = String(v.fa_fecha ?? v.fecha ?? '').slice(0, 10);
       return f && f <= asOfDate;
@@ -799,31 +823,33 @@ export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res
 
     const byCliente = new Map<number, { neto: number; num: number }>();
     const byVendedor = new Map<number, { neto: number; num: number }>();
-    const clientToVendor = new Map<number, number>();
     for (const v of ventasHasta) {
-      if (v.cod_cliente != null && v.cod_vendedor != null && v.cod_vendedor !== 0) {
-        if (!clientToVendor.has(v.cod_cliente)) clientToVendor.set(v.cod_cliente, v.cod_vendedor);
-      }
-    }
-    for (const v of ventasHasta) {
-      const neto = computeVentaNeta(v);
-      if (neto === 0) continue;
+      // Filtro empresa.
+      const codEmp = Number((v as any).cod_empresa);
+      if (Number.isFinite(codEmp) && codEmp !== codEmpresaTarget) continue;
+      // Anuladas + ND/RC/RE/PR/etc. → 0 vía computeVentaNeta.
+      const netoCabecera = computeVentaNeta(v);
+      if (netoCabecera === 0) continue;
+      // Excluir traspasos a sucursales propias.
+      if (v.cod_cliente != null && COD_CLIENTES_INTERNOS_GOALS.has(Number(v.cod_cliente))) continue;
       const k = monthKey(v.fa_fecha ?? v.fecha);
       if (!k || k.year !== year || k.month !== month) continue;
+      // Neto = suma items × signo de la cabecera.
+      const sign = netoCabecera >= 0 ? 1 : -1;
+      const importeItems = importeByComprob.get(Number((v as any).id)) ?? 0;
+      if (importeItems === 0) continue;
+      const neto = importeItems * sign;
       if (v.cod_cliente != null) {
         const cur = byCliente.get(v.cod_cliente) ?? { neto: 0, num: 0 };
         cur.neto += neto; cur.num += 1;
         byCliente.set(v.cod_cliente, cur);
       }
-      let codVend = v.cod_vendedor != null && v.cod_vendedor !== 0 ? v.cod_vendedor : null;
-      if (codVend == null && v.cod_cliente != null) {
-        codVend = clientToVendor.get(v.cod_cliente) ?? null;
-      }
-      if (codVend != null) {
-        const cur = byVendedor.get(codVend) ?? { neto: 0, num: 0 };
-        cur.neto += neto; cur.num += 1;
-        byVendedor.set(codVend, cur);
-      }
+      // Mostrador descartado (no reasignar al cliente). Comisiones también.
+      const codVend = v.cod_vendedor != null && v.cod_vendedor !== 0 ? v.cod_vendedor : null;
+      if (codVend == null) continue;
+      const cur = byVendedor.get(codVend) ?? { neto: 0, num: 0 };
+      cur.neto += neto; cur.num += 1;
+      byVendedor.set(codVend, cur);
     }
 
     // ─── Filtros por rol/vendedor para clientes (replica listClientesObjetivo) ──
@@ -866,7 +892,8 @@ export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res
     const diasRestantes = Math.max(0, diasTotal - diasTrans);
 
     // ─── Whitelist de vendedores visibles (mismo criterio que listGoals) ──
-    const COD_VENDEDORES_VISIBLES = new Set([2, 3, 4, 6, 12]);
+    // Andrea (cod=6) está excluida por decisión de Mati 06/05.
+    const COD_VENDEDORES_VISIBLES = new Set([2, 3, 4, 12]);
     const incluirInactivos = String(req.query.incluir_inactivos ?? '') === 'true';
     const vendedoresValidos = (vendedoresIM ?? []).filter((v: any) => {
       const n = String(v?.nombre ?? '').toUpperCase();
