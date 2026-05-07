@@ -215,8 +215,8 @@ async function syncVentasRango(opts: {
  * Sync del mes actual: del 1 al último día del mes (incluye facturas con
  * `fa_fecha` futura del mes en curso). Antes recortaba a hoy y dejaba afuera
  * las facturas anticipadas, generando diff residual con Comisiones (que
- * consulta el mes entero). Cada corrida del cron */30 vuelve a refrescar
- * el rango y los días futuros aparecen automáticamente cuando IM los tiene.
+ * consulta el mes entero). Cada corrida del cron (cada 30 min) vuelve a
+ * refrescar el rango y los días futuros aparecen cuando IM los tiene.
  */
 export async function syncVentasMesActual(opts?: { codEmpresa?: number }): Promise<SyncResult> {
   const now = new Date();
