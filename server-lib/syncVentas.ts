@@ -84,7 +84,13 @@ async function syncVentasRango(opts: {
     let comprobantesCero = 0;
     let mostradorDescartados = 0;
     let internosExcluidos = 0;
+    let otraEmpresaExcluidos = 0;
     let sinItems = 0;
+
+    // Filtro de empresa = el codEmpresa pedido (default Casa Central). InfoManager
+    // ignora silenciosamente el query param `codEmpresa` en /ventas y devuelve
+    // todas las empresas, así que filtramos en código (igual que comisiones.ts).
+    const codEmpresaTarget = codEmpresa ?? COD_EMPRESA_DEFAULT;
 
     for (const v of ventas) {
       const tipo = String((v as any).tipo ?? (v as any).tipo_comprobante ?? '').toUpperCase();
@@ -98,6 +104,15 @@ async function syncVentasRango(opts: {
       t.sumTotal += total;
       t.sumNeto += netoCabecera;
       byTipo.set(tipo, t);
+
+      // Filtro empresa: solo la empresa pedida. Sin esto el avance se infla
+      // con ventas de sucursales hermanas (BRS, Jujuy) cuyo equipo de
+      // vendedores tiene su propia estructura.
+      const codEmp = Number((v as any).cod_empresa);
+      if (Number.isFinite(codEmp) && codEmp !== codEmpresaTarget) {
+        otraEmpresaExcluidos++;
+        continue;
+      }
 
       // Excluir traspasos a sucursales propias — no son ventas comerciales.
       if (v.cod_cliente != null && COD_CLIENTES_INTERNOS.has(Number(v.cod_cliente))) {
@@ -142,7 +157,7 @@ async function syncVentasRango(opts: {
       .map(([t, s]) => `${t || '(vacío)'}: ${s.count} comp, $${Math.round(s.sumTotal).toLocaleString('es-AR')} total, $${Math.round(s.sumNeto).toLocaleString('es-AR')} neto-cab`)
       .join(' | ');
     console.log(`${tag} Breakdown por tipo (${desde}→${hasta}): ${tipoSummary}`);
-    console.log(`${tag} Items totales: ${items.length}. Comprobantes c/neto=0 (ND/RC/RE/PR/anuladas): ${comprobantesCero}. Sin items en /ventas/items: ${sinItems}. Mostrador descartados (cod_vendedor=0): ${mostradorDescartados}. Clientes internos excluidos: ${internosExcluidos}.`);
+    console.log(`${tag} Items totales: ${items.length}. Comprobantes c/neto=0 (ND/RC/RE/PR/anuladas): ${comprobantesCero}. Sin items en /ventas/items: ${sinItems}. Mostrador descartados (cod_vendedor=0): ${mostradorDescartados}. Clientes internos excluidos: ${internosExcluidos}. Otra empresa excluidos (filtrados en código, no IM): ${otraEmpresaExcluidos}.`);
 
     // Top 5 clientes por neto acumulado — permite al admin cross-checkear.
     const topClientes = Array.from(byCliente.values())
