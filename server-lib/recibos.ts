@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { promises as fsp } from 'node:fs';
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
 import { ocrRecibo } from './ocrRecibo.js';
@@ -106,7 +107,11 @@ export async function uploadRecibo(req: Request & { user?: JwtPayload; file?: an
     const id = randomUUID();
     const objectPath = `tenant/${TENANT_ID}/vendedor/${codVendedor}/${new Date().getUTCFullYear()}/${String(new Date().getUTCMonth() + 1).padStart(2, '0')}/${id}.${ext}`;
 
-    const { error: upErr } = await sb().storage.from(BUCKET).upload(objectPath, file.buffer, {
+    // Multer ahora usa diskStorage: el archivo está en file.path, no en file.buffer.
+    // Lo leemos una vez y lo reutilizamos para storage upload + OCR.
+    const fileBuffer = await fsp.readFile(file.path);
+
+    const { error: upErr } = await sb().storage.from(BUCKET).upload(objectPath, fileBuffer, {
       contentType: file.mimetype,
       upsert: false
     });
@@ -117,7 +122,7 @@ export async function uploadRecibo(req: Request & { user?: JwtPayload; file?: an
     let ocrConfidence: number | null = null;
     try {
       if (file.mimetype.startsWith('image/')) {
-        const base64 = file.buffer.toString('base64');
+        const base64 = fileBuffer.toString('base64');
         const parsed = await ocrRecibo(base64, file.mimetype);
         ocr = parsed;
         ocrConfidence = parsed.confidence;

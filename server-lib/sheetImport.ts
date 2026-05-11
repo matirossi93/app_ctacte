@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { promises as fsp } from 'node:fs';
 import XLSX from 'xlsx';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import type { JwtPayload } from './auth.js';
@@ -112,7 +113,11 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
 
   let wb: XLSX.WorkBook;
   try {
-    wb = XLSX.read(file.buffer, { type: 'buffer' });
+    // Multer ahora usa diskStorage: leer el XLSX del disco. El cleanup del
+    // archivo lo hace el middleware cleanupUploadedFile en server.ts.
+    const buf = file.buffer ?? (file.path ? await fsp.readFile(file.path) : null);
+    if (!buf) { res.status(400).json({ error: 'Archivo no disponible' }); return; }
+    wb = XLSX.read(buf, { type: 'buffer' });
   } catch (err: any) {
     res.status(400).json({ error: `XLSX inválido: ${err?.message ?? err}` }); return;
   }

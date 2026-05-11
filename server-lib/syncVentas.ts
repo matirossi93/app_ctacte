@@ -1,11 +1,28 @@
 import { fetchVentas, fetchVentasItems } from './infomanager.js';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import { computeVentaNeta, monthKey } from '../src/utils/ventas.js';
-import { invalidateAll as invalidateGoalsCache } from './goalsResponseCache.js';
+import { invalidateByPrefix as invalidateGoalsPrefix } from './goalsResponseCache.js';
+import { invalidateMonth as invalidateSnapshotMonth, invalidateItemsMonth } from './snapshotCache.js';
 import {
   COD_EMPRESA_CASA_CENTRAL as COD_EMPRESA_DEFAULT,
   COD_CLIENTES_INTERNOS,
 } from './comisionesShared.js';
+
+/**
+ * Invalida los caches de Goals / snapshot / items para el mes recién sincronizado.
+ * Antes se llamaba `invalidateAll()` sobre el response cache, lo que tiraba
+ * meses históricos que no habían cambiado y bajaba el hit rate. Ahora limpia
+ * solo el prefijo del mes afectado (goals + clientes) y el dataset crudo del
+ * mismo mes en snapshotCache para que /api/goals/snapshot vea las ventas
+ * frescas inmediatamente, sin esperar al TTL de 5 min.
+ */
+function invalidateMonthCaches(year: number, month: number, codEmpresa?: number): void {
+  const mm = String(month).padStart(2, '0');
+  invalidateGoalsPrefix(`goals:${year}-${mm}:`);
+  invalidateGoalsPrefix(`clientes:${year}-${mm}:`);
+  invalidateSnapshotMonth(year, month, codEmpresa);
+  invalidateItemsMonth(year, month, codEmpresa);
+}
 
 export interface SyncResult {
   ok: boolean;
@@ -222,8 +239,8 @@ export async function syncVentasMesActual(opts?: { codEmpresa?: number }): Promi
     label: 'mes-actual',
   });
   // El cron */30 actualiza vendor/client_sales_monthly del mes actual:
-  // invalidar cache de Objetivos para que la próxima carga vea el nuevo avance.
-  if (r.ok) invalidateGoalsCache();
+  // invalidar caches del mes para que la próxima carga vea el nuevo avance.
+  if (r.ok) invalidateMonthCaches(now.getUTCFullYear(), now.getUTCMonth() + 1, opts?.codEmpresa);
   return r;
 }
 
@@ -259,9 +276,10 @@ export async function syncVentasMeses(n: number, opts?: { codEmpresa?: number })
     while (m <= 0) { m += 12; y -= 1; }
     const r = await syncVentasMes(y, m, opts);
     results.push(r);
+    // Invalidar caches de este mes específico tras cada iteración exitosa.
+    // Mejor que un invalidateAll al final: si fallamos a mitad de camino,
+    // los meses que sí sincronizaron ya tienen cache fresco.
+    if (r.ok) invalidateMonthCaches(y, m, opts?.codEmpresa);
   }
-  // Tras sync masivo (cron diario o backfill manual), invalidar cache de
-  // respuestas: los próximos /api/goals reflejan los nuevos avances.
-  invalidateGoalsCache();
   return results;
 }

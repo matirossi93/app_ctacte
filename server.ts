@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import compression from 'compression';
+import rateLimit from 'express-rate-limit';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -72,6 +73,19 @@ app.use((_req, res, next) => {
 // gzip JSON responses (reduce ~80% el payload de /api/data y similares).
 app.use(compression({ threshold: 1024 }));
 app.use(express.json());
+
+// Rate limit global por IP. 600 req/min = 10 req/s sustained, suficiente para
+// polling normal (5-10 req/min por usuario) y bot (Amira a /api/bot). Si esta
+// cifra empieza a quemar, conviene aumentar y monitorear. Los endpoints de
+// login tienen su propio rate-limit más estricto (10 intentos / 15 min).
+const apiLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 600,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Demasiadas requests. Esperá un momento e intentá de nuevo.' },
+});
+app.use('/api/', apiLimiter);
 
 // ─── SQLite Setup ─────────────────────────────────────────────────────────────
 const dbDir = path.join(__dirname, '..', 'data');
@@ -499,9 +513,34 @@ app.get('/api/me', requireJwt, (req: express.Request & { user?: JwtPayload }, re
 });
 
 // ─── Recibos ──────────────────────────────────────────────────────────────────
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+// Uploads van a /tmp (diskStorage) en vez de memoria para no quemar RAM si hay
+// uploads concurrentes. 10 uploads × 10MB en memoryStorage = 100MB de heap;
+// con diskStorage el peak de RAM por upload es O(1). Cleanup del archivo se
+// hace en cleanupUploadedFile (middleware abajo) cuando termina la response.
+const uploadTmpDir = path.join(__dirname, '..', 'data', 'uploads-tmp');
+if (!fs.existsSync(uploadTmpDir)) fs.mkdirSync(uploadTmpDir, { recursive: true });
+const upload = multer({
+    storage: multer.diskStorage({
+        destination: uploadTmpDir,
+        filename: (_req, file, cb) => cb(null, `${randomUUID()}-${Date.now()}${path.extname(file.originalname) || ''}`),
+    }),
+    limits: { fileSize: 10 * 1024 * 1024 },
+});
 
-app.post('/api/recibos/upload', requireJwt, upload.single('foto'), (req: any, res) => uploadRecibo(req, res));
+// Después de cada response de un endpoint con upload, borrar el archivo temporal.
+// `res.on('finish')` corre cuando los bytes salen al cliente; `res.on('close')`
+// corre también si el cliente abortó, así cubrimos ambos casos.
+function cleanupUploadedFile(req: express.Request, res: express.Response, next: express.NextFunction): void {
+    const cleanup = () => {
+        const f = (req as any).file;
+        if (f?.path) fs.promises.unlink(f.path).catch(() => {});
+    };
+    res.on('finish', cleanup);
+    res.on('close', cleanup);
+    next();
+}
+
+app.post('/api/recibos/upload', requireJwt, upload.single('foto'), cleanupUploadedFile, (req: any, res) => uploadRecibo(req, res));
 app.get('/api/recibos', requireJwt, (req: any, res) => listRecibos(req, res));
 app.get('/api/recibos/:id', requireJwt, (req: any, res) => getReciboById(req, res));
 app.get('/api/recibos/:id/facturas-candidatas', requireJwt, (req: any, res) => facturasCandidatas(req, res));
@@ -614,7 +653,7 @@ app.delete('/api/usuarios/:id', requireJwt, requireAdmin, (req: any, res) => del
 app.post('/api/usuarios/change-password', requireJwt, (req: any, res) => changePassword(req, res));
 
 // ─── Import sheet Maestro Clientes ───────────────────────────────────────────
-app.post('/api/sheet-import/maestro-clientes', requireJwt, requireAdmin, upload.single('file'),
+app.post('/api/sheet-import/maestro-clientes', requireJwt, requireAdmin, upload.single('file'), cleanupUploadedFile,
     (req: any, res) => importMaestroClientes(req, res));
 
 // ─── Data Proxy ───────────────────────────────────────────────────────────────
