@@ -2,7 +2,11 @@ import axios, { AxiosInstance } from 'axios';
 
 const BASE = process.env.INFOMANAGER_BASE_URL || 'https://impedidos.infomanager.com.ar/api/v1';
 const CLIENT_ID = process.env.INFOMANAGER_CLIENT_ID || 'ck_elmanantialsrl_base';
-const CLIENT_SECRET = process.env.INFOMANAGER_CLIENT_SECRET || 'e4MCtm6L_PzdnTL';
+const CLIENT_SECRET = process.env.INFOMANAGER_CLIENT_SECRET || '';
+if (!CLIENT_SECRET) {
+  console.error('FATAL: INFOMANAGER_CLIENT_SECRET no está definida en el entorno. Abortando.');
+  process.exit(1);
+}
 
 let _token: { jwt: string; expiresAt: number } | null = null;
 let _pending: Promise<string> | null = null;

@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
-import { sha256hex, type JwtPayload } from './auth.js';
+import { hashPassword, verifyPassword, type JwtPayload } from './auth.js';
 
 type Rol = 'admin' | 'gerente' | 'vendedor';
 const VALID_ROLES: Rol[] = ['admin', 'gerente', 'vendedor'];
@@ -49,7 +49,7 @@ export async function createUsuario(req: Request & { user?: JwtPayload }, res: R
       res.status(400).json({ error: 'vendedor requiere cod_vendedor' }); return;
     }
 
-    const password_hash = sha256hex(password);
+    const password_hash = await hashPassword(password);
     const { data, error } = await sb().from('usuarios').insert({
       tenant_id: TENANT_ID,
       email, password_hash, nombre, rol, cod_vendedor, vendedor_key,
@@ -142,12 +142,14 @@ export async function changePassword(req: Request & { user?: JwtPayload }, res: 
         .select('password_hash')
         .eq('tenant_id', TENANT_ID).eq('id', targetId).maybeSingle();
       if (!u) { res.status(404).json({ error: 'Usuario no encontrado' }); return; }
-      if (sha256hex(current) !== (u as any).password_hash) {
+      const { ok } = await verifyPassword(current, (u as any).password_hash);
+      if (!ok) {
         res.status(401).json({ error: 'Contraseña actual incorrecta' }); return;
       }
     }
 
-    const { error } = await sb().from('usuarios').update({ password_hash: sha256hex(newPass) })
+    const newHash = await hashPassword(newPass);
+    const { error } = await sb().from('usuarios').update({ password_hash: newHash })
       .eq('tenant_id', TENANT_ID).eq('id', targetId);
     if (error) { res.status(500).json({ error: error.message }); return; }
     res.json({ ok: true });

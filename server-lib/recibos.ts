@@ -9,7 +9,11 @@ import { buscarPagoEnMP, todayISO_AR, type MPMatch, type MPCuenta } from './merc
 import type { JwtPayload } from './auth.js';
 
 const { env } = process;
-const IM_USUARIO = env.INFOMANAGER_USUARIO || 'matias';
+const IM_USUARIO = env.INFOMANAGER_USUARIO || '';
+if (!IM_USUARIO) {
+  console.error('FATAL: INFOMANAGER_USUARIO no está definida en el entorno. Abortando.');
+  process.exit(1);
+}
 const IM_CENTRO_COSTO_DEFAULT = (env.IM_CENTRO_COSTO_DEFAULT || 'S') as 'S' | 'N';
 const IM_CUENTA_ANTICIPO_CLIENTES = env.IM_CUENTA_ANTICIPO_CLIENTES || '2124000';
 

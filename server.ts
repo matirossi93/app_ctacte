@@ -13,7 +13,8 @@ import axios from 'axios';
 import cron from 'node-cron';
 import multer from 'multer';
 import {
-  findUsuarioByEmail, signJwt, verifyJwt, sha256hex, usuarioToJwtPayload,
+  findUsuarioByEmail, signJwt, verifyJwt, usuarioToJwtPayload,
+  hashPassword, verifyPassword,
   requireAdmin,
   type JwtPayload
 } from './server-lib/auth.js';
@@ -119,7 +120,9 @@ const CLIENTS_URL = process.env.CLIENTS_URL ||
 // InfoManager API config
 const IM_BASE_URL = process.env.INFOMANAGER_BASE_URL || 'https://impedidos.infomanager.com.ar/api/v1';
 const IM_CLIENT_ID = process.env.INFOMANAGER_CLIENT_ID || 'ck_elmanantialsrl_base';
-const IM_CLIENT_SECRET = process.env.INFOMANAGER_CLIENT_SECRET || 'e4MCtm6L_PzdnTL';
+// El fallback hardcoded ya se eliminó (también enforced en server-lib/infomanager.ts).
+// Si llegamos acá sin la env, el módulo infomanager.ts ya habría abortado el proceso.
+const IM_CLIENT_SECRET = process.env.INFOMANAGER_CLIENT_SECRET || '';
 
 // ─── Cache ───────────────────────────────────────────────────────────────────
 const CACHE_TTL = 10 * 60 * 1000; // 10 min — pre-warm cron refresca cada 4 min
@@ -450,9 +453,19 @@ app.post('/api/auth/login-v2', async (req: express.Request, res: express.Respons
     try {
         const user = await findUsuarioByEmail(email.trim());
         if (!user) { res.status(401).json({ success: false, error: 'Credenciales inválidas' }); return; }
-        const hash = sha256hex(password);
-        if (hash !== user.password_hash) { res.status(401).json({ success: false, error: 'Credenciales inválidas' }); return; }
+        const { ok, needsRehash } = await verifyPassword(password, user.password_hash);
+        if (!ok) { res.status(401).json({ success: false, error: 'Credenciales inválidas' }); return; }
         loginAttempts.delete(ip);
+        // Migración seamless: si el hash era sha256 legacy, lo rehasheamos con
+        // bcrypt aprovechando que tenemos la password en claro. El usuario no
+        // necesita cambiar nada.
+        if (needsRehash && hasSupabase()) {
+            try {
+                const newHash = await hashPassword(password);
+                await sb().from('usuarios').update({ password_hash: newHash })
+                    .eq('tenant_id', TENANT_ID).eq('id', user.id);
+            } catch (e) { console.warn('Rehash bcrypt fallo (no bloqueante):', e); }
+        }
         const jwt = signJwt(usuarioToJwtPayload(user));
         res.json({ success: true, jwt, user: { email: user.email, rol: user.rol, cod_vendedor: user.cod_vendedor, vendedor_key: user.vendedor_key, nombre: user.nombre } });
     } catch (err: any) {
@@ -713,9 +726,26 @@ app.post('/api/client-thresholds', requireAuth, (req: express.Request, res: expr
     }
 });
 
-// ─── Bot API (public) ─────────────────────────────────────────────────────────
+// ─── Bot API ─────────────────────────────────────────────────────────────────
+// Consumido por Amira (CRM WhatsApp) para responder consultas de saldo a clientes.
+// Auth: bearer token en header `Authorization: Bearer <BOT_API_TOKEN>` o
+// `x-bot-token: <BOT_API_TOKEN>`. Modo migración: si la env var no está seteada,
+// permite paso con WARN para no romper Amira durante el deploy. Una vez configurado
+// en EasyPanel + Amira, queda enforced automáticamente.
+const BOT_API_TOKEN = process.env.BOT_API_TOKEN || '';
+if (!BOT_API_TOKEN) {
+  console.warn('⚠️  BOT_API_TOKEN no definida — /api/bot queda PÚBLICO. Configurar en EasyPanel + Amira para enforce.');
+}
+function requireBotToken(req: express.Request, res: express.Response, next: express.NextFunction): void {
+  if (!BOT_API_TOKEN) { next(); return; } // modo migración
+  const auth = String(req.headers['authorization'] || '');
+  const xToken = String(req.headers['x-bot-token'] || '');
+  const provided = auth.startsWith('Bearer ') ? auth.slice(7).trim() : xToken.trim();
+  if (provided && provided === BOT_API_TOKEN) { next(); return; }
+  res.status(401).json({ error: 'Token inválido o ausente' });
+}
 // Accepts optional ?rate=0.10 query param (default 10%)
-app.get('/api/bot', async (req: express.Request, res: express.Response) => {
+app.get('/api/bot', requireBotToken, async (req: express.Request, res: express.Response) => {
     try {
         const interestRate = Math.min(1, Math.max(0, parseFloat(req.query.rate as string) || 0.10));
         const data = await fetchData();

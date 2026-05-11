@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
 import { sb, TENANT_ID } from './supabase.js';
+
+const BCRYPT_ROUNDS = 12;
 
 const JWT_SECRET = process.env.JWT_SECRET || '';
 const JWT_TTL_SECONDS = 8 * 60 * 60;
@@ -23,6 +26,32 @@ export interface JwtPayload {
 
 export function sha256hex(s: string): string {
   return createHash('sha256').update(s, 'utf8').digest('hex');
+}
+
+/** Hashea un password con bcrypt (cost 12). Usar para nuevos usuarios y rehash. */
+export async function hashPassword(plain: string): Promise<string> {
+  return bcrypt.hash(plain, BCRYPT_ROUNDS);
+}
+
+/**
+ * Verifica un password contra un hash almacenado. Soporta dos formatos:
+ *  - bcrypt: empieza con $2a$, $2b$ o $2y$ → verify con bcrypt
+ *  - sha256 legacy: 64 chars hex → compare directo con sha256hex(plain)
+ *
+ * Devuelve `{ ok, needsRehash }`. `needsRehash=true` indica que el hash es
+ * legacy y conviene rehashear con bcrypt tras un login exitoso para migrar
+ * gradualmente sin tocar a los usuarios.
+ */
+export async function verifyPassword(plain: string, hash: string): Promise<{ ok: boolean; needsRehash: boolean }> {
+  if (!hash) return { ok: false, needsRehash: false };
+  if (hash.startsWith('$2a$') || hash.startsWith('$2b$') || hash.startsWith('$2y$')) {
+    const ok = await bcrypt.compare(plain, hash);
+    return { ok, needsRehash: false };
+  }
+  // Fallback: sha256 hex legacy (64 chars). Comparación constant-time vía Buffer.
+  const computed = sha256hex(plain);
+  const ok = computed.length === hash.length && computed === hash;
+  return { ok, needsRehash: ok };
 }
 
 function getSecret(): string {
