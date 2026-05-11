@@ -41,7 +41,33 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 80;
 
-app.use(cors());
+// CORS whitelist por env var. Formato CSV ("https://a.com,https://b.com").
+// Default permite localhost para dev. En prod, setear ALLOWED_ORIGINS.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? 'http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true); // same-origin / curl / capacitor
+    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    return cb(new Error(`CORS: origen no permitido — ${origin}`));
+  },
+  credentials: true,
+}));
+
+// Security headers. HSTS solo en prod (en dev sobre HTTP rompería).
+const IS_PROD = process.env.NODE_ENV === 'production';
+app.use((_req, res, next) => {
+  if (IS_PROD) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
+
 // gzip JSON responses (reduce ~80% el payload de /api/data y similares).
 app.use(compression({ threshold: 1024 }));
 app.use(express.json());

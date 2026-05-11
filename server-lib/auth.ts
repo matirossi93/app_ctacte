@@ -1,9 +1,16 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { sb, TENANT_ID } from './supabase.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || '';
 const JWT_TTL_SECONDS = 8 * 60 * 60;
+
+if (!JWT_SECRET) {
+  // Fail-loud en startup. Sin secret válido, sesiones quedarían rotas silenciosamente.
+  // En dev, exportá JWT_SECRET=<cualquier-string-largo> en tu .env local.
+  console.error('FATAL: JWT_SECRET no está definida en el entorno. Abortando.');
+  process.exit(1);
+}
 
 export interface JwtPayload {
   sub: string;              // usuario.id
@@ -19,13 +26,6 @@ export function sha256hex(s: string): string {
 }
 
 function getSecret(): string {
-  if (!JWT_SECRET) {
-    // En dev sin secret, usar uno efímero para no crashear — NO usar en prod
-    const fallback = randomBytes(32).toString('hex');
-    process.env.JWT_SECRET = fallback;
-    console.warn('JWT_SECRET no definido; usando secreto efímero (dev only)');
-    return fallback;
-  }
   return JWT_SECRET;
 }
 
