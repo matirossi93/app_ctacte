@@ -22,9 +22,10 @@
   --color-surface: #F9EFE3;
   --color-surface-hover: #f3e4d2;
 
-  /* Text Colors */
+  /* Text Colors. text-muted oscurecido de #6b5d52 a #5a4a42 para subir
+     contraste sobre surface (#F9EFE3) de ~4.0:1 a ~4.9:1 (WCAG AA OK). */
   --color-text: #1E120C;
-  --color-text-muted: #6b5d52;
+  --color-text-muted: #5a4a42;
   --color-text-inverse: #ffffff;
 
   /* Borders & Shadows */

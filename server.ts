@@ -928,6 +928,17 @@ app.use((_req, res) => {
     res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
 });
 
+// Error-handling middleware (4 args = signature Express). Captura cualquier
+// excepción no manejada en los handlers async (Express 5 propaga rejections
+// de funciones async). En prod devolvemos mensaje genérico para no leakear
+// detalles técnicos; en dev mostramos el mensaje completo para debugging.
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error('[unhandled]', req.method, req.path, err);
+    if (res.headersSent) return; // ya respondió: solo loguear
+    const safe = IS_PROD ? 'Error interno. Avisá al admin.' : (err?.message ?? 'error');
+    res.status(500).json({ error: safe });
+});
+
 app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
     console.log(`Auth: ${APP_PASSWORD ? 'ENABLED' : 'disabled — set APP_PASSWORD env var to enable'}`);
@@ -936,13 +947,26 @@ app.listen(PORT, () => {
 });
 
 // ─── Crons ────────────────────────────────────────────────────────────────────
+// Lock contra overlap: si IM responde lento y el cron */30 todavía está
+// corriendo cuando dispara la próxima invocación, saltamos sin tirar nada.
+// Antes el sync podía solaparse y generar race en vendor_sales_monthly.
+let syncVentasInFlight = false;
 if (hasSupabase()) {
     cron.schedule('*/30 * * * *', async () => {
-        const r = await syncVentasMesActual();
-        if (r.ok) {
-            console.log(`[cron syncVentas] ok · ${r.comprobantes} comprob → ${r.clientes} clientes, ${r.vendedores} vendedores · ${r.elapsedMs}ms`);
-        } else {
-            console.error(`[cron syncVentas] FAIL · ${r.error}`);
+        if (syncVentasInFlight) {
+            console.warn('[cron syncVentas] skip · todavía está corriendo el anterior');
+            return;
+        }
+        syncVentasInFlight = true;
+        try {
+            const r = await syncVentasMesActual();
+            if (r.ok) {
+                console.log(`[cron syncVentas] ok · ${r.comprobantes} comprob → ${r.clientes} clientes, ${r.vendedores} vendedores · ${r.elapsedMs}ms`);
+            } else {
+                console.error(`[cron syncVentas] FAIL · ${r.error}`);
+            }
+        } finally {
+            syncVentasInFlight = false;
         }
     });
     if (process.env.SYNC_ON_START === 'true') {
@@ -973,15 +997,21 @@ if (hasSupabase()) {
     console.log('Cron deshabilitado (Supabase no configurado)');
 }
 
-// Pre-warm del cache de /api/data cada 4 min — así el cache (TTL 10 min)
-// nunca entra en cold. Los vendedores siempre pegan a cache caliente.
-cron.schedule('*/4 * * * *', async () => {
+// Pre-warm del cache de /api/data cada 8 min — el cache vive 10 min, así que
+// con */8 nos aseguramos refresco antes del expiry sin reventar IM con
+// requests innecesarios. Antes era */4 (15 fetches/hora) que era overkill.
+let prewarmInFlight = false;
+cron.schedule('*/8 * * * *', async () => {
+    if (prewarmInFlight) return;
+    prewarmInFlight = true;
     try {
         const t0 = Date.now();
         await fetchData(true);
         console.log(`[cron pre-warm] /api/data refreshed in ${Date.now() - t0}ms`);
     } catch (err: any) {
         console.warn(`[cron pre-warm] fallo: ${err?.message ?? err}`);
+    } finally {
+        prewarmInFlight = false;
     }
 });
 // Primer pre-warm al arrancar el server (3s de delay para no competir con boot).
@@ -992,7 +1022,7 @@ setTimeout(() => {
     // Resolver de cod_cuenta desde /planes de InfoManager — evita env vars manuales
     import('./server-lib/cuentasResolver.js').then(m => m.prewarmCuentasCache());
 }, 3000);
-console.log('Cron pre-warm /api/data: */4 * * * *');
+console.log('Cron pre-warm /api/data: */8 * * * *');
 
 // Pre-warm del snapshotCache: trae las ventas crudas de los últimos 3 meses
 // a RAM para que el primer corte intra-mes que solicite el usuario sea
