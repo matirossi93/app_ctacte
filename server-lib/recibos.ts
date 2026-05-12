@@ -392,6 +392,16 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
         console.log(`[aprobar] redondeo IM: pagos[0] $${pagoOrig} -> $${pagos[0].importe}, comprobantes truncados a entero (ajuste total $${ajusteTotal.toFixed(2)})`);
         detalleFinal = `${detalleFinal} [auto-ajuste $${ajusteTotal.toFixed(2)}]`.trim();
       }
+      // Si el truncado dejó algún comprobante o el pago total en 0, IM rechaza
+      // ("El valor debe ser mayor a 0"). Validamos ANTES del POST para dar
+      // mensaje claro al admin en vez de que se cuelgue/error 502 enmascarado.
+      const compEnCero = comprobantes.find(c => Number(c.importe_a_pagar) <= 0);
+      if (compEnCero || sumCompInt <= 0) {
+        res.status(400).json({
+          error: `Importe demasiado chico para imputar: después del redondeo a entero (IM trunca decimales) quedaría en $0. Mínimo $1 por factura. Si es un recibo de prueba, usá un monto ≥ $1.`,
+        });
+        return;
+      }
     }
 
     // Inyectar fec_emision/fec_pago en cada pago si está activado el flag.
@@ -441,12 +451,13 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
 
     if (!imRes.ok) {
       console.error('[aprobar] IM rechazo:', imRes.error, '| raw:', JSON.stringify(imRes.raw));
-      // Enriquecer error_msg con detalles del raw IM (suele tener un array `detalles`
-      // con la regla violada — útil para debug en el modal admin).
-      const detalleIM = imRes.raw?.detalles
-        ? ` | detalles: ${JSON.stringify(imRes.raw.detalles).slice(0, 300)}`
-        : '';
-      const errorMsg = `${imRes.error}${detalleIM}`;
+      // Enriquecer error_msg con detalles del raw IM. IM puede devolver `detalles`
+      // o `errores` (array {campo, mensajes}) según el endpoint — mostramos ambos.
+      const errorIM = imRes.raw?.errores
+        ? ` | ${imRes.raw.errores.map((e: any) => `${e.campo}: ${(e.mensajes || []).join(', ')}`).join(' · ')}`
+        : (imRes.raw?.detalles ? ` | detalles: ${JSON.stringify(imRes.raw.detalles).slice(0, 300)}` : '');
+      const mensajeIM = imRes.raw?.mensaje ? ` (${imRes.raw.mensaje})` : '';
+      const errorMsg = `IM rechazó el recibo${mensajeIM}${errorIM}`;
       await sb().from('comprobantes_pago').update({
         status: 'error',
         error_msg: errorMsg,
@@ -454,7 +465,10 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
         reviewed_by: user.sub,
         reviewed_at: new Date().toISOString()
       }).eq('id', comp.id);
-      res.status(502).json({ ok: false, error: errorMsg, raw: imRes.raw });
+      // status 400 (no 502) para que Traefik/EasyPanel NO intercepte la respuesta
+      // como "Bad Gateway" y muestre su HTML default — antes el frontend
+      // recibía HTML en vez del JSON con el mensaje real de IM.
+      res.status(400).json({ ok: false, error: errorMsg, raw: imRes.raw });
       return;
     }
 
