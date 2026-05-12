@@ -434,7 +434,7 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
       fechas_pago_extra: IM_RECIBO_FECHAS_PAGO,
       centro_costo: centroCosto,
       usuario,
-      pagos: pagos.map(p => ({ importe: p.importe, cod_cuenta: p.cod_cuenta, forma_pago: p.forma_pago, fec_emision: p.fec_emision, fec_pago: p.fec_pago })),
+      pagos,  // objeto completo: incluye todas las variantes de fecha cuando IM_RECIBO_FECHAS_PAGO=true
       comprobantes
     }));
 

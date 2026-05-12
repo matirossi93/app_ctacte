@@ -234,6 +234,47 @@ export async function crearRecibo(input: CrearReciboInput): Promise<{ ok: true; 
   }
 }
 
+/**
+ * Debug: probar endpoints no documentados de edición de recibo. El swagger v1
+ * solo lista POST /recibo, pero el cliente desktop SÍ permite editar fechas
+ * de un recibo creado — por lo tanto debe existir un endpoint oculto (o el
+ * cliente desktop habla directo a SQL Server).
+ * Esta función prueba varias URLs/métodos y devuelve qué respondió cada uno.
+ */
+export async function probarEditarReciboIM(reciboId: string, fecha: string): Promise<any> {
+  const cli = await imClient();
+  const intentos: Array<{ method: string; url: string; body?: any }> = [
+    { method: 'GET', url: `/recibo/${reciboId}` },
+    { method: 'GET', url: `/recibos/${reciboId}` },
+    { method: 'PUT', url: `/recibo/${reciboId}`, body: { fecha } },
+    { method: 'PATCH', url: `/recibo/${reciboId}`, body: { fecha } },
+    { method: 'PUT', url: `/recibos/${reciboId}`, body: { fecha } },
+    { method: 'PATCH', url: `/recibos/${reciboId}`, body: { fecha } },
+    { method: 'PUT', url: `/recibo/${reciboId}/pagos`, body: [{ fec_emision: fecha, fec_pago: fecha }] },
+    { method: 'PATCH', url: `/recibo/${reciboId}/pago/0`, body: { fec_emision: fecha, fec_pago: fecha } },
+    { method: 'POST', url: `/recibo/${reciboId}/editar`, body: { fecha } },
+    { method: 'POST', url: `/recibo/${reciboId}/modificar`, body: { fecha } },
+  ];
+  const resultados: any[] = [];
+  for (const i of intentos) {
+    try {
+      const res = i.body !== undefined
+        ? await (cli as any).request({ method: i.method, url: i.url, data: i.body })
+        : await (cli as any).request({ method: i.method, url: i.url });
+      resultados.push({
+        method: i.method, url: i.url, status: res.status,
+        ok: true, data: typeof res.data === 'object' ? JSON.stringify(res.data).slice(0, 300) : String(res.data).slice(0, 300),
+      });
+    } catch (err: any) {
+      resultados.push({
+        method: i.method, url: i.url, status: err?.response?.status ?? null,
+        ok: false, error: err?.message?.slice(0, 200), data: err?.response?.data ? JSON.stringify(err.response.data).slice(0, 300) : null,
+      });
+    }
+  }
+  return resultados;
+}
+
 /** @deprecated Usar getFormaPagoIM de ./mediosPago.js — este re-export queda por compat */
 export { getFormaPagoIM as formaPagoUIToIM } from './mediosPago.js';
 

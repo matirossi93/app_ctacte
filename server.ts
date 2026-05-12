@@ -554,6 +554,31 @@ app.get('/api/reportes/:tipo', requireJwt, (req: any, res) => descargarReporte(r
 app.get('/api/cuentas/debug', requireJwt, (req: any, res) => cuentasDebug(req, res));
 app.post('/api/cuentas/refresh', requireJwt, (req: any, res) => cuentasRefresh(req, res));
 
+// Debug admin-only: probar endpoints no documentados de edición de recibo IM.
+// Swagger v1 solo lista POST /recibo, pero el cliente desktop SÍ edita las
+// fechas Fec.Em./Fec.Pago de un recibo creado → debe haber un endpoint oculto.
+// Esto prueba 10 combos (GET/PUT/PATCH/POST) y devuelve qué respondió cada uno.
+// Llamar con POST /api/debug/im-edit-recibo body {recibo_id, fecha}.
+app.post('/api/debug/im-edit-recibo', requireJwt, async (req: any, res) => {
+  try {
+    if (req.user?.rol !== 'admin' && req.user?.rol !== 'gerente') {
+      res.status(403).json({ error: 'Requiere admin/gerente' });
+      return;
+    }
+    const reciboId = String(req.body?.recibo_id ?? '').trim();
+    const fecha = String(req.body?.fecha ?? '').trim();
+    if (!reciboId || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+      res.status(400).json({ error: 'recibo_id y fecha (YYYY-MM-DD) son obligatorios' });
+      return;
+    }
+    const { probarEditarReciboIM } = await import('./server-lib/infomanager.js');
+    const resultados = await probarEditarReciboIM(reciboId, fecha);
+    res.json({ ok: true, recibo_id: reciboId, fecha, resultados });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+});
+
 // ─── Objetivos ───────────────────────────────────────────────────────────────
 app.get('/api/goals', requireJwt, (req: any, res) => listGoals(req, res));
 app.post('/api/goals', requireJwt, (req: any, res) => setGoal(req, res));
