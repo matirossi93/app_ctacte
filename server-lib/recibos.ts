@@ -404,12 +404,23 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
       }
     }
 
-    // Inyectar fec_emision/fec_pago en cada pago si está activado el flag.
-    // IM por default pone hoy en esas columnas; queremos la fecha del recibo.
+    // Inyectar fechas en cada pago si está activado el flag. IM por default
+    // pone hoy en las columnas "Fec. Em." y "Fec. Pago". Mandamos 5 variantes
+    // del nombre simultáneamente: si IM respeta cualquiera, se graba bien.
+    // Si IM rechaza con 400 por additionalProperties, sabemos que no acepta
+    // ninguna y hay que ir vía proveedor o SQL update.
     if (IM_RECIBO_FECHAS_PAGO) {
       pagos.forEach(p => {
         p.fec_emision = fecha;
         p.fec_pago = fecha;
+        p.fecha_emision = fecha;
+        p.fecha_pago = fecha;
+        p.fec_em = fecha;
+        p.fec_pa = fecha;
+        p.fechaEmision = fecha;
+        p.fechaPago = fecha;
+        p.f_em = fecha;
+        p.f_pa = fecha;
       });
     }
 

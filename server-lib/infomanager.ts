@@ -189,9 +189,18 @@ export interface ReciboPago {
   // columnas "Fec. Em." y "Fec. Pago" que IM muestra en la grilla de pagos del
   // recibo. Por default IM las setea con la fecha del servidor (= hoy), no la
   // del comprobante. Se envían sólo si IM_RECIBO_FECHAS_PAGO=true.
-  // Si IM rechaza por additionalProperties:false, apagar la env var.
+  // RONDA 2: probamos múltiples variantes del nombre porque la primera
+  // (fec_emision/fec_pago) IM las aceptó pero las ignoró silenciosamente.
   fec_emision?: string;              // "YYYY-MM-DD"
   fec_pago?: string;                 // "YYYY-MM-DD"
+  fecha_emision?: string;            // variante más explícita
+  fecha_pago?: string;
+  fec_em?: string;                   // variante corta tipo grilla "Fec. Em."
+  fec_pa?: string;                   // variante corta tipo grilla "Fec. Pago"
+  fechaEmision?: string;             // camelCase
+  fechaPago?: string;
+  f_em?: string;                     // ultra-corta
+  f_pa?: string;
 }
 
 export interface ReciboComprobante {
