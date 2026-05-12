@@ -337,7 +337,11 @@ function UploadRecibo({ clients, defaultCodVendedor, onDone, onCancel }:
     const [codCliente, setCodCliente] = useState('');
     const [codVendedor, setCodVendedor] = useState(defaultCodVendedor?.toString() ?? '');
     const [monto, setMonto] = useState('');
-    const [fecha, setFecha] = useState<string>(new Date().toISOString().slice(0, 10));
+    // Fecha del comprobante: vacía por default para forzar al vendedor a cargar
+    // la fecha REAL del recibo (no la del día de upload). Antes se precargaba
+    // con hoy y muchos vendedores no la modificaban, lo que terminaba grabando
+    // en IM la fecha de subida en vez de la del comprobante.
+    const [fecha, setFecha] = useState<string>('');
     const [medioPago, setMedioPago] = useState<string>(DEFAULT_MEDIO_UI);
     const [observaciones, setObservaciones] = useState('');
     const [clientSearch, setClientSearch] = useState('');
@@ -383,6 +387,7 @@ function UploadRecibo({ clients, defaultCodVendedor, onDone, onCancel }:
         if (!codCliente) { setMsg({ kind: 'err', text: 'Elegí el cliente' }); return; }
         const montoNum = Number(monto);
         if (!monto || !isFinite(montoNum) || montoNum <= 0) { setMsg({ kind: 'err', text: 'Ingresá el monto del pago' }); return; }
+        if (!fecha) { setMsg({ kind: 'err', text: 'Ingresá la fecha del comprobante (la que aparece en el recibo, no la de hoy)' }); return; }
         setBusy(true); setMsg(null);
         try {
             const fd = new FormData();
@@ -491,8 +496,9 @@ function UploadRecibo({ clients, defaultCodVendedor, onDone, onCancel }:
                         />
                     </label>
                     <label className="rec-field">
-                        <span>Fecha</span>
-                        <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} />
+                        <span>Fecha del comprobante *</span>
+                        <input type="date" value={fecha} required onChange={e => setFecha(e.target.value)}
+                            style={!fecha ? { borderColor: '#c00' } : undefined} />
                     </label>
                 </div>
 
@@ -707,10 +713,12 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                 setMontoFinal(montoSeed?.toString() ?? '');
 
                 // Fecha: prioridad vendedor/OCR > MP date_approved (slice ISO directo para no
-                // perder el día por conversión a UTC) > hoy.
+                // perder el día por conversión a UTC). Si no hay ninguna, dejamos VACÍO
+                // — antes caíamos a "hoy" y eso terminaba grabándose en IM como fecha
+                // del recibo (en vez de la real del comprobante).
                 const fechaSeed = item.fecha_comprobante
                     ?? (mpCand?.date_approved ? mpCand.date_approved.slice(0, 10) : null)
-                    ?? new Date().toISOString().slice(0, 10);
+                    ?? '';
                 setFechaFinal(fechaSeed);
 
                 // Normaliza recibos legacy ('transferencia', 'otro', 'tarjeta') al canon actual
@@ -866,6 +874,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
     // Mensaje exacto que explica por qué el botón aprobar está disabled.
     const disabledReason = (() => {
         if (busy) return '';
+        if (!fechaFinal) return 'Cargá la fecha del comprobante (la que se graba en InfoManager)';
         if (esAnticipo) {
             return !(Number(montoFinal) > 0) ? 'Cargá el monto final del anticipo' : '';
         }
@@ -959,8 +968,9 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                             </div>
                             <div className="rec-row">
                                 <label className="rec-field">
-                                    <span>Fecha</span>
-                                    <input type="date" value={fechaFinal} onChange={e => setFechaFinal(e.target.value)} />
+                                    <span>Fecha {!fechaFinal && <small style={{ color: '#c00' }}>· obligatoria</small>}</span>
+                                    <input type="date" value={fechaFinal} required onChange={e => setFechaFinal(e.target.value)}
+                                        style={!fechaFinal ? { borderColor: '#c00' } : undefined} />
                                 </label>
                                 <label className="rec-field">
                                     <span>Medio</span>
@@ -1028,7 +1038,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                                 />
                                 <button className="btn-danger" disabled={busy || !motivoRechazo.trim()} onClick={rechazar}>Rechazar</button>
                                 <button className="btn-primary"
-                                    disabled={busy || (esAnticipo
+                                    disabled={busy || !fechaFinal || (esAnticipo
                                         ? !(Number(montoFinal) > 0)
                                         : (Object.keys(selFacturas).length === 0 || Math.abs(totalImputado - Number(montoFinal)) > 5))}
                                     onClick={aprobar}

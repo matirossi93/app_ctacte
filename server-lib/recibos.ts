@@ -17,6 +17,11 @@ if (!IM_USUARIO) {
 }
 const IM_CENTRO_COSTO_DEFAULT = (env.IM_CENTRO_COSTO_DEFAULT || 'S') as 'S' | 'N';
 const IM_CUENTA_ANTICIPO_CLIENTES = env.IM_CUENTA_ANTICIPO_CLIENTES || '2124000';
+// Feature flag: agregar fec_emision/fec_pago a cada pago del recibo. Estos
+// campos NO están en el swagger oficial pero IM la grilla los muestra como
+// "Fec. Em." y "Fec. Pago". Probamos empíricamente si IM los acepta. Si
+// rechaza con 400 por additionalProperties, apagar esta var.
+const IM_RECIBO_FECHAS_PAGO = String(env.IM_RECIBO_FECHAS_PAGO || '').toLowerCase() === 'true';
 
 const BUCKET = 'recibos';
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -286,7 +291,15 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
 
     const body = req.body ?? {};
     const monto = Number(body.monto ?? comp.monto);
-    const fecha = String(body.fecha ?? comp.fecha_comprobante ?? new Date().toISOString().slice(0, 10));
+    // Fecha del comprobante REAL — la que graba IM. No caer a new Date()
+    // porque eso quedaba como "fecha del día de aprobación" en IM en vez de
+    // la fecha del comprobante. Si no llega ni del body ni de la BD, error.
+    const fechaRaw = body.fecha ?? comp.fecha_comprobante ?? null;
+    const fecha = fechaRaw ? String(fechaRaw).trim() : '';
+    if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+      res.status(400).json({ error: 'Falta la fecha del comprobante (YYYY-MM-DD). Cargala en el modal antes de aprobar.' });
+      return;
+    }
     const codEmpresa = Number(body.cod_empresa);
     if (!codEmpresa) { res.status(400).json({ error: 'cod_empresa obligatorio' }); return; }
     const medioPago = String(body.medio_pago ?? comp.medio_pago ?? 'transferencia');
@@ -381,13 +394,26 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
       }
     }
 
+    // Inyectar fec_emision/fec_pago en cada pago si está activado el flag.
+    // IM por default pone hoy en esas columnas; queremos la fecha del recibo.
+    if (IM_RECIBO_FECHAS_PAGO) {
+      pagos.forEach(p => {
+        p.fec_emision = fecha;
+        p.fec_pago = fecha;
+      });
+    }
+
     console.log('[aprobar] payload IM:', JSON.stringify({
       cod_empresa: String(codEmpresa),
       cod_cliente: String(comp.cod_cliente),
       fecha,
+      fecha_origen: body.fecha ? 'body' : (comp.fecha_comprobante ? 'comp' : 'fallback'),
+      fecha_comp_bd: comp.fecha_comprobante,
+      fecha_body: body.fecha,
+      fechas_pago_extra: IM_RECIBO_FECHAS_PAGO,
       centro_costo: centroCosto,
       usuario,
-      pagos: pagos.map(p => ({ importe: p.importe, cod_cuenta: p.cod_cuenta, forma_pago: p.forma_pago })),
+      pagos: pagos.map(p => ({ importe: p.importe, cod_cuenta: p.cod_cuenta, forma_pago: p.forma_pago, fec_emision: p.fec_emision, fec_pago: p.fec_pago })),
       comprobantes
     }));
 
@@ -403,6 +429,15 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
       pagos,
       comprobantes
     });
+
+    // Si IM devolvió una fecha distinta a la que enviamos, lo logueamos para
+    // detectar el bug "IM ignora el campo fecha y usa la del servidor".
+    if (imRes.ok && imRes.raw) {
+      const fechaIM = imRes.raw?.fecha ?? imRes.raw?.fecha_recibo ?? null;
+      if (fechaIM && String(fechaIM).slice(0, 10) !== fecha) {
+        console.warn(`[aprobar] ⚠️ IM grabó fecha distinta: enviada=${fecha} recibida=${fechaIM} (recibo IM ${imRes.id ?? '?'})`);
+      }
+    }
 
     if (!imRes.ok) {
       console.error('[aprobar] IM rechazo:', imRes.error, '| raw:', JSON.stringify(imRes.raw));
