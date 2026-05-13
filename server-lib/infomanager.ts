@@ -225,15 +225,13 @@ export async function crearRecibo(input: CrearReciboInput): Promise<{ ok: true; 
   try {
     const cli = await imClient();
     const { data } = await cli.post('/recibo', input);
-    // IM puede devolver el ID con varios nombres. Probamos todos los que vimos
-    // y los que aparecen típicamente en APIs ERP.
+    // IM devuelve { recibo: { id, numero, pagos: [{id, ...}], ... }, isCreated }
+    // El id interno es data.recibo.id; el numero visible (para usuario) es data.recibo.numero.
     const id = String(
-      data?.id ?? data?.recibo_id ?? data?.rc_id
-      ?? data?.numero ?? data?.nro ?? data?.codigo ?? data?.cod_recibo
-      ?? data?.rc_nro ?? data?.rc_numero
-      ?? ''
+      data?.recibo?.id ?? data?.id ?? data?.recibo_id ?? data?.rc_id
+      ?? data?.recibo?.numero ?? data?.numero ?? ''
     );
-    console.log('[crearRecibo] OK · id=' + (id || '(vacío!)') + ' raw=' + JSON.stringify(data).slice(0, 500));
+    console.log('[crearRecibo] OK · id=' + (id || '(vacío!)') + ' numero=' + (data?.recibo?.numero ?? '?'));
     return { ok: true, raw: data, id };
   } catch (err: any) {
     const raw = err?.response?.data;
@@ -243,26 +241,43 @@ export async function crearRecibo(input: CrearReciboInput): Promise<{ ok: true; 
 }
 
 /**
- * Debug: probar endpoints no documentados de edición de recibo. El swagger v1
- * solo lista POST /recibo, pero el cliente desktop SÍ permite editar fechas
- * de un recibo creado — por lo tanto debe existir un endpoint oculto (o el
- * cliente desktop habla directo a SQL Server).
- * Esta función prueba varias URLs/métodos y devuelve qué respondió cada uno.
+ * Debug: probar endpoints no documentados de edición de recibo y/o pago.
+ * El cliente desktop de IM permite editar Fec.Em./Fec.Pago de un recibo
+ * creado — por lo tanto debe existir un endpoint oculto.
+ *
+ * Hallazgo clave: IM devuelve cada pago con su propio `id`. Probablemente
+ * exista un endpoint `/pagos/{id}` o `/recibo/{recibo_id}/pago/{pago_id}`
+ * para editar pagos individualmente.
+ *
+ * Esta función prueba varias URLs/métodos contra el recibo Y el pago, y
+ * devuelve qué respondió cada uno (404 = no existe, 200 = endpoint válido,
+ * 405 = endpoint válido pero método no permitido).
  */
-export async function probarEditarReciboIM(reciboId: string, fecha: string): Promise<any> {
+export async function probarEditarReciboIM(reciboId: string, fecha: string, pagoId?: string): Promise<any> {
   const cli = await imClient();
   const intentos: Array<{ method: string; url: string; body?: any }> = [
+    // ── Probar GET para descubrir endpoints válidos (200 = existe) ─────────
     { method: 'GET', url: `/recibo/${reciboId}` },
     { method: 'GET', url: `/recibos/${reciboId}` },
+    { method: 'GET', url: `/recibo/${reciboId}/pagos` },
+    // ── Editar recibo (header completo) ────────────────────────────────────
     { method: 'PUT', url: `/recibo/${reciboId}`, body: { fecha } },
     { method: 'PATCH', url: `/recibo/${reciboId}`, body: { fecha } },
     { method: 'PUT', url: `/recibos/${reciboId}`, body: { fecha } },
-    { method: 'PATCH', url: `/recibos/${reciboId}`, body: { fecha } },
-    { method: 'PUT', url: `/recibo/${reciboId}/pagos`, body: [{ fec_emision: fecha, fec_pago: fecha }] },
-    { method: 'PATCH', url: `/recibo/${reciboId}/pago/0`, body: { fec_emision: fecha, fec_pago: fecha } },
-    { method: 'POST', url: `/recibo/${reciboId}/editar`, body: { fecha } },
-    { method: 'POST', url: `/recibo/${reciboId}/modificar`, body: { fecha } },
   ];
+  // ── Si tenemos el ID del pago, probar editarlo directo ─────────────────
+  if (pagoId) {
+    intentos.push(
+      { method: 'GET', url: `/pago/${pagoId}` },
+      { method: 'GET', url: `/pagos/${pagoId}` },
+      { method: 'PUT', url: `/pago/${pagoId}`, body: { fec_emision: fecha, fec_pago: fecha } },
+      { method: 'PATCH', url: `/pago/${pagoId}`, body: { fec_emision: fecha, fec_pago: fecha } },
+      { method: 'PUT', url: `/pagos/${pagoId}`, body: { fec_emision: fecha, fec_pago: fecha } },
+      { method: 'PATCH', url: `/pagos/${pagoId}`, body: { fec_emision: fecha, fec_pago: fecha } },
+      { method: 'PUT', url: `/recibo/${reciboId}/pago/${pagoId}`, body: { fec_emision: fecha, fec_pago: fecha } },
+      { method: 'PATCH', url: `/recibo/${reciboId}/pago/${pagoId}`, body: { fec_emision: fecha, fec_pago: fecha } },
+    );
+  }
   const resultados: any[] = [];
   for (const i of intentos) {
     try {
@@ -271,7 +286,7 @@ export async function probarEditarReciboIM(reciboId: string, fecha: string): Pro
         : await (cli as any).request({ method: i.method, url: i.url });
       resultados.push({
         method: i.method, url: i.url, status: res.status,
-        ok: true, data: typeof res.data === 'object' ? JSON.stringify(res.data).slice(0, 300) : String(res.data).slice(0, 300),
+        ok: true, data: typeof res.data === 'object' ? JSON.stringify(res.data).slice(0, 500) : String(res.data).slice(0, 500),
       });
     } catch (err: any) {
       resultados.push({

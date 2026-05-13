@@ -567,9 +567,11 @@ app.post('/api/debug/im-edit-recibo', requireJwt, async (req: any, res) => {
       return;
     }
     let reciboId = String(req.body?.recibo_id ?? '').trim();
+    let pagoId = String(req.body?.pago_id ?? '').trim();
     let fecha = String(req.body?.fecha ?? '').trim();
     let ultimoComp: any = null;
     // Si no se pasa recibo_id, buscamos el último imputado de Supabase
+    // y extraemos el id del recibo y del primer pago desde infomanager_response
     if (!reciboId) {
       const { sb, TENANT_ID } = await import('./server-lib/supabase.js');
       const { data } = await sb().from('comprobantes_pago')
@@ -577,12 +579,17 @@ app.post('/api/debug/im-edit-recibo', requireJwt, async (req: any, res) => {
         .eq('tenant_id', TENANT_ID).eq('status', 'imputado')
         .order('imputado_at', { ascending: false }).limit(1).maybeSingle();
       ultimoComp = data;
-      reciboId = String(data?.infomanager_recibo_id ?? '');
+      // Preferimos data.infomanager_recibo_id; si está vacío usamos
+      // infomanager_response.recibo.id (el ID interno verdadero).
+      reciboId = String(data?.infomanager_recibo_id || data?.infomanager_response?.recibo?.id || '');
+      if (!pagoId) {
+        pagoId = String(data?.infomanager_response?.recibo?.pagos?.[0]?.id || '');
+      }
       if (!fecha) fecha = String(data?.fecha_comprobante ?? '');
     }
     if (!reciboId) {
       res.status(400).json({
-        error: 'No hay recibo_id. Pasalo explícito en body, o aprobá un recibo nuevo antes (mirá infomanager_recibo_id del último imputado).',
+        error: 'No hay recibo_id. Pasalo explícito en body, o aprobá un recibo nuevo antes.',
         ultimoComp,
       });
       return;
@@ -592,8 +599,8 @@ app.post('/api/debug/im-edit-recibo', requireJwt, async (req: any, res) => {
       return;
     }
     const { probarEditarReciboIM } = await import('./server-lib/infomanager.js');
-    const resultados = await probarEditarReciboIM(reciboId, fecha);
-    res.json({ ok: true, recibo_id: reciboId, fecha, ultimoComp, resultados });
+    const resultados = await probarEditarReciboIM(reciboId, fecha, pagoId || undefined);
+    res.json({ ok: true, recibo_id: reciboId, pago_id: pagoId, fecha, ultimoComp, resultados });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'error' });
   }
