@@ -404,23 +404,18 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
       }
     }
 
-    // Inyectar fechas en cada pago si está activado el flag. IM por default
-    // pone hoy en las columnas "Fec. Em." y "Fec. Pago". Mandamos 5 variantes
-    // del nombre simultáneamente: si IM respeta cualquiera, se graba bien.
-    // Si IM rechaza con 400 por additionalProperties, sabemos que no acepta
-    // ninguna y hay que ir vía proveedor o SQL update.
+    // Inyectar fec_emision/fec_pago en cada pago si está activado el flag.
+    // IM por default pone hoy en las columnas "Fec. Em." y "Fec. Pago".
+    // Verificado 12/05/2026: IM acepta estos campos en el POST sin error
+    // pero los ignora silenciosamente (la grilla sigue mostrando hoy).
+    // Dejamos los 2 nombres más estándar por si el proveedor IM agrega
+    // soporte oficial usando esos nombres — los otros 8 que probamos
+    // (fecha_emision, fec_em, etc) fueron descartados.
+    // Ver mail al proveedor en c:/tmp/mail_soporte_infomanager.md.
     if (IM_RECIBO_FECHAS_PAGO) {
       pagos.forEach(p => {
         p.fec_emision = fecha;
         p.fec_pago = fecha;
-        p.fecha_emision = fecha;
-        p.fecha_pago = fecha;
-        p.fec_em = fecha;
-        p.fec_pa = fecha;
-        p.fechaEmision = fecha;
-        p.fechaPago = fecha;
-        p.f_em = fecha;
-        p.f_pa = fecha;
       });
     }
 

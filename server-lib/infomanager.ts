@@ -185,22 +185,14 @@ export interface ReciboPago {
   cod_unidad_negocio?: string;
   tarjeta_numero?: string;           // solo TJ
   tarjeta_numero_cupon?: string;     // solo TJ
-  // Campos NO documentados en swagger oficial — prueba empírica para fijar las
-  // columnas "Fec. Em." y "Fec. Pago" que IM muestra en la grilla de pagos del
-  // recibo. Por default IM las setea con la fecha del servidor (= hoy), no la
-  // del comprobante. Se envían sólo si IM_RECIBO_FECHAS_PAGO=true.
-  // RONDA 2: probamos múltiples variantes del nombre porque la primera
-  // (fec_emision/fec_pago) IM las aceptó pero las ignoró silenciosamente.
+  // Campos NO documentados en swagger oficial — los enviamos sólo si
+  // IM_RECIBO_FECHAS_PAGO=true. Verificado 12/05/2026: IM acepta sin error
+  // pero los ignora al grabar. Quedan en el código por si el proveedor IM
+  // agrega soporte oficial (ver mail al proveedor en
+  // c:/tmp/mail_soporte_infomanager.md). Ronda 2 probó 8 variantes más
+  // (fecha_emision, fec_em, fechaEmision, etc) — todas ignoradas igual.
   fec_emision?: string;              // "YYYY-MM-DD"
   fec_pago?: string;                 // "YYYY-MM-DD"
-  fecha_emision?: string;            // variante más explícita
-  fecha_pago?: string;
-  fec_em?: string;                   // variante corta tipo grilla "Fec. Em."
-  fec_pa?: string;                   // variante corta tipo grilla "Fec. Pago"
-  fechaEmision?: string;             // camelCase
-  fechaPago?: string;
-  f_em?: string;                     // ultra-corta
-  f_pa?: string;
 }
 
 export interface ReciboComprobante {

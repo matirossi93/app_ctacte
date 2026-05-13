@@ -43,6 +43,12 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 80;
 
+// Estamos detrás de Traefik (EasyPanel) que setea X-Forwarded-For. Sin esto,
+// express-rate-limit tira un warning y todas las requests parecen venir de la
+// IP interna del proxy → el rate limit global queda inútil. trust proxy=1
+// confía en el primer proxy (Traefik) sin abrir el riesgo de spoofing.
+app.set('trust proxy', 1);
+
 // CORS whitelist por env var. Formato CSV ("https://a.com,https://b.com").
 // Default permite localhost para dev. En prod, setear ALLOWED_ORIGINS.
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? 'http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173')
