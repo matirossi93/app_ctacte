@@ -225,7 +225,15 @@ export async function crearRecibo(input: CrearReciboInput): Promise<{ ok: true; 
   try {
     const cli = await imClient();
     const { data } = await cli.post('/recibo', input);
-    const id = String(data?.id ?? data?.recibo_id ?? data?.rc_id ?? '');
+    // IM puede devolver el ID con varios nombres. Probamos todos los que vimos
+    // y los que aparecen típicamente en APIs ERP.
+    const id = String(
+      data?.id ?? data?.recibo_id ?? data?.rc_id
+      ?? data?.numero ?? data?.nro ?? data?.codigo ?? data?.cod_recibo
+      ?? data?.rc_nro ?? data?.rc_numero
+      ?? ''
+    );
+    console.log('[crearRecibo] OK · id=' + (id || '(vacío!)') + ' raw=' + JSON.stringify(data).slice(0, 500));
     return { ok: true, raw: data, id };
   } catch (err: any) {
     const raw = err?.response?.data;

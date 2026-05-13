@@ -559,21 +559,64 @@ app.post('/api/cuentas/refresh', requireJwt, (req: any, res) => cuentasRefresh(r
 // fechas Fec.Em./Fec.Pago de un recibo creado → debe haber un endpoint oculto.
 // Esto prueba 10 combos (GET/PUT/PATCH/POST) y devuelve qué respondió cada uno.
 // Llamar con POST /api/debug/im-edit-recibo body {recibo_id, fecha}.
+// Si no se pasa recibo_id, usa el último recibo imputado en Supabase.
 app.post('/api/debug/im-edit-recibo', requireJwt, async (req: any, res) => {
   try {
     if (req.user?.rol !== 'admin' && req.user?.rol !== 'gerente') {
       res.status(403).json({ error: 'Requiere admin/gerente' });
       return;
     }
-    const reciboId = String(req.body?.recibo_id ?? '').trim();
-    const fecha = String(req.body?.fecha ?? '').trim();
-    if (!reciboId || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
-      res.status(400).json({ error: 'recibo_id y fecha (YYYY-MM-DD) son obligatorios' });
+    let reciboId = String(req.body?.recibo_id ?? '').trim();
+    let fecha = String(req.body?.fecha ?? '').trim();
+    let ultimoComp: any = null;
+    // Si no se pasa recibo_id, buscamos el último imputado de Supabase
+    if (!reciboId) {
+      const { sb, TENANT_ID } = await import('./server-lib/supabase.js');
+      const { data } = await sb().from('comprobantes_pago')
+        .select('id, infomanager_recibo_id, infomanager_response, fecha_comprobante, cod_cliente, monto')
+        .eq('tenant_id', TENANT_ID).eq('status', 'imputado')
+        .order('imputado_at', { ascending: false }).limit(1).maybeSingle();
+      ultimoComp = data;
+      reciboId = String(data?.infomanager_recibo_id ?? '');
+      if (!fecha) fecha = String(data?.fecha_comprobante ?? '');
+    }
+    if (!reciboId) {
+      res.status(400).json({
+        error: 'No hay recibo_id. Pasalo explícito en body, o aprobá un recibo nuevo antes (mirá infomanager_recibo_id del último imputado).',
+        ultimoComp,
+      });
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+      res.status(400).json({ error: `fecha inválida: "${fecha}". Usá YYYY-MM-DD.` });
       return;
     }
     const { probarEditarReciboIM } = await import('./server-lib/infomanager.js');
     const resultados = await probarEditarReciboIM(reciboId, fecha);
-    res.json({ ok: true, recibo_id: reciboId, fecha, resultados });
+    res.json({ ok: true, recibo_id: reciboId, fecha, ultimoComp, resultados });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+});
+
+// Debug admin-only: devuelve el último comprobante imputado de Supabase con
+// el infomanager_response completo. Útil para ver qué nos contestó IM al crear.
+app.get('/api/debug/ultimo-recibo', requireJwt, async (req: any, res) => {
+  try {
+    if (req.user?.rol !== 'admin' && req.user?.rol !== 'gerente') {
+      res.status(403).json({ error: 'Requiere admin/gerente' });
+      return;
+    }
+    const { sb, TENANT_ID } = await import('./server-lib/supabase.js');
+    const { data, error } = await sb().from('comprobantes_pago')
+      .select('id, cod_cliente, monto, fecha_comprobante, status, infomanager_recibo_id, infomanager_response, imputado_at, error_msg')
+      .eq('tenant_id', TENANT_ID)
+      .in('status', ['imputado', 'error'])
+      .order('imputado_at', { ascending: false, nullsFirst: false })
+      .order('reviewed_at', { ascending: false, nullsFirst: false })
+      .limit(3);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true, recibos: data ?? [] });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'error' });
   }
