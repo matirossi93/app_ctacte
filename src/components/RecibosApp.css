@@ -427,6 +427,17 @@
 @media (max-width: 760px) {
     .recibos-overlay { padding: 0 }
     .recibos-modal { border-radius: 0; max-width: 100%; height: 100dvh }
+    /* iOS Safari hace zoom automático al enfocar un campo con
+       font-size < 16px e ignora maximum-scale=1 (desde iOS 10). Ese zoom
+       descentra todo el panel hacia la derecha. 16px lo evita. */
+    .recibos-modal input,
+    .recibos-modal select,
+    .recibos-modal textarea,
+    .recibos-page input,
+    .recibos-page select,
+    .recibos-page textarea {
+        font-size: 16px;
+    }
     .rec-upload, .rec-detail-grid { grid-template-columns: 1fr }
     .rec-row { grid-template-columns: 1fr }
     .rec-dl { grid-template-columns: 1fr }
