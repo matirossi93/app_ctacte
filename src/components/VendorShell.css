@@ -976,7 +976,9 @@
 .vs-hoy-saludo p strong { color: #141814 }
 
 .vs-hoy-grid {
-    display: grid; grid-template-columns: 1fr; gap: 14px;
+    /* minmax(0,1fr): sin el 0 el track no baja del min-content de su
+       contenido (importes largos) y expande las cards más que el viewport. */
+    display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px;
 }
 
 .vs-widget {
@@ -986,22 +988,26 @@
     padding: 16px;
     display: flex; flex-direction: column; gap: 12px;
     text-align: left; font-family: inherit; color: inherit;
+    min-width: 0;
 }
 button.vs-widget { cursor: pointer; transition: transform .15s ease, box-shadow .15s ease }
 button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(20,24,20,.04), 0 14px 28px -8px rgba(20,24,20,.18) }
 
 .vs-widget-head {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    min-width: 0;
 }
 .vs-widget-head h3 {
     margin: 0; font-size: 14px; font-weight: 800; letter-spacing: -.2px;
     color: #141814;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .vs-widget-more {
     display: inline-flex; align-items: center; gap: 4px;
     background: transparent; border: 0; cursor: pointer;
     font-size: 11px; font-weight: 700; color: #06652F; letter-spacing: .3px;
     font-family: inherit;
+    flex-shrink: 0; white-space: nowrap;
 }
 .vs-widget-empty {
     padding: 14px; text-align: center;
@@ -1017,7 +1023,7 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
 /* Promesas */
 .vs-promesa-list { display: flex; flex-direction: column; gap: 6px }
 .vs-promesa {
-    display: grid; grid-template-columns: 70px 1fr auto; gap: 10px; align-items: center;
+    display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; gap: 10px; align-items: center;
     padding: 10px 12px; border-radius: 14px;
     background: #FCF8EE; border: 1px solid rgba(238,192,69,.28);
     font-family: inherit; cursor: pointer; text-align: left;
@@ -1054,7 +1060,7 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
 .vs-widget--avance.vs-widget--ok { border-left: 3px solid #06652F }
 .vs-widget--avance.vs-widget--mid { border-left: 3px solid #EEC045 }
 .vs-widget--avance.vs-widget--low { border-left: 3px solid #A83E2B }
-.vs-avance-body { display: flex; align-items: center; gap: 16px }
+.vs-avance-body { display: flex; align-items: center; gap: 16px; min-width: 0 }
 .vs-avance-ring {
     position: relative; width: 80px; height: 80px; flex-shrink: 0;
     color: #06652F;
@@ -1069,23 +1075,25 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
 }
 .vs-avance-pct span { font-size: 10px; margin-left: 1px }
 .vs-avance-figs {
-    flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+    flex: 1; min-width: 0;
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px;
 }
 .vs-avance-figs > div {
     display: flex; flex-direction: column; gap: 2px;
     padding: 6px 8px; background: #F5F1E8; border-radius: 10px;
+    min-width: 0;
 }
 .vs-avance-figs .k {
     font-size: 9px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
     color: #6e7670;
 }
-.vs-avance-figs strong { font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; color: #141814 }
+.vs-avance-figs strong { font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; color: #141814; overflow-wrap: anywhere }
 .vs-avance-figs .gold { color: #06652F }
 
 /* Top 3 ranking en widget equipo */
 .vs-hoy-top3 { display: flex; flex-direction: column; gap: 6px }
 .vs-hoy-top3-row {
-    display: grid; grid-template-columns: 24px 1fr 42px 60px; gap: 8px; align-items: center;
+    display: grid; grid-template-columns: 24px minmax(0, 1fr) 42px 60px; gap: 8px; align-items: center;
     padding: 6px 10px; background: #FCF8EE; border-radius: 10px;
 }
 .vs-hoy-top3-row .medal { font-size: 16px; line-height: 1 }
@@ -1097,7 +1105,7 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
 /* Top deudores */
 .vs-deudor-list { display: flex; flex-direction: column; gap: 6px }
 .vs-deudor {
-    display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center;
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center;
     padding: 8px 10px; border-radius: 12px;
     background: #F5DDD6; border: 1px solid rgba(168,62,43,.22);
 }
@@ -1105,11 +1113,20 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
     grid-column: 1; display: flex; justify-content: space-between; align-items: center;
     gap: 10px; background: transparent; border: 0; padding: 0; cursor: pointer;
     font-family: inherit; text-align: left;
+    min-width: 0;
 }
 .vs-deudor-main:hover strong { text-decoration: underline }
-.vs-deudor-main strong { font-size: 13px; color: #141814; display: block }
-.vs-deudor-main span { font-size: 11px; color: #6e7670 }
-.vs-deudor-right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px }
+.vs-deudor-main strong {
+    font-size: 13px; color: #141814; display: block;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* el bloque nombre/localidad debe poder encogerse para no empujar el saldo */
+.vs-deudor-main > div { min-width: 0 }
+.vs-deudor-main span {
+    font-size: 11px; color: #6e7670; display: block;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vs-deudor-right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0 }
 .vs-deudor-saldo { font-size: 13px; font-weight: 800; color: #141814; font-variant-numeric: tabular-nums }
 .vs-deudor-dias {
     font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px;
@@ -1165,7 +1182,7 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
     .vs-goal-ring-center .pct { font-size: 30px }
 
     /* Hoy — grid 2 col, promesas full width */
-    .vs-hoy-grid { grid-template-columns: 1fr 1fr; gap: 16px }
+    .vs-hoy-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px }
     .vs-hoy-grid > .vs-widget--wide { grid-column: 1 / -1 }
     .vs-hoy-saludo h1 { font-size: 36px }
     .vs-goal-ring-center .pct span { font-size: 15px }
