@@ -107,4 +107,27 @@ test('diagnostico modal recibos', async ({ page }) => {
   await page.waitForTimeout(400);
   await page.screenshot({ path: path.join(SHOTS, 'dbg-B-fix-notch-simulado.png') });
   await measure(page, 'B · CSS del repo + notch iPhone 13 simulado');
+
+  // ---- C. Verificar font-size de los campos (anti-zoom iOS) ----
+  const fonts = await page.evaluate(() => {
+    const sels = ['.rec-list-search input', '.rec-vendor-filter select'];
+    return sels.map(s => {
+      const el = document.querySelector(s);
+      return { sel: s, fontSize: el ? getComputedStyle(el).fontSize : 'N/A' };
+    });
+  });
+  console.log('\n=== C · font-size de campos (debe ser >= 16px para evitar zoom iOS) ===');
+  for (const f of fonts) {
+    const px = parseFloat(f.fontSize);
+    console.log(`  ${f.sel}: ${f.fontSize} ${px >= 16 ? '✓' : '✗ DISPARA ZOOM'}`);
+    expect(px, `${f.sel} debe ser >= 16px`).toBeGreaterThanOrEqual(16);
+  }
+
+  // Enfocar la búsqueda y confirmar que no hay overflow horizontal.
+  const search = page.locator('.rec-list-search input').first();
+  await search.click();
+  await search.fill('a');
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: path.join(SHOTS, 'dbg-C-busqueda-enfocada.png') });
+  await measure(page, 'C · búsqueda enfocada con CSS nuevo');
 });

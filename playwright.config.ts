@@ -23,6 +23,18 @@ export default defineConfig({
     {
       name: 'iphone-13',
       use: { ...devices['iPhone 13'] },
+      testIgnore: /recibos-debug\.spec\.ts/,
+    },
+    {
+      // Viewport del iPhone 13 pero corriendo en Edge del sistema
+      // (msedge channel) — no requiere descargar el browser WebKit.
+      name: 'iphone-edge',
+      use: {
+        ...devices['iPhone 13'],
+        defaultBrowserType: 'chromium',
+        channel: 'msedge',
+      },
+      testMatch: /recibos-debug\.spec\.ts/,
     },
   ],
 });
