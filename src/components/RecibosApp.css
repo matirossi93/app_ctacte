@@ -27,6 +27,10 @@
 .recibos-header {
     display: flex; align-items: center; gap: 10px;
     padding: 12px 14px;
+    /* El header respeta la safe-area del notch / status bar. Vive en el
+       header (no en el overlay) porque en mobile el modal es 100dvh full
+       screen y un padding en el overlay lo dejaría fuera de pantalla. */
+    padding-top: max(12px, env(safe-area-inset-top));
     border-bottom: 1px solid rgba(20,24,20,.08);
     background: linear-gradient(180deg, rgba(6,101,47,.06) 0%, transparent 100%);
 }
@@ -39,7 +43,7 @@
     padding: 8px 14px; font-size: 12px; gap: 5px;
 }
 @media (min-width: 720px) {
-    .recibos-header { padding: 18px 22px; gap: 14px }
+    .recibos-header { padding: max(18px, env(safe-area-inset-top)) 22px 18px; gap: 14px }
     .recibos-header h2 { font-size: 18px }
     .recibos-header-actions .btn-primary { padding: 10px 20px; font-size: 13px; gap: 8px }
 }
@@ -500,10 +504,16 @@
 }
 
 /* ─── Modo página completa (shell del repartidor) ──────────────────────────
-   Igual que el modal pero sin overlay/backdrop: Recibos es la app entera. */
+   Mismo layout que el modal (header fijo arriba + body scrolleable) pero sin
+   overlay/backdrop: Recibos es la app entera.
+   IMPORTANTE: la altura es FIJA al viewport y .recibos-body hace su propio
+   scroll — igual que .recibos-modal. Con min-height el contenedor crece con el
+   contenido y el overflow-y:auto del body nunca se activa: la imagen del
+   comprobante queda "congelada" sin poder scrollear el resto. */
 .recibos-page {
-    min-height: 100vh;
-    min-height: 100dvh;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
     background: var(--color-bg, #F2EEDF);
     display: flex;
     justify-content: center;
@@ -511,20 +521,14 @@
 .recibos-page-inner {
     width: 100%;
     max-width: 980px;
-    min-height: 100vh;
-    min-height: 100dvh;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
     background: var(--color-surface, #FBF7ED);
     color: var(--color-text, #141814);
     display: flex;
     flex-direction: column;
     font-family: 'Poppins', system-ui, sans-serif;
-}
-.recibos-page .recibos-header {
-    position: sticky;
-    top: 0;
-    z-index: 5;
-    background: var(--color-surface, #FBF7ED);
-    padding-top: max(12px, env(safe-area-inset-top));
 }
 .recibos-page-brand {
     display: flex;
