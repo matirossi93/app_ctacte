@@ -1,9 +1,8 @@
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
-import { hashPassword, verifyPassword, type JwtPayload } from './auth.js';
+import { hashPassword, verifyPassword, type JwtPayload, type Rol } from './auth.js';
 
-type Rol = 'admin' | 'gerente' | 'vendedor';
-const VALID_ROLES: Rol[] = ['admin', 'gerente', 'vendedor'];
+const VALID_ROLES: Rol[] = ['admin', 'gerente', 'vendedor', 'repartidor'];
 
 function requireSb(res: Response): boolean {
   if (!hasSupabase()) {

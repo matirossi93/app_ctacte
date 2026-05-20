@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Dashboard } from './components/Dashboard';
 import { LoginScreen } from './components/LoginScreen';
 import { VendorShell } from './components/VendorShell';
+import { RepartidorShell } from './components/RepartidorShell';
 import { authHeaders, clearToken, getAuthMode, getUser, setUser } from './utils/auth';
 
 type AuthState = 'checking' | 'authenticated' | 'unauthenticated';
@@ -77,6 +78,11 @@ function App() {
     const mode = getAuthMode();
     const user = getUser();
     if (mode === 'jwt' && user) {
+        // El repartidor solo carga y consulta comprobantes: no ve cobranzas,
+        // objetivos ni comisiones. Tiene su propia pantalla acotada.
+        if (user.rol === 'repartidor') {
+            return <RepartidorShell onLogout={() => { clearToken(); setAuthState('unauthenticated'); }} />;
+        }
         return <VendorShell onLogout={() => { clearToken(); setAuthState('unauthenticated'); }} />;
     }
 

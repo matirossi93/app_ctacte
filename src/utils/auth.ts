@@ -1,6 +1,6 @@
 export interface AuthUser {
     email: string;
-    rol: 'admin' | 'gerente' | 'vendedor';
+    rol: 'admin' | 'gerente' | 'vendedor' | 'repartidor';
     cod_vendedor: number | null;
     vendedor_key: string | null;
     nombre: string | null;

@@ -514,6 +514,27 @@ const maybeJwt = (req: express.Request & { user?: JwtPayload }, _res: express.Re
     next();
 };
 
+// El rol repartidor solo opera sobre Recibos + su propia cuenta. Estos prefijos
+// (ventas, cobranzas, objetivos, comisiones, reportes, config) quedan vedados
+// aunque el repartidor tenga un JWT válido. maybeJwt corre primero para poblar
+// req.user; denyRepartidor lo evalúa antes de que la ruta haga su propio
+// requireJwt/requireAdmin. Este bloque debe ir ANTES de las definiciones de
+// ruta /api/* para que los app.use se apliquen.
+const denyRepartidor = (req: express.Request & { user?: JwtPayload }, res: express.Response, next: express.NextFunction): void => {
+    if (req.user?.rol === 'repartidor') {
+        res.status(403).json({ error: 'Los repartidores no tienen acceso a esta sección' });
+        return;
+    }
+    next();
+};
+for (const prefix of [
+    '/api/data', '/api/goals', '/api/comisiones', '/api/activity',
+    '/api/month-config', '/api/reportes', '/api/cuentas', '/api/sheet-import',
+    '/api/overrides', '/api/client-thresholds', '/api/debug',
+]) {
+    app.use(prefix, maybeJwt, denyRepartidor);
+}
+
 app.get('/api/me', requireJwt, (req: express.Request & { user?: JwtPayload }, res: express.Response) => {
     res.json({ ok: true, user: req.user });
 });

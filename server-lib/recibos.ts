@@ -103,9 +103,24 @@ export async function uploadRecibo(req: Request & { user?: JwtPayload; file?: an
 
     const codCliente = Number(req.body?.cod_cliente);
     if (!codCliente || isNaN(codCliente)) { res.status(400).json({ error: 'cod_cliente inválido' }); return; }
-    const codVendedor = user.rol === 'vendedor'
-      ? user.cod_vendedor!
-      : (Number(req.body?.cod_vendedor) || 0);
+    let codVendedor: number;
+    if (user.rol === 'vendedor') {
+      codVendedor = user.cod_vendedor!;
+    } else if (user.rol === 'repartidor') {
+      // El repartidor no tiene cod_vendedor propio. Derivamos el del cliente
+      // desde el Maestro (client_operational) para que el comprobante también
+      // le aparezca al vendedor que atiende a ese cliente. Si el cliente no
+      // tiene vendedor cargado, queda en 0 (visible solo para backoffice y
+      // repartidores, que ven la lista completa).
+      const { data: cliOp } = await sb().from('client_operational')
+        .select('cod_vendedor')
+        .eq('tenant_id', TENANT_ID)
+        .eq('cod_cliente', codCliente)
+        .maybeSingle();
+      codVendedor = cliOp?.cod_vendedor ?? 0;
+    } else {
+      codVendedor = Number(req.body?.cod_vendedor) || 0;
+    }
 
     // 1. Subir a Supabase Storage
     const ext = extFromMime(file.mimetype);

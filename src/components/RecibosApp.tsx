@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { X, Camera, Upload, Check, AlertCircle, ChevronLeft, Loader2, Search, Clock, FileText, RefreshCw, ZoomIn, ZoomOut, Download, ExternalLink } from 'lucide-react';
+import { X, Camera, Upload, Check, AlertCircle, ChevronLeft, Loader2, Search, Clock, FileText, RefreshCw, ZoomIn, ZoomOut, Download, ExternalLink, LogOut } from 'lucide-react';
 import { authHeaders, getUser } from '../utils/auth';
 import { MEDIOS_PAGO_UI, DEFAULT_MEDIO_UI, normalizeMedioUI } from '../utils/mediosPago';
 import './RecibosApp.css';
@@ -7,6 +7,11 @@ import './RecibosApp.css';
 interface Props {
     onClose: () => void;
     clients?: Array<{ cod: string; name: string; localidad?: string }>; // opcional: para selector
+    // fullPage: modo pantalla completa (sin overlay/backdrop). Lo usa el shell
+    // del repartidor, para quien Recibos ES la app entera, no un modal.
+    fullPage?: boolean;
+    // onLogout: en modo fullPage el header muestra el botón de cerrar sesión.
+    onLogout?: () => void;
 }
 
 interface MPCandidate {
@@ -64,9 +69,14 @@ interface FacturaCandidata {
     detalle?: string;
 }
 
-export const RecibosApp = ({ onClose, clients = [] }: Props) => {
+export const RecibosApp = ({ onClose, clients = [], fullPage = false, onLogout }: Props) => {
     const user = getUser();
     const isBackoffice = user?.rol === 'admin' || user?.rol === 'gerente';
+    const isRepartidor = user?.rol === 'repartidor';
+    // viewAll: ve la lista completa de comprobantes (de todos los vendedores).
+    // El backoffice la revisa/imputa; el repartidor solo la consulta para saber
+    // si un cliente ya pagó antes de entregarle la mercadería.
+    const viewAll = isBackoffice || isRepartidor;
     // Todos arrancan en 'list': vendedores también necesitan ver el histórico de
     // sus comprobantes (aprobados/rechazados/imputados) sin tener que pasar antes
     // por upload. Si quieren cargar uno nuevo, el botón "Cargar nuevo" está en
@@ -103,21 +113,37 @@ export const RecibosApp = ({ onClose, clients = [] }: Props) => {
     }, [mergedClients]);
 
     return (
-        <div className="recibos-overlay" role="dialog" aria-modal="true">
-            <div className="recibos-modal">
+        <div className={fullPage ? 'recibos-page' : 'recibos-overlay'} role="dialog" aria-modal={!fullPage}>
+            <div className={fullPage ? 'recibos-page-inner' : 'recibos-modal'}>
                 <header className="recibos-header">
-                    <button className="recibos-icon-btn" onClick={onClose} aria-label="Cerrar">
-                        <X size={20} />
-                    </button>
+                    {fullPage && view === 'list' ? (
+                        <div className="recibos-page-brand">
+                            <img src="/logo.png" alt="Semillero El Manantial" />
+                        </div>
+                    ) : fullPage ? (
+                        <button className="recibos-icon-btn" onClick={() => setView('list')} aria-label="Volver">
+                            <ChevronLeft size={20} />
+                        </button>
+                    ) : (
+                        <button className="recibos-icon-btn" onClick={onClose} aria-label="Cerrar">
+                            <X size={20} />
+                        </button>
+                    )}
                     <h2>
-                        {view === 'list' && (isBackoffice ? 'Recibos pendientes' : 'Mis comprobantes')}
+                        {view === 'list' && (isBackoffice ? 'Recibos pendientes' : isRepartidor ? 'Comprobantes de pago' : 'Mis comprobantes')}
                         {view === 'upload' && 'Cargar comprobante'}
-                        {view === 'detail' && 'Revisar recibo'}
+                        {view === 'detail' && (isBackoffice ? 'Revisar recibo' : 'Detalle del comprobante')}
                     </h2>
                     <div className="recibos-header-actions">
                         {view === 'list' && (
                             <button className="btn-primary" onClick={() => setView('upload')}>
                                 <Camera size={16} /> Cargar nuevo
+                            </button>
+                        )}
+                        {fullPage && onLogout && (
+                            <button className="recibos-icon-btn" onClick={onLogout}
+                                aria-label="Cerrar sesión" title="Cerrar sesión">
+                                <LogOut size={18} />
                             </button>
                         )}
                     </div>
@@ -127,6 +153,7 @@ export const RecibosApp = ({ onClose, clients = [] }: Props) => {
                     {view === 'list' && (
                         <RecibosList
                             isBackoffice={!!isBackoffice}
+                            viewAll={viewAll}
                             clientNameByCod={clientNameByCod}
                             onOpenDetail={(id) => { setSelectedId(id); setView('detail'); }}
                             onUpload={() => setView('upload')}
@@ -136,7 +163,8 @@ export const RecibosApp = ({ onClose, clients = [] }: Props) => {
                         <UploadRecibo
                             clients={mergedClients}
                             defaultCodVendedor={user?.cod_vendedor ?? null}
-                            onDone={() => setView(isBackoffice ? 'list' : 'list')}
+                            hideCodVendedor={isRepartidor}
+                            onDone={() => setView('list')}
                             onCancel={() => setView('list')}
                         />
                     )}
@@ -174,7 +202,7 @@ const VENDOR_NAMES: Record<number, string> = {
 };
 const vendorLabel = (cod: number): string => VENDOR_NAMES[cod] ?? `Vendedor #${cod}`;
 
-function RecibosList({ isBackoffice, clientNameByCod, onOpenDetail, onUpload }: { isBackoffice: boolean; clientNameByCod: Map<string, string>; onOpenDetail: (id: string) => void; onUpload: () => void }) {
+function RecibosList({ isBackoffice, viewAll, clientNameByCod, onOpenDetail, onUpload }: { isBackoffice: boolean; viewAll: boolean; clientNameByCod: Map<string, string>; onOpenDetail: (id: string) => void; onUpload: () => void }) {
     const [items, setItems] = useState<ReciboRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState<'pendiente_revision' | 'todos' | 'imputado' | 'rechazado'>(isBackoffice ? 'pendiente_revision' : 'todos');
@@ -234,8 +262,9 @@ function RecibosList({ isBackoffice, clientNameByCod, onOpenDetail, onUpload }: 
                 <button className="rec-chip" onClick={load} title="Refrescar"><RefreshCw size={14} /></button>
             </div>
 
-            {/* Filtro vendedor — solo visible para admin/gerente y si hay >1 vendedor en el set */}
-            {isBackoffice && uniqueVendors.length > 1 && (
+            {/* Filtro vendedor — visible para quien ve la lista completa (backoffice
+                y repartidor) y si hay >1 vendedor en el set */}
+            {viewAll && uniqueVendors.length > 1 && (
                 <div className="rec-vendor-filter">
                     <label>
                         <span>Vendedor:</span>
@@ -315,7 +344,7 @@ function RecibosList({ isBackoffice, clientNameByCod, onOpenDetail, onUpload }: 
                             <div className="rec-item-row3">
                                 <Clock size={11} />
                                 <span>{timeAgo(r.created_at)}</span>
-                                {isBackoffice && <span className="rec-vendor-tag">{vendorLabel(r.cod_vendedor)}</span>}
+                                {viewAll && <span className="rec-vendor-tag">{vendorLabel(r.cod_vendedor)}</span>}
                                 {r.ocr_confidence != null && <span className="rec-ocr-badge">OCR {Math.round(r.ocr_confidence * 100)}%</span>}
                             </div>
                         </div>
@@ -329,8 +358,8 @@ function RecibosList({ isBackoffice, clientNameByCod, onOpenDetail, onUpload }: 
 // ───────────────────────────────────────────────────────────────────────────
 // UPLOAD
 // ───────────────────────────────────────────────────────────────────────────
-function UploadRecibo({ clients, defaultCodVendedor, onDone, onCancel }:
-    { clients: Array<{ cod: string; name: string; localidad?: string }>; defaultCodVendedor: number | null; onDone: () => void; onCancel: () => void }) {
+function UploadRecibo({ clients, defaultCodVendedor, hideCodVendedor = false, onDone, onCancel }:
+    { clients: Array<{ cod: string; name: string; localidad?: string }>; defaultCodVendedor: number | null; hideCodVendedor?: boolean; onDone: () => void; onCancel: () => void }) {
     const fileRef = useRef<HTMLInputElement>(null);
     const [file, setFile] = useState<File | null>(null);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -511,7 +540,7 @@ function UploadRecibo({ clients, defaultCodVendedor, onDone, onCancel }:
                             ))}
                         </select>
                     </label>
-                    {defaultCodVendedor == null && (
+                    {defaultCodVendedor == null && !hideCodVendedor && (
                         <label className="rec-field">
                             <span>Cod vendedor</span>
                             <input type="number" value={codVendedor} onChange={e => setCodVendedor(e.target.value)} />

@@ -90,6 +90,7 @@
 .ua-tag.rol-admin { background: rgba(238, 192, 69, .25); color: #8a6510 }
 .ua-tag.rol-gerente { background: rgba(6, 101, 47, .15); color: #06652F }
 .ua-tag.rol-vendedor { background: rgba(20, 24, 20, .08); color: #555 }
+.ua-tag.rol-repartidor { background: rgba(60, 110, 200, .15); color: #2b4f8a }
 .ua-tag.inactivo { background: rgba(168, 62, 43, .18); color: #A83E2B }
 
 .ua-row-actions { display: flex; gap: 4px }

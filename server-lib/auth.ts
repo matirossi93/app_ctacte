@@ -15,10 +15,12 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
+export type Rol = 'admin' | 'gerente' | 'vendedor' | 'repartidor';
+
 export interface JwtPayload {
   sub: string;              // usuario.id
   email: string;
-  rol: 'admin' | 'gerente' | 'vendedor';
+  rol: Rol;
   vendedor_key?: string | null;
   cod_vendedor?: number | null;
   nombre?: string | null;
@@ -74,7 +76,7 @@ export interface UsuarioRow {
   id: string;
   email: string;
   password_hash: string;
-  rol: 'admin' | 'gerente' | 'vendedor';
+  rol: Rol;
   vendedor_key: string | null;
   cod_vendedor: number | null;
   nombre: string | null;

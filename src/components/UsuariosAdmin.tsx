@@ -5,7 +5,7 @@ import './UsuariosAdmin.css';
 
 interface Props { onClose: () => void }
 
-type Rol = 'admin' | 'gerente' | 'vendedor';
+type Rol = 'admin' | 'gerente' | 'vendedor' | 'repartidor';
 interface Usuario {
     id: string;
     email: string;
@@ -152,6 +152,7 @@ function EditUsuarioInline({ u, onClose, onSaved }: { u: Usuario; onClose: () =>
                         <option value="admin">admin</option>
                         <option value="gerente">gerente</option>
                         <option value="vendedor">vendedor</option>
+                        <option value="repartidor">repartidor</option>
                     </select>
                 </label>
                 <label><span>Cod. vendedor</span><input type="number" value={codVendedor} onChange={e => setCodVendedor(e.target.value)} /></label>
@@ -208,6 +209,7 @@ function NuevoUsuario({ onClose, onCreated }: { onClose: () => void; onCreated: 
                     <label><span>Rol</span>
                         <select value={rol} onChange={e => setRol(e.target.value as Rol)}>
                             <option value="vendedor">vendedor</option>
+                            <option value="repartidor">repartidor</option>
                             <option value="gerente">gerente</option>
                             <option value="admin">admin</option>
                         </select>

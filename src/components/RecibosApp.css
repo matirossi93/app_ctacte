@@ -498,3 +498,40 @@
     .rec-lightbox-btn span { display: none }
     .rec-lightbox-btn { padding: 8px 10px }
 }
+
+/* ─── Modo página completa (shell del repartidor) ──────────────────────────
+   Igual que el modal pero sin overlay/backdrop: Recibos es la app entera. */
+.recibos-page {
+    min-height: 100vh;
+    min-height: 100dvh;
+    background: var(--color-bg, #F2EEDF);
+    display: flex;
+    justify-content: center;
+}
+.recibos-page-inner {
+    width: 100%;
+    max-width: 980px;
+    min-height: 100vh;
+    min-height: 100dvh;
+    background: var(--color-surface, #FBF7ED);
+    color: var(--color-text, #141814);
+    display: flex;
+    flex-direction: column;
+    font-family: 'Poppins', system-ui, sans-serif;
+}
+.recibos-page .recibos-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--color-surface, #FBF7ED);
+    padding-top: max(12px, env(safe-area-inset-top));
+}
+.recibos-page-brand {
+    display: flex;
+    align-items: center;
+}
+.recibos-page-brand img {
+    height: 32px;
+    width: auto;
+    display: block;
+}
