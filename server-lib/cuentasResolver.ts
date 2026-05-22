@@ -27,8 +27,16 @@ const PATRONES: Record<string, (n: string) => boolean> = {
   recaudadora_2: (n) =>
     n.includes('recaudadora')
     && /\b(2|02|dos)\b/.test(n),
+  banco_nacion: (n) =>
+    n.includes('banco') && n.includes('nacion'),
   efectivo: (n) => n.includes('caja casa central') || n.includes('caja central'),
-  cheque: (n) => n.includes('banco santander') || n === 'banco santander rio',
+  // Los cheques recibidos se imputan a "Valores a Depositar" (cuenta puente
+  // contable), NO a una cuenta bancaria. Antes este patrón apuntaba a "Banco
+  // Santander Río" — bug reportado por Matías el 22/05/2026.
+  cheque: (n) =>
+    n.includes('valores a depositar')
+    || (n.includes('valores') && n.includes('deposit'))
+    || (n.includes('cheque') && n.includes('deposit')),
 };
 
 // Fallback a env var si la búsqueda no resuelve (compat con el setup actual).
@@ -36,6 +44,7 @@ const ENV_FALLBACK: Record<string, string> = {
   mercadopago: 'IM_CUENTA_MERCADOPAGO',
   recaudadora_1: 'IM_CUENTA_RECAUDADORA_1',
   recaudadora_2: 'IM_CUENTA_RECAUDADORA_2',
+  banco_nacion: 'IM_CUENTA_BANCO_NACION',
   efectivo: 'IM_CUENTA_EFECTIVO',
   cheque: 'IM_CUENTA_CHEQUE',
 };

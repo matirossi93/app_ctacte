@@ -550,3 +550,29 @@
     width: auto;
     display: block;
 }
+
+/* ─── Edición de recibo (backoffice) ─────────────────────────────────────── */
+.rec-detail-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+}
+.rec-edit {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #e3e7e0;
+}
+.rec-edit h4 {
+    margin: 0;
+    font-size: 14px;
+}
+.rec-edit-selected {
+    display: block;
+    margin-top: 4px;
+    font-size: 12px;
+    color: #2563eb;
+}

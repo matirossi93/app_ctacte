@@ -1,16 +1,60 @@
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
+import { fetchClientesIMCached } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
 
 /**
- * Lookup de TODOS los clientes del maestro (client_operational), no solo deudores.
- * Uso: picker de Recibos cuando el cliente no tiene saldo en el mes (ej. adelantos en efectivo).
- * Vendedor ve solo los suyos. Admin/gerente ve todos, o filtra vía ?cod_vendedor=.
+ * Lookup de TODOS los clientes para el picker de Recibos.
+ *
+ * Fuente primaria: la API de InfoManager (/clientes). Antes leíamos la tabla
+ * `client_operational` de Supabase, que se llena con la importación mensual del
+ * Excel — eso dejaba afuera a los clientes nuevos del mes y no se los podía
+ * elegir para cargar un recibo. IM siempre tiene el maestro al día.
+ *
+ * Vendedor ve solo los suyos (filtra por cod_vendedor del cliente en IM).
+ * Admin/gerente ven todos, o filtran vía ?cod_vendedor=.
+ *
+ * Fallback: si IM no responde, caemos al maestro de Supabase para no dejar el
+ * picker vacío.
  */
 export async function listClientesLookup(req: Request & { user?: JwtPayload }, res: Response) {
     try {
-        if (!hasSupabase()) { res.status(500).json({ ok: false, error: 'Supabase no configurado' }); return; }
         const user = req.user!;
+
+        // ── Fuente primaria: InfoManager ────────────────────────────────────
+        let clientesIM: Awaited<ReturnType<typeof fetchClientesIMCached>> = [];
+        try {
+            clientesIM = await fetchClientesIMCached();
+        } catch (e: any) {
+            console.warn('[listClientesLookup] IM fallo, intento fallback Supabase:', e?.message);
+        }
+
+        if (clientesIM.length > 0) {
+            let items = clientesIM.map((c) => ({
+                cod: String(c.cod_cliente),
+                name: c.razon_social || `Cliente #${c.cod_cliente}`,
+                localidad: c.localidad ?? null,
+                cod_vendedor: c.cod_vendedor ?? null,
+            }));
+
+            if (user.rol === 'vendedor') {
+                const cv = user.cod_vendedor ?? -1;
+                items = items.filter((i) => i.cod_vendedor === cv);
+            } else if (req.query.cod_vendedor) {
+                const cv = Number(req.query.cod_vendedor);
+                items = items.filter((i) => i.cod_vendedor === cv);
+            }
+
+            items.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+            res.json({ ok: true, items, source: 'infomanager' });
+            return;
+        }
+
+        // ── Fallback: maestro Supabase (importación Excel) ──────────────────
+        if (!hasSupabase()) {
+            res.json({ ok: true, items: [], source: 'none' });
+            return;
+        }
 
         let q = sb().from('client_operational')
             .select('cod_cliente, cod_vendedor, razon_social, localidad')
@@ -32,7 +76,7 @@ export async function listClientesLookup(req: Request & { user?: JwtPayload }, r
             localidad: c.localidad ?? null,
             cod_vendedor: c.cod_vendedor ?? null,
         }));
-        res.json({ ok: true, items });
+        res.json({ ok: true, items, source: 'supabase_fallback' });
     } catch (err: any) {
         console.error('listClientesLookup error:', err);
         res.status(500).json({ ok: false, error: err.message });

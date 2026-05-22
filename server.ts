@@ -24,7 +24,7 @@ import { syncVentasMesActual, syncVentasMeses } from './server-lib/syncVentas.js
 import { getMonthlyVentasRaw, getMonthlyItemsRaw } from './server-lib/snapshotCache.js';
 import { fetchArticulosCatalogo } from './server-lib/infomanager.js';
 import {
-  uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, cuentasDebug, cuentasRefresh,
+  uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, editarRecibo, cuentasDebug, cuentasRefresh,
   reverificarMP, elegirMatchMP, procesarColaMP
 } from './server-lib/recibos.js';
 import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot } from './server-lib/goals.js';
@@ -573,6 +573,7 @@ app.get('/api/recibos/:id', requireJwt, (req: any, res) => getReciboById(req, re
 app.get('/api/recibos/:id/facturas-candidatas', requireJwt, (req: any, res) => facturasCandidatas(req, res));
 app.post('/api/recibos/:id/aprobar', requireJwt, (req: any, res) => aprobarRecibo(req, res));
 app.post('/api/recibos/:id/rechazar', requireJwt, (req: any, res) => rechazarRecibo(req, res));
+app.post('/api/recibos/:id/editar', requireJwt, (req: any, res) => editarRecibo(req, res));
 app.post('/api/recibos/:id/reverificar-mp', requireJwt, (req: any, res) => reverificarMP(req, res));
 app.post('/api/recibos/:id/elegir-match', requireJwt, (req: any, res) => elegirMatchMP(req, res));
 

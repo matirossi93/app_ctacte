@@ -10,6 +10,7 @@ export const MEDIOS_PAGO_UI: MedioPagoUI[] = [
   { value: 'mercadopago',   label: 'MercadoPago' },
   { value: 'recaudadora_1', label: 'Cuenta Recaudadora 1' },
   { value: 'recaudadora_2', label: 'Cuenta Recaudadora 2' },
+  { value: 'banco_nacion',  label: 'Banco Nación' },
   { value: 'efectivo',      label: 'Efectivo' },
   { value: 'cheque',        label: 'Cheque' },
 ];

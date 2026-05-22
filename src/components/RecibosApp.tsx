@@ -173,6 +173,7 @@ export const RecibosApp = ({ onClose, clients = [], fullPage = false, onLogout }
                             id={selectedId}
                             isBackoffice={!!isBackoffice}
                             clientNameByCod={clientNameByCod}
+                            clients={mergedClients}
                             onBack={() => { setSelectedId(null); setView('list'); }}
                         />
                     )}
@@ -676,10 +677,11 @@ function MPBadge({ rec, isBackoffice, onReverify, onPickMatch }: {
     );
 }
 
-function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: string; isBackoffice: boolean; clientNameByCod: Map<string, string>; onBack: () => void }) {
+function DetalleRecibo({ id, isBackoffice, clientNameByCod, clients, onBack }: { id: string; isBackoffice: boolean; clientNameByCod: Map<string, string>; clients: Array<{ cod: string; name: string; localidad?: string }>; onBack: () => void }) {
     const [rec, setRec] = useState<ReciboRow | null>(null);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
+    const [editMode, setEditMode] = useState(false);
     const [facturas, setFacturas] = useState<FacturaCandidata[]>([]);
     const [loadingFacturas, setLoadingFacturas] = useState(false);
     const [codEmpresa, setCodEmpresa] = useState<number>(1);
@@ -887,6 +889,25 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
         finally { setBusy(false); }
     };
 
+    // Reabre un recibo rechazado o con error → vuelve a 'pendiente_revision'
+    // para poder corregirlo y reprocesarlo.
+    const reabrir = async () => {
+        if (!rec) return;
+        setBusy(true); setMsg(null);
+        try {
+            const res = await fetch(`/api/recibos/${rec.id}/editar`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders() },
+                body: JSON.stringify({ reabrir: true }),
+            });
+            const data = await parseRes(res);
+            if (!res.ok || !data.ok) { setMsg({ kind: 'err', text: data.error }); return; }
+            setMsg({ kind: 'ok', text: 'Recibo reabierto — ya podés corregirlo y reprocesarlo' });
+            await loadRecibo();
+        } catch (e: any) { setMsg({ kind: 'err', text: e.message }); }
+        finally { setBusy(false); }
+    };
+
     if (loading) return <div className="rec-loading"><Loader2 className="spin" /> Cargando…</div>;
     if (err || !rec) return <div className="rec-error"><AlertCircle /> {err ?? 'No encontrado'}</div>;
 
@@ -952,6 +973,15 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                         </div>
                     </div>
 
+                    {editMode && isBackoffice ? (
+                        <EditarReciboForm
+                            rec={rec}
+                            clients={clients}
+                            onSaved={() => { setEditMode(false); loadRecibo(); }}
+                            onCancel={() => setEditMode(false)}
+                        />
+                    ) : (
+                    <>
                     <dl className="rec-dl">
                         <dt>Fecha</dt><dd>{rec.fecha_comprobante ?? '—'}</dd>
                         <dt>Medio</dt><dd>{rec.medio_pago ?? '—'}</dd>
@@ -1077,6 +1107,24 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
                             </div>
                         </div>
                     )}
+
+                    {isBackoffice && (
+                        <div className="rec-detail-tools">
+                            <button className="btn-secondary" onClick={() => { setEditMode(true); setMsg(null); }}>
+                                Editar datos del recibo
+                            </button>
+                            {(rec.status === 'rechazado' || rec.status === 'error') && (
+                                <button className="btn-primary" onClick={reabrir} disabled={busy}>
+                                    {busy ? <><Loader2 size={14} className="spin" /> …</> : 'Reabrir para reprocesar'}
+                                </button>
+                            )}
+                        </div>
+                    )}
+                    {msg && rec.status !== 'pendiente_revision' && rec.status !== 'error' && (
+                        <div className={`rec-msg rec-msg--${msg.kind}`}>{msg.text}</div>
+                    )}
+                    </>
+                    )}
                 </div>
             </div>
         </div>
@@ -1133,6 +1181,177 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, onBack }: { id: stri
             </div>
         )}
         </>
+    );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// EDIT — corrección de datos de un recibo ya cargado (backoffice)
+// ───────────────────────────────────────────────────────────────────────────
+function EditarReciboForm({ rec, clients, onSaved, onCancel }: {
+    rec: ReciboRow;
+    clients: Array<{ cod: string; name: string; localidad?: string }>;
+    onSaved: () => void;
+    onCancel: () => void;
+}) {
+    const [codCliente, setCodCliente] = useState(String(rec.cod_cliente));
+    const [monto, setMonto] = useState(rec.monto != null ? String(rec.monto) : '');
+    const [fecha, setFecha] = useState(rec.fecha_comprobante ?? '');
+    const [medio, setMedio] = useState(normalizeMedioUI(rec.medio_pago));
+    const [bancoOrigen, setBancoOrigen] = useState(rec.banco_origen ?? '');
+    const [referencia, setReferencia] = useState(rec.referencia ?? '');
+    const [observaciones, setObservaciones] = useState(rec.observaciones ?? '');
+    const [clientSearch, setClientSearch] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+    const filteredClients = useMemo(() => {
+        if (!clientSearch.trim()) return clients.slice(0, 30);
+        const q = clientSearch.toLowerCase();
+        return clients.filter(c =>
+            c.name.toLowerCase().includes(q) ||
+            c.cod.includes(q) ||
+            (c.localidad ?? '').toLowerCase().includes(q)
+        ).slice(0, 30);
+    }, [clients, clientSearch]);
+
+    const selectedClientName = useMemo(
+        () => clients.find(c => c.cod === codCliente)?.name ?? null,
+        [clients, codCliente]
+    );
+
+    const save = async () => {
+        const montoNum = Number(monto);
+        if (!codCliente || Number(codCliente) <= 0) { setMsg({ kind: 'err', text: 'Cargá el cliente' }); return; }
+        if (!monto || !isFinite(montoNum) || montoNum <= 0) { setMsg({ kind: 'err', text: 'El monto debe ser mayor a 0' }); return; }
+        setBusy(true); setMsg(null);
+        try {
+            const res = await fetch(`/api/recibos/${rec.id}/editar`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders() },
+                body: JSON.stringify({
+                    cod_cliente: Number(codCliente),
+                    monto: montoNum,
+                    fecha_comprobante: fecha || null,
+                    medio_pago: medio,
+                    banco_origen: bancoOrigen || null,
+                    referencia: referencia || null,
+                    observaciones: observaciones || null,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.ok) { setMsg({ kind: 'err', text: data.error || `HTTP ${res.status}` }); return; }
+            setMsg({ kind: 'ok', text: 'Cambios guardados' });
+            setTimeout(onSaved, 700);
+        } catch (e: any) {
+            setMsg({ kind: 'err', text: e.message });
+        } finally { setBusy(false); }
+    };
+
+    return (
+        <div className="rec-edit">
+            <h4>Editar datos del comprobante</h4>
+
+            {rec.status === 'imputado' && (
+                <div className="rec-msg rec-msg--err">
+                    <AlertCircle size={16} />
+                    <span>
+                        Este recibo ya está imputado en InfoManager. Editar acá corrige
+                        solo el registro de esta app — el recibo emitido en InfoManager
+                        NO se modifica.
+                    </span>
+                </div>
+            )}
+
+            <label className="rec-field">
+                <span>Cliente *</span>
+                <div className="rec-client-picker">
+                    <div className="rec-client-search">
+                        <Search size={14} />
+                        <input
+                            type="text"
+                            value={clientSearch}
+                            onChange={e => setClientSearch(e.target.value)}
+                            placeholder="Buscá por nombre, código o localidad…"
+                        />
+                    </div>
+                    <div className="rec-client-list">
+                        {filteredClients.length === 0 && (
+                            <div className="rec-client-empty">Sin coincidencias. Cargá el código directo abajo.</div>
+                        )}
+                        {filteredClients.map(c => (
+                            <button
+                                key={c.cod}
+                                type="button"
+                                className={`rec-client-option ${codCliente === c.cod ? 'is-active' : ''}`}
+                                onClick={() => setCodCliente(c.cod)}>
+                                <strong>{c.name}</strong>
+                                <span>Cod {c.cod}{c.localidad ? ` · ${c.localidad}` : ''}</span>
+                            </button>
+                        ))}
+                    </div>
+                    <input
+                        type="number"
+                        className="rec-cod-input"
+                        placeholder="o código manual"
+                        value={codCliente}
+                        onChange={e => setCodCliente(e.target.value)}
+                    />
+                    {selectedClientName && (
+                        <span className="rec-edit-selected">Seleccionado: <strong>{selectedClientName}</strong></span>
+                    )}
+                </div>
+            </label>
+
+            <div className="rec-row">
+                <label className="rec-field">
+                    <span>Monto *</span>
+                    <input type="number" step="0.01" value={monto} onChange={e => setMonto(e.target.value)} />
+                </label>
+                <label className="rec-field">
+                    <span>Fecha del comprobante</span>
+                    <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} />
+                </label>
+            </div>
+
+            <div className="rec-row">
+                <label className="rec-field">
+                    <span>Medio</span>
+                    <select value={medio} onChange={e => setMedio(e.target.value)}>
+                        {MEDIOS_PAGO_UI.map(m => (
+                            <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                    </select>
+                </label>
+                <label className="rec-field">
+                    <span>Banco origen</span>
+                    <input type="text" value={bancoOrigen} onChange={e => setBancoOrigen(e.target.value)} />
+                </label>
+            </div>
+
+            <label className="rec-field">
+                <span>Referencia</span>
+                <input type="text" value={referencia} onChange={e => setReferencia(e.target.value)} />
+            </label>
+
+            <label className="rec-field">
+                <span>Observaciones</span>
+                <textarea rows={2} value={observaciones} onChange={e => setObservaciones(e.target.value)} />
+            </label>
+
+            {msg && (
+                <div className={`rec-msg rec-msg--${msg.kind}`}>
+                    {msg.kind === 'ok' ? <Check size={16} /> : <AlertCircle size={16} />}
+                    <span>{msg.text}</span>
+                </div>
+            )}
+
+            <div className="rec-form-actions">
+                <button className="btn-secondary" onClick={onCancel} disabled={busy}>Cancelar</button>
+                <button className="btn-primary" onClick={save} disabled={busy}>
+                    {busy ? <><Loader2 size={16} className="spin" /> Guardando…</> : <><Check size={16} /> Guardar cambios</>}
+                </button>
+            </div>
+        </div>
     );
 }
 

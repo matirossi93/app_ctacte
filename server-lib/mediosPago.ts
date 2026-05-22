@@ -16,6 +16,7 @@ export const MEDIOS_PAGO: MedioPago[] = [
   { value: 'mercadopago',   label: 'MercadoPago',           forma_pago_im: 'OT', cuenta_env_var: 'IM_CUENTA_MERCADOPAGO' },
   { value: 'recaudadora_1', label: 'Cuenta Recaudadora 1',  forma_pago_im: 'OT', cuenta_env_var: 'IM_CUENTA_RECAUDADORA_1' },
   { value: 'recaudadora_2', label: 'Cuenta Recaudadora 2',  forma_pago_im: 'OT', cuenta_env_var: 'IM_CUENTA_RECAUDADORA_2' },
+  { value: 'banco_nacion',  label: 'Banco Nación',          forma_pago_im: 'OT', cuenta_env_var: 'IM_CUENTA_BANCO_NACION' },
   { value: 'efectivo',      label: 'Efectivo',              forma_pago_im: 'EF', cuenta_env_var: 'IM_CUENTA_EFECTIVO' },
   { value: 'cheque',        label: 'Cheque',                forma_pago_im: 'OT', cuenta_env_var: 'IM_CUENTA_CHEQUE' },
 ];

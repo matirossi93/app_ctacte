@@ -3,8 +3,8 @@ import { promises as fsp } from 'node:fs';
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
 import { ocrRecibo } from './ocrRecibo.js';
-import { crearRecibo, fetchComprobPendientes, type ReciboPago, type ReciboComprobante } from './infomanager.js';
-import { getFormaPagoIM } from './mediosPago.js';
+import { crearRecibo, fetchComprobPendientes, fetchClientesIMCached, type ReciboPago, type ReciboComprobante } from './infomanager.js';
+import { getFormaPagoIM, isValidMedio } from './mediosPago.js';
 import { resolveCuentaCod, debugCuentasResolver, invalidateCuentasCache } from './cuentasResolver.js';
 import { buscarPagoEnMP, todayISO_AR, type MPMatch, type MPCuenta } from './mercadopago.js';
 import type { JwtPayload } from './auth.js';
@@ -108,16 +108,27 @@ export async function uploadRecibo(req: Request & { user?: JwtPayload; file?: an
       codVendedor = user.cod_vendedor!;
     } else if (user.rol === 'repartidor') {
       // El repartidor no tiene cod_vendedor propio. Derivamos el del cliente
-      // desde el Maestro (client_operational) para que el comprobante también
-      // le aparezca al vendedor que atiende a ese cliente. Si el cliente no
-      // tiene vendedor cargado, queda en 0 (visible solo para backoffice y
+      // para que el comprobante también le aparezca al vendedor que lo atiende.
+      // Fuente primaria: InfoManager (incluye clientes nuevos del mes que aún
+      // no están en el maestro de Supabase). Fallback: client_operational.
+      // Si no se resuelve, queda en 0 (visible solo para backoffice y
       // repartidores, que ven la lista completa).
-      const { data: cliOp } = await sb().from('client_operational')
-        .select('cod_vendedor')
-        .eq('tenant_id', TENANT_ID)
-        .eq('cod_cliente', codCliente)
-        .maybeSingle();
-      codVendedor = cliOp?.cod_vendedor ?? 0;
+      codVendedor = 0;
+      try {
+        const imClientes = await fetchClientesIMCached();
+        const hit = imClientes.find((c) => Number(c.cod_cliente) === codCliente);
+        if (hit?.cod_vendedor != null) codVendedor = Number(hit.cod_vendedor);
+      } catch (e: any) {
+        console.warn('[uploadRecibo] IM clientes fallo, fallback Supabase:', e?.message);
+      }
+      if (!codVendedor) {
+        const { data: cliOp } = await sb().from('client_operational')
+          .select('cod_vendedor')
+          .eq('tenant_id', TENANT_ID)
+          .eq('cod_cliente', codCliente)
+          .maybeSingle();
+        codVendedor = cliOp?.cod_vendedor ?? 0;
+      }
     } else {
       codVendedor = Number(req.body?.cod_vendedor) || 0;
     }
@@ -540,6 +551,91 @@ export async function rechazarRecibo(req: Request & { user?: JwtPayload }, res: 
     if (error) { res.status(500).json({ error: error.message }); return; }
     res.json({ ok: true });
   } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
+ * POST /api/recibos/:id/editar — edición de un recibo ya cargado (admin/gerente).
+ *
+ * Permite corregir los datos de un comprobante en CUALQUIER estado, incluido
+ * 'imputado'. Campos editables: cod_cliente, monto, fecha_comprobante,
+ * medio_pago, banco_origen, referencia, observaciones.
+ *
+ * ⚠️ Si el recibo ya está 'imputado', esta edición solo cambia el registro de
+ * ESTA app — el recibo emitido en InfoManager NO se modifica (IM no expone API
+ * de edición). Sirve para corregir/anotar el comprobante local.
+ *
+ * Body opcional `reabrir: true` — solo para recibos 'rechazado'/'error': los
+ * vuelve a 'pendiente_revision' para reprocesarlos (limpia motivo/error).
+ */
+const CAMPOS_EDITABLES_TEXTO = ['banco_origen', 'referencia', 'observaciones'] as const;
+
+export async function editarRecibo(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+
+    const { data: comp, error: fErr } = await sb().from('comprobantes_pago').select('*')
+      .eq('id', req.params.id).eq('tenant_id', TENANT_ID).maybeSingle();
+    if (fErr) { res.status(500).json({ error: fErr.message }); return; }
+    if (!comp) { res.status(404).json({ error: 'Comprobante no encontrado' }); return; }
+
+    const body = req.body ?? {};
+    const update: Record<string, any> = {};
+
+    if (body.cod_cliente !== undefined) {
+      const n = Number(body.cod_cliente);
+      if (!Number.isFinite(n) || n <= 0) { res.status(400).json({ error: 'cod_cliente inválido' }); return; }
+      update.cod_cliente = n;
+    }
+    if (body.monto !== undefined) {
+      const m = Number(body.monto);
+      if (!Number.isFinite(m) || m <= 0) { res.status(400).json({ error: 'monto debe ser mayor a 0' }); return; }
+      update.monto = m;
+    }
+    if (body.fecha_comprobante !== undefined) {
+      const f = body.fecha_comprobante ? String(body.fecha_comprobante).trim() : null;
+      if (f && !/^\d{4}-\d{2}-\d{2}$/.test(f)) { res.status(400).json({ error: 'fecha_comprobante debe ser YYYY-MM-DD' }); return; }
+      update.fecha_comprobante = f;
+    }
+    if (body.medio_pago !== undefined) {
+      const mp = body.medio_pago ? String(body.medio_pago) : null;
+      if (mp && !isValidMedio(mp)) { res.status(400).json({ error: `medio_pago inválido: ${mp}` }); return; }
+      update.medio_pago = mp;
+    }
+    for (const campo of CAMPOS_EDITABLES_TEXTO) {
+      if (body[campo] !== undefined) {
+        const v = body[campo];
+        update[campo] = v == null || v === '' ? null : String(v);
+      }
+    }
+
+    // Reapertura: rechazado/error → pendiente_revision para reprocesar.
+    if (body.reabrir === true) {
+      if (comp.status !== 'rechazado' && comp.status !== 'error') {
+        res.status(400).json({ error: `Solo se puede reabrir un recibo rechazado o con error (estado actual: ${comp.status})` });
+        return;
+      }
+      update.status = 'pendiente_revision';
+      update.motivo_rechazo = null;
+      update.error_msg = null;
+    }
+
+    if (Object.keys(update).length === 0) { res.status(400).json({ error: 'No hay nada para actualizar' }); return; }
+
+    update.reviewed_by = user.sub;
+    update.reviewed_at = new Date().toISOString();
+
+    const { data, error } = await sb().from('comprobantes_pago').update(update)
+      .eq('id', comp.id).eq('tenant_id', TENANT_ID).select().single();
+    if (error) { res.status(500).json({ error: `update: ${error.message}` }); return; }
+
+    console.log(`[editarRecibo] ${comp.id} editado por ${user.sub} · campos=${Object.keys(update).join(',')}`);
+    const foto_signed_url = data.foto_url ? await getSignedUrlCached(data.foto_url) : null;
+    res.json({ ok: true, recibo: { ...data, foto_signed_url } });
+  } catch (err: any) {
+    console.error('editarRecibo error:', err);
     res.status(500).json({ error: err?.message ?? 'error' });
   }
 }

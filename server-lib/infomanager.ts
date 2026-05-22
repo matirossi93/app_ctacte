@@ -344,6 +344,8 @@ export async function fetchPlanCuentas(): Promise<PlanCuenta[]> {
 export interface ClienteIM {
   cod_cliente: number;
   razon_social?: string;
+  localidad?: string | null;
+  cod_vendedor?: number | null;
   telefono?: string | null;
   whatsapp?: string | null;
   [k: string]: any;
@@ -373,12 +375,40 @@ export async function fetchClientesIM(): Promise<ClienteIM[]> {
     const cod = Number(r.cod_cliente ?? r.codigo ?? r.id ?? r.cod ?? 0);
     const telFijo = r.telefono ?? r.tel_fijo ?? r.tel ?? r.telefonos ?? null;
     const cel = r.celular ?? r.whatsapp ?? r.movil ?? r.cel ?? null;
+    const codVend = r.cod_vendedor ?? r.codVendedor ?? r.vendedor_cod ?? null;
     return {
       ...r,
       cod_cliente: cod,
       razon_social: r.razon_social ?? r.nombre ?? '',
+      localidad: r.localidad ?? r.ciudad ?? null,
+      cod_vendedor: codVend != null && Number.isFinite(Number(codVend)) ? Number(codVend) : null,
       telefono: telFijo ? String(telFijo) : null,
       whatsapp: cel ? String(cel) : (telFijo ? String(telFijo) : null),
     };
   }).filter((c: ClienteIM) => c.cod_cliente > 0);
 }
+
+// Cache RAM de /clientes de InfoManager. El maestro cambia poco y paginar 20
+// páginas en cada lookup del picker de Recibos era caro. TTL 30min; reiniciar
+// el container o llamar invalidateClientesIMCache() fuerza refresh inmediato.
+let clientesIMCache: { data: ClienteIM[]; fetchedAt: number } | null = null;
+let clientesIMPending: Promise<ClienteIM[]> | null = null;
+const CLIENTES_IM_TTL_MS = 30 * 60 * 1000;
+
+export async function fetchClientesIMCached(force = false): Promise<ClienteIM[]> {
+  if (!force && clientesIMCache && (Date.now() - clientesIMCache.fetchedAt) < CLIENTES_IM_TTL_MS) {
+    return clientesIMCache.data;
+  }
+  if (clientesIMPending) return clientesIMPending;
+  clientesIMPending = fetchClientesIM()
+    .then(rows => { clientesIMCache = { data: rows, fetchedAt: Date.now() }; return rows; })
+    .catch(err => {
+      console.error('[fetchClientesIMCached]', err?.message ?? err);
+      // Si ya teníamos cache (aunque vencido), lo devolvemos antes que nada.
+      return clientesIMCache?.data ?? [];
+    })
+    .finally(() => { clientesIMPending = null; });
+  return clientesIMPending;
+}
+
+export function invalidateClientesIMCache(): void { clientesIMCache = null; }
