@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { esLineaTecnica, agregarPorArticulo, topPorImporte, topPorFrecuencia } from './historialCompras.js';
+import { esLineaTecnica, agregarPorArticulo, topPorImporte, topPorFrecuencia, armarFacturas } from './historialCompras.js';
 
 describe('esLineaTecnica', () => {
   it('matchea flete (case insensitive)', () => {
@@ -121,5 +121,59 @@ describe('topPorFrecuencia', () => {
       [1, { cod_articulo: 1, detalle: 'A', cantidad_total: 0, importe_total: 100, num_facturas: 0, ultima_compra: '2026-05-01' }],
     ]);
     expect(topPorFrecuencia(agg, 5)).toEqual([]);
+  });
+});
+
+describe('armarFacturas', () => {
+  it('agrupa items por id_comprobante, ordena facturas desc por fecha, aplica signo en items', () => {
+    const cabsValidas = new Map<number, any>([
+      [1, { id: 1, fecha: '2026-05-10', tipo: 'FA', tipo_factura: 'A', punto_de_venta: 1, numero: 100, fa_total: 1500, sign: 1 }],
+      [2, { id: 2, fecha: '2026-05-22', tipo: 'NC', tipo_factura: 'A', punto_de_venta: 1, numero: 78, fa_total: 500, sign: -1 }],
+      [3, { id: 3, fecha: '2026-05-20', tipo: 'FA', tipo_factura: 'A', punto_de_venta: 1, numero: 101, fa_total: 1500, sign: 1 }],
+    ]);
+    const items = [
+      { id_comprobante: 1, cod_articulo: 100, cantidad: 2, importe: 1000, detalle: 'Mix' },
+      { id_comprobante: 1, cod_articulo: 200, cantidad: 1, importe: 500, detalle: 'Tiernitos' },
+      { id_comprobante: 2, cod_articulo: 100, cantidad: 1, importe: 500, detalle: 'Mix' },
+      { id_comprobante: 3, cod_articulo: 100, cantidad: 3, importe: 1500, detalle: 'Mix' },
+    ];
+    const articulosMap = new Map<number, { descripcion: string }>();
+
+    const facturas = armarFacturas(cabsValidas, items, articulosMap);
+
+    expect(facturas).toHaveLength(3);
+    // Orden desc por fecha
+    expect(facturas.map(f => f.id_comprobante)).toEqual([2, 3, 1]);
+    // NC con signo aplicado en items
+    const nc = facturas.find(f => f.tipo === 'NC')!;
+    expect(nc.items[0].importe).toBe(-500);
+    expect(nc.items[0].cantidad).toBe(-1);
+    expect(nc.total_neto).toBe(-500);
+    // FA con signo positivo
+    const fa = facturas.find(f => f.numero === 100)!;
+    expect(fa.items).toHaveLength(2);
+    expect(fa.total_neto).toBe(1500);
+  });
+
+  it('descarta items técnicos (flete, descuento, etc)', () => {
+    const cabsValidas = new Map<number, any>([
+      [1, { id: 1, fecha: '2026-05-10', tipo: 'FA', tipo_factura: 'A', punto_de_venta: 1, numero: 100, fa_total: 1500, sign: 1 }],
+    ]);
+    const items = [
+      { id_comprobante: 1, cod_articulo: 100, cantidad: 2, importe: 1000, detalle: 'Mix Energético' },
+      { id_comprobante: 1, cod_articulo: 999, cantidad: 1, importe: 500, detalle: 'FLETE CABA' },
+    ];
+    const facturas = armarFacturas(cabsValidas, items, new Map());
+    expect(facturas[0].items).toHaveLength(1);
+    expect(facturas[0].items[0].detalle).toBe('Mix Energético');
+  });
+
+  it('factura sin items (caso raro) aparece con items vacíos', () => {
+    const cabsValidas = new Map<number, any>([
+      [1, { id: 1, fecha: '2026-05-10', tipo: 'FA', tipo_factura: 'A', punto_de_venta: 1, numero: 100, fa_total: 1500, sign: 1 }],
+    ]);
+    const facturas = armarFacturas(cabsValidas, [], new Map());
+    expect(facturas).toHaveLength(1);
+    expect(facturas[0].items).toEqual([]);
   });
 });

@@ -108,3 +108,74 @@ export function topPorFrecuencia(agg: Map<number, AgregadoArticulo>, n: number):
     })
     .slice(0, n);
 }
+
+export interface FacturaHistorial {
+  id_comprobante: number;
+  fecha: string;
+  tipo: 'FA' | 'NC';
+  tipo_factura: string;
+  punto_venta: number;
+  numero: number;
+  total_neto: number;
+  items: Array<{ cod_articulo: number; detalle: string; cantidad: number; importe: number }>;
+}
+
+interface CabeceraValida {
+  id: number;
+  fecha: string;
+  tipo: string;
+  tipo_factura?: string;
+  punto_de_venta?: number;
+  numero?: number;
+  fa_total?: number;
+  sign: 1 | -1;
+}
+
+export function armarFacturas(
+  cabsValidas: Map<number, CabeceraValida>,
+  items: Array<{ id_comprobante: number; cod_articulo: number | string; cantidad: number | string; importe?: number | string; detalle?: string }>,
+  articulosMap: Map<number, { descripcion: string }>
+): FacturaHistorial[] {
+  const itemsPorComp = new Map<number, FacturaHistorial['items']>();
+
+  for (const it of items) {
+    const cab = cabsValidas.get(Number(it.id_comprobante));
+    if (!cab) continue;
+
+    const detalle = String(
+      (it as any).detalle ?? articulosMap.get(Number(it.cod_articulo))?.descripcion ?? `#${it.cod_articulo}`
+    ).trim();
+    if (esLineaTecnica(detalle)) continue;
+
+    const arr = itemsPorComp.get(Number(it.id_comprobante)) ?? [];
+    arr.push({
+      cod_articulo: Number(it.cod_articulo),
+      detalle,
+      cantidad: Number(it.cantidad ?? 0) * cab.sign,
+      importe: Number(it.importe ?? 0) * cab.sign,
+    });
+    itemsPorComp.set(Number(it.id_comprobante), arr);
+  }
+
+  const facturas: FacturaHistorial[] = [];
+  for (const [id, cab] of cabsValidas) {
+    const clase: 'FA' | 'NC' = cab.sign === -1 ? 'NC' : 'FA';
+    facturas.push({
+      id_comprobante: id,
+      fecha: cab.fecha,
+      tipo: clase,
+      tipo_factura: String(cab.tipo_factura ?? cab.tipo ?? ''),
+      punto_venta: Number(cab.punto_de_venta ?? 0),
+      numero: Number(cab.numero ?? 0),
+      total_neto: Number(cab.fa_total ?? 0) * cab.sign,
+      items: itemsPorComp.get(id) ?? [],
+    });
+  }
+
+  facturas.sort((a, b) => {
+    if (a.fecha === b.fecha) return b.id_comprobante - a.id_comprobante;
+    return a.fecha < b.fecha ? 1 : -1;
+  });
+
+  return facturas;
+}
