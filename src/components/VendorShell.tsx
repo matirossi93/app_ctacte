@@ -158,6 +158,44 @@ interface ActivityItem {
     created_by_nombre?: string | null;
 }
 
+// Historial de compras del cliente — usado en Tasks 8-10
+interface HistorialItemAgregado {
+    cod_articulo: number;
+    detalle: string;
+    cantidad_total: number;
+    importe_total: number;
+    num_facturas: number;
+    ultima_compra: string;
+}
+
+interface HistorialFacturaItem {
+    cod_articulo: number;
+    detalle: string;
+    cantidad: number;
+    importe: number;
+}
+
+interface HistorialFactura {
+    id_comprobante: number;
+    fecha: string;
+    tipo: 'FA' | 'NC';
+    tipo_factura: string;
+    punto_venta: number;
+    numero: number;
+    total_neto: number;
+    items: HistorialFacturaItem[];
+}
+
+interface HistorialComprasResponse {
+    ok: boolean;
+    cod_cliente: number;
+    meses: number;
+    rango: { desde: string; hasta: string };
+    facturas: HistorialFactura[];
+    top_importe: HistorialItemAgregado[];
+    top_frecuencia: HistorialItemAgregado[];
+    generated_at: string;
+}
 interface Props {
     onLogout: () => void;
 }
@@ -1621,7 +1659,35 @@ function ClienteObjetivoCard({ c, isOpen, onToggle }: { c: ClienteObjetivo; isOp
 
     const hasInfoComercial = c.direccion || c.cond_pago || c.hoja_ruta || c.repartidor || c.dia_entrega || c.notas;
     const hasHistorico = c.fact_mes_pasado != null || c.fact_prom_3m != null || c.saldo_cta_cte != null;
-    const canExpand = hasInfoComercial || hasHistorico;
+    const canExpand = true;
+
+    const [histLoading, setHistLoading] = useState(false);
+    const [histErr, setHistErr] = useState<string | null>(null);
+    const [histData, setHistData] = useState<HistorialComprasResponse | null>(null);
+    const [histRequested, setHistRequested] = useState(false);
+
+    const loadHist = async () => {
+        setHistLoading(true);
+        setHistErr(null);
+        try {
+            const res = await fetch(`/api/clientes/${c.cod_cliente}/historial-compras?meses=3`, { headers: authHeaders() });
+            const j = await res.json();
+            if (!res.ok || !j.ok) throw new Error(j.error || `HTTP ${res.status}`);
+            setHistData(j);
+        } catch (e: any) {
+            setHistErr(e.message);
+        } finally {
+            setHistLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (isOpen && !histRequested) {
+            setHistRequested(true);
+            loadHist();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen]);
 
     return (
         <div className={`vs-cliente-obj ${isOpen ? 'is-open' : ''} ${canExpand ? 'is-expandable' : ''}`}>
@@ -1685,6 +1751,27 @@ function ClienteObjetivoCard({ c, isOpen, onToggle }: { c: ClienteObjetivo; isOp
                                 <div><span className="k">Saldo ctacte</span><strong>{formatMoney(c.saldo_cta_cte)}</strong></div>
                             )}
                         </div>
+                    )}
+
+                    {histLoading && (
+                        <div className="vs-historial-loading">
+                            <Loader2 size={14} className="spin" /> Cargando historial…
+                        </div>
+                    )}
+                    {histErr && (
+                        <div className="vs-historial-error">
+                            No se pudieron cargar las compras.
+                            <button type="button" onClick={loadHist}>Reintentar</button>
+                        </div>
+                    )}
+                    {histData && histData.facturas.length === 0 && (
+                        <p className="vs-historial-empty-state">Sin compras registradas en los últimos 3 meses.</p>
+                    )}
+                    {histData && histData.facturas.length > 0 && (
+                        <>
+                            <TopProductosCliente topImporte={histData.top_importe} topFrecuencia={histData.top_frecuencia} />
+                            <ComprasRecientesCliente facturas={histData.facturas} />
+                        </>
                     )}
                 </div>
             )}
@@ -2159,4 +2246,107 @@ function telHref(raw: string | null | undefined): string | null {
 function waHref(raw: string | null | undefined): string | null {
     const n = normalizeArgPhone(raw);
     return n ? `https://wa.me/549${n}` : null;
+}
+
+function TopProductosCliente({ topImporte, topFrecuencia }: { topImporte: HistorialItemAgregado[]; topFrecuencia: HistorialItemAgregado[] }) {
+    if (topImporte.length === 0 && topFrecuencia.length === 0) return null;
+
+    return (
+        <div className="vs-historial-top">
+            <h4>Top productos · últimos 3 meses</h4>
+            <div className="vs-historial-top-grid">
+                <div className="vs-historial-top-col">
+                    <h5>Top por $</h5>
+                    {topImporte.length === 0 ? (
+                        <p className="vs-historial-empty">—</p>
+                    ) : (
+                        <ol className="vs-historial-top-list">
+                            {topImporte.map((a, idx) => (
+                                <li key={`imp-${a.cod_articulo}`}>
+                                    <span className="rank">{idx + 1}.</span>
+                                    <span className="det">{a.detalle}</span>
+                                    <span className="meta">{formatMoney(a.importe_total)} · {a.num_facturas} fact</span>
+                                </li>
+                            ))}
+                        </ol>
+                    )}
+                </div>
+                <div className="vs-historial-top-col">
+                    <h5>Más habitual</h5>
+                    {topFrecuencia.length === 0 ? (
+                        <p className="vs-historial-empty">—</p>
+                    ) : (
+                        <ol className="vs-historial-top-list">
+                            {topFrecuencia.map((a, idx) => (
+                                <li key={`frec-${a.cod_articulo}`}>
+                                    <span className="rank">{idx + 1}.</span>
+                                    <span className="det">{a.detalle}</span>
+                                    <span className="meta">{a.num_facturas} fact · {a.cantidad_total} u.</span>
+                                </li>
+                            ))}
+                        </ol>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function ComprasRecientesCliente({ facturas }: { facturas: HistorialFactura[] }) {
+    const [verTodas, setVerTodas] = useState(false);
+    const [openComp, setOpenComp] = useState<number | null>(null);
+    const limite = 10;
+    const mostradas = verTodas ? facturas : facturas.slice(0, limite);
+
+    if (facturas.length === 0) return null;
+
+    return (
+        <div className="vs-historial-facturas">
+            <h4>Compras recientes · últimos 3 meses</h4>
+            <ul className="vs-historial-facturas-list">
+                {mostradas.map(f => (
+                    <li
+                        key={f.id_comprobante}
+                        className={`vs-factura-row ${f.tipo === 'NC' ? 'is-nc' : ''} ${openComp === f.id_comprobante ? 'is-open' : ''}`}
+                    >
+                        <button
+                            type="button"
+                            className="vs-factura-head"
+                            onClick={() => setOpenComp(p => p === f.id_comprobante ? null : f.id_comprobante)}
+                        >
+                            <span className="fecha">{formatFechaCorta(f.fecha)}</span>
+                            <span className="ref">
+                                {f.tipo}{f.tipo_factura ? `-${f.tipo_factura}` : ''} {String(f.punto_venta).padStart(4, '0')}-{String(f.numero).padStart(8, '0')}
+                            </span>
+                            <span className="monto">{formatMoney(f.total_neto)}</span>
+                        </button>
+                        {openComp === f.id_comprobante && f.items.length > 0 && (
+                            <ul className="vs-factura-items">
+                                {f.items.map((it, idx) => (
+                                    <li key={`${f.id_comprobante}-${idx}`}>
+                                        <span className="det">{it.detalle}</span>
+                                        <span className="cant">×{it.cantidad}</span>
+                                        <span className="imp">{formatMoney(it.importe)}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                        {openComp === f.id_comprobante && f.items.length === 0 && (
+                            <p className="vs-factura-items-empty">Sin desglose disponible</p>
+                        )}
+                    </li>
+                ))}
+            </ul>
+            {!verTodas && facturas.length > limite && (
+                <button type="button" className="vs-historial-ver-todas" onClick={() => setVerTodas(true)}>
+                    Ver todas ({facturas.length})
+                </button>
+            )}
+        </div>
+    );
+}
+
+function formatFechaCorta(iso: string): string {
+    if (!iso || iso.length < 10) return iso ?? '';
+    return `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 }

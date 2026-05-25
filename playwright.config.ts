@@ -23,7 +23,7 @@ export default defineConfig({
     {
       name: 'iphone-13',
       use: { ...devices['iPhone 13'] },
-      testIgnore: /(recibos-debug|vendor-overflow)\.spec\.ts/,
+      testIgnore: /(recibos-debug|vendor-overflow|historial-compras)\.spec\.ts/,
     },
     {
       // Viewport del iPhone 13 pero corriendo en Edge del sistema
@@ -34,7 +34,7 @@ export default defineConfig({
         defaultBrowserType: 'chromium',
         channel: 'msedge',
       },
-      testMatch: /(recibos-debug|vendor-overflow)\.spec\.ts/,
+      testMatch: /(recibos-debug|vendor-overflow|historial-compras)\.spec\.ts/,
     },
   ],
 });
