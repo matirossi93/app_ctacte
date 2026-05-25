@@ -91,3 +91,20 @@ export function agregarPorArticulo(
 
   return acc;
 }
+
+export function topPorImporte(agg: Map<number, AgregadoArticulo>, n: number): AgregadoArticulo[] {
+  return Array.from(agg.values())
+    .filter(a => a.importe_total > 0)
+    .sort((a, b) => b.importe_total - a.importe_total)
+    .slice(0, n);
+}
+
+export function topPorFrecuencia(agg: Map<number, AgregadoArticulo>, n: number): AgregadoArticulo[] {
+  return Array.from(agg.values())
+    .filter(a => a.num_facturas > 0)
+    .sort((a, b) => {
+      if (b.num_facturas !== a.num_facturas) return b.num_facturas - a.num_facturas;
+      return b.importe_total - a.importe_total;
+    })
+    .slice(0, n);
+}

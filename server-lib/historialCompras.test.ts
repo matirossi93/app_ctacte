@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { esLineaTecnica, agregarPorArticulo } from './historialCompras.js';
+import { esLineaTecnica, agregarPorArticulo, topPorImporte, topPorFrecuencia } from './historialCompras.js';
 
 describe('esLineaTecnica', () => {
   it('matchea flete (case insensitive)', () => {
@@ -79,5 +79,47 @@ describe('agregarPorArticulo', () => {
     const articulosMap = new Map<number, { descripcion: string }>();
     const agg = agregarPorArticulo(items, signos, articulosMap);
     expect(agg.get(555)?.detalle).toBe('PRODUCTO DESDE ITEM');
+  });
+});
+
+describe('topPorImporte', () => {
+  it('ordena desc por importe_total y slice 5', () => {
+    const agg = new Map([
+      [1, { cod_articulo: 1, detalle: 'A', cantidad_total: 0, importe_total: 100, num_facturas: 1, ultima_compra: '2026-05-01' }],
+      [2, { cod_articulo: 2, detalle: 'B', cantidad_total: 0, importe_total: 500, num_facturas: 1, ultima_compra: '2026-05-01' }],
+      [3, { cod_articulo: 3, detalle: 'C', cantidad_total: 0, importe_total: 300, num_facturas: 1, ultima_compra: '2026-05-01' }],
+      [4, { cod_articulo: 4, detalle: 'D', cantidad_total: 0, importe_total: 50, num_facturas: 1, ultima_compra: '2026-05-01' }],
+      [5, { cod_articulo: 5, detalle: 'E', cantidad_total: 0, importe_total: 700, num_facturas: 1, ultima_compra: '2026-05-01' }],
+      [6, { cod_articulo: 6, detalle: 'F', cantidad_total: 0, importe_total: 200, num_facturas: 1, ultima_compra: '2026-05-01' }],
+    ]);
+    const top = topPorImporte(agg, 5);
+    expect(top.map(t => t.cod_articulo)).toEqual([5, 2, 3, 6, 1]);
+    expect(top).toHaveLength(5);
+  });
+
+  it('excluye negativos (NC > FA del mismo artículo => importe neto negativo, no debe aparecer en top "más comprado")', () => {
+    const agg = new Map([
+      [1, { cod_articulo: 1, detalle: 'A', cantidad_total: 1, importe_total: -100, num_facturas: 1, ultima_compra: '2026-05-01' }],
+      [2, { cod_articulo: 2, detalle: 'B', cantidad_total: 1, importe_total: 200, num_facturas: 1, ultima_compra: '2026-05-01' }],
+    ]);
+    expect(topPorImporte(agg, 5).map(t => t.cod_articulo)).toEqual([2]);
+  });
+});
+
+describe('topPorFrecuencia', () => {
+  it('ordena desc por num_facturas, desempata por importe_total', () => {
+    const agg = new Map([
+      [1, { cod_articulo: 1, detalle: 'A', cantidad_total: 0, importe_total: 100, num_facturas: 3, ultima_compra: '2026-05-01' }],
+      [2, { cod_articulo: 2, detalle: 'B', cantidad_total: 0, importe_total: 200, num_facturas: 3, ultima_compra: '2026-05-01' }],
+      [3, { cod_articulo: 3, detalle: 'C', cantidad_total: 0, importe_total: 50, num_facturas: 5, ultima_compra: '2026-05-01' }],
+    ]);
+    expect(topPorFrecuencia(agg, 5).map(t => t.cod_articulo)).toEqual([3, 2, 1]);
+  });
+
+  it('excluye artículos con frecuencia 0 (no debería pasar pero defensivo)', () => {
+    const agg = new Map([
+      [1, { cod_articulo: 1, detalle: 'A', cantidad_total: 0, importe_total: 100, num_facturas: 0, ultima_compra: '2026-05-01' }],
+    ]);
+    expect(topPorFrecuencia(agg, 5)).toEqual([]);
   });
 });
