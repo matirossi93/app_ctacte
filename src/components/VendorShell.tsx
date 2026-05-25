@@ -199,6 +199,7 @@ interface HistorialComprasResponse {
 // Placeholder declarations to satisfy noUnusedLocals; serán removidas en Task 10 cuando los componentes consuman las interfaces.
 declare const _historialComprasResponseType: HistorialComprasResponse;
 declare const _topProductosClienteType: typeof TopProductosCliente;
+declare const _comprasRecientesClienteType: typeof ComprasRecientesCliente;
 
 interface Props {
     onLogout: () => void;
@@ -2245,4 +2246,63 @@ function TopProductosCliente({ topImporte, topFrecuencia }: { topImporte: Histor
             </div>
         </div>
     );
+}
+
+function ComprasRecientesCliente({ facturas }: { facturas: HistorialFactura[] }) {
+    const [verTodas, setVerTodas] = useState(false);
+    const [openComp, setOpenComp] = useState<number | null>(null);
+    const limite = 10;
+    const mostradas = verTodas ? facturas : facturas.slice(0, limite);
+
+    if (facturas.length === 0) return null;
+
+    return (
+        <div className="vs-historial-facturas">
+            <h4>Compras recientes · últimos 3 meses</h4>
+            <ul className="vs-historial-facturas-list">
+                {mostradas.map(f => (
+                    <li
+                        key={f.id_comprobante}
+                        className={`vs-factura-row ${f.tipo === 'NC' ? 'is-nc' : ''} ${openComp === f.id_comprobante ? 'is-open' : ''}`}
+                    >
+                        <button
+                            type="button"
+                            className="vs-factura-head"
+                            onClick={() => setOpenComp(p => p === f.id_comprobante ? null : f.id_comprobante)}
+                        >
+                            <span className="fecha">{formatFechaCorta(f.fecha)}</span>
+                            <span className="ref">
+                                {f.tipo}{f.tipo_factura ? `-${f.tipo_factura}` : ''} {String(f.punto_venta).padStart(4, '0')}-{String(f.numero).padStart(8, '0')}
+                            </span>
+                            <span className="monto">{formatMoney(f.total_neto)}</span>
+                        </button>
+                        {openComp === f.id_comprobante && f.items.length > 0 && (
+                            <ul className="vs-factura-items">
+                                {f.items.map((it, idx) => (
+                                    <li key={`${f.id_comprobante}-${idx}`}>
+                                        <span className="det">{it.detalle}</span>
+                                        <span className="cant">×{it.cantidad}</span>
+                                        <span className="imp">{formatMoney(it.importe)}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                        {openComp === f.id_comprobante && f.items.length === 0 && (
+                            <p className="vs-factura-items-empty">Sin desglose disponible</p>
+                        )}
+                    </li>
+                ))}
+            </ul>
+            {!verTodas && facturas.length > limite && (
+                <button type="button" className="vs-historial-ver-todas" onClick={() => setVerTodas(true)}>
+                    Ver todas ({facturas.length})
+                </button>
+            )}
+        </div>
+    );
+}
+
+function formatFechaCorta(iso: string): string {
+    if (!iso || iso.length < 10) return iso ?? '';
+    return `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 }
