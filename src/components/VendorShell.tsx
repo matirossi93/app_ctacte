@@ -196,8 +196,9 @@ interface HistorialComprasResponse {
     top_frecuencia: HistorialItemAgregado[];
     generated_at: string;
 }
-// Placeholder declaration to satisfy noUnusedLocals; será removida en Task 8 cuando los componentes empiecen a usar las interfaces.
+// Placeholder declarations to satisfy noUnusedLocals; serán removidas en Task 10 cuando los componentes consuman las interfaces.
 declare const _historialComprasResponseType: HistorialComprasResponse;
+declare const _topProductosClienteType: typeof TopProductosCliente;
 
 interface Props {
     onLogout: () => void;
@@ -2200,4 +2201,48 @@ function telHref(raw: string | null | undefined): string | null {
 function waHref(raw: string | null | undefined): string | null {
     const n = normalizeArgPhone(raw);
     return n ? `https://wa.me/549${n}` : null;
+}
+
+function TopProductosCliente({ topImporte, topFrecuencia }: { topImporte: HistorialItemAgregado[]; topFrecuencia: HistorialItemAgregado[] }) {
+    if (topImporte.length === 0 && topFrecuencia.length === 0) return null;
+
+    return (
+        <div className="vs-historial-top">
+            <h4>Top productos · últimos 3 meses</h4>
+            <div className="vs-historial-top-grid">
+                <div className="vs-historial-top-col">
+                    <h5>Top por $</h5>
+                    {topImporte.length === 0 ? (
+                        <p className="vs-historial-empty">—</p>
+                    ) : (
+                        <ol className="vs-historial-top-list">
+                            {topImporte.map((a, idx) => (
+                                <li key={`imp-${a.cod_articulo}`}>
+                                    <span className="rank">{idx + 1}.</span>
+                                    <span className="det">{a.detalle}</span>
+                                    <span className="meta">{formatMoney(a.importe_total)} · {a.num_facturas} fact</span>
+                                </li>
+                            ))}
+                        </ol>
+                    )}
+                </div>
+                <div className="vs-historial-top-col">
+                    <h5>Más habitual</h5>
+                    {topFrecuencia.length === 0 ? (
+                        <p className="vs-historial-empty">—</p>
+                    ) : (
+                        <ol className="vs-historial-top-list">
+                            {topFrecuencia.map((a, idx) => (
+                                <li key={`frec-${a.cod_articulo}`}>
+                                    <span className="rank">{idx + 1}.</span>
+                                    <span className="det">{a.detalle}</span>
+                                    <span className="meta">{a.num_facturas} fact · {a.cantidad_total} u.</span>
+                                </li>
+                            ))}
+                        </ol>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
 }
