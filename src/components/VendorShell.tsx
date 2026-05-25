@@ -158,6 +158,47 @@ interface ActivityItem {
     created_by_nombre?: string | null;
 }
 
+// Historial de compras del cliente — usado en Tasks 8-10
+interface HistorialItemAgregado {
+    cod_articulo: number;
+    detalle: string;
+    cantidad_total: number;
+    importe_total: number;
+    num_facturas: number;
+    ultima_compra: string;
+}
+
+interface HistorialFacturaItem {
+    cod_articulo: number;
+    detalle: string;
+    cantidad: number;
+    importe: number;
+}
+
+interface HistorialFactura {
+    id_comprobante: number;
+    fecha: string;
+    tipo: 'FA' | 'NC';
+    tipo_factura: string;
+    punto_venta: number;
+    numero: number;
+    total_neto: number;
+    items: HistorialFacturaItem[];
+}
+
+interface HistorialComprasResponse {
+    ok: boolean;
+    cod_cliente: number;
+    meses: number;
+    rango: { desde: string; hasta: string };
+    facturas: HistorialFactura[];
+    top_importe: HistorialItemAgregado[];
+    top_frecuencia: HistorialItemAgregado[];
+    generated_at: string;
+}
+// Placeholder declaration to satisfy noUnusedLocals; será removida en Task 8 cuando los componentes empiecen a usar las interfaces.
+declare const _historialComprasResponseType: HistorialComprasResponse;
+
 interface Props {
     onLogout: () => void;
 }
