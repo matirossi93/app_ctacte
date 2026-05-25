@@ -196,11 +196,6 @@ interface HistorialComprasResponse {
     top_frecuencia: HistorialItemAgregado[];
     generated_at: string;
 }
-// Placeholder declarations to satisfy noUnusedLocals; serán removidas en Task 10 cuando los componentes consuman las interfaces.
-declare const _historialComprasResponseType: HistorialComprasResponse;
-declare const _topProductosClienteType: typeof TopProductosCliente;
-declare const _comprasRecientesClienteType: typeof ComprasRecientesCliente;
-
 interface Props {
     onLogout: () => void;
 }
@@ -1664,7 +1659,35 @@ function ClienteObjetivoCard({ c, isOpen, onToggle }: { c: ClienteObjetivo; isOp
 
     const hasInfoComercial = c.direccion || c.cond_pago || c.hoja_ruta || c.repartidor || c.dia_entrega || c.notas;
     const hasHistorico = c.fact_mes_pasado != null || c.fact_prom_3m != null || c.saldo_cta_cte != null;
-    const canExpand = hasInfoComercial || hasHistorico;
+    const canExpand = true;
+
+    const [histLoading, setHistLoading] = useState(false);
+    const [histErr, setHistErr] = useState<string | null>(null);
+    const [histData, setHistData] = useState<HistorialComprasResponse | null>(null);
+    const [histRequested, setHistRequested] = useState(false);
+
+    const loadHist = async () => {
+        setHistLoading(true);
+        setHistErr(null);
+        try {
+            const res = await fetch(`/api/clientes/${c.cod_cliente}/historial-compras?meses=3`, { headers: authHeaders() });
+            const j = await res.json();
+            if (!res.ok || !j.ok) throw new Error(j.error || `HTTP ${res.status}`);
+            setHistData(j);
+        } catch (e: any) {
+            setHistErr(e.message);
+        } finally {
+            setHistLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (isOpen && !histRequested) {
+            setHistRequested(true);
+            loadHist();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen]);
 
     return (
         <div className={`vs-cliente-obj ${isOpen ? 'is-open' : ''} ${canExpand ? 'is-expandable' : ''}`}>
@@ -1728,6 +1751,27 @@ function ClienteObjetivoCard({ c, isOpen, onToggle }: { c: ClienteObjetivo; isOp
                                 <div><span className="k">Saldo ctacte</span><strong>{formatMoney(c.saldo_cta_cte)}</strong></div>
                             )}
                         </div>
+                    )}
+
+                    {histLoading && (
+                        <div className="vs-historial-loading">
+                            <Loader2 size={14} className="spin" /> Cargando historial…
+                        </div>
+                    )}
+                    {histErr && (
+                        <div className="vs-historial-error">
+                            No se pudieron cargar las compras.
+                            <button type="button" onClick={loadHist}>Reintentar</button>
+                        </div>
+                    )}
+                    {histData && histData.facturas.length === 0 && (
+                        <p className="vs-historial-empty-state">Sin compras registradas en los últimos 3 meses.</p>
+                    )}
+                    {histData && histData.facturas.length > 0 && (
+                        <>
+                            <TopProductosCliente topImporte={histData.top_importe} topFrecuencia={histData.top_frecuencia} />
+                            <ComprasRecientesCliente facturas={histData.facturas} />
+                        </>
                     )}
                 </div>
             )}
