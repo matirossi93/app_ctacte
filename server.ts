@@ -30,6 +30,7 @@ import {
 import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot } from './server-lib/goals.js';
 import { listComisiones, probeVenta, comisionesSample, topArticulos, facturasVendedor, diagnoseArticulo } from './server-lib/comisiones.js';
 import { listClientesLookup } from './server-lib/clientes.js';
+import { historialComprasCliente } from './server-lib/historialCompras.js';
 import { listActivity, createActivity, updateActivity, deleteActivity } from './server-lib/activity.js';
 import {
   listUsuarios, createUsuario, updateUsuario, deleteUsuario, changePassword
@@ -703,6 +704,7 @@ app.get('/api/comisiones/diagnose-articulo/:cod', requireJwt, requireAdmin, (req
 
 // ─── Clientes lookup (maestro completo, con y sin deuda) ─────────────────────
 app.get('/api/clientes/lookup', requireJwt, (req: any, res) => listClientesLookup(req, res));
+app.get('/api/clientes/:cod/historial-compras', requireJwt, (req: any, res) => historialComprasCliente(req, res));
 
 // ─── DEBUG: sample crudo de /clientes de InfoManager (admin-only) ────────────
 // Uso: curl/browser con JWT admin → ver el shape real para ajustar el mapping
