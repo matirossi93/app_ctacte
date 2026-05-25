@@ -8,6 +8,7 @@
  * Spec: docs/superpowers/specs/2026-05-25-historial-compras-cliente-design.md
  */
 
+
 const PATRONES_LINEA_TECNICA = ['flete', 'descuento', 'bonif', 'ajuste', 'redondeo', 'percepcion'];
 
 /** True si el detalle del artículo corresponde a un concepto técnico (no producto real). */
@@ -178,4 +179,145 @@ export function armarFacturas(
   });
 
   return facturas;
+}
+
+// ---------------------------------------------------------------------------
+// HTTP handler
+// ---------------------------------------------------------------------------
+
+const MESES_DEFAULT = 3;
+
+function ultimosMeses(n: number, ref?: Date): Array<{ year: number; month: number }> {
+  const d = ref ?? new Date();
+  const list: Array<{ year: number; month: number }> = [];
+  for (let i = 0; i < n; i++) {
+    const dd = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - i, 1));
+    list.push({ year: dd.getUTCFullYear(), month: dd.getUTCMonth() + 1 });
+  }
+  return list;
+}
+
+/**
+ * GET /api/clientes/:cod/historial-compras?meses=3
+ *
+ * Auth:
+ *   - admin / gerente: cualquier cliente.
+ *   - vendedor: solo si el cliente pertenece al vendedor (matching de
+ *     cod_vendedor del cliente en IM contra user.cod_vendedor del JWT).
+ *   - cualquier otro rol (incluido repartidor): 403.
+ */
+export async function historialComprasCliente(req: import('express').Request & { user?: import('./auth.js').JwtPayload }, res: import('express').Response) {
+  try {
+    const { tipoComprobante, isAnulada } = await import('../src/utils/ventas.js');
+    const { getMonthlyVentasRaw, getMonthlyItemsRaw } = await import('./snapshotCache.js');
+    const { fetchArticulosCatalogo, fetchClientesIMCached } = await import('./infomanager.js');
+    const { COD_EMPRESA_CASA_CENTRAL, COD_CLIENTES_INTERNOS } = await import('./comisionesShared.js');
+
+    function clasificarCabecera(cab: any): 'FA' | 'NC' | null {
+      if (isAnulada(cab)) return null;
+      const tipo = tipoComprobante(cab);
+      if (tipo.startsWith('ND')) return null;
+      if (tipo.startsWith('NC')) return 'NC';
+      if (tipo.startsWith('F')) return 'FA';
+      return null;
+    }
+
+    const user = req.user!;
+    if (!user || (user.rol !== 'admin' && user.rol !== 'gerente' && user.rol !== 'vendedor')) {
+      res.status(403).json({ error: 'No autorizado para ver el historial de compras' });
+      return;
+    }
+
+    const codCliente = Number(req.params.cod);
+    if (!Number.isFinite(codCliente) || codCliente <= 0) {
+      res.status(400).json({ error: 'cod_cliente inválido' });
+      return;
+    }
+
+    const meses = Number(req.query.meses ?? MESES_DEFAULT);
+    if (meses !== MESES_DEFAULT) {
+      res.status(400).json({ error: `meses debe ser ${MESES_DEFAULT}` });
+      return;
+    }
+
+    if (user.rol === 'vendedor') {
+      const clientesIM = await fetchClientesIMCached();
+      const cli = clientesIM.find((c: any) => Number(c.cod_cliente) === codCliente);
+      if (!cli || Number(cli.cod_vendedor) !== Number(user.cod_vendedor)) {
+        res.status(403).json({ error: 'Cliente no pertenece al vendedor' });
+        return;
+      }
+    }
+
+    const periodos = ultimosMeses(meses);
+    const fetches = periodos.flatMap(p => [getMonthlyVentasRaw(p.year, p.month), getMonthlyItemsRaw(p.year, p.month)]);
+    const articulosMap = await fetchArticulosCatalogo();
+    const results = await Promise.all(fetches);
+
+    const ventasAll: any[] = [];
+    const itemsAll: any[] = [];
+    for (let i = 0; i < periodos.length; i++) {
+      const v = results[i * 2] as Awaited<ReturnType<typeof getMonthlyVentasRaw>>;
+      const it = results[i * 2 + 1] as Awaited<ReturnType<typeof getMonthlyItemsRaw>>;
+      ventasAll.push(...v.ventas);
+      itemsAll.push(...it.items);
+    }
+
+    const cabsValidas = new Map<number, any>();
+    const signosParaAgg = new Map<number, { sign: 1 | -1; fecha: string }>();
+
+    for (const v of ventasAll) {
+      const id = Number(v.id);
+      if (!Number.isFinite(id)) continue;
+      const codEmp = Number(v.cod_empresa);
+      if (Number.isFinite(codEmp) && codEmp !== COD_EMPRESA_CASA_CENTRAL) continue;
+      const codCli = Number(v.cod_cliente);
+      if (codCli !== codCliente) continue;
+      if (COD_CLIENTES_INTERNOS.has(codCli)) continue;
+      const clase = clasificarCabecera(v);
+      if (!clase) continue;
+      const sign: 1 | -1 = clase === 'NC' ? -1 : 1;
+      const fecha = String(v.fecha ?? v.fa_fecha ?? '').slice(0, 10);
+
+      cabsValidas.set(id, {
+        id,
+        fecha,
+        tipo: tipoComprobante(v),
+        tipo_factura: (v as any).tipo_factura ?? tipoComprobante(v),
+        punto_de_venta: v.punto_de_venta,
+        numero: v.numero,
+        fa_total: Number(v.fa_total ?? v.total ?? 0),
+        sign,
+      });
+      signosParaAgg.set(id, { sign, fecha });
+    }
+
+    const itemsLimpios = itemsAll.filter(it => {
+      const detalle = String((it as any).detalle ?? articulosMap.get(Number(it.cod_articulo))?.descripcion ?? '');
+      return !esLineaTecnica(detalle);
+    });
+
+    const agg = agregarPorArticulo(itemsLimpios, signosParaAgg, articulosMap);
+    const top_importe = topPorImporte(agg, 5);
+    const top_frecuencia = topPorFrecuencia(agg, 5);
+    const facturas = armarFacturas(cabsValidas, itemsAll, articulosMap);
+
+    const desde = `${periodos[periodos.length - 1].year}-${String(periodos[periodos.length - 1].month).padStart(2, '0')}-01`;
+    const lastMes = new Date(periodos[0].year, periodos[0].month, 0);
+    const hasta = `${periodos[0].year}-${String(periodos[0].month).padStart(2, '0')}-${String(lastMes.getDate()).padStart(2, '0')}`;
+
+    res.json({
+      ok: true,
+      cod_cliente: codCliente,
+      meses,
+      rango: { desde, hasta },
+      facturas,
+      top_importe,
+      top_frecuencia,
+      generated_at: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error('historialComprasCliente error:', err);
+    res.status(500).json({ ok: false, error: err?.message ?? 'error' });
+  }
 }
