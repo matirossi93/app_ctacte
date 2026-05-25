@@ -1235,3 +1235,242 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
     .vs-main { padding-left: 140px; padding-right: 60px }
     .vs-view-title h1 { font-size: 42px }
 }
+
+/* ─── Historial de compras por cliente ───────────────────────────── */
+
+.vs-historial-loading,
+.vs-historial-error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 8px;
+    color: #6B7280;
+    font-size: 13px;
+}
+
+.vs-historial-error button {
+    background: none;
+    border: 1px solid #A83E2B;
+    color: #A83E2B;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.vs-historial-empty-state {
+    padding: 12px 8px;
+    color: #6B7280;
+    font-style: italic;
+    margin: 0;
+    font-size: 13px;
+}
+
+.vs-historial-top {
+    margin-top: 14px;
+}
+
+.vs-historial-top h4 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #6B7280;
+}
+
+.vs-historial-top-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 12px;
+}
+
+@media (max-width: 480px) {
+    .vs-historial-top-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.vs-historial-top-col h5 {
+    margin: 0 0 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #06652F;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.vs-historial-top-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.vs-historial-top-list li {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    column-gap: 4px;
+    align-items: baseline;
+    font-size: 12px;
+    min-width: 0;
+}
+
+.vs-historial-top-list .rank {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    color: #9CA3AF;
+    font-weight: 600;
+}
+
+.vs-historial-top-list .det {
+    grid-column: 2;
+    grid-row: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+.vs-historial-top-list .meta {
+    grid-column: 2;
+    grid-row: 2;
+    color: #6B7280;
+    font-size: 11px;
+}
+
+.vs-historial-empty {
+    color: #9CA3AF;
+    font-size: 12px;
+    margin: 0;
+}
+
+.vs-historial-facturas {
+    margin-top: 14px;
+}
+
+.vs-historial-facturas h4 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #6B7280;
+}
+
+.vs-historial-facturas-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.vs-factura-row.is-nc .vs-factura-head .monto {
+    color: #A83E2B;
+}
+
+.vs-factura-row.is-nc .vs-factura-head .ref {
+    color: #A83E2B;
+}
+
+.vs-factura-head {
+    display: grid;
+    grid-template-columns: 56px minmax(0, 1fr) auto;
+    gap: 8px;
+    width: 100%;
+    background: none;
+    border: 0;
+    padding: 8px 6px;
+    cursor: pointer;
+    text-align: left;
+    font-size: 13px;
+    border-radius: 6px;
+    align-items: center;
+}
+
+.vs-factura-head:hover {
+    background: rgba(0, 0, 0, 0.03);
+}
+
+.vs-factura-head .fecha {
+    color: #6B7280;
+    font-variant-numeric: tabular-nums;
+}
+
+.vs-factura-head .ref {
+    color: #374151;
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.vs-factura-head .monto {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.vs-factura-items {
+    list-style: none;
+    padding: 4px 8px 8px 64px;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    border-bottom: 1px dashed rgba(0, 0, 0, 0.08);
+}
+
+.vs-factura-items li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 8px;
+    font-size: 12px;
+    color: #4B5563;
+    align-items: baseline;
+}
+
+.vs-factura-items .det {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.vs-factura-items .cant {
+    color: #6B7280;
+    font-variant-numeric: tabular-nums;
+}
+
+.vs-factura-items .imp {
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+.vs-factura-items-empty {
+    padding: 4px 8px 8px 64px;
+    margin: 0;
+    color: #9CA3AF;
+    font-style: italic;
+    font-size: 12px;
+}
+
+.vs-historial-ver-todas {
+    margin-top: 8px;
+    background: none;
+    border: 1px solid #06652F;
+    color: #06652F;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.vs-historial-ver-todas:hover {
+    background: rgba(6, 101, 47, 0.08);
+}
