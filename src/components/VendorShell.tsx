@@ -1647,6 +1647,14 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
     );
 }
 
+// Cache compartido del historial por cod_cliente, a nivel de módulo (vive
+// mientras la pestaña esté abierta). Permite que volver a un cliente ya
+// visitado sea instantáneo y sin pegarle al server. TTL 5min alineado con el
+// cache del backend. Cada card lee de acá al montar; si hay hit válido,
+// arranca con la data ya cargada (sin spinner, sin fetch).
+const HIST_CACHE_TTL_MS = 5 * 60 * 1000;
+const histComprasCache = new Map<number, { data: HistorialComprasResponse; expiresAt: number }>();
+
 function ClienteObjetivoCard({ c, isOpen, onToggle }: { c: ClienteObjetivo; isOpen: boolean; onToggle: () => void }) {
     const pct = c.pct_cumplimiento ?? 0;
     const barPct = Math.min(100, pct * 100);
@@ -1661,10 +1669,13 @@ function ClienteObjetivoCard({ c, isOpen, onToggle }: { c: ClienteObjetivo; isOp
     const hasHistorico = c.fact_mes_pasado != null || c.fact_prom_3m != null || c.saldo_cta_cte != null;
     const canExpand = true;
 
+    const cachedHist = histComprasCache.get(c.cod_cliente);
+    const cachedValid = cachedHist && cachedHist.expiresAt > Date.now() ? cachedHist.data : null;
+
     const [histLoading, setHistLoading] = useState(false);
     const [histErr, setHistErr] = useState<string | null>(null);
-    const [histData, setHistData] = useState<HistorialComprasResponse | null>(null);
-    const [histRequested, setHistRequested] = useState(false);
+    const [histData, setHistData] = useState<HistorialComprasResponse | null>(cachedValid);
+    const [histRequested, setHistRequested] = useState(!!cachedValid);
 
     const loadHist = async () => {
         setHistLoading(true);
@@ -1673,6 +1684,7 @@ function ClienteObjetivoCard({ c, isOpen, onToggle }: { c: ClienteObjetivo; isOp
             const res = await fetch(`/api/clientes/${c.cod_cliente}/historial-compras?meses=3`, { headers: authHeaders() });
             const j = await res.json();
             if (!res.ok || !j.ok) throw new Error(j.error || `HTTP ${res.status}`);
+            histComprasCache.set(c.cod_cliente, { data: j, expiresAt: Date.now() + HIST_CACHE_TTL_MS });
             setHistData(j);
         } catch (e: any) {
             setHistErr(e.message);
