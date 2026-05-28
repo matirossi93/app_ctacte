@@ -198,6 +198,18 @@ function ultimosMeses(n: number, ref?: Date): Array<{ year: number; month: numbe
 }
 
 /**
+ * Cache RAM del response YA ARMADO por cod_cliente. TTL 5min — alineado con
+ * el TTL del mes actual de snapshotCache. La primera carga de un cliente
+ * paga el costo de filtrar+agregar; las siguientes (mismo cliente, cualquier
+ * vendedor) responden desde acá en ~0ms. El permiso se valida SIEMPRE antes
+ * de tocar el cache, así que servir desde cache no filtra datos a quien no
+ * corresponde.
+ */
+interface HistorialCacheEntry { payload: object; expiresAt: number }
+const RESPONSE_CACHE_TTL_MS = 5 * 60 * 1000;
+const responseCache = new Map<number, HistorialCacheEntry>();
+
+/**
  * GET /api/clientes/:cod/historial-compras?meses=3
  *
  * Auth:
@@ -247,6 +259,13 @@ export async function historialComprasCliente(req: import('express').Request & {
         res.status(403).json({ error: 'Cliente no pertenece al vendedor' });
         return;
       }
+    }
+
+    // Cache hit: permiso ya validado arriba, servir el response cacheado.
+    const cached = responseCache.get(codCliente);
+    if (cached && cached.expiresAt > Date.now()) {
+      res.json(cached.payload);
+      return;
     }
 
     const periodos = ultimosMeses(meses);
@@ -306,7 +325,7 @@ export async function historialComprasCliente(req: import('express').Request & {
     const lastMes = new Date(periodos[0].year, periodos[0].month, 0);
     const hasta = `${periodos[0].year}-${String(periodos[0].month).padStart(2, '0')}-${String(lastMes.getDate()).padStart(2, '0')}`;
 
-    res.json({
+    const payload = {
       ok: true,
       cod_cliente: codCliente,
       meses,
@@ -315,7 +334,9 @@ export async function historialComprasCliente(req: import('express').Request & {
       top_importe,
       top_frecuencia,
       generated_at: new Date().toISOString(),
-    });
+    };
+    responseCache.set(codCliente, { payload, expiresAt: Date.now() + RESPONSE_CACHE_TTL_MS });
+    res.json(payload);
   } catch (err: any) {
     console.error('historialComprasCliente error:', err);
     res.status(500).json({ ok: false, error: err?.message ?? 'error' });
