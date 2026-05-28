@@ -268,16 +268,20 @@ export async function historialComprasCliente(req: import('express').Request & {
       return;
     }
 
+    const tFetch0 = Date.now();
     const periodos = ultimosMeses(meses);
     const fetches = periodos.flatMap(p => [getMonthlyVentasRaw(p.year, p.month), getMonthlyItemsRaw(p.year, p.month)]);
     const articulosMap = await fetchArticulosCatalogo();
     const results = await Promise.all(fetches);
+    const fetchMs = Date.now() - tFetch0;
 
+    const cachedFlags: boolean[] = [];
     const ventasAll: any[] = [];
     const itemsAll: any[] = [];
     for (let i = 0; i < periodos.length; i++) {
       const v = results[i * 2] as Awaited<ReturnType<typeof getMonthlyVentasRaw>>;
       const it = results[i * 2 + 1] as Awaited<ReturnType<typeof getMonthlyItemsRaw>>;
+      cachedFlags.push(v.cached, it.cached);
       ventasAll.push(...v.ventas);
       itemsAll.push(...it.items);
     }
@@ -316,15 +320,26 @@ export async function historialComprasCliente(req: import('express').Request & {
       return !esLineaTecnica(detalle);
     });
 
+    const tProc0 = Date.now();
     const agg = agregarPorArticulo(itemsLimpios, signosParaAgg, articulosMap);
     const top_importe = topPorImporte(agg, 5);
     const top_frecuencia = topPorFrecuencia(agg, 5);
     const facturas = armarFacturas(cabsValidas, itemsAll, articulosMap);
+    const processMs = Date.now() - tProc0;
 
     const desde = `${periodos[periodos.length - 1].year}-${String(periodos[periodos.length - 1].month).padStart(2, '0')}-01`;
     const lastMes = new Date(periodos[0].year, periodos[0].month, 0);
     const hasta = `${periodos[0].year}-${String(periodos[0].month).padStart(2, '0')}-${String(lastMes.getDate()).padStart(2, '0')}`;
 
+    const diag = {
+      fetch_ms: fetchMs,
+      process_ms: processMs,
+      cached: cachedFlags,
+      ventas_total: ventasAll.length,
+      items_total: itemsAll.length,
+      facturas_cliente: facturas.length,
+    };
+    console.log(`[historial-compras] cli=${codCliente} fetch=${fetchMs}ms proc=${processMs}ms cached=[${cachedFlags.join(',')}] ventas=${ventasAll.length} items=${itemsAll.length}`);
     const payload = {
       ok: true,
       cod_cliente: codCliente,
@@ -334,6 +349,7 @@ export async function historialComprasCliente(req: import('express').Request & {
       top_importe,
       top_frecuencia,
       generated_at: new Date().toISOString(),
+      _diag: diag,
     };
     responseCache.set(codCliente, { payload, expiresAt: Date.now() + RESPONSE_CACHE_TTL_MS });
     res.json(payload);
