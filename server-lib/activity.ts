@@ -167,7 +167,7 @@ export async function updateActivity(req: Request & { user?: JwtPayload }, res: 
  */
 export async function listNotificaciones(req: Request & { user?: JwtPayload }, res: Response) {
   try {
-    if (!hasSupabase()) { res.json({ ok: true, items: [] }); return; }
+    if (!hasSupabase()) { res.json({ ok: true, items: [], alertas: [] }); return; }
     const user = req.user!;
 
     const today = new Date();
@@ -185,7 +185,7 @@ export async function listNotificaciones(req: Request & { user?: JwtPayload }, r
       .lte('fecha_promesa', hasta);
 
     if (user.rol === 'vendedor') {
-      if (user.cod_vendedor == null) { res.json({ ok: true, items: [] }); return; }
+      if (user.cod_vendedor == null) { res.json({ ok: true, items: [], alertas: [] }); return; }
       q = q.eq('cod_vendedor', user.cod_vendedor);
     }
 
@@ -201,7 +201,20 @@ export async function listNotificaciones(req: Request & { user?: JwtPayload }, r
       return { ...r, vencida: diasRel < 0, dias_relativos: diasRel };
     });
 
-    res.json({ ok: true, items });
+    // Alertas (cliente / producto en abandono): solo para vendedores con
+    // cod_vendedor asignado. Admin/gerente no las ve en su campana — verían
+    // alertas de todos los vendedores, demasiado ruido.
+    let alertas: any[] = [];
+    if (user.rol === 'vendedor' && user.cod_vendedor != null) {
+      try {
+        const { calcularAlertasVendedor } = await import('./notificacionesAlertas.js');
+        alertas = await calcularAlertasVendedor(user.cod_vendedor);
+      } catch (e: any) {
+        console.warn('[listNotificaciones] alertas fail:', e?.message ?? e);
+      }
+    }
+
+    res.json({ ok: true, items, alertas });
   } catch (err: any) {
     console.error('listNotificaciones error:', err);
     res.status(500).json({ error: err?.message ?? 'error' });

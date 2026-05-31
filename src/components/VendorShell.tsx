@@ -2531,6 +2531,25 @@ interface NotifItem {
     dias_relativos: number;
 }
 
+interface NotifAlerta {
+    tipo: 'cliente_abandono' | 'producto_abandono';
+    cod_cliente: number;
+    razon_social: string;
+    cod_vendedor: number;
+    dias_sin_comprar: number;
+    nivel?: 'amarillo' | 'rojo';
+    media_dias?: number;
+    cod_articulo?: number;
+    detalle?: string;
+    intervalo_medio_dias?: number;
+}
+
+function alertaId(a: NotifAlerta): string {
+    return a.tipo === 'cliente_abandono'
+        ? `alc-${a.cod_cliente}`
+        : `alp-${a.cod_cliente}-${a.cod_articulo}`;
+}
+
 const NOTIF_READ_STORAGE_KEY = 'ctacte:notif:read';
 const NOTIF_POLL_MS = 5 * 60 * 1000; // 5 min
 
@@ -2549,6 +2568,7 @@ function saveReadSet(s: Set<string>) {
 
 function NotificacionesBell() {
     const [items, setItems] = useState<NotifItem[]>([]);
+    const [alertas, setAlertas] = useState<NotifAlerta[]>([]);
     const [open, setOpen] = useState(false);
     const [loading, setLoading] = useState(false);
     const [readIds, setReadIds] = useState<Set<string>>(() => loadReadSet());
@@ -2558,7 +2578,10 @@ function NotificacionesBell() {
         try {
             const res = await fetch('/api/notificaciones', { headers: authHeaders() });
             const j = await res.json();
-            if (res.ok && j.ok) setItems(j.items ?? []);
+            if (res.ok && j.ok) {
+                setItems(j.items ?? []);
+                setAlertas(j.alertas ?? []);
+            }
         } catch { /* swallow — polling reintenta */ }
         finally { setLoading(false); }
     };
@@ -2569,11 +2592,14 @@ function NotificacionesBell() {
         return () => window.clearInterval(id);
     }, []);
 
-    const unread = items.filter(i => !readIds.has(i.id)).length;
+    const unreadItems = items.filter(i => !readIds.has(i.id)).length;
+    const unreadAlertas = alertas.filter(a => !readIds.has(alertaId(a))).length;
+    const unread = unreadItems + unreadAlertas;
 
     const markAllAsRead = () => {
         const next = new Set(readIds);
         items.forEach(i => next.add(i.id));
+        alertas.forEach(a => next.add(alertaId(a)));
         setReadIds(next);
         saveReadSet(next);
     };
@@ -2590,6 +2616,21 @@ function NotificacionesBell() {
                 detail: { cod_cliente: String(n.cod_cliente), name: '' }
             }));
         }
+        setOpen(false);
+    };
+
+    const handleAlertaClick = (a: NotifAlerta) => {
+        const id = alertaId(a);
+        const next = new Set(readIds);
+        next.add(id);
+        setReadIds(next);
+        saveReadSet(next);
+        // Reusamos vs-open-activity: abre la tab Actividad con foco en el
+        // cliente — desde ahí el vendedor puede ver historial completo,
+        // registrar llamada/visita o pasar a Objetivos para más detalle.
+        window.dispatchEvent(new CustomEvent('vs-open-activity', {
+            detail: { cod_cliente: String(a.cod_cliente), name: a.razon_social }
+        }));
         setOpen(false);
     };
 
@@ -2625,32 +2666,59 @@ function NotificacionesBell() {
                                 </button>
                             )}
                         </header>
-                        {loading && items.length === 0 && (
+                        {loading && items.length === 0 && alertas.length === 0 && (
                             <div className="vs-notif-empty"><Loader2 size={14} className="spin" /> Cargando…</div>
                         )}
-                        {!loading && items.length === 0 && (
-                            <div className="vs-notif-empty">No hay recordatorios pendientes.</div>
+                        {!loading && items.length === 0 && alertas.length === 0 && (
+                            <div className="vs-notif-empty">Sin novedades.</div>
+                        )}
+                        {alertas.length > 0 && (
+                            <>
+                                <div className="vs-notif-section">Atención</div>
+                                <ul className="vs-notif-list">
+                                    {alertas.map(a => {
+                                        const id = alertaId(a);
+                                        const isUnread = !readIds.has(id);
+                                        const isRojo = a.tipo === 'cliente_abandono' && a.nivel === 'rojo';
+                                        return (
+                                            <li key={id} className={`vs-notif-item vs-notif-alerta ${isRojo ? 'is-rojo' : ''} ${isUnread ? 'is-unread' : ''}`}>
+                                                <button type="button" className="vs-notif-item-btn" onClick={() => handleAlertaClick(a)}>
+                                                    <span className="vs-notif-when">⚠ {a.razon_social}</span>
+                                                    <span className="vs-notif-text">
+                                                        {a.tipo === 'cliente_abandono'
+                                                            ? `Sin comprar hace ${a.dias_sin_comprar} días (suele cada ${Math.round(a.media_dias ?? 0)})`
+                                                            : `${a.detalle} — sin llevar hace ${a.dias_sin_comprar} días (antes cada ${Math.round(a.intervalo_medio_dias ?? 0)})`}
+                                                    </span>
+                                                </button>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            </>
                         )}
                         {items.length > 0 && (
-                            <ul className="vs-notif-list">
-                                {items.map(n => {
-                                    const isUnread = !readIds.has(n.id);
-                                    return (
-                                        <li key={n.id} className={`vs-notif-item ${n.vencida ? 'is-vencida' : ''} ${isUnread ? 'is-unread' : ''}`}>
-                                            <button type="button" className="vs-notif-item-btn" onClick={() => handleItemClick(n)}>
-                                                <span className="vs-notif-when">{labelRelativo(n)}</span>
-                                                <span className="vs-notif-text">
-                                                    {n.cod_cliente && <strong>#{n.cod_cliente} · </strong>}
-                                                    {n.contenido || (n.monto != null ? `Promesa de pago $${n.monto.toLocaleString('es-AR')}` : 'Recordatorio sin descripción')}
-                                                </span>
-                                                {n.monto != null && (
-                                                    <span className="vs-notif-monto">{formatMoney(n.monto)}</span>
-                                                )}
-                                            </button>
-                                        </li>
-                                    );
-                                })}
-                            </ul>
+                            <>
+                                {alertas.length > 0 && <div className="vs-notif-section">Recordatorios</div>}
+                                <ul className="vs-notif-list">
+                                    {items.map(n => {
+                                        const isUnread = !readIds.has(n.id);
+                                        return (
+                                            <li key={n.id} className={`vs-notif-item ${n.vencida ? 'is-vencida' : ''} ${isUnread ? 'is-unread' : ''}`}>
+                                                <button type="button" className="vs-notif-item-btn" onClick={() => handleItemClick(n)}>
+                                                    <span className="vs-notif-when">{labelRelativo(n)}</span>
+                                                    <span className="vs-notif-text">
+                                                        {n.cod_cliente && <strong>#{n.cod_cliente} · </strong>}
+                                                        {n.contenido || (n.monto != null ? `Promesa de pago $${n.monto.toLocaleString('es-AR')}` : 'Recordatorio sin descripción')}
+                                                    </span>
+                                                    {n.monto != null && (
+                                                        <span className="vs-notif-monto">{formatMoney(n.monto)}</span>
+                                                    )}
+                                                </button>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            </>
                         )}
                     </div>
                 </>

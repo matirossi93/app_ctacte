@@ -1814,3 +1814,30 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
     font-weight: 600;
     color: #1f2937;
 }
+
+.vs-notif-section {
+    padding: 8px 14px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #9CA3AF;
+    background: rgba(0, 0, 0, 0.02);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.vs-notif-item.vs-notif-alerta .vs-notif-when {
+    color: #B58829;
+}
+
+.vs-notif-item.vs-notif-alerta.is-rojo .vs-notif-when {
+    color: #A83E2B;
+}
+
+.vs-notif-item.vs-notif-alerta.is-unread {
+    background: rgba(181, 136, 41, 0.06);
+}
+
+.vs-notif-item.vs-notif-alerta.is-rojo.is-unread {
+    background: rgba(168, 62, 43, 0.06);
+}

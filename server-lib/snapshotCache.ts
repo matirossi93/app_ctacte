@@ -41,10 +41,12 @@ interface CachedDataset {
 const TTL_CURRENT_MS = 5 * 60 * 1000;        // 5 min mes actual
 const TTL_HISTORIC_MS = 24 * 60 * 60 * 1000; // 24h meses pasados
 const cache = new Map<string, CachedDataset>();
-// Marcamos las keys con refresh en vuelo para no disparar N refreshes
-// concurrentes del mismo mes desde N requests simultáneas.
-const inflightVentas = new Set<string>();
-const inflightItems = new Set<string>();
+// Coalescing: si un fetch está en vuelo para una key, las requests
+// concurrentes esperan a ese mismo Promise en vez de disparar N fetches
+// paralelos. Cubre tanto refreshes (SWR) como cold fetches sincrónicos
+// que llegan mientras el prewarm está corriendo.
+const inflightVentas = new Map<string, Promise<VentaRaw[]>>();
+const inflightItems = new Map<string, Promise<VentaItem[]>>();
 
 function makeKey(year: number, month: number, codEmpresa?: number): string {
     return `${year}-${String(month).padStart(2, '0')}-emp${codEmpresa ?? 'all'}`;
@@ -82,46 +84,55 @@ export async function getMonthlyVentasRaw(
 
     if (!opts?.force && existing && !fresh) {
         // Stale-while-revalidate: devolvemos lo viejo y refrescamos en background.
+        // El catch evita unhandled rejection: el caller no awaitea, así que
+        // si IM falla solo queremos logear y dejar el cache stale.
         if (!inflightVentas.has(key)) {
-            inflightVentas.add(key);
-            void refreshVentasBackground(year, month, opts).finally(() => inflightVentas.delete(key));
+            const p = refreshVentas(year, month, opts).catch(e => {
+                console.warn(`[snapshot SWR] fallo refresh ventas ${year}-${String(month).padStart(2, '0')}: ${e?.message ?? e}`);
+                return existing.ventas; // mantiene stale para callers que pudieran estar awaiteando vía inflight
+            });
+            inflightVentas.set(key, p);
+            void p.finally(() => inflightVentas.delete(key));
         }
         return { ventas: existing.ventas, cached: true, cacheAge: age };
     }
 
-    // Sin entrada previa: fetch sincrónico.
-    const desde = `${year}-${String(month).padStart(2, '0')}-01`;
-    const hasta = ymdMonthEnd(year, month);
-    const ventas = await fetchVentas(desde, hasta, { codEmpresa: opts?.codEmpresa });
-    if (!opts?.nocache) {
-        cache.set(key, { ventas, fetchedAt: now, isHistoric: !isCurrent });
+    // Sin entrada previa: si hay un fetch en vuelo (típicamente disparado
+    // por el prewarm), esperamos a ese mismo Promise en vez de disparar
+    // otro paralelo. Si no hay nada en vuelo, disparamos uno y otros que
+    // lleguen también lo van a esperar.
+    let p = inflightVentas.get(key);
+    if (!p) {
+        p = refreshVentas(year, month, opts);
+        inflightVentas.set(key, p);
+        void p.finally(() => inflightVentas.delete(key));
     }
+    const ventas = await p;
     return { ventas, cached: false, cacheAge: 0 };
 }
 
-async function refreshVentasBackground(
+async function refreshVentas(
     year: number,
     month: number,
-    opts?: { codEmpresa?: number },
-): Promise<void> {
-    try {
-        const desde = `${year}-${String(month).padStart(2, '0')}-01`;
-        const hasta = ymdMonthEnd(year, month);
-        const t0 = Date.now();
-        const ventas = await fetchVentas(desde, hasta, { codEmpresa: opts?.codEmpresa });
-        const isCurrent = (() => {
-            const d = new Date();
-            return year === d.getUTCFullYear() && month === (d.getUTCMonth() + 1);
-        })();
+    opts?: { codEmpresa?: number; nocache?: boolean },
+): Promise<VentaRaw[]> {
+    const desde = `${year}-${String(month).padStart(2, '0')}-01`;
+    const hasta = ymdMonthEnd(year, month);
+    const t0 = Date.now();
+    const ventas = await fetchVentas(desde, hasta, { codEmpresa: opts?.codEmpresa });
+    const isCurrent = (() => {
+        const d = new Date();
+        return year === d.getUTCFullYear() && month === (d.getUTCMonth() + 1);
+    })();
+    if (!opts?.nocache) {
         cache.set(makeKey(year, month, opts?.codEmpresa), {
             ventas,
             fetchedAt: Date.now(),
             isHistoric: !isCurrent,
         });
-        console.log(`[snapshot SWR] refreshed ventas ${year}-${String(month).padStart(2, '0')} (${ventas.length} en ${Date.now() - t0}ms)`);
-    } catch (e: any) {
-        console.warn(`[snapshot SWR] fallo refresh ventas ${year}-${String(month).padStart(2, '0')}: ${e?.message ?? e}`);
     }
+    console.log(`[snapshot] fetched ventas ${year}-${String(month).padStart(2, '0')} (${ventas.length} en ${Date.now() - t0}ms)`);
+    return ventas;
 }
 
 /** Invalida explícitamente la entrada de cache (ej. tras un sync forzado). */
@@ -145,22 +156,25 @@ export function peekMonthlyVentas(
 ): VentaRaw[] | null {
     const key = makeKey(year, month, codEmpresa);
     const existing = cache.get(key);
-    if (!existing) {
-        // Disparar warm en background — la próxima request lo encuentra.
+    function ensureInflight() {
         if (!inflightVentas.has(key)) {
-            inflightVentas.add(key);
-            void refreshVentasBackground(year, month, { codEmpresa }).finally(() => inflightVentas.delete(key));
+            const p = refreshVentas(year, month, { codEmpresa }).catch(e => {
+                console.warn(`[snapshot peek] fallo warm ventas ${year}-${String(month).padStart(2, '0')}: ${e?.message ?? e}`);
+                return [] as VentaRaw[];
+            });
+            inflightVentas.set(key, p);
+            void p.finally(() => inflightVentas.delete(key));
         }
+    }
+    if (!existing) {
+        ensureInflight();
         return null;
     }
     const now = Date.now();
     const nowD = new Date();
     const isCurrent = year === nowD.getUTCFullYear() && month === (nowD.getUTCMonth() + 1);
     const ttl = isCurrent ? TTL_CURRENT_MS : TTL_HISTORIC_MS;
-    if (now - existing.fetchedAt >= ttl && !inflightVentas.has(key)) {
-        inflightVentas.add(key);
-        void refreshVentasBackground(year, month, { codEmpresa }).finally(() => inflightVentas.delete(key));
-    }
+    if (now - existing.fetchedAt >= ttl) ensureInflight();
     return existing.ventas;
 }
 
@@ -216,44 +230,49 @@ export async function getMonthlyItemsRaw(
 
     if (!opts?.force && existing && !fresh) {
         if (!inflightItems.has(key)) {
-            inflightItems.add(key);
-            void refreshItemsBackground(year, month, opts).finally(() => inflightItems.delete(key));
+            const p = refreshItems(year, month, opts).catch(e => {
+                console.warn(`[snapshot SWR] fallo refresh items ${year}-${String(month).padStart(2, '0')}: ${e?.message ?? e}`);
+                return existing.items;
+            });
+            inflightItems.set(key, p);
+            void p.finally(() => inflightItems.delete(key));
         }
         return { items: existing.items, cached: true, cacheAge: age };
     }
 
-    const desde = `${year}-${String(month).padStart(2, '0')}-01`;
-    const hasta = ymdMonthEnd(year, month);
-    const items = await fetchVentasItems(desde, hasta, { codEmpresa: opts?.codEmpresa });
-    if (!opts?.nocache) {
-        itemsCache.set(key, { items, fetchedAt: now, isHistoric: !isCurrent });
+    // Coalesce con el fetch en vuelo (prewarm o request previa).
+    let p = inflightItems.get(key);
+    if (!p) {
+        p = refreshItems(year, month, opts);
+        inflightItems.set(key, p);
+        void p.finally(() => inflightItems.delete(key));
     }
+    const items = await p;
     return { items, cached: false, cacheAge: 0 };
 }
 
-async function refreshItemsBackground(
+async function refreshItems(
     year: number,
     month: number,
-    opts?: { codEmpresa?: number },
-): Promise<void> {
-    try {
-        const desde = `${year}-${String(month).padStart(2, '0')}-01`;
-        const hasta = ymdMonthEnd(year, month);
-        const t0 = Date.now();
-        const items = await fetchVentasItems(desde, hasta, { codEmpresa: opts?.codEmpresa });
-        const isCurrent = (() => {
-            const d = new Date();
-            return year === d.getUTCFullYear() && month === (d.getUTCMonth() + 1);
-        })();
+    opts?: { codEmpresa?: number; nocache?: boolean },
+): Promise<VentaItem[]> {
+    const desde = `${year}-${String(month).padStart(2, '0')}-01`;
+    const hasta = ymdMonthEnd(year, month);
+    const t0 = Date.now();
+    const items = await fetchVentasItems(desde, hasta, { codEmpresa: opts?.codEmpresa });
+    const isCurrent = (() => {
+        const d = new Date();
+        return year === d.getUTCFullYear() && month === (d.getUTCMonth() + 1);
+    })();
+    if (!opts?.nocache) {
         itemsCache.set(makeItemsKey(year, month, opts?.codEmpresa), {
             items,
             fetchedAt: Date.now(),
             isHistoric: !isCurrent,
         });
-        console.log(`[snapshot SWR] refreshed items ${year}-${String(month).padStart(2, '0')} (${items.length} en ${Date.now() - t0}ms)`);
-    } catch (e: any) {
-        console.warn(`[snapshot SWR] fallo refresh items ${year}-${String(month).padStart(2, '0')}: ${e?.message ?? e}`);
     }
+    console.log(`[snapshot] fetched items ${year}-${String(month).padStart(2, '0')} (${items.length} en ${Date.now() - t0}ms)`);
+    return items;
 }
 
 export function invalidateItemsMonth(year: number, month: number, codEmpresa?: number): void {
@@ -268,20 +287,24 @@ export function peekMonthlyItems(
 ): VentaItem[] | null {
     const key = makeItemsKey(year, month, codEmpresa);
     const existing = itemsCache.get(key);
-    if (!existing) {
+    function ensureInflight() {
         if (!inflightItems.has(key)) {
-            inflightItems.add(key);
-            void refreshItemsBackground(year, month, { codEmpresa }).finally(() => inflightItems.delete(key));
+            const p = refreshItems(year, month, { codEmpresa }).catch(e => {
+                console.warn(`[snapshot peek] fallo warm items ${year}-${String(month).padStart(2, '0')}: ${e?.message ?? e}`);
+                return [] as VentaItem[];
+            });
+            inflightItems.set(key, p);
+            void p.finally(() => inflightItems.delete(key));
         }
+    }
+    if (!existing) {
+        ensureInflight();
         return null;
     }
     const now = Date.now();
     const nowD = new Date();
     const isCurrent = year === nowD.getUTCFullYear() && month === (nowD.getUTCMonth() + 1);
     const ttl = isCurrent ? TTL_CURRENT_MS : TTL_HISTORIC_MS;
-    if (now - existing.fetchedAt >= ttl && !inflightItems.has(key)) {
-        inflightItems.add(key);
-        void refreshItemsBackground(year, month, { codEmpresa }).finally(() => inflightItems.delete(key));
-    }
+    if (now - existing.fetchedAt >= ttl) ensureInflight();
     return existing.items;
 }
