@@ -1706,25 +1706,42 @@ function ClienteObjetivoCard({ c, isOpen, onToggle }: { c: ClienteObjetivo; isOp
     const loadHist = async () => {
         setHistLoading(true);
         setHistErr(null);
-        // Timeout duro de 20s para evitar spinner infinito si el backend
-        // está colgado o IM no responde. AbortController hace que el fetch
-        // rechace con DOMException(AbortError) en vez de quedarse pendiente.
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 20_000);
+        // Dos intentos:
+        //  1) Timeout 15s — cache caliente.
+        //  2) Si el primero aborta, reintento silencioso con 50s para dar
+        //     margen al prewarm post-deploy (los 6 meses tardan ~1min cold).
+        async function tryFetch(timeoutMs: number) {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+            try {
+                const res = await fetch(
+                    `/api/clientes/${c.cod_cliente}/historial-compras?meses=3`,
+                    { headers: authHeaders(), signal: ctrl.signal },
+                );
+                const j = await res.json();
+                if (!res.ok || !j.ok) throw new Error(j.error || `HTTP ${res.status}`);
+                return j;
+            } finally {
+                clearTimeout(timer);
+            }
+        }
         try {
-            const res = await fetch(
-                `/api/clientes/${c.cod_cliente}/historial-compras?meses=3`,
-                { headers: authHeaders(), signal: ctrl.signal },
-            );
-            const j = await res.json();
-            if (!res.ok || !j.ok) throw new Error(j.error || `HTTP ${res.status}`);
-            histComprasCache.set(c.cod_cliente, { data: j, expiresAt: Date.now() + HIST_CACHE_TTL_MS });
-            setHistData(j);
+            let data;
+            try {
+                data = await tryFetch(15_000);
+            } catch (e: any) {
+                if (e?.name === 'AbortError') {
+                    data = await tryFetch(50_000);
+                } else {
+                    throw e;
+                }
+            }
+            histComprasCache.set(c.cod_cliente, { data, expiresAt: Date.now() + HIST_CACHE_TTL_MS });
+            setHistData(data);
         } catch (e: any) {
             const isAbort = e?.name === 'AbortError';
-            setHistErr(isAbort ? 'Tardó demasiado en cargar. Probá de nuevo.' : (e.message || 'Error al cargar'));
+            setHistErr(isAbort ? 'El servidor está cargando datos. Probá en 30 segundos.' : (e.message || 'Error al cargar'));
         } finally {
-            clearTimeout(timer);
             setHistLoading(false);
         }
     };
