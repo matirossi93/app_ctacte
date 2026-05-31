@@ -3,7 +3,7 @@ import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
     DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, Settings2, MapPin,
-    Sun, ChevronRight, AlertTriangle, Download, Trash2, Pencil
+    Sun, ChevronRight, AlertTriangle, Download, Trash2, Pencil, Bell
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser } from '../utils/auth';
 import { RecibosApp } from './RecibosApp';
@@ -496,6 +496,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                 </div>
                 <div className="vs-top-actions">
                     <PeriodSelector value={viewPeriod} onChange={setViewPeriod} />
+                    <NotificacionesBell />
                     <button className="vs-icon-btn" onClick={() => loadData(true)} title="Refrescar" disabled={loading}>
                         {loading ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
                     </button>
@@ -2482,6 +2483,151 @@ function ComparacionTrimestre({ comp }: { comp: HistorialComparacion }) {
             <span className="vs-comparacion-delta">
                 {positivo ? '+' : '-'}{Math.round(pct)}% {arrow}
             </span>
+        </div>
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NOTIFICACIONES — promesas / recordatorios del vendedor
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface NotifItem {
+    id: string;
+    cod_vendedor: number;
+    cod_cliente: number | null;
+    tipo: string;
+    contenido: string | null;
+    monto: number | null;
+    fecha_promesa: string;
+    created_at: string;
+    vencida: boolean;
+    dias_relativos: number;
+}
+
+const NOTIF_READ_STORAGE_KEY = 'ctacte:notif:read';
+const NOTIF_POLL_MS = 5 * 60 * 1000; // 5 min
+
+function loadReadSet(): Set<string> {
+    try {
+        const raw = localStorage.getItem(NOTIF_READ_STORAGE_KEY);
+        if (!raw) return new Set();
+        const arr = JSON.parse(raw);
+        return Array.isArray(arr) ? new Set<string>(arr) : new Set();
+    } catch { return new Set(); }
+}
+
+function saveReadSet(s: Set<string>) {
+    try { localStorage.setItem(NOTIF_READ_STORAGE_KEY, JSON.stringify(Array.from(s))); } catch { /* ignore */ }
+}
+
+function NotificacionesBell() {
+    const [items, setItems] = useState<NotifItem[]>([]);
+    const [open, setOpen] = useState(false);
+    const [loading, setLoading] = useState(false);
+    const [readIds, setReadIds] = useState<Set<string>>(() => loadReadSet());
+
+    const load = async () => {
+        setLoading(true);
+        try {
+            const res = await fetch('/api/notificaciones', { headers: authHeaders() });
+            const j = await res.json();
+            if (res.ok && j.ok) setItems(j.items ?? []);
+        } catch { /* swallow — polling reintenta */ }
+        finally { setLoading(false); }
+    };
+
+    useEffect(() => {
+        load();
+        const id = window.setInterval(load, NOTIF_POLL_MS);
+        return () => window.clearInterval(id);
+    }, []);
+
+    const unread = items.filter(i => !readIds.has(i.id)).length;
+
+    const markAllAsRead = () => {
+        const next = new Set(readIds);
+        items.forEach(i => next.add(i.id));
+        setReadIds(next);
+        saveReadSet(next);
+    };
+
+    const handleItemClick = (n: NotifItem) => {
+        // Marcar leída
+        const next = new Set(readIds);
+        next.add(n.id);
+        setReadIds(next);
+        saveReadSet(next);
+        // Abrir la tab Actividad con foco en el cliente (mismo evento que ya usa la app)
+        if (n.cod_cliente) {
+            window.dispatchEvent(new CustomEvent('vs-open-activity', {
+                detail: { cod_cliente: String(n.cod_cliente), name: '' }
+            }));
+        }
+        setOpen(false);
+    };
+
+    const labelRelativo = (n: NotifItem): string => {
+        const d = n.dias_relativos;
+        if (d === 0) return 'Hoy';
+        if (d === 1) return 'Mañana';
+        if (d === -1) return 'Venció ayer';
+        if (d > 1) return `En ${d} días`;
+        return `Vencida hace ${Math.abs(d)} días`;
+    };
+
+    return (
+        <div className="vs-notif-wrap">
+            <button
+                className="vs-icon-btn vs-notif-btn"
+                onClick={() => setOpen(o => !o)}
+                title={unread > 0 ? `${unread} notificacion${unread === 1 ? '' : 'es'} sin leer` : 'Notificaciones'}
+                aria-label="Notificaciones"
+            >
+                <Bell size={16} />
+                {unread > 0 && <span className="vs-notif-badge">{unread > 9 ? '9+' : unread}</span>}
+            </button>
+            {open && (
+                <>
+                    <div className="vs-notif-scrim" onClick={() => setOpen(false)} />
+                    <div className="vs-notif-panel" role="dialog">
+                        <header className="vs-notif-head">
+                            <strong>Notificaciones</strong>
+                            {unread > 0 && (
+                                <button type="button" className="vs-notif-mark" onClick={markAllAsRead}>
+                                    Marcar todas leídas
+                                </button>
+                            )}
+                        </header>
+                        {loading && items.length === 0 && (
+                            <div className="vs-notif-empty"><Loader2 size={14} className="spin" /> Cargando…</div>
+                        )}
+                        {!loading && items.length === 0 && (
+                            <div className="vs-notif-empty">No hay recordatorios pendientes.</div>
+                        )}
+                        {items.length > 0 && (
+                            <ul className="vs-notif-list">
+                                {items.map(n => {
+                                    const isUnread = !readIds.has(n.id);
+                                    return (
+                                        <li key={n.id} className={`vs-notif-item ${n.vencida ? 'is-vencida' : ''} ${isUnread ? 'is-unread' : ''}`}>
+                                            <button type="button" className="vs-notif-item-btn" onClick={() => handleItemClick(n)}>
+                                                <span className="vs-notif-when">{labelRelativo(n)}</span>
+                                                <span className="vs-notif-text">
+                                                    {n.cod_cliente && <strong>#{n.cod_cliente} · </strong>}
+                                                    {n.contenido || (n.monto != null ? `Promesa de pago $${n.monto.toLocaleString('es-AR')}` : 'Recordatorio sin descripción')}
+                                                </span>
+                                                {n.monto != null && (
+                                                    <span className="vs-notif-monto">{formatMoney(n.monto)}</span>
+                                                )}
+                                            </button>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                        )}
+                    </div>
+                </>
+            )}
         </div>
     );
 }

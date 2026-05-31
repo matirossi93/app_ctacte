@@ -26,7 +26,7 @@ const TIPOS: Array<{ value: ActivityItem['tipo']; label: string; emoji: string; 
     { value: 'nota', label: 'Nota', emoji: '📝', color: 'ochre' },
     { value: 'llamada', label: 'Llamada', emoji: '📞', color: 'green' },
     { value: 'wa', label: 'WhatsApp', emoji: '💬', color: 'wa' },
-    { value: 'promesa', label: 'Promesa', emoji: '📅', color: 'rust' },
+    { value: 'promesa', label: 'Promesa/Recordatorio', emoji: '📅', color: 'rust' },
     { value: 'pago', label: 'Pago', emoji: '💰', color: 'forest' },
     { value: 'visita', label: 'Visita', emoji: '🚚', color: 'ochre' },
 ];
@@ -255,18 +255,18 @@ function NewActivity({ clients, isAdmin, onClose, onCreated }:
                 <label className="act-field">
                     <span>Contenido</span>
                     <textarea rows={3} value={contenido} onChange={e => setContenido(e.target.value)}
-                        placeholder={tipo === 'nota' ? 'Ej: Llamé, paga el viernes' : tipo === 'promesa' ? 'Ej: Promete mitad ahora, mitad fin de mes' : 'Detalle'} />
+                        placeholder={tipo === 'nota' ? 'Ej: Llamé, paga el viernes' : tipo === 'promesa' ? 'Ej: Visitar el viernes, ofrecer Mix Energético' : 'Detalle'} />
                 </label>
 
                 {(tipo === 'promesa' || tipo === 'pago') && (
                     <div className="act-row2">
                         <label className="act-field">
-                            <span>Monto</span>
-                            <input type="number" step="0.01" value={monto} onChange={e => setMonto(e.target.value)} placeholder="0" />
+                            <span>Monto {tipo === 'promesa' && <em className="act-field-opt">opcional</em>}</span>
+                            <input type="number" step="0.01" value={monto} onChange={e => setMonto(e.target.value)} placeholder={tipo === 'promesa' ? 'Vacío si es solo recordatorio' : '0'} />
                         </label>
                         {tipo === 'promesa' && (
                             <label className="act-field">
-                                <span>Vence</span>
+                                <span>Fecha</span>
                                 <input type="date" value={fechaPromesa} onChange={e => setFechaPromesa(e.target.value)} />
                             </label>
                         )}

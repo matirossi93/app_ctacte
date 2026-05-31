@@ -154,6 +154,60 @@ export async function updateActivity(req: Request & { user?: JwtPayload }, res: 
   }
 }
 
+/**
+ * GET /api/notificaciones
+ *
+ * Devuelve las promesas/recordatorios pendientes del vendedor (o todos los
+ * vendedores si admin/gerente). Ventana: fecha_promesa entre hoy-14d y
+ * hoy+7d, así cubrimos vencidas recientes + próximas.
+ *
+ * Cada notificación viene con:
+ *   - vencida: true si fecha_promesa < hoy
+ *   - dias_relativos: signo positivo = vence en N días; negativo = vencida hace |N| días
+ */
+export async function listNotificaciones(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    if (!hasSupabase()) { res.json({ ok: true, items: [] }); return; }
+    const user = req.user!;
+
+    const today = new Date();
+    const ymd = (d: Date) => d.toISOString().slice(0, 10);
+    const desde = ymd(new Date(today.getTime() - 14 * 24 * 60 * 60 * 1000));
+    const hasta = ymd(new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000));
+    const todayStr = ymd(today);
+
+    let q = sb().from('vendor_activity')
+      .select('id, cod_vendedor, cod_cliente, tipo, contenido, monto, fecha_promesa, created_at')
+      .eq('tenant_id', TENANT_ID)
+      .eq('tipo', 'promesa')
+      .not('fecha_promesa', 'is', null)
+      .gte('fecha_promesa', desde)
+      .lte('fecha_promesa', hasta);
+
+    if (user.rol === 'vendedor') {
+      if (user.cod_vendedor == null) { res.json({ ok: true, items: [] }); return; }
+      q = q.eq('cod_vendedor', user.cod_vendedor);
+    }
+
+    q = q.order('fecha_promesa', { ascending: true });
+    const { data, error } = await q;
+    if (error) { res.status(500).json({ error: error.message }); return; }
+
+    const items = (data ?? []).map((r: any) => {
+      const fp: string = r.fecha_promesa;
+      const fpMs = Date.parse(fp + 'T00:00:00Z');
+      const todayMs = Date.parse(todayStr + 'T00:00:00Z');
+      const diasRel = Math.round((fpMs - todayMs) / (1000 * 60 * 60 * 24));
+      return { ...r, vencida: diasRel < 0, dias_relativos: diasRel };
+    });
+
+    res.json({ ok: true, items });
+  } catch (err: any) {
+    console.error('listNotificaciones error:', err);
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
 /** DELETE /api/activity/:id — borra (solo propia o admin) */
 export async function deleteActivity(req: Request & { user?: JwtPayload }, res: Response) {
   try {
