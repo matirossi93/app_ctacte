@@ -1152,13 +1152,20 @@ async function prewarmSnapshotCache() {
         while (m <= 0) { m += 12; y -= 1; }
         meses.push({ year: y, month: m });
     }
-    for (const { year, month } of meses) {
+    // Dos fases paralelas:
+    //  - Fase 1 (trimestre actual): los 3 meses más recientes en paralelo.
+    //    Es lo crítico para snapshot, comisiones e historial fast-path.
+    //  - Fase 2 (trimestre anterior): los 3 anteriores en paralelo.
+    //    Sólo alimenta alertas + comparación trimestral, no es bloqueante.
+    // En vez de 6 fetches secuenciales (~2-3 min cold), arrancamos con 3
+    // en paralelo (~30s) y después los otros 3. Esto reduce el tiempo hasta
+    // que el endpoint historial-compras pueda responder rápido a < 1 min
+    // tras boot frío.
+    const fase1 = meses.slice(0, 3);
+    const fase2 = meses.slice(3);
+    async function warmMes({ year, month }: { year: number; month: number }) {
         try {
             const t0 = Date.now();
-            // force:true para refrescar incluso si el TTL todavía no expiró
-            // (mantiene el cache caliente sin huecos).
-            // Ventas + items en paralelo: items son necesarios para /api/comisiones
-            // y la primera carga de un mes es lenta (varios miles de líneas).
             const [r, ri] = await Promise.all([
                 getMonthlyVentasRaw(year, month, { force: true }),
                 getMonthlyItemsRaw(year, month, { force: true }),
@@ -1168,6 +1175,8 @@ async function prewarmSnapshotCache() {
             console.warn(`[snapshot prewarm] ${year}-${String(month).padStart(2, '0')} fail: ${e?.message ?? e}`);
         }
     }
+    await Promise.all(fase1.map(warmMes));
+    await Promise.all(fase2.map(warmMes));
     // Catálogo de artículos (precio_venta + cod_rubro) para comisiones.
     try {
         const t0 = Date.now();
