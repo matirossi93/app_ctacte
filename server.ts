@@ -31,7 +31,7 @@ import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo
 import { listComisiones, probeVenta, comisionesSample, topArticulos, facturasVendedor, diagnoseArticulo } from './server-lib/comisiones.js';
 import { listClientesLookup } from './server-lib/clientes.js';
 import { historialComprasCliente } from './server-lib/historialCompras.js';
-import { listActivity, createActivity, updateActivity, deleteActivity } from './server-lib/activity.js';
+import { listActivity, createActivity, updateActivity, deleteActivity, listNotificaciones } from './server-lib/activity.js';
 import {
   listUsuarios, createUsuario, updateUsuario, deleteUsuario, changePassword
 } from './server-lib/usuarios.js';
@@ -749,6 +749,7 @@ app.get('/api/activity', requireJwt, (req: any, res) => listActivity(req, res));
 app.post('/api/activity', requireJwt, (req: any, res) => createActivity(req, res));
 app.put('/api/activity/:id', requireJwt, (req: any, res) => updateActivity(req, res));
 app.delete('/api/activity/:id', requireJwt, (req: any, res) => deleteActivity(req, res));
+app.get('/api/notificaciones', requireJwt, (req: any, res) => listNotificaciones(req, res));
 
 // ─── Gestión de usuarios ─────────────────────────────────────────────────────
 app.get('/api/usuarios', requireJwt, requireAdmin, (req: any, res) => listUsuarios(req, res));
