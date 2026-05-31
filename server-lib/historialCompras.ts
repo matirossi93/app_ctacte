@@ -182,6 +182,130 @@ export function armarFacturas(
 }
 
 // ---------------------------------------------------------------------------
+// Análisis: alertas de abandono + comparación entre trimestres
+// ---------------------------------------------------------------------------
+
+function diasEntre(desdeISO: string, hastaMs: number): number {
+  const t = Date.parse(desdeISO + 'T00:00:00Z');
+  if (!Number.isFinite(t)) return 0;
+  return Math.floor((hastaMs - t) / (1000 * 60 * 60 * 24));
+}
+
+function mediaIntervalos(fechasISO: string[]): number {
+  if (fechasISO.length < 2) return 0;
+  const sorted = [...fechasISO].sort();
+  let total = 0;
+  for (let i = 1; i < sorted.length; i++) {
+    total += diasEntre(sorted[i - 1], Date.parse(sorted[i] + 'T00:00:00Z'));
+  }
+  return total / (sorted.length - 1);
+}
+
+export interface AlertaCliente {
+  dias_sin_comprar: number;
+  media_dias_entre_compras: number;
+  nivel: 'amarillo' | 'rojo' | null;
+}
+
+/**
+ * Detecta si el cliente está "dejando de comprar" comparando los días desde
+ * su última FA contra su propio ritmo histórico (media de intervalos entre FAs).
+ *
+ * - Requiere ≥3 FAs en el historial. Con menos hay ruido.
+ * - NCs (devoluciones) NO cuentan como compra: las ignoramos.
+ * - Niveles:
+ *     dias_sin > 3× media  → rojo
+ *     dias_sin > 2× media  → amarillo
+ *     en otro caso         → null (no hay alerta)
+ */
+export function calcularAlertaCliente(facturas: FacturaHistorial[], ahora: Date): AlertaCliente | null {
+  const fas = facturas.filter(f => f.tipo === 'FA');
+  if (fas.length < 3) return null;
+  const fechas = fas.map(f => f.fecha).filter(Boolean);
+  const sorted = [...fechas].sort();
+  const ultima = sorted[sorted.length - 1];
+  const ahoraMs = ahora.getTime();
+  const diasSin = diasEntre(ultima, ahoraMs);
+  const media = mediaIntervalos(sorted);
+  if (media <= 0) return null;
+  let nivel: 'amarillo' | 'rojo' | null = null;
+  if (diasSin > 3 * media) nivel = 'rojo';
+  else if (diasSin > 2 * media) nivel = 'amarillo';
+  return { dias_sin_comprar: diasSin, media_dias_entre_compras: Math.round(media * 10) / 10, nivel };
+}
+
+export interface ProductoAbandono {
+  cod_articulo: number;
+  detalle: string;
+  dias_sin_comprar: number;
+  intervalo_medio_dias: number;
+  num_compras: number;
+}
+
+/**
+ * Detecta productos "habituales" del cliente que dejó de comprar.
+ *
+ * Habitual = aparece en ≥3 facturas FA distintas.
+ * Abandono = `dias_sin_comprar` > 2× `intervalo_medio_dias` del producto.
+ *
+ * Salida ordenada por severidad descendente (`dias_sin / intervalo_medio`).
+ * Ideal para destacar al vendedor los productos más caídos primero.
+ */
+export function detectarProductosAbandono(facturas: FacturaHistorial[], ahora: Date): ProductoAbandono[] {
+  const ahoraMs = ahora.getTime();
+  // Agrupar por cod_articulo: fechas únicas (por fecha de la factura) donde apareció en FAs.
+  const fechasPorArt = new Map<number, { detalle: string; fechas: Set<string> }>();
+  for (const f of facturas) {
+    if (f.tipo !== 'FA') continue;
+    for (const it of f.items) {
+      const cod = it.cod_articulo;
+      if (!Number.isFinite(cod)) continue;
+      let entry = fechasPorArt.get(cod);
+      if (!entry) { entry = { detalle: it.detalle, fechas: new Set() }; fechasPorArt.set(cod, entry); }
+      entry.fechas.add(f.fecha);
+    }
+  }
+  const result: ProductoAbandono[] = [];
+  for (const [cod, { detalle, fechas }] of fechasPorArt) {
+    if (fechas.size < 3) continue;
+    const sorted = [...fechas].sort();
+    const intervaloMedio = mediaIntervalos(sorted);
+    if (intervaloMedio <= 0) continue;
+    const ultima = sorted[sorted.length - 1];
+    const diasSin = diasEntre(ultima, ahoraMs);
+    if (diasSin <= 2 * intervaloMedio) continue;
+    result.push({
+      cod_articulo: cod,
+      detalle,
+      dias_sin_comprar: diasSin,
+      intervalo_medio_dias: Math.round(intervaloMedio * 10) / 10,
+      num_compras: fechas.size,
+    });
+  }
+  // Severidad = qué tan tarde está respecto a su propia frecuencia.
+  result.sort((a, b) => (b.dias_sin_comprar / b.intervalo_medio_dias) - (a.dias_sin_comprar / a.intervalo_medio_dias));
+  return result;
+}
+
+export interface ComparacionTrimestre {
+  actual: number;
+  anterior: number;
+  delta_pct: number | null;
+}
+
+/**
+ * Suma los `total_neto` (que ya vienen con signo: FA + / NC -) de cada
+ * arreglo de facturas y devuelve los totales + delta porcentual.
+ * Si el trimestre anterior es 0, delta_pct es null (evita división por 0).
+ */
+export function calcularComparacionTrimestre(actual: FacturaHistorial[], anterior: FacturaHistorial[]): ComparacionTrimestre {
+  const sumActual = actual.reduce((acc, f) => acc + f.total_neto, 0);
+  const sumAnterior = anterior.reduce((acc, f) => acc + f.total_neto, 0);
+  const delta_pct = sumAnterior !== 0 ? (sumActual - sumAnterior) / Math.abs(sumAnterior) : null;
+  return { actual: sumActual, anterior: sumAnterior, delta_pct };
+}
+
+// ---------------------------------------------------------------------------
 // HTTP handler
 // ---------------------------------------------------------------------------
 
@@ -268,7 +392,11 @@ export async function historialComprasCliente(req: import('express').Request & {
       return;
     }
 
-    const periodos = ultimosMeses(meses);
+    // Pedimos 6 meses (trimestre actual + trimestre anterior). Los 3 más
+    // recientes alimentan rankings + lista de facturas visible al usuario;
+    // los 6 enteros alimentan las alertas (cliente y producto) y la
+    // comparación entre trimestres.
+    const periodos = ultimosMeses(meses * 2);
     const fetches = periodos.flatMap(p => [getMonthlyVentasRaw(p.year, p.month), getMonthlyItemsRaw(p.year, p.month)]);
     const articulosMap = await fetchArticulosCatalogo();
     const results = await Promise.all(fetches);
@@ -282,8 +410,14 @@ export async function historialComprasCliente(req: import('express').Request & {
       itemsAll.push(...it.items);
     }
 
+    // Fecha de corte: primer día del mes más viejo del trimestre actual.
+    // periodos[meses - 1] = mes -2 cuando meses=3. Todo lo >= a esa fecha
+    // es trimestre actual; todo lo < es trimestre anterior.
+    const inicioActual = periodos[meses - 1];
+    const desdeActual = `${inicioActual.year}-${String(inicioActual.month).padStart(2, '0')}-01`;
+
     const cabsValidas = new Map<number, any>();
-    const signosParaAgg = new Map<number, { sign: 1 | -1; fecha: string }>();
+    const signosActual = new Map<number, { sign: 1 | -1; fecha: string }>();
 
     for (const v of ventasAll) {
       const id = Number(v.id);
@@ -308,20 +442,34 @@ export async function historialComprasCliente(req: import('express').Request & {
         fa_total: Number(v.fa_total ?? v.total ?? 0),
         sign,
       });
-      signosParaAgg.set(id, { sign, fecha });
+      if (fecha >= desdeActual) signosActual.set(id, { sign, fecha });
     }
 
-    const itemsLimpios = itemsAll.filter(it => {
+    // Items "limpios" (sin flete/descuento/etc) restringidos al trimestre
+    // actual — son los que alimentan top productos.
+    const itemsActualLimpios = itemsAll.filter(it => {
+      if (!signosActual.has(Number(it.id_comprobante))) return false;
       const detalle = String((it as any).detalle ?? articulosMap.get(Number(it.cod_articulo))?.descripcion ?? '');
       return !esLineaTecnica(detalle);
     });
 
-    const agg = agregarPorArticulo(itemsLimpios, signosParaAgg, articulosMap);
+    const agg = agregarPorArticulo(itemsActualLimpios, signosActual, articulosMap);
     const top_importe = topPorImporte(agg, 5);
     const top_frecuencia = topPorFrecuencia(agg, 5);
-    const facturas = armarFacturas(cabsValidas, itemsAll, articulosMap);
 
-    const desde = `${periodos[periodos.length - 1].year}-${String(periodos[periodos.length - 1].month).padStart(2, '0')}-01`;
+    // Facturas armadas para los 6 meses. Las usamos para separar actual /
+    // anterior y para correr las funciones de análisis. Lo que devolvemos al
+    // cliente como `facturas` es solo el trimestre actual.
+    const facturasTodas = armarFacturas(cabsValidas, itemsAll, articulosMap);
+    const facturas = facturasTodas.filter(f => f.fecha >= desdeActual);
+    const facturasAnterior = facturasTodas.filter(f => f.fecha < desdeActual);
+
+    const ahora = new Date();
+    const alerta_cliente = calcularAlertaCliente(facturasTodas, ahora);
+    const productos_abandono = detectarProductosAbandono(facturasTodas, ahora);
+    const comparacion = calcularComparacionTrimestre(facturas, facturasAnterior);
+
+    const desde = `${inicioActual.year}-${String(inicioActual.month).padStart(2, '0')}-01`;
     const lastMes = new Date(periodos[0].year, periodos[0].month, 0);
     const hasta = `${periodos[0].year}-${String(periodos[0].month).padStart(2, '0')}-${String(lastMes.getDate()).padStart(2, '0')}`;
 
@@ -333,6 +481,11 @@ export async function historialComprasCliente(req: import('express').Request & {
       facturas,
       top_importe,
       top_frecuencia,
+      alertas: {
+        cliente: alerta_cliente,
+        productos: productos_abandono,
+      },
+      comparacion,
       generated_at: new Date().toISOString(),
     };
     responseCache.set(codCliente, { payload, expiresAt: Date.now() + RESPONSE_CACHE_TTL_MS });

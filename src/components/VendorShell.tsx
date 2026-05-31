@@ -186,6 +186,26 @@ interface HistorialFactura {
     items: HistorialFacturaItem[];
 }
 
+interface HistorialAlertaCliente {
+    dias_sin_comprar: number;
+    media_dias_entre_compras: number;
+    nivel: 'amarillo' | 'rojo' | null;
+}
+
+interface HistorialProductoAbandono {
+    cod_articulo: number;
+    detalle: string;
+    dias_sin_comprar: number;
+    intervalo_medio_dias: number;
+    num_compras: number;
+}
+
+interface HistorialComparacion {
+    actual: number;
+    anterior: number;
+    delta_pct: number | null;
+}
+
 interface HistorialComprasResponse {
     ok: boolean;
     cod_cliente: number;
@@ -194,6 +214,11 @@ interface HistorialComprasResponse {
     facturas: HistorialFactura[];
     top_importe: HistorialItemAgregado[];
     top_frecuencia: HistorialItemAgregado[];
+    alertas: {
+        cliente: HistorialAlertaCliente | null;
+        productos: HistorialProductoAbandono[];
+    };
+    comparacion: HistorialComparacion;
     generated_at: string;
 }
 interface Props {
@@ -1781,7 +1806,9 @@ function ClienteObjetivoCard({ c, isOpen, onToggle }: { c: ClienteObjetivo; isOp
                     )}
                     {histData && histData.facturas.length > 0 && (
                         <>
+                            <AtencionCliente alertas={histData.alertas} />
                             <TopProductosCliente topImporte={histData.top_importe} topFrecuencia={histData.top_frecuencia} />
+                            <ComparacionTrimestre comp={histData.comparacion} />
                             <ComprasRecientesCliente facturas={histData.facturas} />
                         </>
                     )}
@@ -2361,4 +2388,54 @@ function ComprasRecientesCliente({ facturas }: { facturas: HistorialFactura[] })
 function formatFechaCorta(iso: string): string {
     if (!iso || iso.length < 10) return iso ?? '';
     return `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+}
+
+function AtencionCliente({ alertas }: { alertas: { cliente: HistorialAlertaCliente | null; productos: HistorialProductoAbandono[] } }) {
+    const tieneCliente = alertas.cliente && alertas.cliente.nivel !== null;
+    const productos = alertas.productos ?? [];
+    if (!tieneCliente && productos.length === 0) return null;
+
+    const nivelCard = alertas.cliente?.nivel === 'rojo' || productos.length >= 3 ? 'rojo' : 'amarillo';
+
+    return (
+        <div className={`vs-atencion vs-atencion--${nivelCard}`}>
+            <h4>⚠ Atención</h4>
+            <ul>
+                {tieneCliente && alertas.cliente && (
+                    <li>
+                        <strong>Cliente sin comprar hace {alertas.cliente.dias_sin_comprar} días</strong>
+                        <span> (suele comprar cada {Math.round(alertas.cliente.media_dias_entre_compras)} días)</span>
+                    </li>
+                )}
+                {productos.slice(0, 5).map(p => (
+                    <li key={p.cod_articulo}>
+                        <strong>{p.detalle}</strong>
+                        <span> — sin llevar hace {p.dias_sin_comprar} días (antes cada {Math.round(p.intervalo_medio_dias)})</span>
+                    </li>
+                ))}
+                {productos.length > 5 && (
+                    <li className="vs-atencion-more">y {productos.length - 5} producto{productos.length - 5 === 1 ? '' : 's'} más con caída</li>
+                )}
+            </ul>
+        </div>
+    );
+}
+
+function ComparacionTrimestre({ comp }: { comp: HistorialComparacion }) {
+    // Si no hay base anterior o no hay nada en actual, no mostramos nada.
+    if (comp.delta_pct === null) return null;
+    const positivo = comp.delta_pct >= 0;
+    const pct = Math.abs(comp.delta_pct * 100);
+    const arrow = positivo ? '▲' : '▼';
+    return (
+        <div className={`vs-comparacion vs-comparacion--${positivo ? 'up' : 'down'}`}>
+            <span className="vs-comparacion-label">vs trimestre anterior:</span>
+            <span className="vs-comparacion-nums">
+                {formatMoney(comp.anterior)} → {formatMoney(comp.actual)}
+            </span>
+            <span className="vs-comparacion-delta">
+                {positivo ? '+' : '-'}{Math.round(pct)}% {arrow}
+            </span>
+        </div>
+    );
 }
