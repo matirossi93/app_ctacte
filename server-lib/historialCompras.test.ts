@@ -1,5 +1,26 @@
 import { describe, it, expect } from 'vitest';
-import { esLineaTecnica, agregarPorArticulo, topPorImporte, topPorFrecuencia, armarFacturas } from './historialCompras.js';
+import {
+  esLineaTecnica,
+  agregarPorArticulo,
+  topPorImporte,
+  topPorFrecuencia,
+  armarFacturas,
+  calcularAlertaCliente,
+  detectarProductosAbandono,
+  calcularComparacionTrimestre,
+  type FacturaHistorial,
+} from './historialCompras.js';
+
+// Helper para tests: crea una factura FA con fecha + lista de items.
+function makeFA(id: number, fecha: string, items: Array<{ cod_articulo: number; detalle: string; cantidad?: number; importe?: number }> = [], total_neto = 1000): FacturaHistorial {
+  return {
+    id_comprobante: id, fecha, tipo: 'FA', tipo_factura: 'A', punto_venta: 1, numero: id, total_neto,
+    items: items.map(i => ({ cod_articulo: i.cod_articulo, detalle: i.detalle, cantidad: i.cantidad ?? 1, importe: i.importe ?? 100 })),
+  };
+}
+function makeNC(id: number, fecha: string, total_neto = -500): FacturaHistorial {
+  return { id_comprobante: id, fecha, tipo: 'NC', tipo_factura: 'A', punto_venta: 1, numero: id, total_neto, items: [] };
+}
 
 describe('esLineaTecnica', () => {
   it('matchea flete (case insensitive)', () => {
@@ -175,5 +196,172 @@ describe('armarFacturas', () => {
     const facturas = armarFacturas(cabsValidas, [], new Map());
     expect(facturas).toHaveLength(1);
     expect(facturas[0].items).toEqual([]);
+  });
+});
+
+describe('calcularAlertaCliente', () => {
+  const ahora = new Date('2026-05-30T00:00:00Z');
+
+  it('null si menos de 3 facturas (poca data)', () => {
+    expect(calcularAlertaCliente([], ahora)).toBeNull();
+    expect(calcularAlertaCliente([makeFA(1, '2026-05-01')], ahora)).toBeNull();
+    expect(calcularAlertaCliente([makeFA(1, '2026-05-01'), makeFA(2, '2026-05-10')], ahora)).toBeNull();
+  });
+
+  it('null si cliente compra con frecuencia normal', () => {
+    // Cada ~12 días, última hace 8 días: dentro del rango normal
+    const facturas = [
+      makeFA(1, '2026-04-10'),
+      makeFA(2, '2026-04-22'),
+      makeFA(3, '2026-05-05'),
+      makeFA(4, '2026-05-22'),
+    ];
+    const r = calcularAlertaCliente(facturas, ahora);
+    expect(r?.nivel).toBeNull();
+  });
+
+  it('amarillo cuando supera 2x la media', () => {
+    // Media ~12 días, última hace 28 días (>2x media)
+    const facturas = [
+      makeFA(1, '2026-03-30'),
+      makeFA(2, '2026-04-12'),
+      makeFA(3, '2026-04-25'),
+      makeFA(4, '2026-05-02'),
+    ];
+    const r = calcularAlertaCliente(facturas, ahora);
+    expect(r?.nivel).toBe('amarillo');
+    expect(r?.dias_sin_comprar).toBe(28);
+  });
+
+  it('rojo cuando supera 3x la media', () => {
+    // Media ~10 días, última hace 50 días (>3x media)
+    const facturas = [
+      makeFA(1, '2026-03-05'),
+      makeFA(2, '2026-03-15'),
+      makeFA(3, '2026-03-25'),
+      makeFA(4, '2026-04-10'),
+    ];
+    const r = calcularAlertaCliente(facturas, ahora);
+    expect(r?.nivel).toBe('rojo');
+  });
+
+  it('ignora NCs para el cálculo de "ritmo de compra"', () => {
+    // Solo cuenta FAs. Una NC el día 28 no debería cambiar el último día de compra.
+    const facturas = [
+      makeFA(1, '2026-03-30'),
+      makeFA(2, '2026-04-12'),
+      makeFA(3, '2026-04-25'),
+      makeFA(4, '2026-05-02'),
+      makeNC(99, '2026-05-25'), // devolución reciente, no compra
+    ];
+    const r = calcularAlertaCliente(facturas, ahora);
+    expect(r?.dias_sin_comprar).toBe(28); // 30/05 - 02/05 = 28
+  });
+});
+
+describe('detectarProductosAbandono', () => {
+  const ahora = new Date('2026-05-30T00:00:00Z');
+
+  it('detecta producto habitual no comprado hace >2x su intervalo medio', () => {
+    // Mix Energético: aparece en 4 facturas con intervalo medio ~14 días.
+    // Última vez 2026-04-01 → 59 días sin comprar (>2× 14)
+    const facturas = [
+      makeFA(1, '2026-02-15', [{ cod_articulo: 100, detalle: 'Mix Energético' }]),
+      makeFA(2, '2026-03-01', [{ cod_articulo: 100, detalle: 'Mix Energético' }]),
+      makeFA(3, '2026-03-15', [{ cod_articulo: 100, detalle: 'Mix Energético' }]),
+      makeFA(4, '2026-04-01', [{ cod_articulo: 100, detalle: 'Mix Energético' }]),
+      // Después: facturas pero sin Mix
+      makeFA(5, '2026-04-20', [{ cod_articulo: 200, detalle: 'Tiernitos' }]),
+      makeFA(6, '2026-05-15', [{ cod_articulo: 200, detalle: 'Tiernitos' }]),
+    ];
+    const r = detectarProductosAbandono(facturas, ahora);
+    expect(r.length).toBeGreaterThan(0);
+    const mix = r.find(p => p.cod_articulo === 100);
+    expect(mix).toBeDefined();
+    expect(mix!.detalle).toBe('Mix Energético');
+    expect(mix!.dias_sin_comprar).toBe(59);
+  });
+
+  it('skipea productos con menos de 3 apariciones (no habitual)', () => {
+    const facturas = [
+      makeFA(1, '2026-02-15', [{ cod_articulo: 100, detalle: 'Mix Energético' }]),
+      makeFA(2, '2026-03-01', [{ cod_articulo: 100, detalle: 'Mix Energético' }]),
+      // Solo 2 apariciones → no habitual
+    ];
+    const r = detectarProductosAbandono(facturas, ahora);
+    expect(r.find(p => p.cod_articulo === 100)).toBeUndefined();
+  });
+
+  it('skipea productos comprados recientemente (sin abandono)', () => {
+    // Producto comprado cada ~14 días, último hace 10 días (no es abandono)
+    const facturas = [
+      makeFA(1, '2026-04-20', [{ cod_articulo: 100, detalle: 'X' }]),
+      makeFA(2, '2026-05-04', [{ cod_articulo: 100, detalle: 'X' }]),
+      makeFA(3, '2026-05-20', [{ cod_articulo: 100, detalle: 'X' }]), // 10 días atrás
+    ];
+    const r = detectarProductosAbandono(facturas, ahora);
+    expect(r).toEqual([]);
+  });
+
+  it('ignora NCs (no cuentan como compra del producto)', () => {
+    const facturas = [
+      makeFA(1, '2026-02-15', [{ cod_articulo: 100, detalle: 'X' }]),
+      makeFA(2, '2026-03-01', [{ cod_articulo: 100, detalle: 'X' }]),
+      makeFA(3, '2026-03-15', [{ cod_articulo: 100, detalle: 'X' }]),
+      makeNC(99, '2026-05-25', /* total */ -500), // NC reciente, no cuenta
+    ];
+    const r = detectarProductosAbandono(facturas, ahora);
+    const x = r.find(p => p.cod_articulo === 100);
+    expect(x).toBeDefined();
+    // dias_sin_comprar tiene que ser desde 2026-03-15, no desde 2026-05-25
+    expect(x!.dias_sin_comprar).toBeGreaterThan(70);
+  });
+
+  it('ordena por severidad descendente (más abandono primero)', () => {
+    const facturas = [
+      // Producto A: cada 7d, última hace 21 días (2026-05-09) → ratio 3.0
+      makeFA(1, '2026-04-25', [{ cod_articulo: 1, detalle: 'A' }]),
+      makeFA(2, '2026-05-02', [{ cod_articulo: 1, detalle: 'A' }]),
+      makeFA(3, '2026-05-09', [{ cod_articulo: 1, detalle: 'A' }]),
+
+      // Producto B: cada ~14d, última hace 56 días (2026-04-04) → ratio ~3.9 (más severo)
+      makeFA(4, '2026-02-20', [{ cod_articulo: 2, detalle: 'B' }]),
+      makeFA(5, '2026-03-06', [{ cod_articulo: 2, detalle: 'B' }]),
+      makeFA(6, '2026-03-20', [{ cod_articulo: 2, detalle: 'B' }]),
+      makeFA(7, '2026-04-04', [{ cod_articulo: 2, detalle: 'B' }]),
+    ];
+    const r = detectarProductosAbandono(facturas, ahora);
+    expect(r[0].cod_articulo).toBe(2); // B más severo
+    expect(r[1].cod_articulo).toBe(1);
+  });
+});
+
+describe('calcularComparacionTrimestre', () => {
+  it('calcula sumas y delta porcentual', () => {
+    const actual = [makeFA(1, '2026-05-01', [], 800000), makeFA(2, '2026-05-15', [], 650000)]; // 1450k
+    const anterior = [makeFA(3, '2026-02-01', [], 700000), makeFA(4, '2026-02-20', [], 550000)]; // 1250k
+    const r = calcularComparacionTrimestre(actual, anterior);
+    expect(r.actual).toBe(1450000);
+    expect(r.anterior).toBe(1250000);
+    expect(r.delta_pct).toBeCloseTo(0.16, 2);
+  });
+
+  it('NCs restan en cada trimestre (total_neto ya viene con signo)', () => {
+    const actual = [makeFA(1, '2026-05-01', [], 1000), makeNC(2, '2026-05-10', -300)];
+    const r = calcularComparacionTrimestre(actual, []);
+    expect(r.actual).toBe(700);
+  });
+
+  it('delta_pct = null si trimestre anterior es 0', () => {
+    const actual = [makeFA(1, '2026-05-01', [], 1000)];
+    const r = calcularComparacionTrimestre(actual, []);
+    expect(r.delta_pct).toBeNull();
+  });
+
+  it('trimestre actual vacío → 0 / 0 / null', () => {
+    const r = calcularComparacionTrimestre([], []);
+    expect(r.actual).toBe(0);
+    expect(r.anterior).toBe(0);
+    expect(r.delta_pct).toBeNull();
   });
 });
