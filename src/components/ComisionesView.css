@@ -12,6 +12,8 @@
 }
 .cv-head-l { display: flex; align-items: center; gap: 10px; color: #06652F }
 .cv-head-l h2 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -.01em }
+.cv-head-actions { display: flex; align-items: center; gap: 8px }
+.cv-refresh[aria-pressed="true"] { background: #06652F; color: #fff; border-color: #06652F }
 .cv-refresh {
     background: #fff; border: 1px solid rgba(20, 24, 20, .12);
     border-radius: 999px; padding: 8px;

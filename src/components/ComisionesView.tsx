@@ -1,11 +1,13 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { DollarSign, Loader2, AlertCircle, RefreshCw, Trophy } from 'lucide-react';
+import { DollarSign, Loader2, AlertCircle, RefreshCw, Trophy, Eye, EyeOff } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import type { ViewPeriod } from './PeriodSelector';
 import './ComisionesView.css';
 
 const MONTH_NAMES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 const CATEGORIA_ORDER = ['5%', '4%', '3.5%', '1%'] as const;
+const PRIVACY_STORAGE_KEY = 'ctacte:comisiones:privacy';
+const MASKED = '$ ••••';
 
 type Categoria = typeof CATEGORIA_ORDER[number];
 
@@ -46,11 +48,26 @@ interface Props {
 const fmtMoney = (n: number) =>
     new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n);
 
+// Wrapper: si el modo privacidad está activo, devuelve "$ ••••" en vez del
+// monto real. Pensado para mostrar la pantalla al cliente sin revelar plata.
+const fmtMoneyMaybe = (n: number, hidden: boolean) => hidden ? MASKED : fmtMoney(n);
+
 export const ComisionesView = ({ isAdmin, viewPeriod, userCodVendedor }: Props) => {
     const [data, setData] = useState<ComisionesResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [err, setErr] = useState<string | null>(null);
     const abortRef = useRef<AbortController | null>(null);
+    const [isPrivate, setIsPrivate] = useState<boolean>(() => {
+        try { return localStorage.getItem(PRIVACY_STORAGE_KEY) === '1'; } catch { return false; }
+    });
+
+    const togglePrivate = () => {
+        setIsPrivate(prev => {
+            const next = !prev;
+            try { localStorage.setItem(PRIVACY_STORAGE_KEY, next ? '1' : '0'); } catch { /* ignore */ }
+            return next;
+        });
+    };
 
     const load = async () => {
         if (abortRef.current) abortRef.current.abort();
@@ -102,9 +119,19 @@ export const ComisionesView = ({ isAdmin, viewPeriod, userCodVendedor }: Props) 
                     <DollarSign size={24} />
                     <h2>Comisiones · {monthLabel}</h2>
                 </div>
-                <button className="cv-refresh" onClick={load} disabled={loading} title="Refrescar">
-                    {loading ? <Loader2 size={16} className="cv-spin" /> : <RefreshCw size={16} />}
-                </button>
+                <div className="cv-head-actions">
+                    <button
+                        className="cv-refresh"
+                        onClick={togglePrivate}
+                        title={isPrivate ? 'Mostrar importes' : 'Ocultar importes (modo privacidad)'}
+                        aria-pressed={isPrivate}
+                    >
+                        {isPrivate ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                    <button className="cv-refresh" onClick={load} disabled={loading} title="Refrescar">
+                        {loading ? <Loader2 size={16} className="cv-spin" /> : <RefreshCw size={16} />}
+                    </button>
+                </div>
             </header>
 
             {err && <div className="cv-error"><AlertCircle size={16} /> {err}</div>}
@@ -114,7 +141,7 @@ export const ComisionesView = ({ isAdmin, viewPeriod, userCodVendedor }: Props) 
             )}
 
             {data && !isAdmin && ownItem && (
-                <SingleVendorPanel item={ownItem} categoriaLabels={data.categoria_labels} />
+                <SingleVendorPanel item={ownItem} categoriaLabels={data.categoria_labels} hidden={isPrivate} />
             )}
 
             {data && !isAdmin && !ownItem && (
@@ -124,7 +151,7 @@ export const ComisionesView = ({ isAdmin, viewPeriod, userCodVendedor }: Props) 
             )}
 
             {data && isAdmin && (
-                <AdminPanel data={data} />
+                <AdminPanel data={data} hidden={isPrivate} />
             )}
         </div>
     );
@@ -132,14 +159,14 @@ export const ComisionesView = ({ isAdmin, viewPeriod, userCodVendedor }: Props) 
 
 // ──────────────────────────── Vendedor: vista simple ────────────────────────
 
-interface SingleProps { item: ComisionVendedor; categoriaLabels: Record<Categoria, string> }
-const SingleVendorPanel = ({ item, categoriaLabels }: SingleProps) => (
+interface SingleProps { item: ComisionVendedor; categoriaLabels: Record<Categoria, string>; hidden: boolean }
+const SingleVendorPanel = ({ item, categoriaLabels, hidden }: SingleProps) => (
     <>
         <div className="cv-hero">
             <span className="cv-hero-label">Tu comisión acumulada</span>
-            <strong className="cv-hero-amount">{fmtMoney(item.comision_total)}</strong>
+            <strong className="cv-hero-amount">{fmtMoneyMaybe(item.comision_total, hidden)}</strong>
             <span className="cv-hero-sub">
-                Sobre <strong>{fmtMoney(item.neto_total)}</strong> facturado neto · {item.num_comprobantes} comprobantes · {item.num_lineas} líneas
+                Sobre <strong>{fmtMoneyMaybe(item.neto_total, hidden)}</strong> facturado neto · {item.num_comprobantes} comprobantes · {item.num_lineas} líneas
             </span>
         </div>
 
@@ -161,9 +188,9 @@ const SingleVendorPanel = ({ item, categoriaLabels }: SingleProps) => (
                         return (
                             <tr key={cat}>
                                 <td>{categoriaLabels[cat]}</td>
-                                <td className="num">{fmtMoney(e.neto)}</td>
+                                <td className="num">{fmtMoneyMaybe(e.neto, hidden)}</td>
                                 <td className="num">{e.lineas}</td>
-                                <td className="num cv-strong">{fmtMoney(e.comision)}</td>
+                                <td className="num cv-strong">{fmtMoneyMaybe(e.comision, hidden)}</td>
                             </tr>
                         );
                     })}
@@ -171,9 +198,9 @@ const SingleVendorPanel = ({ item, categoriaLabels }: SingleProps) => (
                 <tfoot>
                     <tr>
                         <td>Total</td>
-                        <td className="num">{fmtMoney(item.neto_total)}</td>
+                        <td className="num">{fmtMoneyMaybe(item.neto_total, hidden)}</td>
                         <td className="num">{item.num_lineas}</td>
-                        <td className="num cv-strong">{fmtMoney(item.comision_total)}</td>
+                        <td className="num cv-strong">{fmtMoneyMaybe(item.comision_total, hidden)}</td>
                     </tr>
                 </tfoot>
             </table>
@@ -183,16 +210,16 @@ const SingleVendorPanel = ({ item, categoriaLabels }: SingleProps) => (
 
 // ──────────────────────────── Admin: ranking ────────────────────────────────
 
-interface AdminProps { data: ComisionesResponse }
-const AdminPanel = ({ data }: AdminProps) => {
+interface AdminProps { data: ComisionesResponse; hidden: boolean }
+const AdminPanel = ({ data, hidden }: AdminProps) => {
     const [expanded, setExpanded] = useState<number | null>(null);
     return (
         <>
             <div className="cv-hero">
                 <span className="cv-hero-label">Total equipo</span>
-                <strong className="cv-hero-amount">{fmtMoney(data.totales.comision_total)}</strong>
+                <strong className="cv-hero-amount">{fmtMoneyMaybe(data.totales.comision_total, hidden)}</strong>
                 <span className="cv-hero-sub">
-                    Sobre <strong>{fmtMoney(data.totales.neto_total)}</strong> facturado neto · {data.totales.num_comprobantes} comprobantes
+                    Sobre <strong>{fmtMoneyMaybe(data.totales.neto_total, hidden)}</strong> facturado neto · {data.totales.num_comprobantes} comprobantes
                 </span>
             </div>
 
@@ -219,9 +246,9 @@ const AdminPanel = ({ data }: AdminProps) => {
                                     <tr className="cv-row" onClick={() => setExpanded(expanded === v.cod_vendedor ? null : v.cod_vendedor)}>
                                         <td className="cv-rank">{i + 1}</td>
                                         <td>{v.nombre}</td>
-                                        <td className="num">{fmtMoney(v.neto_total)}</td>
+                                        <td className="num">{fmtMoneyMaybe(v.neto_total, hidden)}</td>
                                         <td className="num">{v.num_comprobantes}</td>
-                                        <td className="num cv-strong">{fmtMoney(v.comision_total)}</td>
+                                        <td className="num cv-strong">{fmtMoneyMaybe(v.comision_total, hidden)}</td>
                                     </tr>
                                     {expanded === v.cod_vendedor && (
                                         <tr className="cv-detail">
@@ -233,8 +260,8 @@ const AdminPanel = ({ data }: AdminProps) => {
                                                         return (
                                                             <div key={cat} className="cv-detail-cat">
                                                                 <span className="cv-detail-cat-name">{data.categoria_labels[cat]}</span>
-                                                                <span className="cv-detail-cat-neto">Neto {fmtMoney(e.neto)} · {e.lineas} líneas</span>
-                                                                <strong className="cv-detail-cat-com">{fmtMoney(e.comision)}</strong>
+                                                                <span className="cv-detail-cat-neto">Neto {fmtMoneyMaybe(e.neto, hidden)} · {e.lineas} líneas</span>
+                                                                <strong className="cv-detail-cat-com">{fmtMoneyMaybe(e.comision, hidden)}</strong>
                                                             </div>
                                                         );
                                                     })}
