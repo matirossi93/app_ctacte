@@ -1170,11 +1170,14 @@ async function prewarmSnapshotCache() {
         console.warn(`[snapshot prewarm] articulos catalogo fail: ${e?.message ?? e}`);
     }
 }
-// Boot warm con delay 12s para no competir con el resto del startup.
-setTimeout(() => { prewarmSnapshotCache().catch(() => { }); }, 12000);
-// Cron horario en el minuto 5 (después del posible cron 0 4 * * * que re-syncea).
-cron.schedule('5 * * * *', () => { prewarmSnapshotCache().catch(() => { }); });
-console.log('Cron snapshot prewarm: 5 * * * *');
+// Boot warm con delay 3s para no competir con el resto del startup.
+setTimeout(() => { prewarmSnapshotCache().catch(() => { }); }, 3000);
+// Cron cada 20 min: refresca los 3 meses agresivamente para que el cache
+// histórico (TTL 24h) y el actual (TTL 5min) nunca lleguen vencidos a un
+// request real. Combinado con stale-while-revalidate en snapshotCache, esto
+// elimina cold fetches sincrónicos en el path del usuario.
+cron.schedule('*/20 * * * *', () => { prewarmSnapshotCache().catch(() => { }); });
+console.log('Cron snapshot prewarm: */20 * * * *');
 
 // MP verification — reintenta comprobantes MP pendientes/no encontrados en ventana 24h
 cron.schedule('*/5 * * * *', async () => {
