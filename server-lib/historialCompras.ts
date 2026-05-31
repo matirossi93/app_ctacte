@@ -343,11 +343,17 @@ const responseCache = new Map<number, HistorialCacheEntry>();
  *   - cualquier otro rol (incluido repartidor): 403.
  */
 export async function historialComprasCliente(req: import('express').Request & { user?: import('./auth.js').JwtPayload }, res: import('express').Response) {
+  const tStart = Date.now();
+  const log = (etapa: string, extra?: object) => {
+    console.log(`[historial-compras cod=${req.params.cod}] +${Date.now() - tStart}ms ${etapa}${extra ? ' ' + JSON.stringify(extra) : ''}`);
+  };
   try {
+    log('start');
     const { tipoComprobante, isAnulada } = await import('../src/utils/ventas.js');
     const { getMonthlyVentasRaw, getMonthlyItemsRaw, peekMonthlyVentas, peekMonthlyItems } = await import('./snapshotCache.js');
     const { fetchArticulosCatalogo, fetchClientesIMCached } = await import('./infomanager.js');
     const { COD_EMPRESA_CASA_CENTRAL, COD_CLIENTES_INTERNOS } = await import('./comisionesShared.js');
+    log('imports-done');
 
     function clasificarCabecera(cab: any): 'FA' | 'NC' | null {
       if (isAnulada(cab)) return null;
@@ -378,6 +384,7 @@ export async function historialComprasCliente(req: import('express').Request & {
 
     if (user.rol === 'vendedor') {
       const clientesIM = await fetchClientesIMCached();
+      log('clientes-im-cache', { len: clientesIM.length });
       const cli = clientesIM.find((c: any) => Number(c.cod_cliente) === codCliente);
       if (!cli || Number(cli.cod_vendedor) !== Number(user.cod_vendedor)) {
         res.status(403).json({ error: 'Cliente no pertenece al vendedor' });
@@ -388,6 +395,7 @@ export async function historialComprasCliente(req: import('express').Request & {
     // Cache hit: permiso ya validado arriba, servir el response cacheado.
     const cached = responseCache.get(codCliente);
     if (cached && cached.expiresAt > Date.now()) {
+      log('cache-hit');
       res.json(cached.payload);
       return;
     }
@@ -412,11 +420,16 @@ export async function historialComprasCliente(req: import('express').Request & {
     )));
 
     const articulosMap = await fetchArticulosCatalogo();
+    log('articulos-map', { size: articulosMap.size });
     const fetchesActual = periodosActual.flatMap(p => [
       getMonthlyVentasRaw(p.year, p.month),
       getMonthlyItemsRaw(p.year, p.month),
     ]);
     const resultsActual = await Promise.all(fetchesActual);
+    log('fetches-actual-done', {
+      cached: resultsActual.map((r: any) => r.cached),
+      sizes: resultsActual.map((r: any) => (r.ventas?.length ?? r.items?.length ?? 0)),
+    });
 
     const ventasAll: any[] = [];
     const itemsAll: any[] = [];
@@ -437,6 +450,7 @@ export async function historialComprasCliente(req: import('express').Request & {
       ventasAll.push(...v);
       itemsAll.push(...it);
     }
+    log('trimestre-anterior', { completo: trimestreAnteriorCompleto, total_ventas: ventasAll.length, total_items: itemsAll.length });
 
     // Fecha de corte: primer día del mes más viejo del trimestre actual.
     // periodosActual[meses - 1] = mes -2 cuando meses=3. Todo lo >= a esa
@@ -524,13 +538,13 @@ export async function historialComprasCliente(req: import('express').Request & {
       trimestre_anterior_completo: trimestreAnteriorCompleto,
       generated_at: new Date().toISOString(),
     };
-    // Si el trimestre anterior no estaba completo (alertas/comparación
-    // sirvieron sin datos), no cachear el response — así la próxima
-    // request, una vez que el warm en background haya completado el
-    // cache de meses, devolverá la versión enriquecida.
-    if (trimestreAnteriorCompleto) {
-      responseCache.set(codCliente, { payload, expiresAt: Date.now() + RESPONSE_CACHE_TTL_MS });
-    }
+    // Cachear siempre: si el trimestre anterior estaba completo TTL 5min;
+    // si fue parcial, TTL corto 60s — el cache del usuario reusa el cómputo
+    // pesado mientras el prewarm completa, pero expira pronto para mostrar
+    // alertas tras el warm background.
+    const ttl = trimestreAnteriorCompleto ? RESPONSE_CACHE_TTL_MS : 60_000;
+    responseCache.set(codCliente, { payload, expiresAt: Date.now() + ttl });
+    log('done', { facturas: facturas.length, ms: Date.now() - tStart });
     res.json(payload);
   } catch (err: any) {
     console.error('historialComprasCliente error:', err);

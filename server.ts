@@ -21,7 +21,7 @@ import {
 } from './server-lib/auth.js';
 import { hasSupabase, sb, TENANT_ID } from './server-lib/supabase.js';
 import { syncVentasMesActual, syncVentasMeses } from './server-lib/syncVentas.js';
-import { getMonthlyVentasRaw, getMonthlyItemsRaw } from './server-lib/snapshotCache.js';
+import { getMonthlyVentasRaw, getMonthlyItemsRaw, snapshotCacheStats } from './server-lib/snapshotCache.js';
 import { fetchArticulosCatalogo } from './server-lib/infomanager.js';
 import {
   uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, editarRecibo, cuentasDebug, cuentasRefresh,
@@ -581,6 +581,17 @@ app.post('/api/recibos/:id/elegir-match', requireJwt, (req: any, res) => elegirM
 // Reportes admin-only (xlsx)
 app.get('/api/reportes/:tipo', requireJwt, (req: any, res) => descargarReporte(req, res));
 app.get('/api/cuentas/debug', requireJwt, (req: any, res) => cuentasDebug(req, res));
+
+// Diagnóstico público del estado de cache (sin secretos). Sirve para
+// verificar si el prewarm completó tras un deploy. Si esto responde lento,
+// el problema no es de auth/handlers.
+app.get('/api/debug/cache-state', (_req, res) => {
+    res.json({
+        ok: true,
+        now: new Date().toISOString(),
+        snapshot: snapshotCacheStats(),
+    });
+});
 app.post('/api/cuentas/refresh', requireJwt, (req: any, res) => cuentasRefresh(req, res));
 
 // Debug admin-only: probar endpoints no documentados de edición de recibo IM.

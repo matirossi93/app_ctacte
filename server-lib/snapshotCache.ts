@@ -166,11 +166,21 @@ export function peekMonthlyVentas(
 
 export function snapshotCacheStats() {
     const now = Date.now();
-    return Array.from(cache.entries()).map(([k, v]) => ({
+    const ventas = Array.from(cache.entries()).map(([k, v]) => ({
         key: k,
-        items: v.ventas.length,
+        rows: v.ventas.length,
         age_seconds: Math.round((now - v.fetchedAt) / 1000),
     }));
+    const items = Array.from(itemsCache.entries()).map(([k, v]) => ({
+        key: k,
+        rows: v.items.length,
+        age_seconds: Math.round((now - v.fetchedAt) / 1000),
+    }));
+    return {
+        ventas,
+        items,
+        inflight: { ventas: inflightVentas.size, items: inflightItems.size },
+    };
 }
 
 // ══════════════════════════════════════════════════════════════════════════
