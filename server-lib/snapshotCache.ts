@@ -129,6 +129,41 @@ export function invalidateMonth(year: number, month: number, codEmpresa?: number
     cache.delete(makeKey(year, month, codEmpresa));
 }
 
+/**
+ * Lectura no-bloqueante del cache de ventas. Devuelve la entrada (fresh o
+ * stale) si existe; null si nunca se pobló. NO dispara fetch. Útil para
+ * handlers que prefieren responder rápido con datos parciales antes que
+ * esperar 30-60s un cold fetch sincrónico.
+ *
+ * Si la entrada está stale, dispara un refresh en background para que la
+ * próxima request la encuentre fresca.
+ */
+export function peekMonthlyVentas(
+    year: number,
+    month: number,
+    codEmpresa?: number,
+): VentaRaw[] | null {
+    const key = makeKey(year, month, codEmpresa);
+    const existing = cache.get(key);
+    if (!existing) {
+        // Disparar warm en background — la próxima request lo encuentra.
+        if (!inflightVentas.has(key)) {
+            inflightVentas.add(key);
+            void refreshVentasBackground(year, month, { codEmpresa }).finally(() => inflightVentas.delete(key));
+        }
+        return null;
+    }
+    const now = Date.now();
+    const nowD = new Date();
+    const isCurrent = year === nowD.getUTCFullYear() && month === (nowD.getUTCMonth() + 1);
+    const ttl = isCurrent ? TTL_CURRENT_MS : TTL_HISTORIC_MS;
+    if (now - existing.fetchedAt >= ttl && !inflightVentas.has(key)) {
+        inflightVentas.add(key);
+        void refreshVentasBackground(year, month, { codEmpresa }).finally(() => inflightVentas.delete(key));
+    }
+    return existing.ventas;
+}
+
 export function snapshotCacheStats() {
     const now = Date.now();
     return Array.from(cache.entries()).map(([k, v]) => ({
@@ -213,4 +248,30 @@ async function refreshItemsBackground(
 
 export function invalidateItemsMonth(year: number, month: number, codEmpresa?: number): void {
     itemsCache.delete(makeItemsKey(year, month, codEmpresa));
+}
+
+/** Versión items de peekMonthlyVentas — ver doc allá. */
+export function peekMonthlyItems(
+    year: number,
+    month: number,
+    codEmpresa?: number,
+): VentaItem[] | null {
+    const key = makeItemsKey(year, month, codEmpresa);
+    const existing = itemsCache.get(key);
+    if (!existing) {
+        if (!inflightItems.has(key)) {
+            inflightItems.add(key);
+            void refreshItemsBackground(year, month, { codEmpresa }).finally(() => inflightItems.delete(key));
+        }
+        return null;
+    }
+    const now = Date.now();
+    const nowD = new Date();
+    const isCurrent = year === nowD.getUTCFullYear() && month === (nowD.getUTCMonth() + 1);
+    const ttl = isCurrent ? TTL_CURRENT_MS : TTL_HISTORIC_MS;
+    if (now - existing.fetchedAt >= ttl && !inflightItems.has(key)) {
+        inflightItems.add(key);
+        void refreshItemsBackground(year, month, { codEmpresa }).finally(() => inflightItems.delete(key));
+    }
+    return existing.items;
 }

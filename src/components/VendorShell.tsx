@@ -1706,15 +1706,25 @@ function ClienteObjetivoCard({ c, isOpen, onToggle }: { c: ClienteObjetivo; isOp
     const loadHist = async () => {
         setHistLoading(true);
         setHistErr(null);
+        // Timeout duro de 20s para evitar spinner infinito si el backend
+        // está colgado o IM no responde. AbortController hace que el fetch
+        // rechace con DOMException(AbortError) en vez de quedarse pendiente.
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 20_000);
         try {
-            const res = await fetch(`/api/clientes/${c.cod_cliente}/historial-compras?meses=3`, { headers: authHeaders() });
+            const res = await fetch(
+                `/api/clientes/${c.cod_cliente}/historial-compras?meses=3`,
+                { headers: authHeaders(), signal: ctrl.signal },
+            );
             const j = await res.json();
             if (!res.ok || !j.ok) throw new Error(j.error || `HTTP ${res.status}`);
             histComprasCache.set(c.cod_cliente, { data: j, expiresAt: Date.now() + HIST_CACHE_TTL_MS });
             setHistData(j);
         } catch (e: any) {
-            setHistErr(e.message);
+            const isAbort = e?.name === 'AbortError';
+            setHistErr(isAbort ? 'Tardó demasiado en cargar. Probá de nuevo.' : (e.message || 'Error al cargar'));
         } finally {
+            clearTimeout(timer);
             setHistLoading(false);
         }
     };
@@ -1784,7 +1794,7 @@ function ClienteObjetivoCard({ c, isOpen, onToggle }: { c: ClienteObjetivo; isOp
                     )}
                     {histErr && (
                         <div className="vs-historial-error">
-                            No se pudieron cargar las compras.
+                            <span>{histErr}</span>
                             <button type="button" onClick={loadHist}>Reintentar</button>
                         </div>
                     )}

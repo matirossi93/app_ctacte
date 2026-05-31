@@ -1139,8 +1139,14 @@ console.log('Cron pre-warm /api/data: */8 * * * *');
 // se reganará por demanda igualmente (tiene TTL corto a propósito).
 async function prewarmSnapshotCache() {
     const now = new Date();
+    // 6 meses: trimestre actual + trimestre anterior. Necesitamos los 6
+    // calientes para que el endpoint /api/clientes/:cod/historial-compras
+    // pueda calcular alertas (cliente sin comprar / producto en abandono) y
+    // comparación contra el trimestre anterior sin cold fetches en el path
+    // del usuario. El trimestre actual de igual modo lo usan /api/goals/snapshot
+    // y /api/comisiones.
     const meses: Array<{ year: number; month: number }> = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 6; i++) {
         let m = now.getUTCMonth() + 1 - i;
         let y = now.getUTCFullYear();
         while (m <= 0) { m += 12; y -= 1; }
@@ -1173,7 +1179,7 @@ async function prewarmSnapshotCache() {
 }
 // Boot warm con delay 3s para no competir con el resto del startup.
 setTimeout(() => { prewarmSnapshotCache().catch(() => { }); }, 3000);
-// Cron cada 20 min: refresca los 3 meses agresivamente para que el cache
+// Cron cada 20 min: refresca los 6 meses agresivamente para que el cache
 // histórico (TTL 24h) y el actual (TTL 5min) nunca lleguen vencidos a un
 // request real. Combinado con stale-while-revalidate en snapshotCache, esto
 // elimina cold fetches sincrónicos en el path del usuario.

@@ -345,7 +345,7 @@ const responseCache = new Map<number, HistorialCacheEntry>();
 export async function historialComprasCliente(req: import('express').Request & { user?: import('./auth.js').JwtPayload }, res: import('express').Response) {
   try {
     const { tipoComprobante, isAnulada } = await import('../src/utils/ventas.js');
-    const { getMonthlyVentasRaw, getMonthlyItemsRaw } = await import('./snapshotCache.js');
+    const { getMonthlyVentasRaw, getMonthlyItemsRaw, peekMonthlyVentas, peekMonthlyItems } = await import('./snapshotCache.js');
     const { fetchArticulosCatalogo, fetchClientesIMCached } = await import('./infomanager.js');
     const { COD_EMPRESA_CASA_CENTRAL, COD_CLIENTES_INTERNOS } = await import('./comisionesShared.js');
 
@@ -392,28 +392,56 @@ export async function historialComprasCliente(req: import('express').Request & {
       return;
     }
 
-    // Pedimos 6 meses (trimestre actual + trimestre anterior). Los 3 más
-    // recientes alimentan rankings + lista de facturas visible al usuario;
-    // los 6 enteros alimentan las alertas (cliente y producto) y la
-    // comparación entre trimestres.
-    const periodos = ultimosMeses(meses * 2);
-    const fetches = periodos.flatMap(p => [getMonthlyVentasRaw(p.year, p.month), getMonthlyItemsRaw(p.year, p.month)]);
+    // Estrategia de fetch:
+    //  - Trimestre ACTUAL (3 meses más recientes): fast path — esperamos.
+    //    Es lo que el usuario realmente quiere ver (top productos + compras
+    //    recientes) y el prewarm los mantiene siempre calientes.
+    //  - Trimestre ANTERIOR (3 meses previos): best-effort — solo lo usamos
+    //    si ya está en cache (peek). Si no, alimentamos alertas/comparación
+    //    con los datos parciales que tengamos. El peek dispara un warm en
+    //    background; la próxima request los encontrará.
+    //
+    // Esto convierte un endpoint que podía tardar 30-60s en cold start en
+    // uno que siempre responde en <2s, sacrificando temporalmente las
+    // alertas hasta que el prewarm complete el trimestre anterior.
+    const periodosActual = ultimosMeses(meses);
+    const periodosAnterior = ultimosMeses(meses, new Date(Date.UTC(
+      new Date().getUTCFullYear(),
+      new Date().getUTCMonth() - meses,
+      1,
+    )));
+
     const articulosMap = await fetchArticulosCatalogo();
-    const results = await Promise.all(fetches);
+    const fetchesActual = periodosActual.flatMap(p => [
+      getMonthlyVentasRaw(p.year, p.month),
+      getMonthlyItemsRaw(p.year, p.month),
+    ]);
+    const resultsActual = await Promise.all(fetchesActual);
 
     const ventasAll: any[] = [];
     const itemsAll: any[] = [];
-    for (let i = 0; i < periodos.length; i++) {
-      const v = results[i * 2] as Awaited<ReturnType<typeof getMonthlyVentasRaw>>;
-      const it = results[i * 2 + 1] as Awaited<ReturnType<typeof getMonthlyItemsRaw>>;
+    for (let i = 0; i < periodosActual.length; i++) {
+      const v = resultsActual[i * 2] as Awaited<ReturnType<typeof getMonthlyVentasRaw>>;
+      const it = resultsActual[i * 2 + 1] as Awaited<ReturnType<typeof getMonthlyItemsRaw>>;
       ventasAll.push(...v.ventas);
       itemsAll.push(...it.items);
     }
 
+    // Trimestre anterior: solo lo que ya esté cacheado (no espera fetch).
+    // Si falta algún mes, el peek dispara el warm en background.
+    let trimestreAnteriorCompleto = true;
+    for (const p of periodosAnterior) {
+      const v = peekMonthlyVentas(p.year, p.month);
+      const it = peekMonthlyItems(p.year, p.month);
+      if (v === null || it === null) { trimestreAnteriorCompleto = false; continue; }
+      ventasAll.push(...v);
+      itemsAll.push(...it);
+    }
+
     // Fecha de corte: primer día del mes más viejo del trimestre actual.
-    // periodos[meses - 1] = mes -2 cuando meses=3. Todo lo >= a esa fecha
-    // es trimestre actual; todo lo < es trimestre anterior.
-    const inicioActual = periodos[meses - 1];
+    // periodosActual[meses - 1] = mes -2 cuando meses=3. Todo lo >= a esa
+    // fecha es trimestre actual; todo lo < es trimestre anterior.
+    const inicioActual = periodosActual[meses - 1];
     const desdeActual = `${inicioActual.year}-${String(inicioActual.month).padStart(2, '0')}-01`;
 
     const cabsValidas = new Map<number, any>();
@@ -465,13 +493,20 @@ export async function historialComprasCliente(req: import('express').Request & {
     const facturasAnterior = facturasTodas.filter(f => f.fecha < desdeActual);
 
     const ahora = new Date();
-    const alerta_cliente = calcularAlertaCliente(facturasTodas, ahora);
-    const productos_abandono = detectarProductosAbandono(facturasTodas, ahora);
-    const comparacion = calcularComparacionTrimestre(facturas, facturasAnterior);
+    // Si el trimestre anterior no estaba completo en cache, alertas y
+    // comparación se calculan con datos parciales — preferimos no mostrarlas
+    // a mostrar números engañosos. Cuando el prewarm complete, la próxima
+    // request (hit del cache 5min del response) ya las verá llenas tras
+    // expirar el TTL.
+    const alerta_cliente = trimestreAnteriorCompleto ? calcularAlertaCliente(facturasTodas, ahora) : null;
+    const productos_abandono = trimestreAnteriorCompleto ? detectarProductosAbandono(facturasTodas, ahora) : [];
+    const comparacion = trimestreAnteriorCompleto
+      ? calcularComparacionTrimestre(facturas, facturasAnterior)
+      : { actual: facturas.reduce((s, f) => s + f.total_neto, 0), anterior: 0, delta_pct: null };
 
     const desde = `${inicioActual.year}-${String(inicioActual.month).padStart(2, '0')}-01`;
-    const lastMes = new Date(periodos[0].year, periodos[0].month, 0);
-    const hasta = `${periodos[0].year}-${String(periodos[0].month).padStart(2, '0')}-${String(lastMes.getDate()).padStart(2, '0')}`;
+    const lastMes = new Date(periodosActual[0].year, periodosActual[0].month, 0);
+    const hasta = `${periodosActual[0].year}-${String(periodosActual[0].month).padStart(2, '0')}-${String(lastMes.getDate()).padStart(2, '0')}`;
 
     const payload = {
       ok: true,
@@ -486,9 +521,16 @@ export async function historialComprasCliente(req: import('express').Request & {
         productos: productos_abandono,
       },
       comparacion,
+      trimestre_anterior_completo: trimestreAnteriorCompleto,
       generated_at: new Date().toISOString(),
     };
-    responseCache.set(codCliente, { payload, expiresAt: Date.now() + RESPONSE_CACHE_TTL_MS });
+    // Si el trimestre anterior no estaba completo (alertas/comparación
+    // sirvieron sin datos), no cachear el response — así la próxima
+    // request, una vez que el warm en background haya completado el
+    // cache de meses, devolverá la versión enriquecida.
+    if (trimestreAnteriorCompleto) {
+      responseCache.set(codCliente, { payload, expiresAt: Date.now() + RESPONSE_CACHE_TTL_MS });
+    }
     res.json(payload);
   } catch (err: any) {
     console.error('historialComprasCliente error:', err);
