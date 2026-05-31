@@ -311,7 +311,7 @@ export function calcularComparacionTrimestre(actual: FacturaHistorial[], anterio
 
 const MESES_DEFAULT = 3;
 
-function ultimosMeses(n: number, ref?: Date): Array<{ year: number; month: number }> {
+export function ultimosMeses(n: number, ref?: Date): Array<{ year: number; month: number }> {
   const d = ref ?? new Date();
   const list: Array<{ year: number; month: number }> = [];
   for (let i = 0; i < n; i++) {
