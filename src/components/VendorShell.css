@@ -1577,3 +1577,74 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
     color: #A83E2B;
     background: rgba(168, 62, 43, 0.12);
 }
+
+/* ─── Tabs internas dentro del expand del cliente ─────────────────── */
+
+.vs-hist-tabs {
+    margin-top: 14px;
+}
+
+.vs-hist-tabs-strip {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    scrollbar-width: thin;
+}
+
+.vs-hist-tab {
+    background: none;
+    border: 0;
+    padding: 6px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    color: #6B7280;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.15s, color 0.15s;
+}
+
+.vs-hist-tab:hover {
+    background: rgba(0, 0, 0, 0.04);
+}
+
+.vs-hist-tab.is-active {
+    background: #06652F;
+    color: #fff;
+}
+
+.vs-hist-tab--atencion {
+    color: #A83E2B;
+}
+
+.vs-hist-tab--atencion.is-active {
+    background: #A83E2B;
+    color: #fff;
+}
+
+.vs-hist-tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.12);
+    font-size: 10px;
+    font-weight: 700;
+}
+
+.vs-hist-tab.is-active .vs-hist-tab-badge {
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.vs-hist-resumen .vs-client-historico {
+    margin-bottom: 10px;
+}

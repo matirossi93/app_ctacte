@@ -1776,20 +1776,6 @@ function ClienteObjetivoCard({ c, isOpen, onToggle }: { c: ClienteObjetivo; isOp
                         </div>
                     )}
 
-                    {hasHistorico && (
-                        <div className="vs-client-historico">
-                            {c.fact_mes_pasado != null && (
-                                <div><span className="k">Mes pasado</span><strong>{formatMoney(c.fact_mes_pasado)}</strong></div>
-                            )}
-                            {c.fact_prom_3m != null && (
-                                <div><span className="k">Prom. 3m</span><strong>{formatMoney(c.fact_prom_3m)}</strong></div>
-                            )}
-                            {c.saldo_cta_cte != null && (
-                                <div><span className="k">Saldo ctacte</span><strong>{formatMoney(c.saldo_cta_cte)}</strong></div>
-                            )}
-                        </div>
-                    )}
-
                     {histLoading && (
                         <div className="vs-historial-loading">
                             <Loader2 size={14} className="spin" /> Cargando historial…
@@ -1805,12 +1791,7 @@ function ClienteObjetivoCard({ c, isOpen, onToggle }: { c: ClienteObjetivo; isOp
                         <p className="vs-historial-empty-state">Sin compras registradas en los últimos 3 meses.</p>
                     )}
                     {histData && histData.facturas.length > 0 && (
-                        <>
-                            <AtencionCliente alertas={histData.alertas} />
-                            <TopProductosCliente topImporte={histData.top_importe} topFrecuencia={histData.top_frecuencia} />
-                            <ComparacionTrimestre comp={histData.comparacion} />
-                            <ComprasRecientesCliente facturas={histData.facturas} />
-                        </>
+                        <HistorialTabs c={c} histData={histData} hasHistorico={!!hasHistorico} />
                     )}
                 </div>
             )}
@@ -2388,6 +2369,71 @@ function ComprasRecientesCliente({ facturas }: { facturas: HistorialFactura[] })
 function formatFechaCorta(iso: string): string {
     if (!iso || iso.length < 10) return iso ?? '';
     return `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+}
+
+type HistTab = 'atencion' | 'resumen' | 'productos' | 'compras';
+
+function HistorialTabs({ c, histData, hasHistorico }: { c: ClienteObjetivo; histData: HistorialComprasResponse; hasHistorico: boolean }) {
+    const alertasCount = (histData.alertas.cliente && histData.alertas.cliente.nivel !== null ? 1 : 0)
+        + histData.alertas.productos.length;
+    const tieneAlertas = alertasCount > 0;
+
+    const [tab, setTab] = useState<HistTab>(tieneAlertas ? 'atencion' : 'resumen');
+
+    return (
+        <div className="vs-hist-tabs">
+            <nav className="vs-hist-tabs-strip">
+                {tieneAlertas && (
+                    <button
+                        type="button"
+                        className={`vs-hist-tab vs-hist-tab--atencion ${tab === 'atencion' ? 'is-active' : ''}`}
+                        onClick={() => setTab('atencion')}
+                    >
+                        ⚠ Atención <span className="vs-hist-tab-badge">{alertasCount}</span>
+                    </button>
+                )}
+                <button type="button" className={`vs-hist-tab ${tab === 'resumen' ? 'is-active' : ''}`} onClick={() => setTab('resumen')}>
+                    Resumen
+                </button>
+                <button type="button" className={`vs-hist-tab ${tab === 'productos' ? 'is-active' : ''}`} onClick={() => setTab('productos')}>
+                    Productos
+                </button>
+                <button type="button" className={`vs-hist-tab ${tab === 'compras' ? 'is-active' : ''}`} onClick={() => setTab('compras')}>
+                    Compras
+                </button>
+            </nav>
+
+            <div className="vs-hist-tabs-content">
+                {tab === 'atencion' && tieneAlertas && (
+                    <AtencionCliente alertas={histData.alertas} />
+                )}
+                {tab === 'resumen' && (
+                    <div className="vs-hist-resumen">
+                        {hasHistorico && (
+                            <div className="vs-client-historico">
+                                {c.fact_mes_pasado != null && (
+                                    <div><span className="k">Mes pasado</span><strong>{formatMoney(c.fact_mes_pasado)}</strong></div>
+                                )}
+                                {c.fact_prom_3m != null && (
+                                    <div><span className="k">Prom. 3m</span><strong>{formatMoney(c.fact_prom_3m)}</strong></div>
+                                )}
+                                {c.saldo_cta_cte != null && (
+                                    <div><span className="k">Saldo ctacte</span><strong>{formatMoney(c.saldo_cta_cte)}</strong></div>
+                                )}
+                            </div>
+                        )}
+                        <ComparacionTrimestre comp={histData.comparacion} />
+                    </div>
+                )}
+                {tab === 'productos' && (
+                    <TopProductosCliente topImporte={histData.top_importe} topFrecuencia={histData.top_frecuencia} />
+                )}
+                {tab === 'compras' && (
+                    <ComprasRecientesCliente facturas={histData.facturas} />
+                )}
+            </div>
+        </div>
+    );
 }
 
 function AtencionCliente({ alertas }: { alertas: { cliente: HistorialAlertaCliente | null; productos: HistorialProductoAbandono[] } }) {
