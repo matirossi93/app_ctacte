@@ -538,6 +538,24 @@
     border: 1px solid rgba(20,24,20,.12); border-radius: 12px;
 }
 .vs-newact-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px }
+
+/* Selector de vendedor (admin/gerente asigna actividad a otro user). */
+.vs-newact-field {
+    display: flex; flex-direction: column; gap: 4px;
+}
+.vs-newact-field > span {
+    font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+    color: #6e7670;
+}
+.vs-newact-field select {
+    font-family: inherit; font-size: 14px;
+    padding: 10px 12px; border: 1px solid rgba(20,24,20,.12);
+    border-radius: 12px; background: #fff; color: inherit;
+}
+.vs-newact-field select:focus {
+    outline: none; border-color: #06652F; box-shadow: 0 0 0 2px rgba(6,101,47,.2);
+}
+
 .vs-btn-sec { background: #fff; color: #141814; border: 1px solid rgba(20,24,20,.12); border-radius: 25px; padding: 10px 18px; font-weight: 600; font-size: 13px; cursor: pointer; font-family: inherit }
 .vs-btn-primary { background: linear-gradient(135deg, #06652F 0%, #03481F 100%); color: #EEC045; border: 0; border-radius: 25px; padding: 10px 20px; font-weight: 700; font-size: 13px; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 6px 14px -4px rgba(6,101,47,.4) }
 

@@ -587,6 +587,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                     selectedVendor={selectedVendor}
                     cods={codsQs}
                     isAdmin={isAdmin}
+                    vendedoresList={vendedores}
                     pendingNew={pendingNewActivity}
                     onPendingConsumed={() => setPendingNewActivity(null)}
                 />}
@@ -1902,10 +1903,11 @@ function RankingEquipo({ items }: { items: any[] }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // ACTIVIDAD VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendor, cods, isAdmin, pendingNew, onPendingConsumed }:
+function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendor, cods, isAdmin, vendedoresList, pendingNew, onPendingConsumed }:
     {
         vendedorKey: string | null; clientNameMap: Record<string, any>;
         selectedVendor: number | null; cods: string; isAdmin: boolean;
+        vendedoresList: Array<{ cod_vendedor: number; nombre: string; activo: boolean }>;
         pendingNew: { cod_cliente?: string; name?: string } | null;
         onPendingConsumed: () => void;
     }) {
@@ -2010,6 +2012,8 @@ function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendo
                 mode="new"
                 defaultClientCod={showNew.cod_cliente ?? ''}
                 defaultClientName={showNew.name ?? ''}
+                isAdmin={isAdmin}
+                vendedoresList={vendedoresList}
                 onClose={() => setShowNew(null)}
                 onSaved={() => { setShowNew(null); load(); }}
             />}
@@ -2018,6 +2022,8 @@ function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendo
                 mode="edit"
                 initial={editing}
                 defaultClientName={editing.cod_cliente ? clientNameMap[String(editing.cod_cliente)]?.['Razon Social'] : ''}
+                isAdmin={isAdmin}
+                vendedoresList={vendedoresList}
                 onClose={() => setEditing(null)}
                 onSaved={() => { setEditing(null); load(); }}
             />}
@@ -2076,12 +2082,14 @@ function FeedItem({ item, clientName, onEdit, onDelete }:
     );
 }
 
-function ActivityFormInline({ mode, initial, defaultClientCod, defaultClientName, onClose, onSaved }:
+function ActivityFormInline({ mode, initial, defaultClientCod, defaultClientName, isAdmin = false, vendedoresList = [], onClose, onSaved }:
     {
         mode: 'new' | 'edit';
         initial?: ActivityItem;
         defaultClientCod?: string;
         defaultClientName?: string;
+        isAdmin?: boolean;
+        vendedoresList?: Array<{ cod_vendedor: number; nombre: string; activo: boolean }>;
         onClose: () => void;
         onSaved: () => void;
     }) {
@@ -2089,6 +2097,9 @@ function ActivityFormInline({ mode, initial, defaultClientCod, defaultClientName
     const [contenido, setContenido] = useState(initial?.contenido ?? '');
     const [monto, setMonto] = useState(initial?.monto != null ? String(initial.monto) : '');
     const [fechaPromesa, setFechaPromesa] = useState(initial?.fecha_promesa ?? '');
+    // Solo admin/gerente lo edita. En edit, arranca con el cod del item.
+    // En new, vacío: el backend obliga a admin a mandar cod_vendedor (validación en activity.ts).
+    const [codVendedor, setCodVendedor] = useState<string>(initial?.cod_vendedor != null ? String(initial.cod_vendedor) : '');
     const [saving, setSaving] = useState(false);
     const [err, setErr] = useState<string | null>(null);
 
@@ -2102,6 +2113,10 @@ function ActivityFormInline({ mode, initial, defaultClientCod, defaultClientName
                 fecha_promesa: fechaPromesa || null,
             };
             if (mode === 'new') body.cod_cliente = defaultClientCod || null;
+            // Admin elige a quién asignar. Vendedor no puede cambiarlo (el backend
+            // ignora cod_vendedor si rol === 'vendedor'). En edit, solo lo mandamos
+            // si admin cambió la selección (sino backend lo respeta intacto).
+            if (isAdmin && codVendedor) body.cod_vendedor = Number(codVendedor);
             const url = mode === 'edit' ? `/api/activity/${initial!.id}` : '/api/activity';
             const method = mode === 'edit' ? 'PUT' : 'POST';
             const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(body) });
@@ -2146,6 +2161,20 @@ function ActivityFormInline({ mode, initial, defaultClientCod, defaultClientName
                         <input type="number" step="0.01" value={monto} onChange={e => setMonto(e.target.value)} placeholder="Monto" />
                         {tipo === 'promesa' && <input type="date" value={fechaPromesa} onChange={e => setFechaPromesa(e.target.value)} />}
                     </div>
+                )}
+
+                {/* Admin/gerente: asignar a un vendedor específico. La lista viene del
+                    state global del shell (ya cargada en /api/goals) para no pegar de nuevo. */}
+                {isAdmin && vendedoresList.length > 0 && (
+                    <label className="vs-newact-field">
+                        <span>A nombre de</span>
+                        <select value={codVendedor} onChange={e => setCodVendedor(e.target.value)}>
+                            <option value="">— elegí vendedor —</option>
+                            {vendedoresList.filter(v => v.activo).map(v => (
+                                <option key={v.cod_vendedor} value={v.cod_vendedor}>{v.nombre}</option>
+                            ))}
+                        </select>
+                    </label>
                 )}
 
                 {err && <div className="vs-error"><AlertCircle size={14} /> {err}</div>}
