@@ -3,7 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/logo.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover" />
+    <!-- maximum-scale removido y user-scalable=yes para permitir pinch-to-zoom
+         en mobile: los vendedores necesitan agrandar números/tablas cuando
+         están en cancha y los ítems se ven muy chicos. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5, user-scalable=yes, viewport-fit=cover" />
     <meta name="theme-color" content="#06652F" />
 
     <!-- PWA -->
