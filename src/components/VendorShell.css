@@ -487,6 +487,17 @@
 .vs-feed-amount span { font-size: 11px; font-weight: 500; opacity: .75 }
 .vs-feed-text { font-size: 12.5px; margin-top: 4px; line-height: 1.4 }
 
+/* Badge "recordatorio sin monto" para promesas usadas como recordatorio puro */
+.vs-feed-recordatorio {
+    display: inline-flex; align-items: center;
+    margin-top: 6px; padding: 4px 10px; border-radius: 999px;
+    background: rgba(216,142,38,.12); color: #8a5a18;
+    font-size: 11px; font-weight: 600; width: fit-content;
+}
+
+/* Etiqueta "(opcional)" del label de hora */
+.vs-newact-opt { font-style: normal; font-weight: 500; text-transform: none; letter-spacing: 0; color: #9CA3AF; margin-left: 4px }
+
 /* FAB secundario tab Actividad */
 .vs-fab-act {
     position: absolute; bottom: 110px; right: 18px;

@@ -5,6 +5,25 @@ import type { JwtPayload } from './auth.js';
 export type ActivityTipo = 'nota' | 'llamada' | 'wa' | 'promesa' | 'pago' | 'visita';
 const TIPOS: ActivityTipo[] = ['nota', 'llamada', 'wa', 'promesa', 'pago', 'visita'];
 
+/**
+ * Normaliza una hora a formato "HH:MM" (postgres TIME).
+ * Acepta "HH:MM", "HH:MM:SS", o "" / null → null.
+ * Devuelve `null` si entrada vacía/nula, string normalizado si válido,
+ * o objeto con error si inválido.
+ */
+function parseHoraPromesa(input: unknown): string | null | { error: string } {
+  if (input == null || input === '') return null;
+  const s = String(input).trim();
+  const m = /^(\d{1,2}):(\d{2})(?::\d{2})?$/.exec(s);
+  if (!m) return { error: `hora_promesa inválida: "${s}". Usá HH:MM (24h).` };
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+    return { error: `hora_promesa fuera de rango: ${s}` };
+  }
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
 /** GET /api/activity?tipo=&cod_cliente=&cod_vendedor=&limit=&offset= */
 export async function listActivity(req: Request & { user?: JwtPayload }, res: Response) {
   try {
@@ -83,6 +102,12 @@ export async function createActivity(req: Request & { user?: JwtPayload }, res: 
       }
     }
 
+    const horaParsed = parseHoraPromesa(body.hora_promesa);
+    if (horaParsed && typeof horaParsed === 'object' && 'error' in horaParsed) {
+      res.status(400).json({ error: horaParsed.error });
+      return;
+    }
+
     const row: any = {
       tenant_id: TENANT_ID,
       cod_vendedor: codVendedor,
@@ -91,6 +116,7 @@ export async function createActivity(req: Request & { user?: JwtPayload }, res: 
       contenido: body.contenido ?? null,
       monto: body.monto != null ? Number(body.monto) : null,
       fecha_promesa: body.fecha_promesa ?? null,
+      hora_promesa: horaParsed,
       created_by: user.sub,
     };
 
@@ -129,6 +155,14 @@ export async function updateActivity(req: Request & { user?: JwtPayload }, res: 
     if (body.contenido !== undefined) patch.contenido = body.contenido || null;
     if (body.monto !== undefined) patch.monto = body.monto != null && body.monto !== '' ? Number(body.monto) : null;
     if (body.fecha_promesa !== undefined) patch.fecha_promesa = body.fecha_promesa || null;
+    if (body.hora_promesa !== undefined) {
+      const h = parseHoraPromesa(body.hora_promesa);
+      if (h && typeof h === 'object' && 'error' in h) {
+        res.status(400).json({ error: h.error });
+        return;
+      }
+      patch.hora_promesa = h;
+    }
     if (body.cod_cliente !== undefined) patch.cod_cliente = body.cod_cliente ? Number(body.cod_cliente) : null;
     // cod_vendedor sólo lo cambia admin/gerente.
     if (body.cod_vendedor !== undefined && user.rol !== 'vendedor') {
@@ -177,7 +211,7 @@ export async function listNotificaciones(req: Request & { user?: JwtPayload }, r
     const todayStr = ymd(today);
 
     let q = sb().from('vendor_activity')
-      .select('id, cod_vendedor, cod_cliente, tipo, contenido, monto, fecha_promesa, created_at')
+      .select('id, cod_vendedor, cod_cliente, tipo, contenido, monto, fecha_promesa, hora_promesa, created_at')
       .eq('tenant_id', TENANT_ID)
       .eq('tipo', 'promesa')
       .not('fecha_promesa', 'is', null)
@@ -189,7 +223,8 @@ export async function listNotificaciones(req: Request & { user?: JwtPayload }, r
       q = q.eq('cod_vendedor', user.cod_vendedor);
     }
 
-    q = q.order('fecha_promesa', { ascending: true });
+    // Orden secundario por hora_promesa (NULLs al final del día naturalmente).
+    q = q.order('fecha_promesa', { ascending: true }).order('hora_promesa', { ascending: true, nullsFirst: false });
     const { data, error } = await q;
     if (error) { res.status(500).json({ error: error.message }); return; }
 

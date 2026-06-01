@@ -153,6 +153,7 @@ interface ActivityItem {
     contenido: string | null;
     monto: number | null;
     fecha_promesa: string | null;
+    hora_promesa: string | null;   // "HH:MM" o null
     created_at: string;
     created_by_email?: string | null;
     created_by_nombre?: string | null;
@@ -2059,7 +2060,13 @@ function FeedItem({ item, clientName, onEdit, onDelete }:
                 {item.monto != null && (
                     <div className={`vs-feed-amount ${item.tipo === 'promesa' ? 'promise' : ''}`}>
                         {item.tipo === 'pago' ? '+ ' : ''}{formatMoney(item.monto)}
-                        {item.fecha_promesa && <span> · {item.fecha_promesa}</span>}
+                        {item.fecha_promesa && <span> · {item.fecha_promesa}{item.hora_promesa ? ` ${item.hora_promesa}` : ''}</span>}
+                    </div>
+                )}
+                {/* Promesa sin monto pero con fecha: mostramos la fecha aparte. */}
+                {item.tipo === 'promesa' && item.monto == null && item.fecha_promesa && (
+                    <div className="vs-feed-recordatorio">
+                        🔔 {item.fecha_promesa}{item.hora_promesa ? ` · ${item.hora_promesa}` : ''}
                     </div>
                 )}
                 {item.contenido && <div className="vs-feed-text">{item.contenido}</div>}
@@ -2097,6 +2104,8 @@ function ActivityFormInline({ mode, initial, defaultClientCod, defaultClientName
     const [contenido, setContenido] = useState(initial?.contenido ?? '');
     const [monto, setMonto] = useState(initial?.monto != null ? String(initial.monto) : '');
     const [fechaPromesa, setFechaPromesa] = useState(initial?.fecha_promesa ?? '');
+    // Hora opcional: "" = recordatorio "todo el día", "HH:MM" = hora específica.
+    const [horaPromesa, setHoraPromesa] = useState(initial?.hora_promesa ?? '');
     // Solo admin/gerente lo edita. En edit, arranca con el cod del item.
     // En new, vacío: el backend obliga a admin a mandar cod_vendedor (validación en activity.ts).
     const [codVendedor, setCodVendedor] = useState<string>(initial?.cod_vendedor != null ? String(initial.cod_vendedor) : '');
@@ -2111,6 +2120,8 @@ function ActivityFormInline({ mode, initial, defaultClientCod, defaultClientName
                 contenido: contenido || null,
                 monto: monto ? Number(monto) : null,
                 fecha_promesa: fechaPromesa || null,
+                // Solo mandamos hora si hay fecha; sino el backend la guardaría huérfana.
+                hora_promesa: fechaPromesa && horaPromesa ? horaPromesa : null,
             };
             if (mode === 'new') body.cod_cliente = defaultClientCod || null;
             // Admin elige a quién asignar. Vendedor no puede cambiarlo (el backend
@@ -2161,6 +2172,15 @@ function ActivityFormInline({ mode, initial, defaultClientCod, defaultClientName
                         <input type="number" step="0.01" value={monto} onChange={e => setMonto(e.target.value)} placeholder="Monto" />
                         {tipo === 'promesa' && <input type="date" value={fechaPromesa} onChange={e => setFechaPromesa(e.target.value)} />}
                     </div>
+                )}
+
+                {/* Hora opcional: solo si hay fecha de recordatorio. Útil para llamadas
+                    pautadas ("recordame el viernes a las 14:30"). NULL = todo el día. */}
+                {tipo === 'promesa' && fechaPromesa && (
+                    <label className="vs-newact-field">
+                        <span>Hora <em className="vs-newact-opt">(opcional)</em></span>
+                        <input type="time" value={horaPromesa} onChange={e => setHoraPromesa(e.target.value)} />
+                    </label>
                 )}
 
                 {/* Admin/gerente: asignar a un vendedor específico. La lista viene del
@@ -2555,6 +2575,7 @@ interface NotifItem {
     contenido: string | null;
     monto: number | null;
     fecha_promesa: string;
+    hora_promesa: string | null;
     created_at: string;
     vencida: boolean;
     dias_relativos: number;
@@ -2665,10 +2686,13 @@ function NotificacionesBell() {
 
     const labelRelativo = (n: NotifItem): string => {
         const d = n.dias_relativos;
-        if (d === 0) return 'Hoy';
-        if (d === 1) return 'Mañana';
+        // Si hay hora cargada, la sumamos para que el vendedor sepa cuándo exacto
+        // ("Hoy 14:30" vs solo "Hoy"). El backend devuelve hora_promesa como "HH:MM" o null.
+        const horaStr = n.hora_promesa ? ` ${n.hora_promesa}` : '';
+        if (d === 0) return `Hoy${horaStr}`;
+        if (d === 1) return `Mañana${horaStr}`;
         if (d === -1) return 'Venció ayer';
-        if (d > 1) return `En ${d} días`;
+        if (d > 1) return `En ${d} días${horaStr}`;
         return `Vencida hace ${Math.abs(d)} días`;
     };
 
