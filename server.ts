@@ -33,6 +33,10 @@ import { listClientesLookup } from './server-lib/clientes.js';
 import { historialComprasCliente } from './server-lib/historialCompras.js';
 import { listActivity, createActivity, updateActivity, deleteActivity, listNotificaciones } from './server-lib/activity.js';
 import {
+  isWebPushEnabled, getVapidPublicKeyHandler, subscribePush, unsubscribePush, testPush,
+  dispararRecordatoriosPromesa,
+} from './server-lib/webpush.js';
+import {
   listUsuarios, createUsuario, updateUsuario, deleteUsuario, changePassword
 } from './server-lib/usuarios.js';
 import { importMaestroClientes } from './server-lib/sheetImport.js';
@@ -762,6 +766,12 @@ app.put('/api/activity/:id', requireJwt, (req: any, res) => updateActivity(req, 
 app.delete('/api/activity/:id', requireJwt, (req: any, res) => deleteActivity(req, res));
 app.get('/api/notificaciones', requireJwt, (req: any, res) => listNotificaciones(req, res));
 
+// ─── Web Push (notificaciones nativas browser) ───────────────────────────────
+app.get('/api/push/vapid-public-key', requireJwt, (req: any, res) => getVapidPublicKeyHandler(req, res));
+app.post('/api/push/subscribe', requireJwt, (req: any, res) => subscribePush(req, res));
+app.post('/api/push/unsubscribe', requireJwt, (req: any, res) => unsubscribePush(req, res));
+app.post('/api/push/test', requireJwt, (req: any, res) => testPush(req, res));
+
 // ─── Gestión de usuarios ─────────────────────────────────────────────────────
 app.get('/api/usuarios', requireJwt, requireAdmin, (req: any, res) => listUsuarios(req, res));
 app.post('/api/usuarios', requireJwt, requireAdmin, (req: any, res) => createUsuario(req, res));
@@ -1218,3 +1228,26 @@ cron.schedule('*/5 * * * *', async () => {
     }
 });
 console.log('Cron MP verify: */5 * * * *');
+
+// ─── Cron: disparar Web Push de recordatorios vencidos ───────────────────────
+// Cada minuto chequea promesas con fecha+hora <= now y push_notificado_at IS NULL.
+// Solo arranca si VAPID está configurado. Lock contra overlap por las dudas.
+let pushInFlight = false;
+if (hasSupabase()) {
+    cron.schedule('* * * * *', async () => {
+        if (pushInFlight) return;
+        pushInFlight = true;
+        try {
+            if (!isWebPushEnabled()) return;
+            const r = await dispararRecordatoriosPromesa();
+            if (r.candidatos > 0) {
+                console.log(`[cron push] candidatos=${r.candidatos} enviados=${r.enviados} fallidos=${r.fallidos} sinSub=${r.sinSub}`);
+            }
+        } catch (err: any) {
+            console.warn(`[cron push] fallo: ${err?.message ?? err}`);
+        } finally {
+            pushInFlight = false;
+        }
+    });
+    console.log('Cron push recordatorios: * * * * *');
+}

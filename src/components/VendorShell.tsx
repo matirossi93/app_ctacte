@@ -15,6 +15,7 @@ import { PeriodSelector, type ViewPeriod } from './PeriodSelector';
 import { HistoricBanner } from './HistoricBanner';
 import { PrintAvanceView } from './PrintAvanceView';
 import { ComisionesView } from './ComisionesView';
+import { ensurePushSubscription } from '../utils/webPush';
 import './VendorShell.css';
 
 const VIEW_PERIOD_KEY = 'vs_view_period';
@@ -269,6 +270,24 @@ export const VendorShell = ({ onLogout }: Props) => {
         };
         window.addEventListener('vs-open-activity', h);
         return () => window.removeEventListener('vs-open-activity', h);
+    }, []);
+
+    // Web Push: registramos SW al montar; el permiso lo pedimos en el primer
+    // click del usuario en cualquier parte de la app porque los navegadores
+    // requieren un user gesture para Notification.requestPermission. Si VAPID
+    // no está en el server, el helper devuelve 'not-configured' sin error.
+    useEffect(() => {
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').catch(() => { });
+        }
+        let asked = false;
+        const onFirstClick = () => {
+            if (asked) return;
+            asked = true;
+            ensurePushSubscription().catch(() => { });
+        };
+        document.addEventListener('click', onFirstClick, { once: true });
+        return () => document.removeEventListener('click', onFirstClick);
     }, []);
 
     // Vendedor activo: vendedor usa el propio; admin elige (null = Todos)
