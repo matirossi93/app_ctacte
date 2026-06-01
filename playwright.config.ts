@@ -36,5 +36,15 @@ export default defineConfig({
       },
       testMatch: /(recibos-debug|vendor-overflow|historial-compras)\.spec\.ts/,
     },
+    {
+      // iPhone 17 Pro: 402x874 viewport @ 3x DPR. Corre en Edge para no tener
+      // que descargar WebKit. El spec setea su propio viewport con test.use().
+      name: 'iphone-17-pro',
+      use: {
+        defaultBrowserType: 'chromium',
+        channel: 'msedge',
+      },
+      testMatch: /iphone-17-pro\.spec\.ts/,
+    },
   ],
 });

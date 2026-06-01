@@ -73,6 +73,24 @@
   padding: 0;
 }
 
+/* iOS Safari hace auto-zoom al focusear inputs con font-size < 16px y eso
+   desplaza el viewport rompiendo el layout (login, formularios, recibos, etc).
+   Antes lo bloqueábamos con `maximum-scale=1` en el viewport, pero ese mismo
+   atributo también desactivaba el pinch-to-zoom que los vendedores piden.
+   Solución: en devices con puntero coarse (touch / mobile), forzamos un mínimo
+   de 16px en todos los inputs/textareas/selects. Desktop queda intacto.
+
+   `!important` es necesario porque la mayoría de los inputs de la app tienen
+   font-size por clase (.login-input, .rec-importe-input, etc.) que ganan por
+   especificidad sobre el selector de tipo. Mantenerlo localizado a la regla
+   mobile minimiza el riesgo. Tipografías ya ≥ 16px no se ven afectadas por
+   `max()`. */
+@media (pointer: coarse) {
+  input, textarea, select {
+    font-size: max(16px, 1rem) !important;
+  }
+}
+
 html, body {
   height: 100%;
   overflow: hidden;

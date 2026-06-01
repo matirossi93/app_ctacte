@@ -31,8 +31,15 @@
     background: rgba(251,247,237,.85);
     backdrop-filter: blur(10px);
     border-bottom: 1px solid rgba(20,24,20,.06);
+    gap: 8px;       /* separa brand de actions cuando el viewport es chico */
 }
-.vs-brand { display: flex; align-items: center; gap: 12px }
+@media (max-width: 480px) {
+    .vs-top { padding: 12px 12px 10px }
+}
+/* Brand puede achicarse; actions NUNCA — sino el avatar se sale del viewport.
+   `min-width: 0` libera al hijo flex para que el ellipsis del select funcione. */
+.vs-brand { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1 1 auto }
+.vs-top-actions { flex: 0 0 auto }
 .vs-mark {
     width: 42px; height: 42px; border-radius: 50%;
     display: grid; place-items: center;
@@ -41,9 +48,14 @@
     box-shadow: 0 3px 8px -2px rgba(20,24,20,.15), 0 0 0 1px rgba(6,101,47,.08);
 }
 .vs-mark img { width: 100%; height: 100%; object-fit: contain; display: block }
-.vs-brand-text { display: flex; flex-direction: column; line-height: 1 }
+.vs-brand-text { display: flex; flex-direction: column; line-height: 1; min-width: 0; flex: 1 1 auto }
 .vs-brand-text .eyebrow { font-size: 9px; font-weight: 600; letter-spacing: 1.5px; color: #6e7670 }
-.vs-brand-text .name { font-size: 15px; font-weight: 700; margin-top: 3px }
+.vs-brand-text .name {
+    font-size: 15px; font-weight: 700; margin-top: 3px;
+    /* Para que el bloque que contiene select+gear+toggle pueda achicarse y
+       no empuje el header más allá del viewport. */
+    display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0;
+}
 .vs-vendor-select {
     font-family: inherit; font-size: 13px; font-weight: 700;
     color: #06652F; background: transparent;
@@ -51,7 +63,11 @@
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%2306652F' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
     background-repeat: no-repeat; background-position: right center;
     appearance: none; -webkit-appearance: none;
-    max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 170px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* En mobile el select tiene que ceder ancho para que el gear/toggle entren. */
+@media (max-width: 480px) {
+    .vs-vendor-select { max-width: 120px; font-size: 12px }
 }
 .vs-vendor-select:focus { outline: none }
 .vs-inactivos-toggle {
@@ -59,10 +75,18 @@
     margin-left: 10px; font-size: 10px; font-weight: 600;
     color: #6e7670; cursor: pointer; user-select: none;
     vertical-align: middle;
+    flex-shrink: 0;
 }
 .vs-inactivos-toggle input {
     margin: 0; width: 12px; height: 12px; cursor: pointer;
     accent-color: #06652F;
+}
+/* En mobile el label "Ver inactivos" comía demasiado ancho del header y
+   empujaba el avatar fuera del viewport. Queda solo el checkbox con title
+   visible al tocarlo (accesibilidad preservada). */
+@media (max-width: 480px) {
+    .vs-inactivos-toggle { margin-left: 6px; gap: 0 }
+    .vs-inactivos-toggle span { display: none }
 }
 
 /* Gear para configurar vendedores visibles en "Todos" */
@@ -161,7 +185,13 @@
     height: 1px; background: rgba(20, 24, 20, .06);
     margin: 4px 6px;
 }
-.vs-top-actions { display: flex; align-items: center; gap: 8px }
+.vs-top-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto }
+/* Reducimos el gap en mobile para ganar 4px x cada hueco entre íconos. */
+@media (max-width: 480px) {
+    .vs-top-actions { gap: 4px }
+    .vs-icon-btn { width: 34px; height: 34px }
+    .vs-avatar { width: 34px; height: 34px; font-size: 12px }
+}
 .vs-icon-btn {
     width: 36px; height: 36px; border-radius: 12px;
     background: rgba(255,255,255,.8); border: 1px solid rgba(20,24,20,.08);
@@ -543,10 +573,14 @@
     font-family: inherit; font-size: 14px; padding: 12px;
     border: 1px solid rgba(20,24,20,.12); border-radius: 14px; resize: vertical;
 }
-.vs-newact-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px }
+/* `minmax(0, 1fr)` evita que <input type="date"> con su min-content intrínseco
+   reviente el grid en mobile (clave cuando font-size sube a 16px por el fix
+   anti-auto-zoom de iOS — el contenido del placeholder se hace más ancho). */
+.vs-newact-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px }
 .vs-newact-row input {
     font-family: inherit; font-size: 14px; padding: 10px 12px;
     border: 1px solid rgba(20,24,20,.12); border-radius: 12px;
+    min-width: 0;
 }
 .vs-newact-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px }
 
