@@ -779,6 +779,24 @@ app.post('/api/push/unsubscribe', requireJwt, (req: any, res) => unsubscribePush
 app.post('/api/push/test', requireJwt, (req: any, res) => testPush(req, res));
 app.post('/api/push/dispatch-now', requireJwt, (req: any, res) => dispatchPushNow(req, res));
 
+// Estado del cron de push (admin-only) — declarado acá para que el endpoint
+// quede registrado ANTES del catch-all de la SPA (línea ~1060). Las mismas
+// variables las modifica el cron tick más abajo.
+let lastPushCronAt: Date | null = null;
+let lastPushCronResult: any = null;
+app.get('/api/push/cron-status', requireJwt, (req: any, res) => {
+    if (req.user?.rol !== 'admin' && req.user?.rol !== 'gerente') {
+        res.status(403).json({ error: 'Requiere admin/gerente' });
+        return;
+    }
+    res.json({
+        ok: true,
+        lastRunAt: lastPushCronAt?.toISOString() ?? null,
+        secondsSinceLastRun: lastPushCronAt ? Math.round((Date.now() - lastPushCronAt.getTime()) / 1000) : null,
+        lastResult: lastPushCronResult,
+    });
+});
+
 // ─── Gestión de usuarios ─────────────────────────────────────────────────────
 app.get('/api/usuarios', requireJwt, requireAdmin, (req: any, res) => listUsuarios(req, res));
 app.post('/api/usuarios', requireJwt, requireAdmin, (req: any, res) => createUsuario(req, res));
@@ -1239,12 +1257,7 @@ console.log('Cron MP verify: */5 * * * *');
 // ─── Cron: disparar Web Push de recordatorios vencidos ───────────────────────
 // Cada minuto chequea promesas con fecha+hora <= now y push_notificado_at IS NULL.
 // Solo arranca si VAPID está configurado. Lock contra overlap por las dudas.
-// `lastPushCronAt` se expone vía /api/push/cron-status para diagnóstico — si
-// el cron deja de correr (EasyPanel idle, proceso colgado), el endpoint lo
-// delata sin tener que mirar logs.
 let pushInFlight = false;
-let lastPushCronAt: Date | null = null;
-let lastPushCronResult: any = null;
 if (hasSupabase()) {
     cron.schedule('* * * * *', async () => {
         if (pushInFlight) return;
@@ -1266,16 +1279,3 @@ if (hasSupabase()) {
     console.log('Cron push recordatorios: * * * * *');
 }
 
-// Endpoint diagnóstico: ¿el cron está vivo? Devuelve last run + result.
-app.get('/api/push/cron-status', requireJwt, (req: any, res) => {
-    if (req.user?.rol !== 'admin' && req.user?.rol !== 'gerente') {
-        res.status(403).json({ error: 'Requiere admin/gerente' });
-        return;
-    }
-    res.json({
-        ok: true,
-        lastRunAt: lastPushCronAt?.toISOString() ?? null,
-        secondsSinceLastRun: lastPushCronAt ? Math.round((Date.now() - lastPushCronAt.getTime()) / 1000) : null,
-        lastResult: lastPushCronResult,
-    });
-});
