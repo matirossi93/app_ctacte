@@ -161,3 +161,75 @@
 [data-theme="dark"] .cv-detail-cat-com { color: #EEC045 }
 [data-theme="dark"] .cv-strong { color: #EEC045 }
 [data-theme="dark"] .cv-refresh { background: #1f2521; border-color: #3a423c; color: #EEC045 }
+
+/* ─────────── Overrides de vendedor (admin) ─────────── */
+.cv-ov {
+    background: #fff;
+    border: 1px solid rgba(20, 24, 20, .08);
+    border-radius: 18px;
+    margin-bottom: 14px;
+    overflow: hidden;
+}
+.cv-ov-toggle {
+    width: 100%; background: none; border: 0; cursor: pointer;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; padding: 14px 16px;
+    font-family: 'Poppins', sans-serif; font-size: 14px; font-weight: 700; color: #06652F;
+}
+.cv-ov-toggle span { display: flex; align-items: center; gap: 8px }
+.cv-ov-body { padding: 0 14px 16px }
+@media (min-width: 720px) { .cv-ov-body { padding: 0 18px 18px } }
+.cv-ov-hint { font-size: 12.5px; color: #6e7670; line-height: 1.5; margin: 0 0 14px }
+
+.cv-ov-form {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px; align-items: end; margin-bottom: 12px;
+}
+.cv-ov-field { display: flex; flex-direction: column; gap: 4px; min-width: 0 }
+.cv-ov-field-wide { grid-column: 1 / -1 }
+@media (min-width: 720px) { .cv-ov-field-wide { grid-column: auto } }
+.cv-ov-field span { font-size: 10px; font-weight: 700; color: #6e7670; text-transform: uppercase; letter-spacing: .04em }
+.cv-ov-field input, .cv-ov-field select {
+    font-family: 'Poppins', sans-serif; font-size: 16px; /* 16px: evita auto-zoom iOS */
+    padding: 9px 10px; border: 1px solid rgba(20, 24, 20, .14); border-radius: 10px;
+    background: #fff; color: #141814; min-width: 0;
+}
+.cv-ov-field input:focus, .cv-ov-field select:focus { outline: none; border-color: #06652F }
+.cv-ov-add {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    background: #06652F; color: #fff; border: 0; border-radius: 10px;
+    padding: 10px 16px; font-family: 'Poppins', sans-serif; font-size: 13px; font-weight: 700;
+    cursor: pointer; white-space: nowrap; height: fit-content;
+}
+.cv-ov-add:disabled { opacity: .6; cursor: wait }
+
+.cv-ov-table { margin-top: 4px }
+.cv-ov-motivo { color: #6e7670; font-family: 'Poppins', sans-serif; white-space: normal }
+.cv-ov-del {
+    background: rgba(168, 62, 43, .1); color: #A83E2B; border: 0; border-radius: 8px;
+    padding: 6px 8px; cursor: pointer; display: inline-flex;
+}
+.cv-ov-del:hover { background: rgba(168, 62, 43, .2) }
+.cv-ov-empty { font-size: 13px; color: #6e7670; text-align: center; padding: 14px 0 }
+.cv-ov-loading { display: flex; align-items: center; gap: 8px; color: #6e7670; font-size: 13px; padding: 10px 0 }
+
+.cv-ov-recalc { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 16px }
+.cv-ov-recalc-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: #fff; border: 1px solid #06652F; color: #06652F;
+    border-radius: 999px; padding: 8px 14px; font-family: 'Poppins', sans-serif;
+    font-size: 12.5px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.cv-ov-recalc-btn:hover { background: rgba(6, 101, 47, .06) }
+.cv-ov-recalc-hint { font-size: 11.5px; color: #6e7670; flex: 1; min-width: 160px }
+.cv-ov-recalc-msg {
+    margin-top: 10px; font-size: 12.5px; color: #06652F;
+    background: rgba(6, 101, 47, .08); border-radius: 10px; padding: 10px 12px;
+}
+
+/* Dark theme — overrides */
+[data-theme="dark"] .cv-ov { background: #1f2521; border-color: #3a423c }
+[data-theme="dark"] .cv-ov-field input, [data-theme="dark"] .cv-ov-field select { background: #2a2f2a; border-color: #3a423c; color: #f0f0e8 }
+[data-theme="dark"] .cv-ov-recalc-btn { background: #1f2521; color: #EEC045; border-color: #EEC045 }
+[data-theme="dark"] .cv-ov-recalc-msg { color: #EEC045; background: rgba(238, 192, 69, .1) }
+[data-theme="dark"] .cv-ov-toggle { color: #EEC045 }
