@@ -16,6 +16,7 @@ import {
   COD_CLIENTES_INTERNOS,
   COD_VENDEDORES_VISIBLES,
 } from './comisionesShared.js';
+import { loadVendedorOverrides, resolveCodVendedor } from './comisionOverrides.js';
 
 interface BreakdownEntry { neto: number; comision: number; lineas: number }
 interface ComisionVendedor {
@@ -69,11 +70,12 @@ export async function getComisionesData(opts: GetComisionesOpts) {
   const asOfValid = asOfDate && /^\d{4}-\d{2}-\d{2}$/.test(asOfDate) ? asOfDate : null;
 
   // 1. Datos crudos paralelos.
-  const [ventasRes, itemsRes, articulosMap, vendedoresIM] = await Promise.all([
+  const [ventasRes, itemsRes, articulosMap, vendedoresIM, overrides] = await Promise.all([
     getMonthlyVentasRaw(year, month),
     getMonthlyItemsRaw(year, month),
     fetchArticulosCatalogo(),
     fetchVendedores(),
+    loadVendedorOverrides(),
   ]);
 
   // 2. Map id_comprobante → { signo (FA=+1, NC=-1), cod_vendedor }.
@@ -101,8 +103,11 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     }
     const clase = clasificarCabecera(v);
     if (!clase) { nDescartadas++; continue; }
-    const codVend = Number((v as any).cod_vendedor);
-    if (!Number.isFinite(codVend)) { nDescartadas++; continue; }
+    // Override manual por comprobante (factura emitida en IM con vendedor
+    // equivocado e inmutable). Sin override mantiene el crudo; el 0 (mostrador)
+    // se deja pasar y lo filtra luego COD_VENDEDORES_VISIBLES.
+    const codVend = resolveCodVendedor((v as any).cod_vendedor, id, overrides);
+    if (codVend == null) { nDescartadas++; continue; }
     // Excluir transferencias entre sucursales — no son ventas comerciales.
     const codCli = Number((v as any).cod_cliente);
     if (Number.isFinite(codCli) && COD_CLIENTES_INTERNOS.has(codCli)) {

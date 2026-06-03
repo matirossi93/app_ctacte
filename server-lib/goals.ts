@@ -10,6 +10,7 @@ import {
   COD_CLIENTES_INTERNOS as COD_CLIENTES_INTERNOS_GOALS,
   COD_VENDEDORES_VISIBLES as COD_VENDEDORES_VISIBLES_SHARED,
 } from './comisionesShared.js';
+import { loadVendedorOverrides, resolveCodVendedor } from './comisionOverrides.js';
 
 function normLoc(s: string | null | undefined): string {
   if (!s) return '';
@@ -763,9 +764,10 @@ export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res
     // cabecera, idéntico al cálculo de comisiones.ts. Con `fa_total` (cabecera)
     // los dos paneles divergían por IVA y redondeos.
     const t0 = Date.now();
-    const [ventasResRaw, itemsRes] = await Promise.all([
+    const [ventasResRaw, itemsRes, overrides] = await Promise.all([
       getMonthlyVentasRaw(year, month, { codEmpresa }),
       getMonthlyItemsRaw(year, month, { codEmpresa }),
+      loadVendedorOverrides(),
     ]);
     const { ventas, cached, cacheAge } = ventasResRaw;
     const fetchMs = Date.now() - t0;
@@ -811,7 +813,9 @@ export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res
         byCliente.set(v.cod_cliente, cur);
       }
       // Mostrador descartado (no reasignar al cliente). Comisiones también.
-      const codVend = v.cod_vendedor != null && v.cod_vendedor !== 0 ? v.cod_vendedor : null;
+      // Excepción: override manual por comprobante gana incluso sobre mostrador.
+      const idVenta = Number((v as any).id);
+      const codVend = resolveCodVendedor(v.cod_vendedor, idVenta, overrides, { mostradorEsNull: true });
       if (codVend == null) continue;
       const cur = byVendedor.get(codVend) ?? { neto: 0, num: 0 };
       cur.neto += neto; cur.num += 1;

@@ -7,6 +7,7 @@ import {
   COD_EMPRESA_CASA_CENTRAL as COD_EMPRESA_DEFAULT,
   COD_CLIENTES_INTERNOS,
 } from './comisionesShared.js';
+import { loadVendedorOverrides, resolveCodVendedor } from './comisionOverrides.js';
 
 /**
  * Invalida los caches de Goals / snapshot / items para el mes recién sincronizado.
@@ -70,9 +71,10 @@ async function syncVentasRango(opts: {
     // el mismo número que `comisiones.ts` (ya validado contra el Excel manual
     // de Mati), y evita la diff que aparecía cuando se sumaba `fa_total` por
     // cabecera (incluye IVA/redondeos que items no tiene).
-    const [ventas, items] = await Promise.all([
+    const [ventas, items, overrides] = await Promise.all([
       fetchVentas(desde, hasta, { codEmpresa }),
       fetchVentasItems(desde, hasta, { codEmpresa }),
+      loadVendedorOverrides(),
     ]);
 
     // Importe por id_comprobante (suma de líneas).
@@ -147,8 +149,10 @@ async function syncVentasRango(opts: {
       }
       // Vendedor: descartar mostrador (cod_vendedor=0) sin reasignar.
       // Comisiones también las descarta y no le asigna comisión a nadie por
-      // mostrador, así que el avance debe seguir la misma regla.
-      const codVend = v.cod_vendedor != null && v.cod_vendedor !== 0 ? v.cod_vendedor : null;
+      // mostrador, así que el avance debe seguir la misma regla. Excepción:
+      // un override manual por comprobante gana incluso sobre mostrador.
+      const idVenta = Number((v as any).id);
+      const codVend = resolveCodVendedor(v.cod_vendedor, idVenta, overrides, { mostradorEsNull: true });
       if (codVend == null) { mostradorDescartados++; continue; }
       const key = `${codVend}-${k.year}-${k.month}`;
       const cur = byVendedor.get(key) ?? { cod_vendedor: codVend, year: k.year, month: k.month, neto: 0, num: 0 };
