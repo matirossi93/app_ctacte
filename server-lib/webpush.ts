@@ -167,6 +167,34 @@ export async function testPush(req: Request & { user?: JwtPayload }, res: Respon
 }
 
 /**
+ * POST /api/push/dispatch-now — admin-only. Dispara manualmente el worker del
+ * cron de recordatorios y devuelve el resultado en línea para diagnóstico.
+ * Sirve cuando hay sospecha de que el cron no está corriendo en EasyPanel
+ * (idle, restart, etc.) y queremos verificar si la lógica responde.
+ *
+ * Bonus: agrega los IDs candidatos al response para que admin sepa exactamente
+ * cuáles entraron en la evaluación (útil para depurar timing).
+ */
+export async function dispatchPushNow(req: Request & { user?: JwtPayload }, res: Response): Promise<void> {
+  try {
+    if (req.user?.rol !== 'admin' && req.user?.rol !== 'gerente') {
+      res.status(403).json({ error: 'Requiere admin/gerente' });
+      return;
+    }
+    const t0 = Date.now();
+    const enabled = isWebPushEnabled();
+    if (!enabled) {
+      res.json({ ok: false, enabled: false, error: 'Web Push no configurado (faltan VAPID env)' });
+      return;
+    }
+    const r = await dispararRecordatoriosPromesa();
+    res.json({ ok: true, enabled: true, elapsedMs: Date.now() - t0, ...r });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
  * Cron worker — corre cada minuto. Busca promesas con fecha+hora <= now y
  * push_notificado_at IS NULL, manda push al vendedor asignado, marca flag.
  *

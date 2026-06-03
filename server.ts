@@ -29,12 +29,13 @@ import {
 } from './server-lib/recibos.js';
 import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot } from './server-lib/goals.js';
 import { listComisiones, probeVenta, comisionesSample, topArticulos, facturasVendedor, diagnoseArticulo } from './server-lib/comisiones.js';
+import { listOverrides, addOverride, deleteOverride } from './server-lib/comisionOverrides.js';
 import { listClientesLookup } from './server-lib/clientes.js';
 import { historialComprasCliente } from './server-lib/historialCompras.js';
 import { listActivity, createActivity, updateActivity, deleteActivity, listNotificaciones } from './server-lib/activity.js';
 import {
   isWebPushEnabled, getVapidPublicKeyHandler, subscribePush, unsubscribePush, testPush,
-  dispararRecordatoriosPromesa,
+  dispararRecordatoriosPromesa, dispatchPushNow,
 } from './server-lib/webpush.js';
 import {
   listUsuarios, createUsuario, updateUsuario, deleteUsuario, changePassword
@@ -716,6 +717,11 @@ app.get('/api/comisiones/sample', requireJwt, requireAdmin, (req: any, res) => c
 app.get('/api/comisiones/top-articulos', requireJwt, requireAdmin, (req: any, res) => topArticulos(req, res));
 app.get('/api/comisiones/facturas-vendedor', requireJwt, requireAdmin, (req: any, res) => facturasVendedor(req, res));
 app.get('/api/comisiones/diagnose-articulo/:cod', requireJwt, requireAdmin, (req: any, res) => diagnoseArticulo(req, res));
+// Override manual de vendedor por comprobante (factura emitida en IM con
+// vendedor equivocado e inmutable). Admin-only.
+app.get('/api/comisiones/overrides', requireJwt, requireAdmin, (req: any, res) => listOverrides(req, res));
+app.post('/api/comisiones/overrides', requireJwt, requireAdmin, (req: any, res) => addOverride(req, res));
+app.delete('/api/comisiones/overrides/:id', requireJwt, requireAdmin, (req: any, res) => deleteOverride(req, res));
 
 // ─── Clientes lookup (maestro completo, con y sin deuda) ─────────────────────
 app.get('/api/clientes/lookup', requireJwt, (req: any, res) => listClientesLookup(req, res));
@@ -771,6 +777,7 @@ app.get('/api/push/vapid-public-key', requireJwt, (req: any, res) => getVapidPub
 app.post('/api/push/subscribe', requireJwt, (req: any, res) => subscribePush(req, res));
 app.post('/api/push/unsubscribe', requireJwt, (req: any, res) => unsubscribePush(req, res));
 app.post('/api/push/test', requireJwt, (req: any, res) => testPush(req, res));
+app.post('/api/push/dispatch-now', requireJwt, (req: any, res) => dispatchPushNow(req, res));
 
 // ─── Gestión de usuarios ─────────────────────────────────────────────────────
 app.get('/api/usuarios', requireJwt, requireAdmin, (req: any, res) => listUsuarios(req, res));
@@ -1232,7 +1239,12 @@ console.log('Cron MP verify: */5 * * * *');
 // ─── Cron: disparar Web Push de recordatorios vencidos ───────────────────────
 // Cada minuto chequea promesas con fecha+hora <= now y push_notificado_at IS NULL.
 // Solo arranca si VAPID está configurado. Lock contra overlap por las dudas.
+// `lastPushCronAt` se expone vía /api/push/cron-status para diagnóstico — si
+// el cron deja de correr (EasyPanel idle, proceso colgado), el endpoint lo
+// delata sin tener que mirar logs.
 let pushInFlight = false;
+let lastPushCronAt: Date | null = null;
+let lastPushCronResult: any = null;
 if (hasSupabase()) {
     cron.schedule('* * * * *', async () => {
         if (pushInFlight) return;
@@ -1240,9 +1252,11 @@ if (hasSupabase()) {
         try {
             if (!isWebPushEnabled()) return;
             const r = await dispararRecordatoriosPromesa();
-            if (r.candidatos > 0) {
-                console.log(`[cron push] candidatos=${r.candidatos} enviados=${r.enviados} fallidos=${r.fallidos} sinSub=${r.sinSub}`);
-            }
+            lastPushCronAt = new Date();
+            lastPushCronResult = r;
+            // Log siempre (no solo cuando hay candidatos) para confirmar que el
+            // cron está vivo. Volumen bajo: 1 línea/minuto.
+            console.log(`[cron push] ${new Date().toISOString()} candidatos=${r.candidatos} enviados=${r.enviados} fallidos=${r.fallidos} sinSub=${r.sinSub}`);
         } catch (err: any) {
             console.warn(`[cron push] fallo: ${err?.message ?? err}`);
         } finally {
@@ -1251,3 +1265,17 @@ if (hasSupabase()) {
     });
     console.log('Cron push recordatorios: * * * * *');
 }
+
+// Endpoint diagnóstico: ¿el cron está vivo? Devuelve last run + result.
+app.get('/api/push/cron-status', requireJwt, (req: any, res) => {
+    if (req.user?.rol !== 'admin' && req.user?.rol !== 'gerente') {
+        res.status(403).json({ error: 'Requiere admin/gerente' });
+        return;
+    }
+    res.json({
+        ok: true,
+        lastRunAt: lastPushCronAt?.toISOString() ?? null,
+        secondsSinceLastRun: lastPushCronAt ? Math.round((Date.now() - lastPushCronAt.getTime()) / 1000) : null,
+        lastResult: lastPushCronResult,
+    });
+});
