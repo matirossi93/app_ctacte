@@ -219,7 +219,7 @@ export async function dispararRecordatoriosPromesa(): Promise<{ candidatos: numb
   // push_notificado_at IS NULL. Filtramos en memoria por fecha+hora <= now.
   const { data: rows, error } = await sb()
     .from('vendor_activity')
-    .select('id, cod_vendedor, cod_cliente, tipo, contenido, fecha_promesa, hora_promesa, push_notificado_at')
+    .select('id, cod_vendedor, cod_cliente, tipo, contenido, fecha_promesa, hora_promesa, push_notificado_at, created_by, asignado_por')
     .eq('tenant_id', TENANT_ID)
     .eq('tipo', 'promesa')
     .is('push_notificado_at', null)
@@ -250,28 +250,45 @@ export async function dispararRecordatoriosPromesa(): Promise<{ candidatos: numb
 
   // Resolver cod_vendedor → user.id (push_subscriptions es por user_id).
   const cods = Array.from(new Set(due.map(r => r.cod_vendedor)));
-  const { data: users } = await sb()
+  const { data: usersByCodVend } = await sb()
     .from('usuarios')
     .select('id, cod_vendedor, nombre, email')
     .in('cod_vendedor', cods);
   const userByCod = new Map<number, { id: string; nombre: string | null; email: string }>();
-  (users ?? []).forEach((u: any) => userByCod.set(u.cod_vendedor, { id: u.id, nombre: u.nombre, email: u.email }));
+  (usersByCodVend ?? []).forEach((u: any) => userByCod.set(u.cod_vendedor, { id: u.id, nombre: u.nombre, email: u.email }));
 
   let enviados = 0, fallidos = 0, sinSub = 0;
   for (const r of due) {
-    const dest = userByCod.get(r.cod_vendedor);
-    if (!dest) { sinSub++; continue; }
+    // Reunir TODOS los user_id a notificar para esta promesa, sin duplicar:
+    //   - El vendedor asignado (cod_vendedor → user.id).
+    //   - El usuario que la creó (created_by) — clave cuando admin se carga una
+    //     promesa "para acordarse" y la asigna a un vendedor que aún no tiene
+    //     PWA instalada: sin esto, el push se va al vacío.
+    //   - El admin que la asignó (asignado_por), si fue diferente al creador.
+    // Set deduplica si el creador es el mismo vendedor asignado (caso vendedor
+    // que se carga promesa para sí).
+    const targets = new Set<string>();
+    const vendedor = userByCod.get(r.cod_vendedor);
+    if (vendedor?.id) targets.add(vendedor.id);
+    if (r.created_by) targets.add(r.created_by);
+    if (r.asignado_por) targets.add(r.asignado_por);
+    if (targets.size === 0) { sinSub++; continue; }
 
     const body = (r.contenido || `Promesa pendiente${r.cod_cliente ? ` (cliente ${r.cod_cliente})` : ''}`).slice(0, 140);
-    const result = await sendPushToUser(dest.id, {
-      title: '📌 Recordatorio Semillero',
-      body,
-      icon: '/icon-192.png',
-      tag: `promesa-${r.id}`,
-      url: '/',
-      data: { activityId: r.id, codCliente: r.cod_cliente },
-    });
-    if (result.sent > 0) enviados++; else if (result.failed > 0) fallidos++; else sinSub++;
+    let sentForRow = 0, failedForRow = 0;
+    for (const userId of targets) {
+      const result = await sendPushToUser(userId, {
+        title: '📌 Recordatorio Semillero',
+        body,
+        icon: '/icon-192.png',
+        tag: `promesa-${r.id}`,
+        url: '/',
+        data: { activityId: r.id, codCliente: r.cod_cliente },
+      });
+      sentForRow += result.sent;
+      failedForRow += result.failed;
+    }
+    if (sentForRow > 0) enviados++; else if (failedForRow > 0) fallidos++; else sinSub++;
 
     // Marcamos notificado incluso si no había sub: así el cron no re-evalúa cada
     // minuto la misma promesa. La campana in-app sigue cubriendo al usuario.
