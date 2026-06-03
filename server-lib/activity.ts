@@ -154,7 +154,16 @@ export async function updateActivity(req: Request & { user?: JwtPayload }, res: 
     }
     if (body.contenido !== undefined) patch.contenido = body.contenido || null;
     if (body.monto !== undefined) patch.monto = body.monto != null && body.monto !== '' ? Number(body.monto) : null;
-    if (body.fecha_promesa !== undefined) patch.fecha_promesa = body.fecha_promesa || null;
+    // Editar fecha/hora de la promesa = se quiere re-disparar el push con el
+    // nuevo timing. Reseteamos push_notificado_at para que el cron de Web Push
+    // vuelva a evaluar la fila. Sin esto, si el usuario corrige la hora después
+    // de que el cron ya disparó (a un device viejo, o por error), el push nunca
+    // se reenvía al timing nuevo.
+    let resetPushFlag = false;
+    if (body.fecha_promesa !== undefined) {
+      patch.fecha_promesa = body.fecha_promesa || null;
+      resetPushFlag = true;
+    }
     if (body.hora_promesa !== undefined) {
       const h = parseHoraPromesa(body.hora_promesa);
       if (h && typeof h === 'object' && 'error' in h) {
@@ -162,7 +171,9 @@ export async function updateActivity(req: Request & { user?: JwtPayload }, res: 
         return;
       }
       patch.hora_promesa = h;
+      resetPushFlag = true;
     }
+    if (resetPushFlag) patch.push_notificado_at = null;
     if (body.cod_cliente !== undefined) patch.cod_cliente = body.cod_cliente ? Number(body.cod_cliente) : null;
     // cod_vendedor sólo lo cambia admin/gerente.
     if (body.cod_vendedor !== undefined && user.rol !== 'vendedor') {
