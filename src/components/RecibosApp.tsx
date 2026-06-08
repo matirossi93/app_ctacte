@@ -911,7 +911,9 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, clients, onBack }: {
     if (loading) return <div className="rec-loading"><Loader2 className="spin" /> Cargando…</div>;
     if (err || !rec) return <div className="rec-error"><AlertCircle /> {err ?? 'No encontrado'}</div>;
 
-    const totalImputado = Object.values(selFacturas).reduce((a, b) => a + (b || 0), 0);
+    // Redondeo a 2 decimales: el reduce de floats puede dar 4.0000000001 y eso
+    // ensucia tanto el display con decimales como la comparación contra montoFinal.
+    const totalImputado = Math.round(Object.values(selFacturas).reduce((a, b) => a + (b || 0), 0) * 100) / 100;
 
     // Si el OCR falló y el vendedor no cargó monto, comprobantes_pago.monto queda en 0.01.
     // Cuando MP verificó el pago, mostramos el amount real detectado para no engañar al admin con "$ 0".
@@ -1054,7 +1056,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, clients, onBack }: {
                                                 <input type="checkbox" checked={sel} onChange={() => toggleFactura(f)} />
                                                 <div>
                                                     <strong>{f.tipo_comprobante} {f.punto_de_venta}-{f.numero}</strong>
-                                                    <span>{f.fecha_factura ?? ''} · Saldo {formatMoney(saldo)}{f.dias_deuda != null ? ` · ${f.dias_deuda}d` : ''}{f.detalle ? ` · ${f.detalle}` : ''}</span>
+                                                    <span>{f.fecha_factura ?? ''} · Saldo {formatMoneyExact(saldo)}{f.dias_deuda != null ? ` · ${f.dias_deuda}d` : ''}{f.detalle ? ` · ${f.detalle}` : ''}</span>
                                                 </div>
                                             </label>
                                             {sel && (
@@ -1062,7 +1064,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, clients, onBack }: {
                                                     value={selFacturas[key]}
                                                     onChange={e => setImporteFactura(key, Number(e.target.value), saldo)}
                                                     className="rec-importe-input"
-                                                    title={`Máx $${saldo.toLocaleString('es-AR')}`} />
+                                                    title={`Máx ${formatMoneyExact(saldo)}`} />
                                             )}
                                         </div>
                                     );
@@ -1071,7 +1073,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, clients, onBack }: {
 
                             {!esAnticipo && (
                                 <div className="rec-approval-summary">
-                                    <span>Total a imputar: <strong>{formatMoney(totalImputado)}</strong> / {formatMoney(Number(montoFinal))}</span>
+                                    <span>Total a imputar: <strong>{formatMoneyExact(totalImputado)}</strong> / {formatMoneyExact(Number(montoFinal))}</span>
                                     {Math.abs(totalImputado - Number(montoFinal)) > 5 && (
                                         <span className="rec-warn">
                                             ⚠ Diferencia: ${(Number(montoFinal) - totalImputado).toFixed(2)}
@@ -1372,6 +1374,14 @@ function statusLabel(s: string): string {
 function formatMoney(n: number | null | undefined): string {
     if (n == null) return '—';
     return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n);
+}
+// Versión con 2 decimales: SOLO para el flujo de imputación de recibos, donde
+// el centavo es "load-bearing" (el saldo real de la factura tiene decimales y
+// el cobrador necesita ver/imputar el monto exacto). El resto de la app sigue
+// usando formatMoney (entero) para los displays informativos.
+function formatMoneyExact(n: number | null | undefined): string {
+    if (n == null) return '—';
+    return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 }
 function timeAgo(iso: string): string {
     const d = new Date(iso);
