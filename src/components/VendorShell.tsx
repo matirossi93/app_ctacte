@@ -397,7 +397,11 @@ export const VendorShell = ({ onLogout }: Props) => {
             const c = map.get(cod)!;
             c.totalSaldo += saldo;
             const dias = Number(inv.DIAS_EMISI) || 0;
-            if (inv.TIPO_COMPR === 'FA' && dias > c.maxDias) c.maxDias = dias;
+            // Aging: cuenta todo comprobante con saldo DEUDOR (positivo) para la
+            // antigüedad — FA y ND suman deuda. NC, recibos y ajustes al haber
+            // tienen saldo negativo y no deben contar. Antes solo miraba 'FA',
+            // por eso una ND vieja no movía los días de mora del cliente.
+            if (saldo > 0 && dias > c.maxDias) c.maxDias = dias;
             c.invoices.push(inv);
         }
         return Array.from(map.values())
