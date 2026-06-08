@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
 import type { JwtPayload } from './auth.js';
+import { fetchComprobPendientes } from './infomanager.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Reportes — export xlsx admin-only para analisis ad-hoc
@@ -252,6 +253,48 @@ async function reporteSinActividad30d(year: number, month: number): Promise<Shee
   };
 }
 
+/**
+ * Residuos de centavos: facturas con saldo deudor POSITIVO chico (≤ maxSaldo),
+ * que es lo que deja InfoManager al truncar a entero el importe imputado en los
+ * recibos (ver server-lib/recibos.ts). Sirve para la limpieza/ajuste contable
+ * en lote — IM no expone API de NC/ajuste, así que el cierre es manual en el
+ * cliente desktop o por import. NO depende del período. Empresa 1 (casa central)
+ * por default, igual que /api/data. Se excluyen saldos negativos (NC/recibos).
+ *
+ * OJO: un saldo chico puede ser deuda parcial legítima, no solo residuo de
+ * truncado — el que ajusta revisa la lista antes de cerrar cada uno.
+ */
+async function reporteResiduos(maxSaldo: number, codEmpresa = 1): Promise<Sheet> {
+  const [comprobantes, vmap] = await Promise.all([
+    fetchComprobPendientes(codEmpresa, 0),
+    vendorNameMap(),
+  ]);
+  const rows: (string | number | null)[][] = [];
+  for (const c of comprobantes ?? []) {
+    const saldo = Number((c as any).saldo) || 0;
+    if (!(saldo > 0 && saldo <= maxSaldo)) continue;
+    const codVend = (c as any).cod_vendedor != null ? Number((c as any).cod_vendedor) : null;
+    rows.push([
+      (c as any).cod_cliente ?? '',
+      (c as any).nombre ?? '',
+      codVend,
+      codVend != null ? (vmap.get(codVend) ?? '') : '',
+      (c as any).tipo_comprobante ?? '',
+      `${(c as any).punto_de_venta ?? 0}-${(c as any).numero ?? 0}`,
+      (c as any).fecha_factura ? String((c as any).fecha_factura).slice(0, 10) : '',
+      Math.round(saldo * 100) / 100,
+    ]);
+  }
+  // Agrupado visualmente por cliente (nombre asc), y dentro por saldo desc.
+  rows.sort((a: any, b: any) =>
+    String(a[1]).localeCompare(String(b[1])) || (Number(b[7]) - Number(a[7]))
+  );
+  return {
+    headers: ['cod_cliente', 'razon_social', 'cod_vendedor', 'vendedor', 'tipo', 'comprobante', 'fecha_emision', 'saldo_residuo'],
+    rows,
+  };
+}
+
 function buildXlsx(sheetName: string, sheet: Sheet): Buffer {
   const wb = XLSX.utils.book_new();
   const aoa = [sheet.headers, ...sheet.rows];
@@ -304,6 +347,15 @@ export async function descargarReporte(req: Request & { user?: JwtPayload }, res
         sheetName = `Sin Actividad 30d`;
         fileName = `clientes-sin-actividad-30d-${year}-${mm}.xlsx`;
         break;
+      case 'residuos': {
+        // No depende de year/month. Corte de saldo por ?max (default $50).
+        const max = Number(req.query.max) > 0 ? Number(req.query.max) : 50;
+        const empresa = Number(req.query.empresa) > 0 ? Number(req.query.empresa) : 1;
+        sheet = await reporteResiduos(max, empresa);
+        sheetName = `Residuos hasta $${max}`;
+        fileName = `residuos-saldos-chicos-hasta-${max}.xlsx`;
+        break;
+      }
       default:
         res.status(400).json({ error: `Tipo desconocido: ${tipoRaw}` });
         return;

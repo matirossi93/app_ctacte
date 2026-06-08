@@ -14,6 +14,8 @@ interface Reporte {
     tipo: string;
     nombre: string;
     descripcion: string;
+    /** Query extra (ej. residuos no depende de period y usa &max=). */
+    extraQuery?: string;
 }
 
 const REPORTES: Reporte[] = [
@@ -32,6 +34,12 @@ const REPORTES: Reporte[] = [
         nombre: 'Clientes sin actividad 30d',
         descripcion: 'Clientes con saldo, target o facturación histórica que no tuvieron nota/llamada/pago registrado en los últimos 30 días.',
     },
+    {
+        tipo: 'residuos',
+        nombre: 'Residuos de centavos (saldos ≤ $50)',
+        descripcion: 'Facturas con saldo positivo ≤ $50 — los residuos que deja InfoManager al truncar la imputación de recibos a entero. Para revisar y ajustar/cerrar en lote. No depende del período. (Un saldo chico puede ser deuda parcial real: revisar antes de cerrar.)',
+        extraQuery: '&max=50',
+    },
 ];
 
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
@@ -43,11 +51,11 @@ export function ReportesModal({ onClose, period }: Props) {
     const [busy, setBusy] = useState<string | null>(null);
     const [err, setErr] = useState<string | null>(null);
 
-    const descargar = async (tipo: string, nombreReporte: string) => {
+    const descargar = async (tipo: string, nombreReporte: string, extraQuery = '') => {
         setBusy(tipo);
         setErr(null);
         try {
-            const res = await fetch(`/api/reportes/${tipo}?year=${year}&month=${month}`, {
+            const res = await fetch(`/api/reportes/${tipo}?year=${year}&month=${month}${extraQuery}`, {
                 headers: authHeaders(),
             });
             if (!res.ok) {
@@ -101,7 +109,7 @@ export function ReportesModal({ onClose, period }: Props) {
                             <button
                                 className="rep-dl-btn"
                                 disabled={busy != null}
-                                onClick={() => descargar(r.tipo, r.nombre)}
+                                onClick={() => descargar(r.tipo, r.nombre, r.extraQuery ?? '')}
                             >
                                 {busy === r.tipo
                                     ? <><Loader2 size={16} className="rep-spin" /> Generando...</>
