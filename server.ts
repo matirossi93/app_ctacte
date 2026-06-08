@@ -1006,8 +1006,13 @@ app.get('/api/bot', requireBotToken, async (req: express.Request, res: express.R
             if (clientDb?.frecuencia === 'SEMANAL') threshold = 7;
             else if (clientDb?.frecuencia === 'MENSUAL') threshold = 30;
 
-            const isOverdue = type === 'FA' && diffDays > threshold;
             const balance = parseNum(raw.SALDO);
+            // Ignorar comprobantes de saldo despreciable (centavos, residuos de
+            // pagos parciales, ajustes contables) — mismo criterio que la vista
+            // vendedor (umbral $2000) y el dashboard admin.
+            if (Math.abs(balance) <= 2000) return;
+
+            const isOverdue = type === 'FA' && diffDays > threshold;
             const interest = isOverdue ? balance * interestRate : 0;
 
             if (!vendorsMap.has(vendorName)) vendorsMap.set(vendorName, new Map());
@@ -1021,7 +1026,9 @@ app.get('/api/bot', requireBotToken, async (req: express.Request, res: express.R
                 });
             }
             const c = vendorClients.get(clientId)!;
-            if (diffDays > c.maxDaysOverdue) c.maxDaysOverdue = diffDays;
+            // Aging: solo saldo DEUDOR (FA y ND positivos) suma a los días de
+            // atraso. NC/recibos (saldo a favor, negativo) no inflan la mora.
+            if (balance > 0 && diffDays > c.maxDaysOverdue) c.maxDaysOverdue = diffDays;
             c.totalBalance += balance;
             c.totalInterest += interest;
             c.totalWithInterest += balance + interest;

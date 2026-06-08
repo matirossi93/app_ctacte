@@ -94,8 +94,12 @@ export const processInvoices = (
             daysOverdue = isOverdue ? diffDays : 0;
         }
         
-        // Solo facturas (FA) generan atraso/interés — NC, ND, RC, ASD, ASH no
-        if (type !== 'FA') {
+        // FA y ND generan ATRASO: ambas son deuda real del cliente (saldo deudor).
+        // El INTERÉS, en cambio, solo se calcula sobre FA (ver appliedInterestRate
+        // abajo, gateado por type === 'FA'), así que contar la ND para la mora NO
+        // le cobra interés. NC, RC, ASD, ASH son saldo a favor/pagos/ajustes: no
+        // generan atraso. Antes solo FA contaba y una ND vieja salía "Al día".
+        if (type !== 'FA' && type !== 'ND') {
             isOverdue = false;
             daysOverdue = 0;
         }
@@ -184,8 +188,9 @@ export const processInvoices = (
         clientSummary.totalBalance += inv.balance;
         clientSummary.totalInterest += inv.interestAmount;
         clientSummary.totalWithInterest += inv.totalWithInterest;
-        // Solo considerar facturas (FAC) para el cálculo de días de deuda, ignorando NC y ND
-        if (inv.type === 'FA') {
+        // FA y ND con saldo deudor (positivo) cuentan para el atraso máximo del
+        // cliente. NC/recibos/ajustes con saldo a favor (negativo) no.
+        if ((inv.type === 'FA' || inv.type === 'ND') && inv.balance > 0) {
             clientSummary.maxDaysOverdue = Math.max(clientSummary.maxDaysOverdue, inv.daysOverdue);
         }
         clientSummary.invoices.push(inv);

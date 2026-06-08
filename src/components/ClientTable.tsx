@@ -162,7 +162,7 @@ export const ClientTable = ({ vendor, clientThresholds = {}, onUpdateThreshold, 
                                                 <td style={{ textAlign: 'center' }}>
                                                     <input 
                                                         type="checkbox" 
-                                                        checked={invoiceInterestOverrides[inv.id] !== undefined ? invoiceInterestOverrides[inv.id] : inv.isOverdue}
+                                                        checked={invoiceInterestOverrides[inv.id] !== undefined ? invoiceInterestOverrides[inv.id] : (inv.type === 'FA' && inv.isOverdue)}
                                                         onChange={(e) => onToggleInvoiceInterest?.(inv.id, e.target.checked)}
                                                         style={{ cursor: 'pointer', transform: 'scale(1.2)' }}
                                                     />

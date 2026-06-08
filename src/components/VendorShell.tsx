@@ -1094,7 +1094,7 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
             {isOpen && (
                 <div className="vs-timeline">
                     <h4>Facturas pendientes</h4>
-                    {client.invoices.slice(0, 12).map(inv => (
+                    {[...client.invoices].sort((a, b) => (Number(b.DIAS_EMISI) || 0) - (Number(a.DIAS_EMISI) || 0)).slice(0, 12).map(inv => (
                         <div key={inv.ID} className="vs-tl-item">
                             <div className="vs-tl-icon">
                                 <FileText size={14} />
