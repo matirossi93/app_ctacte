@@ -925,10 +925,17 @@ app.post('/api/client-thresholds', requireAuth, (req: express.Request, res: expr
 // en EasyPanel + Amira, queda enforced automáticamente.
 const BOT_API_TOKEN = process.env.BOT_API_TOKEN || '';
 if (!BOT_API_TOKEN) {
-  console.warn('⚠️  BOT_API_TOKEN no definida — /api/bot queda PÚBLICO. Configurar en EasyPanel + Amira para enforce.');
+  if (IS_PROD) {
+    // /api/bot expone datos de facturación (saldos, clientes, vendedores) en
+    // solo-lectura. En producción NO puede quedar público: fail-loud como
+    // JWT_SECRET / INFOMANAGER_CLIENT_SECRET. Setear BOT_API_TOKEN en EasyPanel.
+    console.error('FATAL: BOT_API_TOKEN no definida en producción — /api/bot expondría datos de facturación. Abortando.');
+    process.exit(1);
+  }
+  console.warn('⚠️  BOT_API_TOKEN no definida — /api/bot queda PÚBLICO (solo dev). Configurar en EasyPanel + Amira para enforce.');
 }
 function requireBotToken(req: express.Request, res: express.Response, next: express.NextFunction): void {
-  if (!BOT_API_TOKEN) { next(); return; } // modo migración
+  if (!BOT_API_TOKEN) { next(); return; } // modo migración (solo dev; en prod ya abortó arriba)
   const auth = String(req.headers['authorization'] || '');
   const xToken = String(req.headers['x-bot-token'] || '');
   const provided = auth.startsWith('Bearer ') ? auth.slice(7).trim() : xToken.trim();

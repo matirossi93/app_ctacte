@@ -37,6 +37,33 @@ export async function imClient(): Promise<AxiosInstance> {
   });
 }
 
+/**
+ * Reintenta una llamada IDEMPOTENTE (GET) ante fallos TRANSITORIOS de IM:
+ * timeout (ECONNABORTED), error de red sin respuesta, 5xx o 429. NO reintenta
+ * 4xx (errores del cliente, no transitorios). Backoff exponencial 1s/2s/4s.
+ * IM tuvo episodios de sobrecarga documentados; un transient de 10-20s a mitad
+ * de una página paginada tiraba el sync entero. SOLO para GET — NO usar en
+ * POST/crearRecibo sin hacerlo idempotente primero.
+ */
+async function imGetRetry<T>(fn: () => Promise<T>, label: string, attempts = 3): Promise<T> {
+  let lastErr: any;
+  for (let intento = 1; intento <= attempts; intento++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastErr = err;
+      const status = err?.response?.status;
+      const transitorio = status === undefined || status >= 500 || status === 429
+        || ['ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN'].includes(err?.code);
+      if (!transitorio || intento === attempts) break;
+      const backoff = 1000 * Math.pow(2, intento - 1); // 1s, 2s, 4s
+      console.warn(`[IM retry] ${label}: intento ${intento}/${attempts} falló (${status ?? err?.code ?? err?.message}); reintento en ${backoff}ms`);
+      await new Promise(r => setTimeout(r, backoff));
+    }
+  }
+  throw lastErr;
+}
+
 export interface VentaRaw {
   id?: number | string;
   tipo?: string;
@@ -67,7 +94,7 @@ export async function fetchVentas(desde: string, hasta: string, opts?: { codEmpr
     // InfoManager usa fechaDesde/fechaHasta (NO desde/hasta)
     const params: Record<string, string | number> = { fechaDesde: desde, fechaHasta: hasta, page, limit };
     if (opts?.codEmpresa) params.codEmpresa = opts.codEmpresa;
-    const { data } = await cli.get('/ventas', { params });
+    const { data } = await imGetRetry(() => cli.get('/ventas', { params }), `ventas p${page}`);
     const rows: VentaRaw[] = data?.results ?? data?.ventas ?? (Array.isArray(data) ? data : []);
     all.push(...rows);
     // Si la página vino llena (== limit), asumimos que hay más. Si vino
@@ -112,7 +139,7 @@ export async function fetchVentasItems(desde: string, hasta: string, opts?: { co
   while (true) {
     const params: Record<string, string | number> = { fechaDesde: desde, fechaHasta: hasta, page, limit };
     if (opts?.codEmpresa) params.codEmpresa = opts.codEmpresa;
-    const { data } = await cli.get('/ventas/items', { params });
+    const { data } = await imGetRetry(() => cli.get('/ventas/items', { params }), `ventas/items p${page}`);
     const rows: VentaItem[] = data?.results ?? data?.items ?? (Array.isArray(data) ? data : []);
     all.push(...rows);
     // Estrategia robusta: si la página vino llena (== limit), asumimos que
@@ -151,7 +178,7 @@ export async function fetchArticulosCatalogo(force = false): Promise<Map<number,
   // /articulos/stock devuelve consolidado de las 3 sucursales, 1 fila por
   // (artículo, depósito). Solo necesitamos cod_articulo → cod_rubro, los
   // duplicados se sobrescriben sin problema (todos comparten rubro).
-  const { data } = await cli.get('/articulos/stock');
+  const { data } = await imGetRetry(() => cli.get('/articulos/stock'), 'articulos/stock');
   const rows: any[] = data?.results ?? data?.articulos ?? (Array.isArray(data) ? data : []);
   for (const r of rows) {
     const cod = Number(r.cod_articulo ?? r.cod ?? r.codigo);
@@ -296,7 +323,7 @@ export { getFormaPagoIM as formaPagoUIToIM } from './mediosPago.js';
 export async function fetchComprobPendientes(codEmpresa: number, codCliente?: number): Promise<any[]> {
   const cli = await imClient();
   const params: Record<string, any> = { tag: 'todos', codEmpresa, codCliente: codCliente ?? 0 };
-  const { data } = await cli.get('/reportes/comprob_pendientes_clientes', { params });
+  const { data } = await imGetRetry(() => cli.get('/reportes/comprob_pendientes_clientes', { params }), `comprob_pendientes emp${codEmpresa}`);
   return Array.isArray(data) ? data : (data?.results ?? []);
 }
 
@@ -313,7 +340,7 @@ export async function fetchVendedores(): Promise<Array<{ cod_vendedor: number; n
     return vendedoresCache.data;
   }
   const cli = await imClient();
-  const { data } = await cli.get('/vendedores');
+  const { data } = await imGetRetry(() => cli.get('/vendedores'), 'vendedores');
   const rows = Array.isArray(data) ? data : (data?.results ?? []);
   vendedoresCache = { data: rows, fetchedAt: now };
   return rows;
@@ -331,7 +358,7 @@ export interface PlanCuenta {
 /** Trae el plan de cuentas completo (~316 cuentas). */
 export async function fetchPlanCuentas(): Promise<PlanCuenta[]> {
   const cli = await imClient();
-  const { data } = await cli.get('/planes');
+  const { data } = await imGetRetry(() => cli.get('/planes'), 'planes');
   const rows = Array.isArray(data) ? data : (data?.results ?? []);
   // InfoManager puede usar "id" o "cod_cuenta" según el recurso — normalizo.
   return rows.map((r: any) => ({
@@ -364,7 +391,7 @@ export async function fetchClientesIM(): Promise<ClienteIM[]> {
   const MAX_PAGES = 20; // safety cap: soporta hasta 10k clientes
   const all: any[] = [];
   for (let page = 1; page <= MAX_PAGES; page++) {
-    const { data } = await cli.get('/clientes', { params: { page, limit: PAGE_SIZE } });
+    const { data } = await imGetRetry(() => cli.get('/clientes', { params: { page, limit: PAGE_SIZE } }), `clientes p${page}`);
     const rows = Array.isArray(data) ? data
       : (data?.results ?? data?.clientes ?? data?.data ?? data?.items ?? []);
     if (!rows.length) break;
