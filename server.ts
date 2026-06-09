@@ -22,7 +22,7 @@ import {
 import { hasSupabase, sb, TENANT_ID } from './server-lib/supabase.js';
 import { syncVentasMesActual, syncVentasMeses } from './server-lib/syncVentas.js';
 import { getMonthlyVentasRaw, getMonthlyItemsRaw, snapshotCacheStats } from './server-lib/snapshotCache.js';
-import { fetchArticulosCatalogo } from './server-lib/infomanager.js';
+import { fetchArticulosCatalogo, imGetRetry } from './server-lib/infomanager.js';
 import {
   uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, editarRecibo, cuentasDebug, cuentasRefresh,
   reverificarMP, elegirMatchMP, procesarColaMP
@@ -286,11 +286,14 @@ async function fetchIMData(codEmpresa?: number): Promise<NormalizedData> {
 
     // Fetch comprob_pendientes for requested empresa(s) + vendedores + clients sheet
     const empresas = codEmpresa ? [codEmpresa] : [1]; // Default: solo empresa 1
+    // Retry ante transitorios de IM (timeout/5xx/reset) — el caso documentado del
+    // BI era "body vacío + resets". El Google Sheet (CLIENTS_URL) ya degrada con
+    // .catch, no necesita retry.
     const invoicePromises = empresas.map(e =>
-        axios.get(`${IM_BASE_URL}/reportes/comprob_pendientes_clientes?tag=todos&codCliente=0&codEmpresa=${e}`, { headers, timeout: 60000 })
+        imGetRetry(() => axios.get(`${IM_BASE_URL}/reportes/comprob_pendientes_clientes?tag=todos&codCliente=0&codEmpresa=${e}`, { headers, timeout: 60000 }), `comprob_pendientes emp${e} (/api/data)`)
     );
     const [vendedoresRes, clientsSheetRes, ...invoiceResults] = await Promise.all([
-        axios.get(`${IM_BASE_URL}/vendedores`, { headers, timeout: 15000 }),
+        imGetRetry(() => axios.get(`${IM_BASE_URL}/vendedores`, { headers, timeout: 15000 }), 'vendedores (/api/data)'),
         axios.get(CLIENTS_URL, { responseType: 'text', timeout: 30000, maxRedirects: 10 }).catch(() => null),
         ...invoicePromises,
     ]);

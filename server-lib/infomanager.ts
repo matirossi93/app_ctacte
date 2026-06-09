@@ -45,7 +45,7 @@ export async function imClient(): Promise<AxiosInstance> {
  * de una página paginada tiraba el sync entero. SOLO para GET — NO usar en
  * POST/crearRecibo sin hacerlo idempotente primero.
  */
-async function imGetRetry<T>(fn: () => Promise<T>, label: string, attempts = 3): Promise<T> {
+export async function imGetRetry<T>(fn: () => Promise<T>, label: string, attempts = 3): Promise<T> {
   let lastErr: any;
   for (let intento = 1; intento <= attempts; intento++) {
     try {
