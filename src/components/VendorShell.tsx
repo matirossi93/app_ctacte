@@ -3,7 +3,7 @@ import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
     DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, Settings2, MapPin,
-    Sun, ChevronRight, AlertTriangle, Download, Trash2, Pencil, Bell
+    Sun, ChevronRight, ChevronDown, AlertTriangle, Download, Trash2, Pencil, Bell, Wallet
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser } from '../utils/auth';
 import { RecibosApp } from './RecibosApp';
@@ -374,7 +374,7 @@ export const VendorShell = ({ onLogout }: Props) => {
     // Umbral $2000 para ignorar facturas con saldo despreciable (ajustes contables,
     // redondeos, anuladas parciales). Estas ensucian el maxDias antiguedad si no se filtran.
     const UMBRAL_SALDO_FACTURA = 2000;
-    const clientsAgg = useMemo<ClientAgg[]>(() => {
+    const clientsAggAll = useMemo<ClientAgg[]>(() => {
         const map = new Map<string, ClientAgg>();
         for (const inv of invoices) {
             const cod = inv.COD_CLIENT;
@@ -404,10 +404,21 @@ export const VendorShell = ({ onLogout }: Props) => {
             if (saldo > 0 && dias > c.maxDias) c.maxDias = dias;
             c.invoices.push(inv);
         }
-        return Array.from(map.values())
-            .filter(c => c.totalSaldo > 1000)
-            .sort((a, b) => b.maxDias - a.maxDias);
+        return Array.from(map.values());
     }, [invoices, clientDbMap]);
+
+    // Deudores (saldo neto deudor > umbral) para la vista de cobranzas. Umbral
+    // unificado con el de comprobante ($2000) para no mostrar clientes "fantasma".
+    const clientsAgg = useMemo<ClientAgg[]>(
+        () => clientsAggAll.filter(c => c.totalSaldo > UMBRAL_SALDO_FACTURA).sort((a, b) => b.maxDias - a.maxDias),
+        [clientsAggAll]
+    );
+    // Acreedores: clientes con saldo A FAVOR (crédito neto) — antes invisibles por
+    // el filtro de deudores. El backoffice necesita verlos (acreencias, disputas).
+    const clientesConCredito = useMemo<ClientAgg[]>(
+        () => clientsAggAll.filter(c => c.totalSaldo < -UMBRAL_SALDO_FACTURA).sort((a, b) => a.totalSaldo - b.totalSaldo),
+        [clientsAggAll]
+    );
 
     const buckets = useMemo(() => {
         const b = { reciente: 0, medio: 0, vencido: 0 };
@@ -588,6 +599,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                 {tab === 'cobranzas' && (
                     <CobranzasView
                         clients={clientsFiltered}
+                        clientesConCredito={clientesConCredito}
                         search={search} setSearch={setSearch}
                         bucket={bucket} setBucket={setBucket}
                         buckets={buckets}
@@ -961,9 +973,9 @@ function WidgetTopDeudores({ clients, onOpenClient, onGoToCobranzas }: { clients
 // ═══════════════════════════════════════════════════════════════════════════
 // COBRANZAS VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function CobranzasView({ clients, search, setSearch, bucket, setBucket, buckets, totalSaldo, totalClientes, onUploadPago, lastRefresh, loading, pendingOpenClient, onPendingOpenConsumed }:
+function CobranzasView({ clients, clientesConCredito, search, setSearch, bucket, setBucket, buckets, totalSaldo, totalClientes, onUploadPago, lastRefresh, loading, pendingOpenClient, onPendingOpenConsumed }:
     {
-        clients: ClientAgg[]; search: string; setSearch: (s: string) => void;
+        clients: ClientAgg[]; clientesConCredito: ClientAgg[]; search: string; setSearch: (s: string) => void;
         bucket: 'todos' | 'reciente' | 'medio' | 'vencido'; setBucket: (b: any) => void;
         buckets: { reciente: number; medio: number; vencido: number };
         totalSaldo: number; totalClientes: number;
@@ -974,6 +986,7 @@ function CobranzasView({ clients, search, setSearch, bucket, setBucket, buckets,
         onPendingOpenConsumed?: () => void;
     }) {
     const [openClient, setOpenClient] = useState<string | null>(null);
+    const [showCredito, setShowCredito] = useState(false);
 
     // Si vienen con un cliente pre-seleccionado desde "Hoy", expandirlo y scrollear.
     useEffect(() => {
@@ -1033,6 +1046,28 @@ function CobranzasView({ clients, search, setSearch, bucket, setBucket, buckets,
                         onUploadPago={onUploadPago} />
                 ))}
             </div>
+
+            {clientesConCredito.length > 0 && (
+                <div className="vs-credito">
+                    <button className="vs-credito-head" onClick={() => setShowCredito(s => !s)}>
+                        <span><Wallet size={15} /> {clientesConCredito.length} cliente{clientesConCredito.length > 1 ? 's' : ''} con saldo a favor</span>
+                        <ChevronDown size={16} className={showCredito ? 'is-open' : ''} />
+                    </button>
+                    {showCredito && (
+                        <div className="vs-credito-list">
+                            {clientesConCredito.map(c => (
+                                <div key={c.cod} className="vs-credito-item" data-client-cod={c.cod}>
+                                    <div className="vs-credito-info">
+                                        <strong>{c.name}</strong>
+                                        <span>{c.localidad || 'Sin localidad'} · Cod {c.cod}</span>
+                                    </div>
+                                    <span className="vs-credito-monto">{formatMoney(Math.abs(c.totalSaldo))} a favor</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 }
