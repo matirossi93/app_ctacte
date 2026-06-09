@@ -25,7 +25,7 @@ import { getMonthlyVentasRaw, getMonthlyItemsRaw, snapshotCacheStats } from './s
 import { fetchArticulosCatalogo, imGetRetry } from './server-lib/infomanager.js';
 import {
   uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, editarRecibo, cuentasDebug, cuentasRefresh,
-  reverificarMP, elegirMatchMP, procesarColaMP
+  reverificarMP, elegirMatchMP, procesarColaMP, caducarRecibosPendientes
 } from './server-lib/recibos.js';
 import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot } from './server-lib/goals.js';
 import { listComisiones, probeVenta, comisionesSample, topArticulos, facturasVendedor, diagnoseArticulo } from './server-lib/comisiones.js';
@@ -1294,5 +1294,21 @@ if (hasSupabase()) {
         }
     });
     console.log('Cron push recordatorios: * * * * *');
+}
+
+// ─── Cron: caducar recibos en pendiente_revision >30 días ────────────────────
+// Diario 09:00. Evita que un comprobante quede colgado sin imputar para siempre
+// (plata pagada que nunca se acreditó). Pasa a 'error' con motivo [CADUCADO]
+// claro y reversible para que el admin lo reprocese o descarte.
+if (hasSupabase()) {
+    cron.schedule('0 9 * * *', async () => {
+        try {
+            const r = await caducarRecibosPendientes(30);
+            if (r.caducados > 0) console.log(`[cron caducar recibos] ${r.caducados} recibo(s) caducado(s)`);
+        } catch (err: any) {
+            console.warn(`[cron caducar recibos] fallo: ${err?.message ?? err}`);
+        }
+    });
+    console.log('Cron caducar recibos pendientes: 0 9 * * *');
 }
 

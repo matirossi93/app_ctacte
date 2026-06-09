@@ -223,6 +223,27 @@ export async function uploadRecibo(req: Request & { user?: JwtPayload; file?: an
 const LIST_COLUMNS = 'id,cod_cliente,cod_vendedor,monto,fecha_comprobante,medio_pago,status,foto_url,ocr_confidence,created_at';
 
 /**
+ * Caduca recibos que quedaron en 'pendiente_revision' demasiado tiempo (default
+ * 30 días): los pasa a 'error' con un motivo claro [CADUCADO] para que dejen de
+ * estar colgados invisiblemente (plata que el cliente pagó pero nunca se imputó)
+ * y el admin los reprocese o descarte. Reversible: el recibo sigue en la tabla,
+ * solo cambia de estado. Pensado para correr por cron una vez al día.
+ */
+export async function caducarRecibosPendientes(diasMax = 30): Promise<{ caducados: number; ids: string[] }> {
+  const corte = new Date(Date.now() - diasMax * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await sb().from('comprobantes_pago')
+    .update({ status: 'error', error_msg: `[CADUCADO] Más de ${diasMax} días en pendiente_revisión sin imputar — revisar y reprocesar o descartar.` })
+    .eq('tenant_id', TENANT_ID)
+    .eq('status', 'pendiente_revision')
+    .lt('created_at', corte)
+    .select('id');
+  if (error) { console.warn(`[caducar recibos] error: ${error.message}`); return { caducados: 0, ids: [] }; }
+  const ids = (data ?? []).map((r: any) => String(r.id));
+  if (ids.length) console.log(`[caducar recibos] ${ids.length} recibo(s) en pendiente_revision >${diasMax}d marcados como error: ${ids.join(', ')}`);
+  return { caducados: ids.length, ids };
+}
+
+/**
  * GET /api/recibos — listar
  * Query: status?, cod_cliente?, cod_vendedor?, limit?=50
  * Vendedor solo ve los suyos. admin/gerente ven todo.
