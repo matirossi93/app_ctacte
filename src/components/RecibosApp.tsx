@@ -97,6 +97,19 @@ export const RecibosApp = ({ onClose, clients = [], fullPage = false, onLogout }
         return () => { alive = false; };
     }, []);
 
+    // Estado de la integración MercadoPago (solo backoffice): permite avisar si la
+    // verificación automática de recibos NO está activa (tokens sin cargar/inválidos).
+    const [mpCfg, setMpCfg] = useState<{ activas: number; total: number; cuentas: { cuenta: string; configured: boolean; valid: boolean | null; detail: string }[] } | null>(null);
+    useEffect(() => {
+        if (!isBackoffice) return;
+        let alive = true;
+        fetch('/api/recibos/mp-config', { headers: authHeaders() })
+            .then(r => r.json())
+            .then(j => { if (alive && j.ok) setMpCfg(j); })
+            .catch(() => { /* silencioso */ });
+        return () => { alive = false; };
+    }, [isBackoffice]);
+
     // Merge: maestro + clientes con deuda. Maestro pisa por si trae razón social más actual.
     const mergedClients = useMemo(() => {
         const m = new Map<string, { cod: string; name: string; localidad?: string }>();
@@ -150,6 +163,22 @@ export const RecibosApp = ({ onClose, clients = [], fullPage = false, onLogout }
                 </header>
 
                 <div className="recibos-body">
+                    {view === 'list' && isBackoffice && mpCfg && (
+                        mpCfg.activas === mpCfg.total ? (
+                            <div className="mp-cfg-banner mp-cfg-banner--ok">
+                                ✓ MercadoPago activo — verificación automática en {mpCfg.activas}/{mpCfg.total} cuentas
+                            </div>
+                        ) : (
+                            <div className="mp-cfg-banner mp-cfg-banner--warn">
+                                <strong>⚠️ MercadoPago: {mpCfg.activas}/{mpCfg.total} cuentas activas.</strong> Los recibos de MercadoPago no se verifican solos hasta cargar los tokens en EasyPanel.
+                                <ul>
+                                    {mpCfg.cuentas.map(c => (
+                                        <li key={c.cuenta}>{c.cuenta.replace('_', ' ')}: {c.valid === true ? '✓ ' : c.configured ? '✗ ' : '— '}{c.detail}</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )
+                    )}
                     {view === 'list' && (
                         <RecibosList
                             isBackoffice={!!isBackoffice}

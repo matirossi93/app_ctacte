@@ -6,7 +6,7 @@ import { ocrRecibo } from './ocrRecibo.js';
 import { crearRecibo, fetchComprobPendientes, fetchClientesIMCached, type ReciboPago, type ReciboComprobante } from './infomanager.js';
 import { getFormaPagoIM, isValidMedio } from './mediosPago.js';
 import { resolveCuentaCod, debugCuentasResolver, invalidateCuentasCache } from './cuentasResolver.js';
-import { buscarPagoEnMP, todayISO_AR, type MPMatch, type MPCuenta } from './mercadopago.js';
+import { buscarPagoEnMP, todayISO_AR, mpConfigStatus, type MPMatch, type MPCuenta } from './mercadopago.js';
 import { ajustarImputacionIM } from './recibosImputacion.js';
 import type { JwtPayload } from './auth.js';
 
@@ -241,6 +241,24 @@ export async function caducarRecibosPendientes(diasMax = 30): Promise<{ caducado
   const ids = (data ?? []).map((r: any) => String(r.id));
   if (ids.length) console.log(`[caducar recibos] ${ids.length} recibo(s) en pendiente_revision >${diasMax}d marcados como error: ${ids.join(', ')}`);
   return { caducados: ids.length, ids };
+}
+
+/**
+ * GET /api/recibos/mp-config — estado de configuración de MercadoPago (admin).
+ * Le permite al backoffice ver si la verificación automática está activa y
+ * qué cuentas tienen token válido, en vez de descubrirlo por prueba y error.
+ */
+export async function mpConfig(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    const force = req.query.force === '1';
+    const cuentas = await mpConfigStatus(force);
+    const activas = cuentas.filter(c => c.valid === true).length;
+    res.json({ ok: true, activas, total: cuentas.length, cuentas });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
 }
 
 /**

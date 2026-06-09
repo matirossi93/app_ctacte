@@ -337,6 +337,17 @@
 [data-theme="dark"] .rec-approval { border-top-color: rgba(240,223,203,.15) }
 
 /* MP verification badge */
+/* Banner de estado de la integración MercadoPago (backoffice) */
+.mp-cfg-banner {
+    margin: 0 0 14px; padding: 11px 14px; border-radius: 10px;
+    font-size: 13px; line-height: 1.45; border: 1px solid;
+}
+.mp-cfg-banner--ok { background: #F1F8F3; border-color: #BCE0C7; color: #03481F; font-weight: 600; }
+.mp-cfg-banner--warn { background: #FFF6E5; border-color: #F0D08A; color: #6b4e10; }
+.mp-cfg-banner--warn strong { display: block; margin-bottom: 4px; }
+.mp-cfg-banner--warn ul { margin: 6px 0 0; padding-left: 18px; }
+.mp-cfg-banner--warn li { text-transform: capitalize; }
+
 .mp-badge {
     margin-top: 12px;
     padding: 10px 12px;

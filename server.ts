@@ -25,7 +25,7 @@ import { getMonthlyVentasRaw, getMonthlyItemsRaw, snapshotCacheStats } from './s
 import { fetchArticulosCatalogo, imGetRetry } from './server-lib/infomanager.js';
 import {
   uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, editarRecibo, cuentasDebug, cuentasRefresh,
-  reverificarMP, elegirMatchMP, procesarColaMP, caducarRecibosPendientes
+  reverificarMP, elegirMatchMP, procesarColaMP, caducarRecibosPendientes, mpConfig
 } from './server-lib/recibos.js';
 import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot } from './server-lib/goals.js';
 import { listComisiones, probeVenta, comisionesSample, topArticulos, facturasVendedor, diagnoseArticulo } from './server-lib/comisiones.js';
@@ -578,6 +578,8 @@ function cleanupUploadedFile(req: express.Request, res: express.Response, next: 
 
 app.post('/api/recibos/upload', requireJwt, upload.single('foto'), cleanupUploadedFile, (req: any, res) => uploadRecibo(req, res));
 app.get('/api/recibos', requireJwt, (req: any, res) => listRecibos(req, res));
+// IMPORTANTE: antes de /api/recibos/:id para que ":id" no capture "mp-config".
+app.get('/api/recibos/mp-config', requireJwt, (req: any, res) => mpConfig(req, res));
 app.get('/api/recibos/:id', requireJwt, (req: any, res) => getReciboById(req, res));
 app.get('/api/recibos/:id/facturas-candidatas', requireJwt, (req: any, res) => facturasCandidatas(req, res));
 app.post('/api/recibos/:id/aprobar', requireJwt, (req: any, res) => aprobarRecibo(req, res));

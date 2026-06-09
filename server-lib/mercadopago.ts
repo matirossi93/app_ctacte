@@ -99,3 +99,34 @@ export function todayISO_AR(): string {
 export function hasAnyMPToken(): boolean {
   return !!(E.MP_TOKEN_PRINCIPAL || E.MP_TOKEN_RECAUDADORA_1 || E.MP_TOKEN_RECAUDADORA_2);
 }
+
+// ─── Diagnóstico de configuración ────────────────────────────────────────────
+// Reporta, por cuenta, si hay token y si es válido (ping a /users/me). Permite
+// que la UI avise "MercadoPago no configurado / inválido" en vez de marcar los
+// recibos como "no encontrado" silenciosamente. Cacheado 5 min (no martillar MP).
+export interface MPCuentaStatus { cuenta: MPCuenta; configured: boolean; valid: boolean | null; detail: string }
+
+let _mpStatusCache: { data: MPCuentaStatus[]; at: number } | null = null;
+const MP_STATUS_TTL = 5 * 60 * 1000;
+
+export async function mpConfigStatus(force = false): Promise<MPCuentaStatus[]> {
+  const now = Date.now();
+  if (!force && _mpStatusCache && (now - _mpStatusCache.at) < MP_STATUS_TTL) return _mpStatusCache.data;
+  const cuentas: MPCuenta[] = ['principal', 'recaudadora_1', 'recaudadora_2'];
+  const data = await Promise.all(cuentas.map(async (cuenta): Promise<MPCuentaStatus> => {
+    const token = getToken(cuenta);
+    if (!token) return { cuenta, configured: false, valid: null, detail: 'sin token' };
+    try {
+      const { data } = await axios.get(`${MP_API}/users/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 8000,
+      });
+      return { cuenta, configured: true, valid: true, detail: data?.nickname ? `@${data.nickname}` : 'token válido' };
+    } catch (err: any) {
+      const status = err?.response?.status;
+      return { cuenta, configured: true, valid: false, detail: status === 401 ? 'token inválido o expirado' : `error ${status ?? err?.code ?? 'desconocido'}` };
+    }
+  }));
+  _mpStatusCache = { data, at: now };
+  return data;
+}
