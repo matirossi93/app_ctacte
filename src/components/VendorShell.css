@@ -398,6 +398,12 @@
 .vs-tl-amount { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums }
 .vs-tl-meta { font-size: 10.5px; color: #6e7670; margin-top: 2px }
 .vs-tl-more { font-size: 11px; color: #6e7670; padding: 8px 0 0; text-align: center; font-style: italic }
+.vs-estado-cuenta {
+    width: 100%; margin-top: 12px; display: flex; align-items: center; justify-content: center;
+    gap: 7px; padding: 11px; border: none; border-radius: 14px; cursor: pointer;
+    background: #06652F; color: #fff; font-size: .85rem; font-weight: 600;
+}
+.vs-estado-cuenta:active { background: #054f25 }
 
 /* Hero goal (Objetivos tab) */
 .vs-hero-goal {

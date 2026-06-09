@@ -3,7 +3,7 @@ import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
     DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, Settings2, MapPin,
-    Sun, ChevronRight, ChevronDown, AlertTriangle, Download, Trash2, Pencil, Bell, Wallet
+    Sun, ChevronRight, ChevronDown, AlertTriangle, Download, Trash2, Pencil, Bell, Wallet, Send
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser } from '../utils/auth';
 import { RecibosApp } from './RecibosApp';
@@ -1146,6 +1146,9 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
                     {client.invoices.length > 12 && (
                         <div className="vs-tl-more">+ {client.invoices.length - 12} comprobantes más</div>
                     )}
+                    <button className="vs-estado-cuenta" onClick={e => { e.stopPropagation(); enviarEstadoCuenta(client); }}>
+                        <Send size={14} /> Enviar estado de cuenta por WhatsApp
+                    </button>
                 </div>
             )}
         </div>
@@ -2401,6 +2404,44 @@ function telHref(raw: string | null | undefined): string | null {
 function waHref(raw: string | null | undefined): string | null {
     const n = normalizeArgPhone(raw);
     return n ? `https://wa.me/549${n}` : null;
+}
+
+// Texto del estado de cuenta de un cliente, listo para mandar por WhatsApp como
+// respaldo del reclamo de cobranza. Reusa los datos ya cargados (sin pegada extra).
+function buildEstadoCuentaTexto(client: ClientAgg): string {
+    const hoy = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const lineas = [...client.invoices]
+        .sort((a, b) => (Number(b.DIAS_EMISI) || 0) - (Number(a.DIAS_EMISI) || 0))
+        .slice(0, 30)
+        .map(inv => `• ${inv.TIPO_COMPR} ${inv.NUMERO} — ${inv.FECHA} — ${formatMoney(inv.SALDO)} (${inv.DIAS_EMISI}d)`);
+    return [
+        '🌱 *Semillero El Manantial*',
+        `Estado de cuenta — ${client.name} (Cod ${client.cod})`,
+        hoy,
+        '',
+        'Comprobantes pendientes:',
+        ...lineas,
+        '',
+        `*Total adeudado: ${formatMoney(client.totalSaldo)}*`,
+        '',
+        'Ante cualquier duda, escribinos. ¡Gracias! 🌱',
+    ].join('\n');
+}
+
+// Abre WhatsApp del cliente con el estado de cuenta pre-cargado. Si no hay
+// teléfono, usa el share sheet nativo (mobile) o wa.me genérico para elegir.
+function enviarEstadoCuenta(client: ClientAgg): void {
+    const texto = buildEstadoCuentaTexto(client);
+    const base = waHref(client.db?.whatsapp ?? client.db?.telefono);
+    if (base) {
+        window.open(`${base}?text=${encodeURIComponent(texto)}`, '_blank');
+        return;
+    }
+    if (typeof navigator !== 'undefined' && navigator.share) {
+        navigator.share({ text: texto }).catch(() => { /* cancelado */ });
+        return;
+    }
+    window.open(`https://wa.me/?text=${encodeURIComponent(texto)}`, '_blank');
 }
 
 function TopProductosCliente({ topImporte, topFrecuencia }: { topImporte: HistorialItemAgregado[]; topFrecuencia: HistorialItemAgregado[] }) {
