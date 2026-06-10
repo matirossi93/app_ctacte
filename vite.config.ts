@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -11,5 +12,10 @@ export default defineConfig({
         changeOrigin: true
       }
     }
-  }
+  },
+  test: {
+    // tests/ contiene specs de Playwright (E2E) — vitest no debe levantarlos.
+    // Los unitarios viven junto al código (server-lib/*.test.ts, src/**).
+    exclude: ['tests/**', 'node_modules/**', 'dist/**', 'dist-server/**'],
+  },
 })
