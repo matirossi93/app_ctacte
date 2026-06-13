@@ -27,7 +27,7 @@ import {
   uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, editarRecibo, cuentasDebug, cuentasRefresh,
   reverificarMP, elegirMatchMP, procesarColaMP, caducarRecibosPendientes, mpConfig
 } from './server-lib/recibos.js';
-import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot } from './server-lib/goals.js';
+import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot, botGoals } from './server-lib/goals.js';
 import { listComisiones, probeVenta, comisionesSample, topArticulos, facturasVendedor, diagnoseArticulo } from './server-lib/comisiones.js';
 import { listOverrides, addOverride, deleteOverride } from './server-lib/comisionOverrides.js';
 import { listClientesLookup } from './server-lib/clientes.js';
@@ -948,6 +948,10 @@ function requireBotToken(req: express.Request, res: express.Response, next: expr
   res.status(401).json({ error: 'Token inválido o ausente' });
 }
 // Accepts optional ?rate=0.10 query param (default 10%)
+// Objetivo/avance del mes de UN vendedor (Amira modo equipo). Gating estructural:
+// el cod_vendedor lo resuelve Amira desde el número remitente, nunca del prompt.
+app.get('/api/bot/goals', requireBotToken, (req: express.Request, res: express.Response) => botGoals(req, res));
+
 app.get('/api/bot', requireBotToken, async (req: express.Request, res: express.Response) => {
     try {
         const interestRate = Math.min(1, Math.max(0, parseFloat(req.query.rate as string) || 0.10));

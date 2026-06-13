@@ -84,24 +84,13 @@ export interface GoalItem {
  * Vendedor: solo el suyo.
  * Si year/month no se pasan, usa mes actual.
  */
-export async function listGoals(req: Request & { user?: JwtPayload }, res: Response) {
-  try {
-    if (!hasSupabase()) { res.status(500).json({ error: 'Supabase no configurado' }); return; }
-    const user = req.user!;
+/**
+ * Núcleo compartido: computa los GoalItem de TODOS los vendedores (sin filtrar por rol).
+ * Lo usan listGoals (panel, filtra por rol via JWT) y botGoals (Amira, filtra por cod).
+ * Single source of truth: la cifra de Amira coincide 1:1 con la del panel.
+ */
+async function computeGoalItems(year: number, month: number, incluirInactivos: boolean) {
     const t = today();
-    const year = Number(req.query.year) || t.year;
-    const month = Number(req.query.month) || t.month;
-
-    // Cache hit: el response final ya está armado para esta combinación
-    // (year, month, rol, cod_vendedor opcional, incluir_inactivos). TTL 3min.
-    const cacheKey = `goals:${year}-${month}:${user.rol}:${user.cod_vendedor ?? ''}:${req.query.incluir_inactivos ?? ''}`;
-    const cached = getResponseCached(cacheKey);
-    if (cached) {
-      res.setHeader('X-Cache', 'HIT');
-      res.json(cached);
-      return;
-    }
-
     // Fetch goals + ventas caches + vendedores IM + month_config en paralelo
     const [goalsRes, salesRes, vendedoresIM, monthCfgRes] = await Promise.all([
       sb().from('vendor_goals').select('cod_vendedor, target_neto, dias_habiles, set_by, updated_at').eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month),
@@ -110,8 +99,8 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
       sb().from('month_config').select('dias_habiles, holidays').eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month).maybeSingle()
     ]);
 
-    if (goalsRes.error) { res.status(500).json({ error: `goals: ${goalsRes.error.message}` }); return; }
-    if (salesRes.error) { res.status(500).json({ error: `sales: ${salesRes.error.message}` }); return; }
+    if (goalsRes.error) throw new Error(`goals: ${goalsRes.error.message}`);
+    if (salesRes.error) throw new Error(`sales: ${salesRes.error.message}`);
 
     // Traer usuarios con cod_vendedor + email para tags visuales + flag activo.
     const { data: usuariosRows } = await sb().from('usuarios')
@@ -145,7 +134,6 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
 
     const COD_VENDEDORES_VISIBLES = COD_VENDEDORES_VISIBLES_SHARED;
 
-    const incluirInactivos = String(req.query.incluir_inactivos ?? '') === 'true';
     const vendedoresValidos = (vendedoresIM ?? []).filter((v: any) => {
       const n = String(v?.nombre ?? '').toUpperCase();
       if (n.includes('SUCURSAL') || n.includes('CONSUMO')) return false;
@@ -188,6 +176,29 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
         goal_updated_at: goal?.updated_at ?? null,
       };
     });
+    return { items, isCurrentMonth, diasTotal, diasAuto, diasConFeriados, diasTrans, diasRestantes, holidays, cfg };
+}
+
+export async function listGoals(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    if (!hasSupabase()) { res.status(500).json({ error: 'Supabase no configurado' }); return; }
+    const user = req.user!;
+    const t = today();
+    const year = Number(req.query.year) || t.year;
+    const month = Number(req.query.month) || t.month;
+
+    // Cache hit: el response final ya está armado para esta combinación
+    // (year, month, rol, cod_vendedor opcional, incluir_inactivos). TTL 3min.
+    const cacheKey = `goals:${year}-${month}:${user.rol}:${user.cod_vendedor ?? ''}:${req.query.incluir_inactivos ?? ''}`;
+    const cached = getResponseCached(cacheKey);
+    if (cached) {
+      res.setHeader('X-Cache', 'HIT');
+      res.json(cached);
+      return;
+    }
+
+    const incluirInactivos = String(req.query.incluir_inactivos ?? '') === 'true';
+    const { items, isCurrentMonth, diasTotal, diasAuto, diasConFeriados, diasTrans, diasRestantes, holidays, cfg } = await computeGoalItems(year, month, incluirInactivos);
 
     // Filtrar por rol
     const visible = user.rol === 'vendedor'
@@ -232,6 +243,40 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
   } catch (err: any) {
     console.error('listGoals error:', err);
     res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
+ * GET /api/bot/goals?cod_vendedor=N[&year=&month=]
+ * Consumido por Amira (modo equipo) para "¿cómo vengo este mes?".
+ * Auth: requireBotToken. Devuelve SOLO el vendedor pedido — gating estructural:
+ * el cod sale del número remitente que resuelve Amira, nunca del prompt del usuario.
+ */
+export async function botGoals(req: Request, res: Response) {
+  try {
+    if (!hasSupabase()) { res.status(500).json({ ok: false, error: 'Supabase no configurado' }); return; }
+    const cod = Number(req.query.cod_vendedor);
+    if (!cod || !Number.isFinite(cod)) { res.status(400).json({ ok: false, error: 'cod_vendedor requerido' }); return; }
+    const t = today();
+    const year = Number(req.query.year) || t.year;
+    const month = Number(req.query.month) || t.month;
+    const cacheKey = `goals-bot:${year}-${month}:${cod}`;
+    const cached = getResponseCached(cacheKey);
+    if (cached) { res.setHeader('X-Cache', 'HIT'); res.json(cached); return; }
+    const { items, isCurrentMonth, diasTotal, diasTrans, diasRestantes } = await computeGoalItems(year, month, false);
+    const item = items.find(it => it.cod_vendedor === cod);
+    if (!item) { res.status(404).json({ ok: false, error: 'vendedor sin datos para ese período' }); return; }
+    const body = {
+      ok: true, year, month, is_historic: !isCurrentMonth,
+      dias_habiles_total: diasTotal, dias_habiles_transcurridos: diasTrans, dias_restantes: diasRestantes,
+      item,
+    };
+    setResponseCached(cacheKey, body);
+    res.setHeader('X-Cache', 'MISS');
+    res.json(body);
+  } catch (err: any) {
+    console.error('botGoals error:', err);
+    res.status(500).json({ ok: false, error: err?.message ?? 'error' });
   }
 }
 
