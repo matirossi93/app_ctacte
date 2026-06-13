@@ -1,0 +1,71 @@
+name: CI
+
+# Corre el mismo pipeline que el deploy de EasyPanel (build del front + del server + tests)
+# en cada push a main y en cada PR contra main. Es el gate que faltaba: el PR #14
+# se mergeó roto porque validó `npm test` pero nunca `npm run build` (tsc -b reventaba).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Si llega un push/PR nuevo, cancela el run viejo del mismo ref (ahorra minutos).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Mínimo privilegio: el CI solo necesita leer el repo.
+permissions:
+  contents: read
+
+jobs:
+  # Gate bloqueante: si esto falla, el deploy también fallaría. Marcar como required
+  # en Branch protection (Settings → Branches → main).
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15 # el pipeline real corre en 2-4 min; techo para que un cuelgue no facture 6h
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22 # calza con el Dockerfile (node:22-alpine)
+          cache: npm
+
+      - name: Install deps (npm ci)
+        run: npm ci
+
+      - name: Build front (tsc -b && vite build)
+        run: npm run build
+
+      - name: Build server (tsc -p tsconfig.server.json)
+        run: npm run build:server
+
+      - name: Tests (vitest run)
+        run: npm test
+
+  # Job informativo: NO bloquea el merge (hoy hay ~500 errores de eslint, casi todo
+  # no-explicit-any). Da visibilidad para ir limpiándolo. NO marcar como required.
+  lint:
+    name: Lint (informativo)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install deps (npm ci)
+        run: npm ci
+
+      - name: Lint (eslint)
+        run: npm run lint
