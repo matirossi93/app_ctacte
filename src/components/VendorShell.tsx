@@ -2391,7 +2391,10 @@ function normalizeArgPhone(raw: string | null | undefined): string | null {
     if (digits.startsWith('9') && digits.length === 11) digits = digits.slice(1);
     if (digits.startsWith('15') && digits.length === 9) digits = '381' + digits.slice(2);
     else if (digits.startsWith('15') && digits.length >= 10) digits = digits.slice(2);
-    digits = digits.replace(/^(\d{2,4})15(\d{6,8})$/, '$1$2');
+    // El "15" intermedio solo se saca si SOBRAN dígitos (>=12). Sin este guard, un
+    // celular de Tucumán "3815XXXXXX" (área 381 + número que arranca en 5) se leería
+    // como 38·15·XXXXXX y quedaría en 8 dígitos → rechazado. Pasaba con ~200 clientes.
+    if (digits.length >= 12) digits = digits.replace(/^(\d{2,4})15(\d{6,8})$/, '$1$2');
     if (digits.length < 10 || digits.length > 11) return null;
     return digits;
 }
