@@ -16,6 +16,7 @@ import { HistoricBanner } from './HistoricBanner';
 import { PrintAvanceView } from './PrintAvanceView';
 import { ComisionesView } from './ComisionesView';
 import { ensurePushSubscription } from '../utils/webPush';
+import { telHref, waHref } from '../utils/phone';
 import './VendorShell.css';
 
 const VIEW_PERIOD_KEY = 'vs_view_period';
@@ -2374,40 +2375,7 @@ function monthName(m: number): string {
     return ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'][m - 1];
 }
 
-// Normaliza un número argentino a 10 u 11 dígitos locales (área + número), manejando:
-// - Múltiples números separados por / , ; | " y " " ó " → toma el primero.
-// - 0 inicial (ej. "0381"), prefijo país "+54", prefijo móvil internacional "9".
-// - "15" prefix viejo sin código área → asume Tucumán (381). Con código área → lo quita.
-// - "15" intermedio (ej. "381 15 4161064") → lo saca.
-// Retorna null si no llega a 10-11 dígitos válidos.
-function normalizeArgPhone(raw: string | null | undefined): string | null {
-    if (!raw) return null;
-    const parts = String(raw).split(/[\/;|,]|\sy\s|\só\s/i).map(s => s.trim()).filter(Boolean);
-    if (parts.length === 0) return null;
-    let digits = parts[0].replace(/\D/g, '');
-    if (!digits) return null;
-    if (digits.startsWith('0') && digits.length >= 11) digits = digits.slice(1);
-    if (digits.startsWith('54') && digits.length >= 12) digits = digits.slice(2);
-    if (digits.startsWith('9') && digits.length === 11) digits = digits.slice(1);
-    if (digits.startsWith('15') && digits.length === 9) digits = '381' + digits.slice(2);
-    else if (digits.startsWith('15') && digits.length >= 10) digits = digits.slice(2);
-    // El "15" intermedio solo se saca si SOBRAN dígitos (>=12). Sin este guard, un
-    // celular de Tucumán "3815XXXXXX" (área 381 + número que arranca en 5) se leería
-    // como 38·15·XXXXXX y quedaría en 8 dígitos → rechazado. Pasaba con ~200 clientes.
-    if (digits.length >= 12) digits = digits.replace(/^(\d{2,4})15(\d{6,8})$/, '$1$2');
-    if (digits.length < 10 || digits.length > 11) return null;
-    return digits;
-}
-
-function telHref(raw: string | null | undefined): string | null {
-    const n = normalizeArgPhone(raw);
-    return n ? `tel:+54${n}` : null;
-}
-
-function waHref(raw: string | null | undefined): string | null {
-    const n = normalizeArgPhone(raw);
-    return n ? `https://wa.me/549${n}` : null;
-}
+// normalizeArgPhone / telHref / waHref → movidas a src/utils/phone.ts (con tests).
 
 // Texto del estado de cuenta de un cliente, listo para mandar por WhatsApp como
 // respaldo del reclamo de cobranza. Reusa los datos ya cargados (sin pegada extra).
