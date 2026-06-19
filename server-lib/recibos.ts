@@ -274,11 +274,16 @@ export async function listRecibos(req: Request & { user?: JwtPayload }, res: Res
     if (req.query.status) q = q.eq('status', String(req.query.status));
     if (req.query.cod_cliente) q = q.eq('cod_cliente', Number(req.query.cod_cliente));
     if (req.query.cod_vendedor && user.rol !== 'vendedor') q = q.eq('cod_vendedor', Number(req.query.cod_vendedor));
-    // Default 200 (max). Antes era 30 y los recibos más viejos del mes
-    // desaparecían cuando se acumulaban nuevos. 200 cubre 1-2 meses de
-    // carga típica del equipo; si en el futuro hay más, agregar paginación
-    // o filtro por rango de fecha.
-    const limit = Math.min(Number(req.query.limit) || 200, 500);
+    // Ventana temporal: por default el último mes (30 días). Antes se cortaba
+    // SOLO por cantidad (limit 200) y, al crecer el volumen de carga del equipo,
+    // eso terminó mostrando ~2 semanas. Filtramos por created_at para que la
+    // ventana sea estable en el tiempo sin importar cuántos se carguen.
+    // Parametrizable con ?dias= (1-120) por si se necesita ver más hacia atrás.
+    const dias = Math.min(Math.max(Number(req.query.dias) || 30, 1), 120);
+    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
+    q = q.gte('created_at', desde);
+    // limit como tope de seguridad (un mes de carga entra holgado en 500).
+    const limit = Math.min(Number(req.query.limit) || 500, 500);
     q = q.order('created_at', { ascending: false }).limit(limit);
     const { data, error } = await q;
     if (error) { res.status(500).json({ error: error.message }); return; }
