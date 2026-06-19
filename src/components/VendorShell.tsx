@@ -16,7 +16,7 @@ import { HistoricBanner } from './HistoricBanner';
 import { PrintAvanceView } from './PrintAvanceView';
 import { ComisionesView } from './ComisionesView';
 import { ensurePushSubscription } from '../utils/webPush';
-import { telHref, waHref, phoneStatus, looksLikeLandline } from '../utils/phone';
+import { telHref, waHref, phoneStatus } from '../utils/phone';
 import './VendorShell.css';
 
 const VIEW_PERIOD_KEY = 'vs_view_period';
@@ -1082,7 +1082,6 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
     const waRaw = db.whatsapp ?? db.telefono; // IM no separa celular del fijo: cae al teléfono
     const wa = waHref(waRaw);
     const waStatus = phoneStatus(waRaw);
-    const waMaybeLandline = !!wa && looksLikeLandline(waRaw);
 
     return (
         <div className={`vs-client ${isOpen ? 'is-open' : ''}`} data-client-cod={client.cod}>
@@ -1120,10 +1119,9 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
                    href={wa ?? undefined}
                    target={wa ? '_blank' : undefined} rel="noreferrer"
                    onClick={e => { e.stopPropagation(); if (!wa) e.preventDefault(); }}
-                   title={wa
-                       ? (waMaybeLandline ? `Parece un fijo (${waRaw}): puede no tener WhatsApp` : 'WhatsApp')
+                   title={wa ? 'WhatsApp'
                        : (waStatus === 'invalid' ? `Teléfono mal cargado en IM: ${waRaw}` : 'Sin teléfono en InfoManager')}>
-                    <MessageSquare size={18} /><span>WhatsApp{waMaybeLandline && <AlertTriangle size={11} style={{ marginLeft: 3, color: '#f59e0b', verticalAlign: 'middle' }} />}</span>
+                    <MessageSquare size={18} /><span>WhatsApp</span>
                 </a>
                 <button className="vs-qa note" onClick={e => { e.stopPropagation(); window.dispatchEvent(new CustomEvent('vs-open-activity', { detail: { cod_cliente: client.cod, name: client.name } })); }}>
                     <FileText size={18} /><span>Nota</span>

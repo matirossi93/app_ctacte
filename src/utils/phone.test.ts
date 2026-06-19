@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeArgPhone, telHref, waHref, phoneStatus, looksLikeLandline } from './phone';
+import { normalizeArgPhone, telHref, waHref, phoneStatus } from './phone';
 
 describe('normalizeArgPhone', () => {
   // ── REGRESIÓN: el bug que dejó ~200 botones de contacto muertos ──────────
@@ -69,20 +69,6 @@ describe('phoneStatus', () => {
     expect(phoneStatus('   ')).toBe('missing');
     expect(phoneStatus(null)).toBe('missing');
     expect(phoneStatus(undefined)).toBe('missing');
-  });
-});
-
-describe('looksLikeLandline', () => {
-  it('marca el fijo capital 381-4XXXXXX', () => {
-    expect(looksLikeLandline('3814254600')).toBe(true);
-    expect(looksLikeLandline('0381 4254600')).toBe(true);
-  });
-  it('NO marca celulares (381-5/6) ni interior ni vacío', () => {
-    expect(looksLikeLandline('3815424600')).toBe(false); // celular capital
-    expect(looksLikeLandline('3816696066')).toBe(false); // celular capital
-    expect(looksLikeLandline('3865123456')).toBe(false); // interior
-    expect(looksLikeLandline('')).toBe(false);
-    expect(looksLikeLandline(null)).toBe(false);
   });
 });
 
