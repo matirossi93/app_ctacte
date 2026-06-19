@@ -45,13 +45,3 @@ export function phoneStatus(raw: string | null | undefined): 'ok' | 'invalid' | 
     if (!raw || !String(raw).trim()) return 'missing';
     return normalizeArgPhone(raw) ? 'ok' : 'invalid';
 }
-
-// Heurística CONSERVADORA: ¿el número parece un fijo de capital de Tucumán?
-// Solo marca el patrón inequívoco 381-4XXXXXX (fijos capital arrancan en 4; los
-// móviles en 5/6). Deliberadamente NO marca interior ni otros patrones para no
-// degradar por error el botón de WhatsApp de un celular válido. InfoManager no
-// separa fijo/celular, así que esto sirve solo para ADVERTIR, nunca para bloquear.
-export function looksLikeLandline(raw: string | null | undefined): boolean {
-    const n = normalizeArgPhone(raw);
-    return n ? /^3814\d{6}$/.test(n) : false;
-}
