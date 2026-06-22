@@ -235,7 +235,7 @@ const vendorLabel = (cod: number): string => VENDOR_NAMES[cod] ?? `Vendedor #${c
 function RecibosList({ isBackoffice, viewAll, clientNameByCod, onOpenDetail, onUpload }: { isBackoffice: boolean; viewAll: boolean; clientNameByCod: Map<string, string>; onOpenDetail: (id: string) => void; onUpload: () => void }) {
     const [items, setItems] = useState<ReciboRow[]>([]);
     const [loading, setLoading] = useState(true);
-    const [filter, setFilter] = useState<'pendiente_revision' | 'todos' | 'imputado' | 'rechazado'>(isBackoffice ? 'pendiente_revision' : 'todos');
+    const [filter, setFilter] = useState<'pendiente_revision' | 'todos' | 'imputado' | 'rechazado' | 'aprobado'>(isBackoffice ? 'pendiente_revision' : 'todos');
     const [vendorFilter, setVendorFilter] = useState<'all' | string>('all');
     const [search, setSearch] = useState('');
     const [err, setErr] = useState<string | null>(null);
@@ -280,7 +280,7 @@ function RecibosList({ isBackoffice, viewAll, clientNameByCod, onOpenDetail, onU
         <div className="rec-list">
             <div className="rec-filter-bar">
                 {(isBackoffice
-                    ? ['pendiente_revision', 'imputado', 'rechazado', 'todos']
+                    ? ['pendiente_revision', 'aprobado', 'imputado', 'rechazado', 'todos']
                     : ['todos', 'pendiente_revision', 'imputado', 'rechazado']
                 ).map(f => (
                     <button key={f}
@@ -720,6 +720,8 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, clients, onBack }: {
     const [medioFinal, setMedioFinal] = useState('');
     const [motivoRechazo, setMotivoRechazo] = useState('');
     const [esAnticipo, setEsAnticipo] = useState(false);
+    const [cuentasEfectivo, setCuentasEfectivo] = useState<Array<{ cod_cuenta: string; nombre: string; es_default: boolean }>>([]);
+    const [cuentaEfectivoSel, setCuentaEfectivoSel] = useState('');
     const [busy, setBusy] = useState(false);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
     const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -827,6 +829,26 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, clients, onBack }: {
     };
     useEffect(() => { if (isBackoffice && rec) loadFacturas(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [rec?.id, codEmpresa]);
 
+    // Cajas de efectivo: se cargan una vez cuando el backoffice abre un recibo en
+    // efectivo, para poder elegir a qué caja entra la plata (Casa Central, Caja
+    // Chica 2, etc.). Sólo aplica a medio 'efectivo' (no anticipo).
+    useEffect(() => {
+        if (!isBackoffice || esAnticipo || medioFinal !== 'efectivo') return;
+        if (cuentasEfectivo.length > 0) return; // ya cargadas
+        (async () => {
+            try {
+                const res = await fetch('/api/cuentas/efectivo', { headers: authHeaders() });
+                const data = await res.json();
+                const list = (data.cuentas ?? []) as Array<{ cod_cuenta: string; nombre: string; es_default: boolean }>;
+                setCuentasEfectivo(list);
+                if (!cuentaEfectivoSel) {
+                    const def = list.find(c => c.es_default) ?? list[0];
+                    if (def) setCuentaEfectivoSel(def.cod_cuenta);
+                }
+            } catch { /* si falla, el backend cae a la caja por defecto */ }
+        })();
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [isBackoffice, esAnticipo, medioFinal]);
+
     const toggleFactura = (f: FacturaCandidata) => {
         const key = String(f.id);
         setSelFacturas(prev => {
@@ -878,6 +900,10 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, clients, onBack }: {
                 : Object.entries(selFacturas).map(([id, importe]) => ({
                     id, importe_a_pagar: Number(importe)
                 }));
+            // Cuenta de efectivo elegida: solo se manda para medio efectivo (no anticipo).
+            const codCuenta = (!esAnticipo && medioFinal === 'efectivo' && cuentaEfectivoSel)
+                ? cuentaEfectivoSel
+                : undefined;
             const res = await fetch(`/api/recibos/${rec.id}/aprobar`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -888,6 +914,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, clients, onBack }: {
                     cod_empresa: codEmpresa,
                     comprobantes: comprobantesPayload,
                     es_anticipo: esAnticipo,
+                    ...(codCuenta ? { cod_cuenta: codCuenta } : {}),
                 })
             });
             const data = await parseRes(res);
@@ -895,8 +922,13 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, clients, onBack }: {
                 setMsg({ kind: 'err', text: `Error: ${data.error}${data.raw ? ' — ' + JSON.stringify(data.raw).slice(0, 200) : ''}` });
                 return;
             }
-            setMsg({ kind: 'ok', text: `Imputado. Recibo InfoManager: ${data.recibo_id ?? '(sin id)'}` });
-            setTimeout(onBack, 1800);
+            setMsg({
+                kind: 'ok',
+                text: data.anticipo
+                    ? (data.mensaje ?? 'Anticipo registrado. Cargalo a mano en IM.')
+                    : `Imputado. Recibo InfoManager: ${data.recibo_id ?? '(sin id)'}`,
+            });
+            setTimeout(onBack, data.anticipo ? 3200 : 1800);
         } catch (e: any) { setMsg({ kind: 'err', text: e.message }); }
         finally { setBusy(false); }
     };
@@ -1038,7 +1070,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, clients, onBack }: {
                                 <input type="checkbox" checked={esAnticipo} onChange={e => setEsAnticipo(e.target.checked)} />
                                 <div>
                                     <strong>Es anticipo de cliente (sin factura)</strong>
-                                    <span>Se imputa a la cuenta 2124000 — Anticipo de clientes.</span>
+                                    <span>La API de IM no emite anticipos: se registra acá y lo cargás a mano en IM (Recibos → Tipo Recibo "S/Anticipo" → Cta. Contable 2124000).</span>
                                 </div>
                             </label>
 
@@ -1071,6 +1103,21 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, clients, onBack }: {
                                     </select>
                                 </label>
                             </div>
+
+                            {!esAnticipo && medioFinal === 'efectivo' && cuentasEfectivo.length > 0 && (
+                                <div className="rec-row">
+                                    <label className="rec-field">
+                                        <span>Caja de efectivo</span>
+                                        <select value={cuentaEfectivoSel} onChange={e => setCuentaEfectivoSel(e.target.value)}>
+                                            {cuentasEfectivo.map(c => (
+                                                <option key={c.cod_cuenta} value={c.cod_cuenta}>
+                                                    {c.nombre}{c.es_default ? ' (por defecto)' : ''}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                </div>
+                            )}
 
                             {!esAnticipo && <div className="rec-facturas">
                                 {loadingFacturas && <div><Loader2 className="spin" size={14} /> Cargando facturas pendientes…</div>}
@@ -1112,7 +1159,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, clients, onBack }: {
                             )}
                             {esAnticipo && (
                                 <div className="rec-approval-summary">
-                                    <span>Anticipo por <strong>{formatMoney(Number(montoFinal))}</strong> → cta 2124000</span>
+                                    <span>Anticipo por <strong>{formatMoney(Number(montoFinal))}</strong> → cta 2124000 · <em>se carga a mano en IM</em></span>
                                 </div>
                             )}
 
@@ -1133,7 +1180,7 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, clients, onBack }: {
                                         : (Object.keys(selFacturas).length === 0 || Math.abs(totalImputado - Number(montoFinal)) > 5))}
                                     onClick={aprobar}
                                     title={disabledReason}>
-                                    {busy ? <><Loader2 size={14} className="spin" /> Emitiendo…</> : <><Check size={14} /> {esAnticipo ? 'Aprobar como anticipo' : 'Aprobar y emitir recibo'}</>}
+                                    {busy ? <><Loader2 size={14} className="spin" /> {esAnticipo ? 'Registrando…' : 'Emitiendo…'}</> : <><Check size={14} /> {esAnticipo ? 'Registrar anticipo (cargar a mano en IM)' : 'Aprobar y emitir recibo'}</>}
                                 </button>
                             </div>
                         </div>
@@ -1144,9 +1191,9 @@ function DetalleRecibo({ id, isBackoffice, clientNameByCod, clients, onBack }: {
                             <button className="btn-secondary" onClick={() => { setEditMode(true); setMsg(null); }}>
                                 Editar datos del recibo
                             </button>
-                            {(rec.status === 'rechazado' || rec.status === 'error') && (
+                            {(rec.status === 'rechazado' || rec.status === 'error' || rec.status === 'aprobado') && (
                                 <button className="btn-primary" onClick={reabrir} disabled={busy}>
-                                    {busy ? <><Loader2 size={14} className="spin" /> …</> : 'Reabrir para reprocesar'}
+                                    {busy ? <><Loader2 size={14} className="spin" /> …</> : (rec.status === 'aprobado' ? 'Reabrir anticipo' : 'Reabrir para reprocesar')}
                                 </button>
                             )}
                         </div>
@@ -1392,7 +1439,7 @@ function EditarReciboForm({ rec, clients, onSaved, onCancel }: {
 function statusLabel(s: string): string {
     switch (s) {
         case 'pendiente_revision': return 'Pendiente';
-        case 'aprobado': return 'Aprobado';
+        case 'aprobado': return 'Anticipo (cargar en IM)';
         case 'imputado': return 'Imputado';
         case 'rechazado': return 'Rechazado';
         case 'error': return 'Error';

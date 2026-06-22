@@ -5,7 +5,7 @@ import { sb, TENANT_ID } from './supabase.js';
 import { ocrRecibo } from './ocrRecibo.js';
 import { crearRecibo, fetchComprobPendientes, fetchClientesIMCached, type ReciboPago, type ReciboComprobante } from './infomanager.js';
 import { getFormaPagoIM, isValidMedio } from './mediosPago.js';
-import { resolveCuentaCod, debugCuentasResolver, invalidateCuentasCache } from './cuentasResolver.js';
+import { resolveCuentaCod, debugCuentasResolver, invalidateCuentasCache, listCuentasEfectivo } from './cuentasResolver.js';
 import { buscarPagoEnMP, todayISO_AR, mpConfigStatus, type MPMatch, type MPCuenta } from './mercadopago.js';
 import { ajustarImputacionIM } from './recibosImputacion.js';
 import type { JwtPayload } from './auth.js';
@@ -378,6 +378,43 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
     const usuario = String(body.usuario ?? IM_USUARIO);
     const esAnticipo = body.es_anticipo === true;
 
+    // ── ANTICIPO: NO se emite por la API de IM ──────────────────────────────
+    // La API REST de IM (POST /recibo) NO soporta anticipos: su único endpoint
+    // de recibos exige imputar contra comprobantes pendientes y NO expone el
+    // campo de cabecera "Tipo Recibo: Anticipo" + "Cta. Contable" que sí tiene
+    // el cliente de escritorio (verificado 22/06/2026 contra el swagger y un
+    // recibo manual nro 30151572 — ver memoria
+    // feedback_im_recibo_anticipo_api_no_soporta). Por eso NO llamamos a IM:
+    // dejamos el recibo en estado 'aprobado' (= "anticipo registrado, cargar a
+    // mano en IM") y el backoffice lo carga en el escritorio (Ventas → Recibos
+    // → Tipo Recibo "S/Anticipo" → Cta. Contable 2124000). Reutilizar 'aprobado'
+    // (estado válido pero hasta hoy sin uso) evita una migración del CHECK.
+    if (esAnticipo) {
+      if (!(monto > 0)) { res.status(400).json({ error: 'Cargá el monto del anticipo (> 0)' }); return; }
+      const now = new Date().toISOString();
+      const { error: updErr } = await sb().from('comprobantes_pago').update({
+        status: 'aprobado',
+        monto,
+        fecha_comprobante: fecha,
+        medio_pago: medioPago,
+        cod_empresa: codEmpresa,
+        factura_asociada: `ANTICIPO cta ${IM_CUENTA_ANTICIPO_CLIENTES} $${monto.toFixed(2)} — cargar a mano en IM`,
+        infomanager_recibo_id: null,
+        error_msg: null,
+        reviewed_by: user.sub,
+        reviewed_at: now,
+      }).eq('id', comp.id);
+      if (updErr) { res.status(500).json({ error: `update anticipo: ${updErr.message}` }); return; }
+      console.log(`[aprobar] anticipo registrado (sin IM) id=${comp.id} cliente=${comp.cod_cliente} $${monto.toFixed(2)}`);
+      res.json({
+        ok: true,
+        anticipo: true,
+        recibo_id: null,
+        mensaje: 'Anticipo registrado. Cargalo a mano en IM: Ventas → Recibos → Tipo Recibo "S/Anticipo" → Cta. Contable 2124000 (Anticipo de clientes).',
+      });
+      return;
+    }
+
     // comprobantes: [{id, importe_a_pagar}] — id viene del endpoint comprob_pendientes_clientes.
     // En anticipos no se imputa a facturas → queda vacío, la cuenta de destino es 2124000.
     const comprobantesBody: Array<{ id: string | number; importe_a_pagar: number | string }> =
@@ -391,6 +428,13 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
     // comportamiento manual actual en InfoManager.
     const pagosBody: Array<Partial<ReciboPago>> = Array.isArray(body.pagos) ? body.pagos : [];
     const cuentaDefault = esAnticipo ? IM_CUENTA_ANTICIPO_CLIENTES : await resolveCuentaCod(medioPago);
+    // Override de cuenta elegido por el backoffice en la aprobación: hoy se usa
+    // para elegir a qué CAJA de efectivo entra la plata (Caja Casa Central, Caja
+    // Chica 2, etc.; ver GET /api/cuentas/efectivo). El frontend lo manda solo
+    // cuando tiene sentido (medio efectivo). Debe respetar el patrón de IM.
+    const codCuentaOverride = (typeof body.cod_cuenta === 'string' && /^\d{1,10}$/.test(body.cod_cuenta.trim()))
+      ? body.cod_cuenta.trim()
+      : null;
     let pagos: ReciboPago[];
     if (pagosBody.length && !esAnticipo) {
       pagos = pagosBody.map(p => ({
@@ -405,7 +449,7 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
       pagos = [{
         forma_pago: getFormaPagoIM(medioPago),
         importe: monto.toFixed(2),
-        cod_cuenta: cuentaDefault || '0',
+        cod_cuenta: codCuentaOverride || cuentaDefault || '0',
         cod_unidad_negocio: '',
         tarjeta_numero: '',
         tarjeta_numero_cupon: '',
@@ -628,10 +672,11 @@ export async function editarRecibo(req: Request & { user?: JwtPayload }, res: Re
       }
     }
 
-    // Reapertura: rechazado/error → pendiente_revision para reprocesar.
+    // Reapertura: rechazado/error/aprobado(anticipo) → pendiente_revision para
+    // reprocesar o deshacer un anticipo registrado por error.
     if (body.reabrir === true) {
-      if (comp.status !== 'rechazado' && comp.status !== 'error') {
-        res.status(400).json({ error: `Solo se puede reabrir un recibo rechazado o con error (estado actual: ${comp.status})` });
+      if (comp.status !== 'rechazado' && comp.status !== 'error' && comp.status !== 'aprobado') {
+        res.status(400).json({ error: `Solo se puede reabrir un recibo rechazado, con error o anticipo (estado actual: ${comp.status})` });
         return;
       }
       update.status = 'pendiente_revision';
@@ -667,6 +712,22 @@ export async function cuentasDebug(req: Request & { user?: JwtPayload }, res: Re
     if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
     const mapping = await debugCuentasResolver();
     res.json({ ok: true, mapping });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
+ * GET /api/cuentas/efectivo — admin/gerente. Lista las cajas de efectivo del
+ * plan de cuentas de IM para que el backoffice elija a cuál imputar un recibo
+ * en efectivo (Caja Casa Central, Caja Chica 2, etc.). El default viene marcado.
+ */
+export async function cuentasEfectivo(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    const cuentas = await listCuentasEfectivo();
+    res.json({ ok: true, cuentas });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'error' });
   }

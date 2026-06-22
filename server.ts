@@ -24,7 +24,7 @@ import { syncVentasMesActual, syncVentasMeses } from './server-lib/syncVentas.js
 import { getMonthlyVentasRaw, getMonthlyItemsRaw, snapshotCacheStats } from './server-lib/snapshotCache.js';
 import { fetchArticulosCatalogo, imGetRetry } from './server-lib/infomanager.js';
 import {
-  uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, editarRecibo, cuentasDebug, cuentasRefresh,
+  uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, editarRecibo, cuentasDebug, cuentasRefresh, cuentasEfectivo,
   reverificarMP, elegirMatchMP, procesarColaMP, caducarRecibosPendientes, mpConfig
 } from './server-lib/recibos.js';
 import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot, botGoals } from './server-lib/goals.js';
@@ -591,6 +591,7 @@ app.post('/api/recibos/:id/elegir-match', requireJwt, (req: any, res) => elegirM
 // Reportes admin-only (xlsx)
 app.get('/api/reportes/:tipo', requireJwt, (req: any, res) => descargarReporte(req, res));
 app.get('/api/cuentas/debug', requireJwt, (req: any, res) => cuentasDebug(req, res));
+app.get('/api/cuentas/efectivo', requireJwt, (req: any, res) => cuentasEfectivo(req, res));
 
 // Diagnóstico público del estado de cache (sin secretos). Sirve para
 // verificar si el prewarm completó tras un deploy. Si esto responde lento,

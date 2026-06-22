@@ -3,6 +3,7 @@
 // al arrancar consultando /planes.
 
 import { fetchPlanCuentas, type PlanCuenta } from './infomanager.js';
+import { filterCuentasEfectivo, type CuentaEfectivo } from './cuentasEfectivoFilter.js';
 
 const { env } = process;
 
@@ -114,6 +115,24 @@ export async function resolveCuentaCod(medio: string): Promise<string> {
 /** Para el endpoint /api/cuentas/debug — muestra qué resolvió y de dónde. */
 export async function debugCuentasResolver(): Promise<Record<string, ResolvedCuenta>> {
   return getCache();
+}
+
+/**
+ * Lista las cuentas de EFECTIVO (cajas físicas) del plan de cuentas de IM para
+ * que el backoffice elija a qué caja imputar un recibo en efectivo (Caja Casa
+ * Central, Caja Chica 2, etc.). La lógica de filtrado vive en
+ * ./cuentasEfectivoFilter.ts (testeada). El default es la cuenta que resuelve el
+ * patrón `efectivo` (Caja Casa Central).
+ */
+export async function listCuentasEfectivo(): Promise<CuentaEfectivo[]> {
+  let cuentas: PlanCuenta[] = [];
+  try {
+    cuentas = await fetchPlanCuentas();
+  } catch (e: any) {
+    console.warn('[cuentasResolver] /planes fallo (efectivo):', e?.message);
+  }
+  const defaultCod = await resolveCuentaCod('efectivo');
+  return filterCuentasEfectivo(cuentas, defaultCod);
 }
 
 /** Fuerza refresh (endpoint admin). */
