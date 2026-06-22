@@ -25,17 +25,32 @@ export function normalizeCuentaNombre(s: string): string {
 
 /**
  * Dado el plan de cuentas y el cod de la caja por defecto, devuelve las cuentas
- * de efectivo (cajas físicas) ordenadas con el default primero. Incluye nombres
- * con "caja" o "efectivo" y EXCLUYE "caja de ahorro" (que es una cuenta
- * bancaria, no efectivo físico). Garantiza que el default esté en la lista.
+ * de efectivo que se ofrecen en la aprobación, ordenadas con el default primero.
+ *
+ * `allowed` es una lista blanca (nombres y/o cod_cuenta) de las cajas que
+ * queremos mostrar — IM tiene decenas de cajas (diferencias, puente, reservas,
+ * por vendedor/sucursal, etc.) y solo usamos un par. Si `allowed` viene con
+ * elementos, SOLO se muestran esas (match por nombre normalizado exacto o por
+ * cod_cuenta). Si `allowed` está vacío, cae a la heurística amplia (cualquier
+ * "caja"/"efectivo" que no sea "caja de ahorro", que es banco).
+ *
+ * El default resuelto siempre queda disponible (se agrega si el filtro no lo
+ * incluye) para que el pago nunca quede sin cuenta.
  */
-export function filterCuentasEfectivo(cuentas: PlanCuentaLite[], defaultCod: string): CuentaEfectivo[] {
+export function filterCuentasEfectivo(cuentas: PlanCuentaLite[], defaultCod: string, allowed: string[] = []): CuentaEfectivo[] {
+  const allowSet = allowed.map(a => normalizeCuentaNombre(a)).filter(Boolean);
+  const useAllow = allowSet.length > 0;
+
   const cash = cuentas
+    .filter(c => c.cod_cuenta)
     .filter(c => {
       const n = normalizeCuentaNombre(c.nombre);
+      if (useAllow) {
+        // Match exacto por nombre normalizado o por código de cuenta.
+        return allowSet.includes(n) || allowSet.includes(normalizeCuentaNombre(c.cod_cuenta));
+      }
       return (n.includes('caja') || n.includes('efectivo')) && !n.includes('ahorro');
     })
-    .filter(c => c.cod_cuenta)
     .map(c => ({ cod_cuenta: c.cod_cuenta, nombre: c.nombre, es_default: c.cod_cuenta === defaultCod }));
 
   // Garantizar que el default resuelto esté en la lista aunque el filtro no lo agarre.
