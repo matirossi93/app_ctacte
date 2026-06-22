@@ -55,6 +55,45 @@ describe('filterCuentasEfectivo', () => {
     expect(filterCuentasEfectivo([], '')).toEqual([]);
   });
 
+  describe('allow-list', () => {
+    it('con allow-list por nombre, muestra SOLO esas cajas', () => {
+      const out = filterCuentasEfectivo(PLAN, '1110005', ['Caja Casa Central', 'Caja Chica 2']);
+      const cods = out.map(c => c.cod_cuenta).sort();
+      expect(cods).toEqual(['1110005', '1110010']);
+      // NO trae San Martín, Efectivo en tránsito, etc.
+      expect(out.find(c => c.cod_cuenta === '1110011')).toBeUndefined();
+      expect(out.find(c => c.cod_cuenta === '1110099')).toBeUndefined();
+    });
+
+    it('el match de nombre ignora tildes y mayúsculas', () => {
+      const out = filterCuentasEfectivo(PLAN, '1110005', ['caja san martin']);
+      expect(out.find(c => c.cod_cuenta === '1110011')).toBeTruthy(); // "CAJA SAN MARTÍN"
+    });
+
+    it('también acepta cod_cuenta en la allow-list', () => {
+      const out = filterCuentasEfectivo(PLAN, '1110005', ['1110010']);
+      const cods = out.map(c => c.cod_cuenta).sort();
+      // Caja Chica 2 por código + el default forzado a estar presente
+      expect(cods).toContain('1110010');
+      expect(cods).toContain('1110005');
+    });
+
+    it('match exacto: "Caja Chica 2" no arrastra "Caja Chica 1"', () => {
+      const out = filterCuentasEfectivo(PLAN, '9999999', ['Caja Chica 2']);
+      expect(out.find(c => c.cod_cuenta === '1110010')).toBeTruthy(); // Chica 2 sí
+      const planConChica1 = [...PLAN, { cod_cuenta: '1110009', nombre: 'Caja Chica 1' }];
+      const out2 = filterCuentasEfectivo(planConChica1, '9999999', ['Caja Chica 2']);
+      expect(out2.find(c => c.cod_cuenta === '1110009')).toBeUndefined(); // Chica 1 no
+    });
+
+    it('allow-list vacía → cae a la heurística amplia', () => {
+      const conAllow = filterCuentasEfectivo(PLAN, '1110005', []);
+      const sinArg = filterCuentasEfectivo(PLAN, '1110005');
+      expect(conAllow.map(c => c.cod_cuenta)).toEqual(sinArg.map(c => c.cod_cuenta));
+      expect(conAllow.length).toBeGreaterThan(2); // trae varias cajas
+    });
+  });
+
   it('descarta cuentas sin cod_cuenta', () => {
     const out = filterCuentasEfectivo([{ cod_cuenta: '', nombre: 'Caja fantasma' }], '1110005');
     // solo queda el default inyectado, no la caja sin cod

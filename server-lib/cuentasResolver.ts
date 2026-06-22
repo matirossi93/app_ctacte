@@ -117,12 +117,24 @@ export async function debugCuentasResolver(): Promise<Record<string, ResolvedCue
   return getCache();
 }
 
+// Lista blanca de cajas de efectivo a ofrecer en la aprobación. IM tiene
+// decenas de cajas y solo usamos un par. Configurable por env var
+// IM_CUENTAS_EFECTIVO_PERMITIDAS (nombres y/o cod_cuenta separados por coma) sin
+// necesidad de redeploy de código. Si no está seteada, default a estas dos.
+const EFECTIVO_PERMITIDAS_DEFAULT = ['Caja Casa Central', 'Caja Chica 2'];
+
+function cuentasEfectivoPermitidas(): string[] {
+  const fromEnv = (env.IM_CUENTAS_EFECTIVO_PERMITIDAS || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  return fromEnv.length > 0 ? fromEnv : EFECTIVO_PERMITIDAS_DEFAULT;
+}
+
 /**
- * Lista las cuentas de EFECTIVO (cajas físicas) del plan de cuentas de IM para
- * que el backoffice elija a qué caja imputar un recibo en efectivo (Caja Casa
- * Central, Caja Chica 2, etc.). La lógica de filtrado vive en
- * ./cuentasEfectivoFilter.ts (testeada). El default es la cuenta que resuelve el
- * patrón `efectivo` (Caja Casa Central).
+ * Lista las cuentas de EFECTIVO que se ofrecen al backoffice para imputar un
+ * recibo en efectivo. Por defecto solo Caja Casa Central + Caja Chica 2 (ver
+ * EFECTIVO_PERMITIDAS_DEFAULT / env IM_CUENTAS_EFECTIVO_PERMITIDAS). La lógica de
+ * filtrado vive en ./cuentasEfectivoFilter.ts (testeada). El default es la
+ * cuenta que resuelve el patrón `efectivo` (Caja Casa Central).
  */
 export async function listCuentasEfectivo(): Promise<CuentaEfectivo[]> {
   let cuentas: PlanCuenta[] = [];
@@ -132,7 +144,7 @@ export async function listCuentasEfectivo(): Promise<CuentaEfectivo[]> {
     console.warn('[cuentasResolver] /planes fallo (efectivo):', e?.message);
   }
   const defaultCod = await resolveCuentaCod('efectivo');
-  return filterCuentasEfectivo(cuentas, defaultCod);
+  return filterCuentasEfectivo(cuentas, defaultCod, cuentasEfectivoPermitidas());
 }
 
 /** Fuerza refresh (endpoint admin). */
