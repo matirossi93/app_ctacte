@@ -3,7 +3,7 @@ import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
     DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, Settings2, MapPin,
-    Sun, ChevronRight, ChevronDown, AlertTriangle, Download, Trash2, Pencil, Bell, Wallet, Send
+    Sun, ChevronRight, ChevronDown, AlertTriangle, Download, Trash2, Pencil, Bell, Wallet, Send, Store
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser } from '../utils/auth';
 import { RecibosApp } from './RecibosApp';
@@ -11,6 +11,7 @@ import { CambiarPassword } from './CambiarPassword';
 import { UsuariosAdmin } from './UsuariosAdmin';
 import { ImportarSheet } from './ImportarSheet';
 import { ReportesModal } from './ReportesModal';
+import { ComisionesSucursalModal } from './ComisionesSucursalModal';
 import { PeriodSelector, type ViewPeriod } from './PeriodSelector';
 import { HistoricBanner } from './HistoricBanner';
 import { PrintAvanceView } from './PrintAvanceView';
@@ -246,6 +247,7 @@ export const VendorShell = ({ onLogout }: Props) => {
     const [showUsuariosAdmin, setShowUsuariosAdmin] = useState(false);
     const [showImportSheet, setShowImportSheet] = useState(false);
     const [showReportes, setShowReportes] = useState(false);
+    const [showComisionesSucursal, setShowComisionesSucursal] = useState(false);
     const [reloadObjetivosTick, setReloadObjetivosTick] = useState(0);
 
     // Período visible para tabs Objetivos y Reportes. Default = mes actual.
@@ -566,6 +568,11 @@ export const VendorShell = ({ onLogout }: Props) => {
                                             <Download size={14} /> Exportar reportes
                                         </button>
                                     )}
+                                    {isAdmin && (
+                                        <button onClick={() => { setAvatarMenu(false); setShowComisionesSucursal(true); }}>
+                                            <Store size={14} /> Comisiones sucursal San Martín
+                                        </button>
+                                    )}
                                     <div className="vs-avatar-sep" />
                                     <button className="danger" onClick={() => { setAvatarMenu(false); clearToken(); onLogout(); }}>
                                         <LogOut size={14} /> Cerrar sesión
@@ -670,6 +677,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                 onImported={() => setReloadObjetivosTick(t => t + 1)}
             />}
             {showReportes && <ReportesModal onClose={() => setShowReportes(false)} period={viewPeriod} />}
+            {showComisionesSucursal && <ComisionesSucursalModal onClose={() => setShowComisionesSucursal(false)} period={viewPeriod} />}
         </div>
     );
 };

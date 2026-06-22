@@ -39,3 +39,35 @@ export const COD_CLIENTES_INTERNOS = new Set<number>([1, 652, 666, 861]);
  * algún momento se incorpora un vendedor nuevo, agregar acá.
  */
 export const COD_VENDEDORES_VISIBLES = new Set<number>([2, 3, 4, 12]);
+
+/**
+ * Sucursales con vista de comisión SEPARADA (solo-admin). El cálculo de Casa
+ * Central paga al vendedor por sus clientes que retiran en la sucursal: las
+ * facturas de la sucursal traen el cod_vendedor del cliente (InfoManager lo
+ * hereda), así que se reusa exactamente la misma matemática que Casa Central.
+ */
+export const COD_EMPRESA_SAN_MARTIN = 2;
+export const NOMBRE_EMPRESA: Record<number, string> = {
+  1: 'Casa Central',
+  2: 'San Martín (BRS)',
+  3: 'San Juan',
+  4: 'Av. Jujuy',
+};
+
+/**
+ * Clientes EXCLUIDOS del cálculo de comisión de sucursal, por periodo 'YYYY-MM'.
+ *
+ * Decisión de negocio (Mati, 16/06/2026): el cliente 17 (BRUNO, Mayra —
+ * Alderetes) compra de forma directa y recurrente en el mostrador de San Martín
+ * (31 retiros en mayo, varios el mismo día) SIN intervención del vendedor → esas
+ * ventas NO le corresponden a Julio. Se excluye SOLO en mayo 2026; en abril no
+ * tuvo compras en San Martín. Si cambia el criterio, editar acá.
+ */
+export const EXCLUIR_CLIENTES_COMISION_SUCURSAL: Record<string, number[]> = {
+  '2026-05': [17],
+};
+
+/** Devuelve el Set de cod_cliente a excluir para un periodo 'YYYY-MM'. */
+export function excluirClientesDe(periodo: string): Set<number> {
+  return new Set(EXCLUIR_CLIENTES_COMISION_SUCURSAL[periodo] ?? []);
+}

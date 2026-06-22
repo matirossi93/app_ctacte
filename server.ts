@@ -28,7 +28,7 @@ import {
   reverificarMP, elegirMatchMP, procesarColaMP, caducarRecibosPendientes, mpConfig
 } from './server-lib/recibos.js';
 import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot, botGoals } from './server-lib/goals.js';
-import { listComisiones, probeVenta, comisionesSample, topArticulos, facturasVendedor, diagnoseArticulo } from './server-lib/comisiones.js';
+import { listComisiones, listComisionesSucursal, probeVenta, comisionesSample, topArticulos, facturasVendedor, diagnoseArticulo } from './server-lib/comisiones.js';
 import { listOverrides, addOverride, deleteOverride } from './server-lib/comisionOverrides.js';
 import { listClientesLookup } from './server-lib/clientes.js';
 import { historialComprasCliente } from './server-lib/historialCompras.js';
@@ -717,6 +717,9 @@ app.get('/api/goals/snapshot', requireJwt, (req: any, res) => getGoalsSnapshot(r
 // ─── Comisiones por vendedor (calculadas desde /ventas + /ventas/items) ──────
 // Vendedor: ve solo la suya. Admin/gerente: ve todas (whitelist 5 visibles).
 app.get('/api/comisiones', requireJwt, (req: any, res) => listComisiones(req, res));
+// Comisiones por ventas en SUCURSAL (San Martín) — SOLO admin/gerente, no visible
+// para vendedores. Clientes de Casa Central que retiran en la sucursal.
+app.get('/api/comisiones/sucursal', requireJwt, requireAdmin, (req: any, res) => listComisionesSucursal(req, res));
 app.get('/api/comisiones/probe-venta/:id', requireJwt, requireAdmin, (req: any, res) => probeVenta(req, res));
 app.get('/api/comisiones/sample', requireJwt, requireAdmin, (req: any, res) => comisionesSample(req, res));
 app.get('/api/comisiones/top-articulos', requireJwt, requireAdmin, (req: any, res) => topArticulos(req, res));

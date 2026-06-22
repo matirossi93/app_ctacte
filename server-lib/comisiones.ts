@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import type { JwtPayload } from './auth.js';
 import { sb, hasSupabase } from './supabase.js';
-import { fetchVendedores, fetchArticulosCatalogo } from './infomanager.js';
+import { fetchVendedores, fetchArticulosCatalogo, fetchClientesIMCached } from './infomanager.js';
 import { getMonthlyVentasRaw, getMonthlyItemsRaw } from './snapshotCache.js';
 import { tipoComprobante, isAnulada } from '../src/utils/ventas.js';
 import { getCached as getResponseCached, setCached as setResponseCached } from './goalsResponseCache.js';
@@ -15,6 +15,9 @@ import {
   COD_EMPRESA_CASA_CENTRAL,
   COD_CLIENTES_INTERNOS,
   COD_VENDEDORES_VISIBLES,
+  COD_EMPRESA_SAN_MARTIN,
+  NOMBRE_EMPRESA,
+  excluirClientesDe,
 } from './comisionesShared.js';
 import { loadVendedorOverrides, resolveCodVendedor } from './comisionOverrides.js';
 
@@ -45,6 +48,27 @@ interface GetComisionesOpts {
   month: number;
   codVendedorFilter?: number;
   asOfDate?: string; // 'YYYY-MM-DD' — incluir cabeceras con fecha <= asOfDate
+  /** Empresa a comisionar. Default Casa Central (1). La vista de sucursal pasa 2. */
+  codEmpresa?: number;
+  /** Cod_cliente a excluir del cálculo (decisión de negocio, ej. compras directas
+   *  de mostrador que no corresponden al vendedor). Default: ninguno. */
+  excluirClientes?: Set<number>;
+  /** Si true, además del resumen por vendedor devuelve el detalle factura por
+   *  factura (id, fecha, cliente, neto, comisión). Usado por la vista de sucursal. */
+  incluirFacturas?: boolean;
+}
+
+/** Detalle de una factura comisionada (para la vista de sucursal). */
+export interface FacturaComision {
+  id: number;
+  fecha: string;
+  tipo: string;
+  cod_cliente: number;
+  razon_social: string;
+  cod_vendedor: number;
+  nombre_vendedor: string;
+  neto: number;
+  comision: number;
 }
 
 /**
@@ -64,32 +88,39 @@ function clasificarCabecera(cab: any): 'FA' | 'NC' | null {
 }
 
 export async function getComisionesData(opts: GetComisionesOpts) {
-  const { year, month, codVendedorFilter, asOfDate } = opts;
+  const { year, month, codVendedorFilter, asOfDate, incluirFacturas } = opts;
+  // Empresa a comisionar (default Casa Central) + clientes excluidos por negocio.
+  const codEmpresaTarget = opts.codEmpresa ?? COD_EMPRESA_CASA_CENTRAL;
+  const excluir = opts.excluirClientes ?? new Set<number>();
   // Default: mes entero (incluye facturas con fa_fecha futura del mes en curso).
   // Si se pasa asOfDate, recortar hasta ese día.
   const asOfValid = asOfDate && /^\d{4}-\d{2}-\d{2}$/.test(asOfDate) ? asOfDate : null;
 
-  // 1. Datos crudos paralelos.
-  const [ventasRes, itemsRes, articulosMap, vendedoresIM, overrides] = await Promise.all([
+  // 1. Datos crudos paralelos. Los nombres de cliente solo se piden cuando se
+  //    necesita el detalle factura por factura (vista de sucursal).
+  const [ventasRes, itemsRes, articulosMap, vendedoresIM, overrides, clientesIM] = await Promise.all([
     getMonthlyVentasRaw(year, month),
     getMonthlyItemsRaw(year, month),
     fetchArticulosCatalogo(),
     fetchVendedores(),
     loadVendedorOverrides(),
+    incluirFacturas ? fetchClientesIMCached() : Promise.resolve([] as Awaited<ReturnType<typeof fetchClientesIMCached>>),
   ]);
+  const nombreCliente = new Map<number, string>();
+  for (const c of clientesIM) nombreCliente.set(Number(c.cod_cliente), String((c as any).razon_social ?? ''));
 
   // 2. Map id_comprobante → { signo (FA=+1, NC=-1), cod_vendedor }.
   // Solo cabeceras válidas. Las inválidas (PR, ND, anuladas) quedan fuera y
   // sus items se descartan automáticamente en el loop.
-  const cabPorId = new Map<number, { sign: 1 | -1; cod_vendedor: number; tipo: string }>();
-  let nFA = 0, nNC = 0, nDescartadas = 0, nClientesInternos = 0, nOtraEmpresa = 0, nFueraCorte = 0;
+  const cabPorId = new Map<number, { sign: 1 | -1; cod_vendedor: number; tipo: string; cod_cliente: number; fecha: string }>();
+  let nFA = 0, nNC = 0, nDescartadas = 0, nClientesInternos = 0, nOtraEmpresa = 0, nFueraCorte = 0, nExcluidos = 0;
   for (const v of ventasRes.ventas) {
     const id = Number((v as any).id);
     if (!Number.isFinite(id)) { nDescartadas++; continue; }
-    // Filtrar empresas: solo Casa Central (cod_empresa=1) suma a estas
-    // comisiones. Sucursales tienen su propia estructura.
+    // Filtrar empresas: solo la empresa pedida (default Casa Central=1) suma a
+    // estas comisiones. La vista de sucursal pasa codEmpresa=2 (San Martín).
     const codEmp = Number((v as any).cod_empresa);
-    if (Number.isFinite(codEmp) && codEmp !== COD_EMPRESA_CASA_CENTRAL) {
+    if (Number.isFinite(codEmp) && codEmp !== codEmpresaTarget) {
       nOtraEmpresa++;
       continue;
     }
@@ -114,10 +145,18 @@ export async function getComisionesData(opts: GetComisionesOpts) {
       nClientesInternos++;
       continue;
     }
+    // Excluir clientes vetados por decisión de negocio (ej. compras directas de
+    // mostrador en sucursal que no corresponden al vendedor del cliente).
+    if (Number.isFinite(codCli) && excluir.has(codCli)) {
+      nExcluidos++;
+      continue;
+    }
     cabPorId.set(id, {
       sign: clase === 'NC' ? -1 : 1,
       cod_vendedor: codVend,
       tipo: tipoComprobante(v),
+      cod_cliente: Number.isFinite(codCli) ? codCli : 0,
+      fecha: String((v as any).fecha ?? '').slice(0, 10),
     });
     if (clase === 'FA') nFA++; else nNC++;
   }
@@ -125,6 +164,8 @@ export async function getComisionesData(opts: GetComisionesOpts) {
   // 3. Iterar items: cada uno tiene importe directo de la API.
   const acc = new Map<number, ComisionVendedor>();
   const compsTocados = new Map<number, Set<number>>();
+  // Acumulador por factura (solo para la vista de sucursal que muestra detalle).
+  const facturaAgg = incluirFacturas ? new Map<number, { neto: number; comision: number }>() : null;
   let primerItemLogueado = false;
   let itemsProcesados = 0;
   let itemsDescartados = 0;
@@ -159,6 +200,13 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     const pct = pctParaArticulo(codArt, codRubro, detalle);
     const cat = categoriaParaPct(pct);
     const comision = Math.round(importe * pct * 100) / 100;
+
+    if (facturaAgg) {
+      let f = facturaAgg.get(idComp);
+      if (!f) { f = { neto: 0, comision: 0 }; facturaAgg.set(idComp, f); }
+      f.neto += importe;
+      f.comision += comision;
+    }
 
     let v = acc.get(meta.cod_vendedor);
     if (!v) {
@@ -248,6 +296,7 @@ export async function getComisionesData(opts: GetComisionesOpts) {
 
   // 8. Diagnóstico.
   const diag = {
+    cod_empresa: codEmpresaTarget,
     cabeceras_total: ventasRes.ventas.length,
     cabeceras_validas: cabPorId.size,
     cabeceras_FA: nFA,
@@ -255,6 +304,7 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     cabeceras_descartadas: nDescartadas,
     cabeceras_clientes_internos_excluidas: nClientesInternos,
     cabeceras_otra_empresa_excluidas: nOtraEmpresa,
+    cabeceras_excluidas_negocio: nExcluidos,
     cabeceras_fuera_corte: nFueraCorte,
     asOfDate: asOfValid,
     items_total: itemsRes.items.length,
@@ -267,11 +317,41 @@ export async function getComisionesData(opts: GetComisionesOpts) {
   };
   console.log(`[comisiones] ${year}-${String(month).padStart(2, '0')}:`, JSON.stringify(diag));
 
+  // 9. Detalle factura por factura (solo vista de sucursal). Mismo universo que
+  //    los `items`: vendedores visibles (o el filtrado), sin las excluidas.
+  let facturas: FacturaComision[] | undefined;
+  if (incluirFacturas && facturaAgg) {
+    const vendVisibles = new Set(items.map(v => v.cod_vendedor));
+    const vendNombre = new Map<number, string>();
+    for (const v of items) vendNombre.set(v.cod_vendedor, v.nombre);
+    facturas = [];
+    for (const [id, meta] of cabPorId.entries()) {
+      if (!vendVisibles.has(meta.cod_vendedor)) continue;
+      const f = facturaAgg.get(id);
+      if (!f) continue; // factura sin items con precio → no aporta
+      facturas.push({
+        id,
+        fecha: meta.fecha,
+        tipo: meta.tipo,
+        cod_cliente: meta.cod_cliente,
+        razon_social: nombreCliente.get(meta.cod_cliente) ?? '',
+        cod_vendedor: meta.cod_vendedor,
+        nombre_vendedor: vendNombre.get(meta.cod_vendedor) ?? `Vendedor ${meta.cod_vendedor}`,
+        neto: Math.round(f.neto * 100) / 100,
+        comision: Math.round(f.comision * 100) / 100,
+      });
+    }
+    facturas.sort((a, b) => Math.abs(b.comision) - Math.abs(a.comision));
+  }
+
   return {
     year,
     month,
+    cod_empresa: codEmpresaTarget,
+    empresa_nombre: NOMBRE_EMPRESA[codEmpresaTarget] ?? `Empresa ${codEmpresaTarget}`,
     items,
     totales,
+    facturas,
     categoria_labels: CATEGORIA_LABELS,
     diagnostico: diag,
     cache_info: {
@@ -737,6 +817,59 @@ export async function listComisiones(req: Request & { user?: JwtPayload }, res: 
     res.set('X-Cache', 'MISS').json(body);
   } catch (err: any) {
     console.error('listComisiones error:', err);
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
+ * GET /api/comisiones/sucursal?year=&month=&cod_empresa=2  (SOLO admin/gerente)
+ *
+ * Comisiones que le corresponden a los vendedores de Casa Central por sus
+ * clientes que retiran en una SUCURSAL (default San Martín=2). El cálculo de
+ * comisiones normal solo cuenta Casa Central, así que estas ventas quedan
+ * afuera; esta vista las muestra aparte y NO es visible para los vendedores.
+ * Aplica las exclusiones de negocio (EXCLUIR_CLIENTES_COMISION_SUCURSAL) y
+ * devuelve, además del resumen por vendedor, el detalle factura por factura.
+ */
+export async function listComisionesSucursal(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') {
+      res.status(403).json({ error: 'Requiere admin/gerente' }); return;
+    }
+    if (!hasSupabase()) { res.status(500).json({ error: 'Supabase no configurado' }); return; }
+    const t = new Date();
+    const year = Number(req.query.year) || t.getUTCFullYear();
+    const month = Number(req.query.month) || (t.getUTCMonth() + 1);
+    if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+      res.status(400).json({ error: 'year/month inválidos' }); return;
+    }
+    // Empresa: default San Martín. Se permiten solo sucursales (≠ Casa Central),
+    // porque Casa Central ya tiene su propio panel de comisiones para vendedores.
+    let codEmpresa = COD_EMPRESA_SAN_MARTIN;
+    if (req.query.cod_empresa != null) {
+      const c = Number(req.query.cod_empresa);
+      if (![2, 3, 4].includes(c)) { res.status(400).json({ error: 'cod_empresa debe ser una sucursal (2, 3 o 4)' }); return; }
+      codEmpresa = c;
+    }
+    const periodo = `${year}-${String(month).padStart(2, '0')}`;
+    const excluirClientes = excluirClientesDe(periodo);
+
+    const cacheKey = `comisiones-suc:${periodo}:emp${codEmpresa}`;
+    const hit = getResponseCached(cacheKey);
+    if (hit) { res.set('X-Cache', 'HIT').json(hit); return; }
+
+    const data = await getComisionesData({ year, month, codEmpresa, excluirClientes, incluirFacturas: true });
+    const body = {
+      ok: true,
+      ...data,
+      // Clientes excluidos por decisión de negocio (para mostrarlo en la vista).
+      excluidos: Array.from(excluirClientes),
+    };
+    setResponseCached(cacheKey, body);
+    res.set('X-Cache', 'MISS').json(body);
+  } catch (err: any) {
+    console.error('listComisionesSucursal error:', err);
     res.status(500).json({ error: err?.message ?? 'error' });
   }
 }

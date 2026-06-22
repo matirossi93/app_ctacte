@@ -1,0 +1,229 @@
+.csm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 16px;
+}
+.csm-modal {
+    background: #fff;
+    border-radius: 14px;
+    max-width: 680px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, .3);
+    display: flex;
+    flex-direction: column;
+}
+.csm-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 18px 22px;
+    border-bottom: 1px solid #eee;
+}
+.csm-head h2 {
+    margin: 0;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #06652f;
+}
+.csm-close {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: #777;
+    padding: 6px;
+    border-radius: 6px;
+}
+.csm-close:hover { background: #f0f0f0; }
+
+.csm-sub {
+    margin: 0;
+    padding: 12px 22px;
+    font-size: 12.5px;
+    color: #666;
+    line-height: 1.45;
+    background: #fafafa;
+    border-bottom: 1px solid #eee;
+}
+.csm-sub strong { color: #06652f; }
+
+.csm-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 14px 22px;
+}
+.csm-nav strong {
+    min-width: 150px;
+    text-align: center;
+    text-transform: capitalize;
+    color: #06652f;
+    font-size: 15px;
+    font-weight: 700;
+}
+.csm-nav button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    background: #fff;
+    cursor: pointer;
+    color: #333;
+}
+.csm-nav button:hover:not(:disabled) { border-color: #eec045; background: #fffdf5; }
+.csm-nav button:disabled { opacity: .4; cursor: not-allowed; }
+
+.csm-error {
+    margin: 0 22px 12px;
+    padding: 10px 12px;
+    background: #fdecec;
+    border: 1px solid #e3a39a;
+    color: #a83e2b;
+    border-radius: 8px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 13px;
+}
+.csm-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 40px 22px;
+    color: #777;
+    font-size: 14px;
+}
+.csm-spin { animation: csm-spin 1s linear infinite; }
+@keyframes csm-spin { to { transform: rotate(360deg); } }
+
+.csm-total {
+    margin: 0 22px 14px;
+    padding: 14px 18px;
+    background: linear-gradient(135deg, #06652f, #054e24);
+    color: #fff;
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+.csm-total-label { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; opacity: .85; }
+.csm-total-val { font-size: 28px; font-weight: 800; color: #eec045; }
+.csm-total-meta { font-size: 12px; opacity: .85; }
+
+.csm-table {
+    width: calc(100% - 44px);
+    margin: 0 22px 14px;
+    border-collapse: collapse;
+    font-size: 13.5px;
+}
+.csm-table th, .csm-table td {
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid #eee;
+}
+.csm-table th {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    color: #888;
+    font-weight: 600;
+}
+.csm-table td.num, .csm-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.csm-table .csm-strong { font-weight: 700; color: #06652f; }
+.csm-table tfoot td {
+    border-top: 2px solid #06652f;
+    border-bottom: none;
+    font-weight: 700;
+    padding-top: 10px;
+}
+.csm-detalle { font-size: 12.5px; }
+.csm-detalle th { font-size: 10px; }
+
+.csm-empty {
+    margin: 0 22px 16px;
+    padding: 20px;
+    text-align: center;
+    color: #888;
+    font-size: 13px;
+    background: #fafafa;
+    border-radius: 10px;
+}
+.csm-note {
+    margin: 0 22px 14px;
+    padding: 10px 12px;
+    background: #fff8e6;
+    border: 1px solid #eec045;
+    border-radius: 8px;
+    font-size: 12px;
+    color: #6b5400;
+    line-height: 1.4;
+}
+.csm-note strong { color: #4d3d00; }
+
+.csm-detalle-toggle {
+    margin: 0 22px 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: transparent;
+    border: none;
+    color: #06652f;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 6px 0;
+}
+.csm-detalle-toggle:hover { text-decoration: underline; }
+
+.csm-foot {
+    padding: 12px 22px;
+    border-top: 1px solid #eee;
+    font-size: 11px;
+    color: #888;
+    background: #fafafa;
+    border-radius: 0 0 14px 14px;
+}
+
+/* Dark */
+[data-theme="dark"] .csm-modal { background: #1a1a1a; color: #eee; }
+[data-theme="dark"] .csm-head { border-color: #2a2a2a; }
+[data-theme="dark"] .csm-head h2 { color: #7fdfa0; }
+[data-theme="dark"] .csm-close { color: #aaa; }
+[data-theme="dark"] .csm-close:hover { background: #2a2a2a; }
+[data-theme="dark"] .csm-sub { background: #141414; border-color: #2a2a2a; color: #aaa; }
+[data-theme="dark"] .csm-sub strong { color: #7fdfa0; }
+[data-theme="dark"] .csm-nav strong { color: #eec045; }
+[data-theme="dark"] .csm-nav button { background: #222; border-color: #3a3a3a; color: #eee; }
+[data-theme="dark"] .csm-nav button:hover:not(:disabled) { background: #2a2a1a; border-color: #eec045; }
+[data-theme="dark"] .csm-table th { color: #999; }
+[data-theme="dark"] .csm-table th, [data-theme="dark"] .csm-table td { border-color: #2a2a2a; }
+[data-theme="dark"] .csm-table .csm-strong { color: #7fdfa0; }
+[data-theme="dark"] .csm-table tfoot td { border-top-color: #7fdfa0; }
+[data-theme="dark"] .csm-empty { background: #141414; color: #999; }
+[data-theme="dark"] .csm-note { background: #2a2410; border-color: #6b5400; color: #e8d48a; }
+[data-theme="dark"] .csm-note strong { color: #eec045; }
+[data-theme="dark"] .csm-detalle-toggle { color: #7fdfa0; }
+[data-theme="dark"] .csm-foot { background: #141414; border-color: #2a2a2a; color: #888; }
+
+/* Mobile */
+@media (max-width: 600px) {
+    .csm-overlay { padding: 0; }
+    .csm-modal { border-radius: 0; max-height: 100vh; height: 100vh; max-width: 100%; }
+    .csm-total-val { font-size: 24px; }
+    .csm-table { font-size: 12.5px; }
+    .csm-table th, .csm-table td { padding: 7px 6px; }
+}
