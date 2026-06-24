@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
-import { fetchVendedores, fetchVentas } from './infomanager.js';
+import { fetchVendedores, fetchVentas, fetchClientesIMCached } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
 import { computeVentaNeta, monthKey } from '../src/utils/ventas.js';
 import { getMonthlyVentasRaw, getMonthlyItemsRaw } from './snapshotCache.js';
@@ -22,6 +22,88 @@ function normLoc(s: string | null | undefined): string {
 function prettyLoc(s: string): string {
   // Title case preservando el normalizado (resultado típico: "Alberdi")
   return s.toLowerCase().replace(/(^|\s|-)(\w)/g, (_, pre, ch) => pre + ch.toUpperCase());
+}
+
+/**
+ * Clientes nuevos que YA tienen ventas este mes pero todavía no entraron al
+ * Excel de objetivos (no están en client_operational). Antes desaparecían de la
+ * vista de objetivos por cliente hasta el próximo import del Excel, aunque ya
+ * estuvieran facturando — el loop iteraba solo sobre client_operational.
+ *
+ * Mismo patrón que el picker de Recibos (clientes.ts): el maestro al día sale de
+ * InfoManager. Devuelve items con la MISMA forma que listClientesObjetivo, con
+ * objetivo_mes=null (status 'sin_objetivo') y metadata (razón social, localidad,
+ * vendedor) traída de IM. Marca `es_nuevo:true` para que el front pueda badgearlos.
+ *
+ * Solo se usa para el mes en curso: los meses históricos se congelan en su
+ * snapshot (client_objectives_history) y no se tocan.
+ */
+export async function buildClientesNuevosConVentas(opts: {
+  salesByCliente: Map<number, { neto: number; num: number }>;
+  existingCods: Set<number>;
+  codVend: number | null;
+  codsList: number[] | null;
+}): Promise<any[]> {
+  const { salesByCliente, existingCods, codVend, codsList } = opts;
+  // Códigos con ventas del mes que no están en el maestro operacional.
+  const faltantes = Array.from(salesByCliente.keys()).filter(cod => !existingCods.has(cod));
+  if (faltantes.length === 0) return [];
+
+  // Maestro IM (cacheado, mismo que usa Recibos). Si IM no responde no agregamos
+  // nada: la vista sigue funcionando con lo que ya hay en client_operational.
+  let imClientes: Awaited<ReturnType<typeof fetchClientesIMCached>> = [];
+  try {
+    imClientes = await fetchClientesIMCached();
+  } catch (e: any) {
+    console.warn('[buildClientesNuevosConVentas] IM falló, sin clientes nuevos:', e?.message);
+    return [];
+  }
+  const imByCod = new Map<number, { razon_social?: string; localidad?: string | null; cod_vendedor?: number | null }>();
+  imClientes.forEach(c => imByCod.set(c.cod_cliente, c));
+
+  const out: any[] = [];
+  for (const cod of faltantes) {
+    const im = imByCod.get(cod);
+    const codVendedorEfectivo = im?.cod_vendedor ?? null;
+    // Filtro por vendedor (replica el de la query SQL): el vendedor ve solo los
+    // suyos; admin con cod_vendedor/cods filtra igual; admin sin filtro ve todos.
+    if (codVend != null) {
+      if (codVendedorEfectivo !== codVend) continue;
+    } else if (codsList) {
+      if (codVendedorEfectivo == null || !codsList.includes(codVendedorEfectivo)) continue;
+    }
+    const sale = salesByCliente.get(cod)!;
+    const avance = Number(sale.neto.toFixed(2));
+    const locNorm = normLoc(im?.localidad);
+    out.push({
+      cod_cliente: cod,
+      cod_vendedor: codVendedorEfectivo,
+      razon_social: im?.razon_social || `Cliente #${cod}`,
+      localidad: locNorm ? prettyLoc(locNorm) : (im?.localidad ?? null),
+      localidad_norm: locNorm,
+      frecuencia: null,
+      dia_visita: null,
+      tipo_abc: null,
+      direccion: null,
+      repartidor: null,
+      hoja_ruta: null,
+      dia_entrega: null,
+      cond_pago: null,
+      notas: null,
+      objetivo_mes: null,
+      fact_mes_pasado: null,
+      fact_prom_3m: null,
+      saldo_cta_cte: null,
+      avance,
+      num_comprobantes: sale.num,
+      pct_cumplimiento: null,
+      falta: null,
+      sobrante: 0,
+      status: 'sin_objetivo',
+      es_nuevo: true,
+    });
+  }
+  return out;
 }
 
 function today(): { year: number; month: number; day: number } {
@@ -489,6 +571,20 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
         status,
       };
     });
+
+    // Clientes nuevos con ventas que aún no entraron al Excel (client_operational).
+    // Solo mes en curso: los históricos se congelan en su snapshot. Se agregan a
+    // `items` ANTES de stats/localidades/filtros para que cuenten en todos lados.
+    if (isCurrent) {
+      const existingCods = new Set<number>((clientes ?? []).map((c: any) => c.cod_cliente));
+      const nuevos = await buildClientesNuevosConVentas({
+        salesByCliente,
+        existingCods,
+        codVend,
+        codsList,
+      });
+      if (nuevos.length) items.push(...nuevos);
+    }
 
     // Filtros (status + localidad) — localidad se compara normalizada
     const filter = String(req.query.filter ?? 'todos');
@@ -1071,6 +1167,19 @@ export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res
         status,
       };
     });
+
+    // Clientes nuevos con ventas que aún no entraron al Excel (client_operational).
+    // Solo mes en curso. El avance sale del agregado en RAM (byCliente).
+    if (!isHistoric) {
+      const existingCods = new Set<number>((clientes ?? []).map((c: any) => c.cod_cliente));
+      const nuevos = await buildClientesNuevosConVentas({
+        salesByCliente: byCliente,
+        existingCods,
+        codVend: codVendFilter,
+        codsList: codsListFilter,
+      });
+      if (nuevos.length) clientesItems.push(...nuevos);
+    }
 
     const snapshotBody = {
       ok: true,
