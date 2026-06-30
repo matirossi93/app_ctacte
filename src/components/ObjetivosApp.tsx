@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { X, Target, Calendar, Check, Edit3, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+import { X, Target, Calendar, Check, Edit3, Loader2, AlertCircle, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { authHeaders, getUser } from '../utils/auth';
 import './ObjetivosApp.css';
 
@@ -42,8 +42,26 @@ export const ObjetivosApp = ({ onClose }: Props) => {
     const user = getUser();
     const isAdmin = user?.rol === 'admin' || user?.rol === 'gerente';
     const today = new Date();
-    const [year] = useState(today.getUTCFullYear());
-    const [month] = useState(today.getUTCMonth() + 1);
+    const [year, setYear] = useState(today.getUTCFullYear());
+    const [month, setMonth] = useState(today.getUTCMonth() + 1);
+
+    // Navegación de mes. Índice absoluto = year*12 + (month-1) para comparar y
+    // moverse cruzando años. Rango: desde enero 2026 (inicio de datos) hasta
+    // 2 meses adelante del actual (para precargar objetivos del mes que viene).
+    const curIdx = today.getUTCFullYear() * 12 + today.getUTCMonth();
+    const viewIdx = year * 12 + (month - 1);
+    const MIN_IDX = 2026 * 12 + 0;   // enero 2026
+    const MAX_IDX = curIdx + 2;      // hasta 2 meses adelante
+    const canPrev = viewIdx > MIN_IDX;
+    const canNext = viewIdx < MAX_IDX;
+    const isCurrentView = viewIdx === curIdx;
+    const isFutureView = viewIdx > curIdx;
+    const stepMonth = (delta: number) => {
+        const next = viewIdx + delta;
+        if (next < MIN_IDX || next > MAX_IDX) return;
+        setYear(Math.floor(next / 12));
+        setMonth((next % 12) + 1);
+    };
     const [data, setData] = useState<GoalsResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
@@ -124,10 +142,19 @@ export const ObjetivosApp = ({ onClose }: Props) => {
             <div className="obj-modal">
                 <header className="obj-header">
                     <button className="obj-icon-btn" onClick={onClose} aria-label="Cerrar"><X size={20} /></button>
-                    <h2>
-                        {isAdmin ? 'Objetivos del equipo' : 'Mis objetivos'}
-                        <span className="obj-month">· {monthLabel}</span>
-                    </h2>
+                    <h2>{isAdmin ? 'Objetivos del equipo' : 'Mis objetivos'}</h2>
+                    <div className="obj-month-nav">
+                        <button className="obj-nav-btn" onClick={() => stepMonth(-1)} disabled={!canPrev} aria-label="Mes anterior" title="Mes anterior">
+                            <ChevronLeft size={16} />
+                        </button>
+                        <span className="obj-month-label">
+                            {monthLabel}
+                            {!isCurrentView && <span className={`obj-month-tag ${isFutureView ? 'is-future' : 'is-hist'}`}>{isFutureView ? 'mes futuro' : 'histórico'}</span>}
+                        </span>
+                        <button className="obj-nav-btn" onClick={() => stepMonth(1)} disabled={!canNext} aria-label="Mes siguiente" title="Mes siguiente">
+                            <ChevronRight size={16} />
+                        </button>
+                    </div>
                     <div className="obj-header-actions">
                         <button className="obj-icon-btn" onClick={syncNow} disabled={syncing} title="Sync ventas InfoManager">
                             {syncing ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}

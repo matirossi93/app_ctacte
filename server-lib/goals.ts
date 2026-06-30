@@ -211,7 +211,13 @@ async function computeGoalItems(year: number, month: number, incluirInactivos: b
     // Prioridad: dias_habiles manual > auto con feriados
     const diasTotal = cfg?.dias_habiles ?? diasConFeriados;
     const isCurrentMonth = year === t.year && month === t.month;
-    const diasTrans = isCurrentMonth ? businessDaysElapsed(year, month, t.day, holidays) : diasTotal;
+    const isFutureMonth = year > t.year || (year === t.year && month > t.month);
+    // Mes actual → días hábiles ya transcurridos. Mes futuro (ej: cargar julio
+    // estando en junio) → 0 transcurridos, todos restantes. Mes pasado → todos
+    // transcurridos (el mes ya cerró).
+    const diasTrans = isCurrentMonth ? businessDaysElapsed(year, month, t.day, holidays)
+      : isFutureMonth ? 0
+      : diasTotal;
     const diasRestantes = Math.max(0, diasTotal - diasTrans);
 
     const COD_VENDEDORES_VISIBLES = COD_VENDEDORES_VISIBLES_SHARED;

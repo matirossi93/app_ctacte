@@ -28,6 +28,26 @@
     margin: 0; font-size: 18px; font-weight: 700; flex: 1;
 }
 .obj-month { color: #6e7670; font-weight: 500; margin-left: 8px; font-size: 14px }
+
+/* Navegador de mes (‹ junio 2026 ›) */
+.obj-month-nav { display: flex; align-items: center; gap: 4px }
+.obj-nav-btn {
+    background: transparent; border: 1px solid rgba(20,24,20,.12);
+    width: 30px; height: 30px; border-radius: 9px;
+    display: grid; place-items: center; cursor: pointer; color: inherit; font-family: inherit;
+}
+.obj-nav-btn:hover:not(:disabled) { background: rgba(20,24,20,.05) }
+.obj-nav-btn:disabled { opacity: .35; cursor: not-allowed }
+.obj-month-label {
+    min-width: 116px; text-align: center; font-size: 14px; font-weight: 600;
+    color: #14181c; text-transform: capitalize; line-height: 1.1;
+}
+.obj-month-tag {
+    display: block; font-size: 10px; font-weight: 600; text-transform: none; line-height: 1.2;
+}
+.obj-month-tag.is-future { color: #06652F }
+.obj-month-tag.is-hist { color: #B58829 }
+
 .obj-header-actions { display: flex; gap: 6px }
 .obj-icon-btn {
     background: transparent; border: 1px solid rgba(20,24,20,.12);

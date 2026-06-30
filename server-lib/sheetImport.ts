@@ -68,7 +68,7 @@ const FIELD_ALIASES: Record<string, string[]> = {
 // header esté presente en la fila 1 — los ausentes se omiten del upsert para
 // no sobrescribir con NULL columnas que ahora se cargan desde otra fuente
 // (ej: saldo_cta_cte / fact_prom_3m / fact_mes_pasado vienen de syncVentas).
-function buildFieldIndex(headerRow: any[]): Record<string, number> {
+export function buildFieldIndex(headerRow: any[]): Record<string, number> {
   const headerNorm = headerRow.map(normHeader);
   const idx: Record<string, number> = {};
   for (const [field, aliases] of Object.entries(FIELD_ALIASES)) {
@@ -84,6 +84,75 @@ function buildFieldIndex(headerRow: any[]): Record<string, number> {
     if (i !== -1) idx.objetivo_mes = i;
   }
   return idx;
+}
+
+// Campos string/num que copiamos SOLO si la columna existe en el sheet (los
+// ausentes se omiten del upsert para no pisar con NULL columnas que ahora se
+// cargan desde otra fuente, ej: saldo_cta_cte / fact_prom_3m vienen de syncVentas).
+const STR_FIELDS: string[] = ['razon_social', 'direccion', 'dia_visita', 'visita', 'frecuencia', 'localidad', 'hoja_ruta', 'repartidor', 'dia_entrega', 'cond_pago', 'tipo_abc'];
+const NUM_FIELDS: string[] = ['saldo_cta_cte', 'fact_prom_3m', 'fact_mes_pasado'];
+
+export interface BuiltMaestroRows {
+  out: any[];
+  descartadas: number;
+  conObjetivo: number;
+  dupCods: number[];
+}
+
+/**
+ * Construye las filas a upsertear desde el sheet, DEDUPLICANDO por cod_cliente.
+ *
+ * Por qué deduplicar: un Maestro con un código repetido (típico error de carga
+ * — la misma fila pegada dos veces) rompía el import entero. El batch llevaba
+ * dos filas con la misma clave de conflicto y Postgres tira
+ * "ON CONFLICT DO UPDATE command cannot affect row a second time", que volvía
+ * con ok:false y la UI mostraba un críptico "HTTP 200" (incidente 30/06:
+ * clientes 742 y 1193 cargados 2× → import de Julio bloqueado).
+ *
+ * Nos quedamos con la ÚLTIMA aparición de cada código (last-write-wins) y
+ * devolvemos los códigos que venían duplicados para avisar en la UI.
+ */
+export function buildMaestroRows(
+  rows: any[][],
+  fieldIdx: Record<string, number>,
+  opts: { tenantId: string; year: number; month: number; updatedAt: string },
+): BuiltMaestroRows {
+  const getStr = (r: any[], field: string): string | null =>
+    fieldIdx[field] != null ? toStr(r[fieldIdx[field]]) : null;
+  const getInt = (r: any[], field: string): number | null =>
+    fieldIdx[field] != null ? toInt(r[fieldIdx[field]]) : null;
+  const getNum = (r: any[], field: string): number | null =>
+    fieldIdx[field] != null ? toNum(r[fieldIdx[field]]) : null;
+
+  const byCod = new Map<number, any>();
+  const dupCods = new Set<number>();
+  let descartadas = 0;
+
+  for (let i = 1; i < rows.length; i++) {
+    const r: any[] = rows[i] || [];
+    const cod = getInt(r, 'cod_cliente');
+    if (!cod) { descartadas++; continue; }
+    const row: any = {
+      tenant_id: opts.tenantId,
+      cod_cliente: cod,
+      objetivo_mes: getNum(r, 'objetivo_mes'),
+      objetivo_source: 'sheet',
+      objetivo_year: opts.year,
+      objetivo_month: opts.month,
+      updated_at: opts.updatedAt,
+    };
+    // cod_vendedor sólo si está presente.
+    if (fieldIdx.cod_vendedor != null) row.cod_vendedor = getInt(r, 'cod_vendedor');
+    // Campos string/num: incluir sólo si la columna está en el sheet.
+    for (const f of STR_FIELDS) if (fieldIdx[f] != null) row[f] = getStr(r, f);
+    for (const f of NUM_FIELDS) if (fieldIdx[f] != null) row[f] = getNum(r, f);
+    if (byCod.has(cod)) dupCods.add(cod);
+    byCod.set(cod, row); // last-write-wins
+  }
+
+  const out = [...byCod.values()];
+  const conObjetivo = out.filter(r => r.objetivo_mes != null).length;
+  return { out, descartadas, conObjetivo, dupCods: [...dupCods] };
 }
 
 /**
@@ -160,45 +229,12 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
     return;
   }
 
-  // Helpers para leer un campo del row r tomando el índice del map dinámico.
-  const getStr = (r: any[], field: string): string | null =>
-    fieldIdx[field] != null ? toStr(r[fieldIdx[field]]) : null;
-  const getInt = (r: any[], field: string): number | null =>
-    fieldIdx[field] != null ? toInt(r[fieldIdx[field]]) : null;
-  const getNum = (r: any[], field: string): number | null =>
-    fieldIdx[field] != null ? toNum(r[fieldIdx[field]]) : null;
-
-  // Lista de campos string/num/int que vamos a copiar SOLO si la columna existe.
-  const STR_FIELDS: string[] = ['razon_social', 'direccion', 'dia_visita', 'visita', 'frecuencia', 'localidad', 'hoja_ruta', 'repartidor', 'dia_entrega', 'cond_pago', 'tipo_abc'];
-  const NUM_FIELDS: string[] = ['saldo_cta_cte', 'fact_prom_3m', 'fact_mes_pasado'];
-
-  const out: any[] = [];
-  let descartadas = 0;
-  let conObjetivo = 0;
+  // Construir y deduplicar las filas (last-write-wins por cod_cliente). Ver
+  // buildMaestroRows: un código repetido en el sheet rompía el upsert entero.
   const updatedAt = new Date().toISOString();
-
-  for (let i = 1; i < rows.length; i++) {
-    const r: any[] = rows[i] || [];
-    const cod = getInt(r, 'cod_cliente');
-    if (!cod) { descartadas++; continue; }
-    const objetivoMes = getNum(r, 'objetivo_mes');
-    if (objetivoMes != null) conObjetivo++;
-    const row: any = {
-      tenant_id: TENANT_ID,
-      cod_cliente: cod,
-      objetivo_mes: objetivoMes,
-      objetivo_source: 'sheet',
-      objetivo_year: year,
-      objetivo_month: month,
-      updated_at: updatedAt,
-    };
-    // cod_vendedor sólo si está presente.
-    if (fieldIdx.cod_vendedor != null) row.cod_vendedor = getInt(r, 'cod_vendedor');
-    // Campos string/num: incluir sólo si la columna está en el sheet.
-    for (const f of STR_FIELDS) if (fieldIdx[f] != null) row[f] = getStr(r, f);
-    for (const f of NUM_FIELDS) if (fieldIdx[f] != null) row[f] = getNum(r, f);
-    out.push(row);
-  }
+  const { out, descartadas, conObjetivo, dupCods } = buildMaestroRows(
+    rows, fieldIdx, { tenantId: TENANT_ID, year, month, updatedAt },
+  );
 
   // Upsert por batches a client_operational SOLO si es el mes actual.
   // En histórico, esa tabla NO debe tocarse: representa el snapshot vivo.
@@ -264,13 +300,24 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
   // cliente / vendedor entran a las próximas queries.
   invalidateGoalsCache();
 
-  // Warning si vienen muchos rows sin objetivo: el sheet probablemente perdió
-  // la columna o se desplazó. El import no falla pero la UI puede avisar para
-  // que Matías corrija el sheet antes de la reunión.
-  let warning: string | undefined;
-  if (out.length > 0 && conObjetivo / out.length < 0.20) {
-    warning = `Sólo ${conObjetivo} de ${out.length} clientes tienen objetivo cargado en el sheet. Revisá la columna "OBJETIVO" en la hoja "${sheetKey}" antes de seguir.`;
+  // Warnings (no bloquean el import, pero la UI los muestra para que Matías
+  // limpie el sheet antes de la reunión).
+  const warnings: string[] = [];
+  // 1) Códigos repetidos en el sheet: importamos la última aparición de cada uno.
+  if (dupCods.length > 0) {
+    warnings.push(
+      `El sheet tenía ${dupCods.length} código(s) de cliente repetido(s) (${dupCods.join(', ')}). `
+      + `Importé la última fila de cada uno; limpiá las filas duplicadas en la hoja "${sheetKey}".`,
+    );
   }
+  // 2) Muchos rows sin objetivo: el sheet probablemente perdió la columna o se desplazó.
+  if (out.length > 0 && conObjetivo / out.length < 0.20) {
+    warnings.push(
+      `Sólo ${conObjetivo} de ${out.length} clientes tienen objetivo cargado en el sheet. `
+      + `Revisá la columna "OBJETIVO" en la hoja "${sheetKey}" antes de seguir.`,
+    );
+  }
+  const warning: string | undefined = warnings.length ? warnings.join(' · ') : undefined;
 
   res.json({
     ok: errores.length === 0,

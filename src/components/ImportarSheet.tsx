@@ -35,8 +35,17 @@ export const ImportarSheet = ({ onClose, onImported }: Props) => {
                 headers: { ...authHeaders() },
                 body: fd,
             });
-            const j = await res.json();
-            if (!res.ok || !j.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
+            const j = await res.json().catch(() => ({} as any));
+            if (!res.ok || !j.ok) {
+                // El backend devuelve el detalle en `errores` (array) cuando un batch
+                // del upsert falla — sin esto la UI mostraba un críptico "HTTP 200".
+                const detalle = j.error
+                    ?? (Array.isArray(j.errores) && j.errores.length
+                        ? j.errores.map((e: any) => e.error).join(' · ')
+                        : null)
+                    ?? `HTTP ${res.status}`;
+                throw new Error(detalle);
+            }
             setResult(j);
             // Disparar sync en background para refrescar vendor/client_sales_monthly.
             fetch('/api/goals/sync-now', { method: 'POST', headers: authHeaders() }).catch(() => { });
