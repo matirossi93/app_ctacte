@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { X, Target, Calendar, Check, Edit3, Loader2, AlertCircle, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { X, Target, Calendar, Check, Edit3, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import { authHeaders, getUser } from '../utils/auth';
 import './ObjetivosApp.css';
 
@@ -42,26 +42,8 @@ export const ObjetivosApp = ({ onClose }: Props) => {
     const user = getUser();
     const isAdmin = user?.rol === 'admin' || user?.rol === 'gerente';
     const today = new Date();
-    const [year, setYear] = useState(today.getUTCFullYear());
-    const [month, setMonth] = useState(today.getUTCMonth() + 1);
-
-    // Navegación de mes. Índice absoluto = year*12 + (month-1) para comparar y
-    // moverse cruzando años. Rango: desde enero 2026 (inicio de datos) hasta
-    // 2 meses adelante del actual (para precargar objetivos del mes que viene).
-    const curIdx = today.getUTCFullYear() * 12 + today.getUTCMonth();
-    const viewIdx = year * 12 + (month - 1);
-    const MIN_IDX = 2026 * 12 + 0;   // enero 2026
-    const MAX_IDX = curIdx + 2;      // hasta 2 meses adelante
-    const canPrev = viewIdx > MIN_IDX;
-    const canNext = viewIdx < MAX_IDX;
-    const isCurrentView = viewIdx === curIdx;
-    const isFutureView = viewIdx > curIdx;
-    const stepMonth = (delta: number) => {
-        const next = viewIdx + delta;
-        if (next < MIN_IDX || next > MAX_IDX) return;
-        setYear(Math.floor(next / 12));
-        setMonth((next % 12) + 1);
-    };
+    const [year] = useState(today.getUTCFullYear());
+    const [month] = useState(today.getUTCMonth() + 1);
     const [data, setData] = useState<GoalsResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
@@ -142,19 +124,10 @@ export const ObjetivosApp = ({ onClose }: Props) => {
             <div className="obj-modal">
                 <header className="obj-header">
                     <button className="obj-icon-btn" onClick={onClose} aria-label="Cerrar"><X size={20} /></button>
-                    <h2>{isAdmin ? 'Objetivos del equipo' : 'Mis objetivos'}</h2>
-                    <div className="obj-month-nav">
-                        <button className="obj-nav-btn" onClick={() => stepMonth(-1)} disabled={!canPrev} aria-label="Mes anterior" title="Mes anterior">
-                            <ChevronLeft size={16} />
-                        </button>
-                        <span className="obj-month-label">
-                            {monthLabel}
-                            {!isCurrentView && <span className={`obj-month-tag ${isFutureView ? 'is-future' : 'is-hist'}`}>{isFutureView ? 'mes futuro' : 'histórico'}</span>}
-                        </span>
-                        <button className="obj-nav-btn" onClick={() => stepMonth(1)} disabled={!canNext} aria-label="Mes siguiente" title="Mes siguiente">
-                            <ChevronRight size={16} />
-                        </button>
-                    </div>
+                    <h2>
+                        {isAdmin ? 'Objetivos del equipo' : 'Mis objetivos'}
+                        <span className="obj-month">· {monthLabel}</span>
+                    </h2>
                     <div className="obj-header-actions">
                         <button className="obj-icon-btn" onClick={syncNow} disabled={syncing} title="Sync ventas InfoManager">
                             {syncing ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
@@ -244,46 +217,8 @@ export const ObjetivosApp = ({ onClose }: Props) => {
 function HeroGoal({ item }: { item: GoalItem }) {
     const pct = item.pct_cumplimiento ?? 0;
     const pctPct = Math.min(200, pct * 100);
-    const hasTarget = item.target_neto != null;
-    const reached = pct >= 1;
-
-    // % del mes transcurrido (en días hábiles). Es la "vara": a ritmo lineal,
-    // deberías tener cumplido ~ese mismo % del objetivo. Si cumplís menos, vas
-    // atrasado; si cumplís más, adelantado.
-    const diasPct = item.dias_habiles_total > 0
-        ? item.dias_habiles_transcurridos / item.dias_habiles_total : 0;
-    const diasPctRound = Math.round(diasPct * 100);
-    const paceDelta = pct - diasPct;
-    const pace = !hasTarget ? null
-        : paceDelta >= 0.03 ? { label: 'Adelantado', cls: 'ok' }
-        : paceDelta <= -0.03 ? { label: 'Atrasado', cls: 'low' }
-        : { label: 'En ritmo', cls: 'mid' };
-
-    // Animación de entrada: arrancamos en 0 y transicionamos al valor real. Sin
-    // esto React pinta el estado final de una y las transiciones CSS no corren
-    // (solo animan ante un cambio, no en el montaje). El doble requestAnimationFrame
-    // garantiza que el frame "vacío" se pinte antes. Gatilla anillo + barras.
-    const [mounted, setMounted] = useState(false);
-    useEffect(() => {
-        let raf2 = 0;
-        const raf1 = requestAnimationFrame(() => {
-            raf2 = requestAnimationFrame(() => setMounted(true));
-        });
-        return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
-    }, []);
-    const shownPct = mounted ? Math.min(1, pct) : 0;
-    const shownDias = mounted ? Math.min(1, diasPct) : 0;
-
-    const R = 54;
-    const circumference = 2 * Math.PI * R;
-    const offset = circumference * (1 - shownPct);
-    // Marcador de "ritmo del mes" sobre el anillo. Mismo sistema de coords que el
-    // SVG (rotado -90° por CSS → 0 = arriba, sentido horario), así el punto cae
-    // justo donde llegaría el relleno si estuvieras exactamente a ritmo.
-    const paceAngle = Math.min(1, diasPct) * 2 * Math.PI;
-    const paceX = 60 + R * Math.cos(paceAngle);
-    const paceY = 60 + R * Math.sin(paceAngle);
-    const showPaceMarker = hasTarget && diasPct > 0.02 && diasPct < 0.99;
+    const circumference = 2 * Math.PI * 54;
+    const offset = circumference * (1 - Math.min(1, pct));
 
     return (
         <div className="obj-hero">
@@ -298,12 +233,9 @@ function HeroGoal({ item }: { item: GoalItem }) {
             <div className="obj-hero-main">
                 <div className="obj-ring">
                     <svg viewBox="0 0 120 120">
-                        <circle className="obj-ring-track" cx="60" cy="60" r={R} />
-                        <circle className={`obj-ring-fill${reached ? ' is-done' : ''}`} cx="60" cy="60" r={R}
+                        <circle className="obj-ring-track" cx="60" cy="60" r="54" />
+                        <circle className="obj-ring-fill" cx="60" cy="60" r="54"
                             style={{ strokeDasharray: circumference, strokeDashoffset: offset }} />
-                        {showPaceMarker && (
-                            <circle className="obj-ring-pace" cx={paceX} cy={paceY} r="4.5" />
-                        )}
                     </svg>
                     <div className="obj-ring-center">
                         <div className="obj-ring-pct">{Math.round(pctPct)}<span>%</span></div>
@@ -326,39 +258,14 @@ function HeroGoal({ item }: { item: GoalItem }) {
                 </div>
             </div>
 
-            {/* Ritmo del mes: % de días transcurridos vs % de cumplimiento. */}
-            <div className="obj-pace">
-                <div className="obj-pace-head">
-                    <span className="obj-pace-title">Ritmo del mes</span>
-                    {pace && <span className={`obj-pace-badge ${pace.cls}`}>{pace.label}</span>}
-                </div>
-                <div className="obj-pace-row">
-                    <span className="obj-pace-lbl">Mes transcurrido</span>
-                    <div className="obj-pace-track"><div className="obj-pace-fill mes" style={{ width: `${shownDias * 100}%` }} /></div>
-                    <span className="obj-pace-val">{diasPctRound}%</span>
-                </div>
-                <div className="obj-pace-row">
-                    <span className="obj-pace-lbl">Cumplimiento</span>
-                    <div className="obj-pace-track"><div className="obj-pace-fill obj" style={{ width: `${shownPct * 100}%` }} /></div>
-                    <span className="obj-pace-val">{Math.round(pctPct)}%</span>
-                </div>
-                <div className="obj-pace-note">
-                    {item.dias_habiles_transcurridos} de {item.dias_habiles_total} días hábiles
-                    {item.num_comprobantes > 0 ? ` · ${item.num_comprobantes} comprobantes` : ''}
-                </div>
-            </div>
-
             <div className="obj-hero-daily">
                 <div className="obj-daily-box">
                     <div className="k">Necesario por día</div>
                     <strong>{formatMoney(item.necesario_por_dia)}</strong>
                 </div>
                 <div className="obj-daily-note">
-                    {reached
-                        ? '¡Objetivo cumplido! 🎉'
-                        : hasTarget
-                            ? `Te faltan ${formatMoney((item.target_neto ?? 0) - item.avance)} en ${item.dias_restantes} días hábiles.`
-                            : 'Cuando carguen tu target, acá vas a ver cuánto necesitás por día.'}
+                    {item.dias_habiles_transcurridos} de {item.dias_habiles_total} días hábiles.
+                    {item.num_comprobantes > 0 && ` ${item.num_comprobantes} comprobantes este mes.`}
                 </div>
             </div>
 
