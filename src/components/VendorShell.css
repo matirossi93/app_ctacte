@@ -109,13 +109,19 @@
 }
 
 /* ── Multiselect único de vendedores (reemplaza dropdown + gear + toggle) ── */
-.vs-vendor-ms { position: relative; display: inline-flex; vertical-align: middle; min-width: 0 }
-/* El trigger reusa el look del viejo <select> pero es un <button>. */
+.vs-vendor-ms { position: relative; display: inline-flex; vertical-align: middle; min-width: 0; max-width: 100% }
+/* El trigger reusa el look del viejo <select> pero es un <button>. El texto va
+   en un span que recorta con "…" y la flechita queda fija a su lado (así el
+   botón no se estira ni se encima con el selector de mes en celular). */
 .vs-vendor-ms-trigger {
     display: inline-flex; align-items: center; gap: 3px;
-    background-image: none; padding-right: 2px; max-width: 100%;
+    background-image: none; padding-right: 2px; max-width: 170px;
 }
-.vs-vendor-ms-trigger > span, .vs-vendor-ms-trigger { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.vs-vendor-ms-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0 }
+.vs-vendor-ms-trigger svg { flex-shrink: 0 }
+@media (max-width: 480px) {
+    .vs-vendor-ms-trigger { max-width: 120px; font-size: 12px }
+}
 .vs-vendores-menu-search {
     display: flex; align-items: center; gap: 6px;
     padding: 6px 8px; margin-bottom: 6px;

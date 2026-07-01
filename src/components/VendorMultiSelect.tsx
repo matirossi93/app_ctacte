@@ -54,7 +54,8 @@ export function VendorMultiSelect({ vendedores, selected, onChange, showInactivo
             <button className="vs-vendor-select vs-vendor-ms-trigger"
                 onClick={() => setOpen(o => !o)}
                 title="Elegir vendedores" aria-haspopup="menu" aria-expanded={open}>
-                {label} <ChevronDown size={12} />
+                <span className="vs-vendor-ms-label">{label}</span>
+                <ChevronDown size={12} />
             </button>
             {open && (
                 <>
