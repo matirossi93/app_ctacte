@@ -262,6 +262,17 @@
 .spin { animation: vs-spin 1s linear infinite }
 @keyframes vs-spin { to { transform: rotate(360deg) } }
 
+/* Aviso transitorio (flash) — refrescar contactos, etc. */
+.vs-flash {
+    margin: 8px 12px; padding: 10px 14px; border-radius: 10px;
+    font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px;
+    border: 1px solid transparent;
+}
+.vs-flash.ok  { background: rgba(6,101,47,.10);  color: #06652F; border-color: rgba(6,101,47,.25) }
+.vs-flash.err { background: rgba(168,62,43,.10); color: #A83E2B; border-color: rgba(168,62,43,.25) }
+[data-theme="dark"] .vs-flash.ok  { background: #14251b; color: #7fd39b; border-color: #2b4a37 }
+[data-theme="dark"] .vs-flash.err { background: #2a1714; color: #f0a99d; border-color: #5a2b24 }
+
 /* Search */
 .vs-search {
     background: #fff; border: 1px solid rgba(20,24,20,.08);

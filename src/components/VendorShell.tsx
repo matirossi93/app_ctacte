@@ -324,6 +324,8 @@ export const VendorShell = ({ onLogout }: Props) => {
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
     const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+    const [refrescandoContactos, setRefrescandoContactos] = useState(false);
+    const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
 
     // Filtro multi en vista "Todos": siempre se aplica cuando hay seed, así Andrea/etc.
     // quedan fuera por default aunque no aparezcan en la lista de /api/goals.
@@ -352,6 +354,25 @@ export const VendorShell = ({ onLogout }: Props) => {
         finally { setLoading(false); }
     };
     useEffect(() => { loadData(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedVendor, codsQs]);
+
+    // Fuerza releer los teléfonos/WhatsApp desde InfoManager (invalida los cachés
+    // del server) y recarga la vista. Útil tras corregir un contacto en IM.
+    const refrescarContactos = async () => {
+        setRefrescandoContactos(true); setFlash(null);
+        try {
+            const res = await fetch('/api/clientes/refresh-contactos', { method: 'POST', headers: authHeaders() });
+            if (res.status === 401) { onLogout(); return; }
+            const d = await res.json();
+            if (!res.ok || d.error || d.ok === false) throw new Error(d.error || d.warning || 'No se pudo refrescar contactos');
+            await loadData(true); // recarga /api/data con los teléfonos frescos
+            setFlash({ ok: true, text: `Contactos actualizados desde InfoManager (${d.contactos} clientes).` });
+        } catch (e: any) {
+            setFlash({ ok: false, text: e.message || 'No se pudo refrescar contactos.' });
+        } finally {
+            setRefrescandoContactos(false);
+            window.setTimeout(() => setFlash(null), 4500);
+        }
+    };
 
     // Admin: traer lista de vendedores desde /api/goals (filtrada por activo según toggle)
     useEffect(() => {
@@ -559,6 +580,11 @@ export const VendorShell = ({ onLogout }: Props) => {
                                         </button>
                                     )}
                                     {isAdmin && (
+                                        <button onClick={() => { setAvatarMenu(false); refrescarContactos(); }} disabled={refrescandoContactos}>
+                                            <RefreshCw size={14} /> Refrescar contactos (teléfonos)
+                                        </button>
+                                    )}
+                                    {isAdmin && (
                                         <button onClick={() => { setAvatarMenu(false); setShowUsuariosAdmin(true); }}>
                                             <Users size={14} /> Gestionar usuarios
                                         </button>
@@ -583,6 +609,9 @@ export const VendorShell = ({ onLogout }: Props) => {
                     </div>
                 </div>
             </header>
+
+            {/* Aviso transitorio (ej. refrescar contactos desde InfoManager). */}
+            {flash && <div className={`vs-flash ${flash.ok ? 'ok' : 'err'}`}>{flash.text}</div>}
 
             {/* Banner amarillo cuando se está viendo un período histórico (≠ mes actual). */}
             {isHistoricView && <HistoricBanner period={viewPeriod} onReset={resetPeriod} />}

@@ -605,6 +605,32 @@ app.get('/api/debug/cache-state', (_req, res) => {
 });
 app.post('/api/cuentas/refresh', requireJwt, (req: any, res) => cuentasRefresh(req, res));
 
+// ─── Refrescar contactos (teléfonos/WhatsApp) desde InfoManager ─────────────
+// Los teléfonos se leen de IM y viven en DOS cachés: imClientesCache (contactos
+// crudos de IM, TTL 1h) y dataCache (respuesta armada de /api/data, TTL 10min).
+// Tras corregir un teléfono en InfoManager, este endpoint invalida ambas capas
+// y re-lee IM en el acto, sin esperar el TTL ni reiniciar el container. Admin-only.
+app.post('/api/clientes/refresh-contactos', requireJwt, requireAdmin, async (_req: any, res) => {
+    try {
+        // Re-leemos IM PRIMERO (fetch en vivo). Solo si trajo contactos pisamos la
+        // caché: si IM está caído o responde vacío, preservamos los teléfonos que
+        // ya teníamos (no dejamos la app sin contactos). fetchClientesIM tira si IM
+        // falla → cae al catch (500) sin tocar nada.
+        const { fetchClientesIM } = await import('./server-lib/infomanager.js');
+        const rows = await fetchClientesIM();
+        if (rows.length === 0) {
+            res.json({ ok: false, contactos: 0, warning: 'InfoManager no devolvió contactos; se conservan los actuales.' });
+            return;
+        }
+        imClientesCache = { data: rows, timestamp: Date.now() }; // pisa contactos IM (TTL 1h)
+        dataCache = null; // invalida /api/data para que rearme con los teléfonos nuevos
+        res.json({ ok: true, contactos: rows.length, refreshedAt: new Date().toISOString() });
+    } catch (err: any) {
+        console.error('[refresh-contactos]', err?.message ?? err);
+        res.status(500).json({ error: err?.message ?? 'Error refrescando contactos desde InfoManager' });
+    }
+});
+
 // Debug admin-only: probar endpoints no documentados de edición de recibo IM.
 // Swagger v1 solo lista POST /recibo, pero el cliente desktop SÍ edita las
 // fechas Fec.Em./Fec.Pago de un recibo creado → debe haber un endpoint oculto.
