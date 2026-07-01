@@ -432,8 +432,9 @@
 .vs-goal-ring .fill {
     fill: none; stroke: #EEC045; stroke-width: 8; stroke-linecap: round;
     filter: drop-shadow(0 0 10px rgba(238,192,69,.5));
-    transition: stroke-dashoffset .8s ease;
+    transition: stroke-dashoffset 1s cubic-bezier(.22,.61,.36,1), stroke .4s ease, filter .4s ease;
 }
+.vs-goal-ring .fill.is-done { stroke: #7BD88F; filter: drop-shadow(0 0 12px rgba(123,216,143,.6)) }
 .vs-goal-ring-center { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 10px }
 .vs-goal-ring-center .pct { font-size: 24px; font-weight: 800; letter-spacing: -0.8px; line-height: 1 }
 .vs-goal-ring-center .pct span { font-size: 13px; font-weight: 600; margin-left: 1px }
@@ -475,6 +476,27 @@
 .vs-target-edit button:last-child { background: rgba(255,255,255,.15); color: #fff }
 .vs-goal-figs .v.gold { color: #EEC045 }
 .vs-goal-pct { font-size: 11px; font-weight: 600; opacity: .55; letter-spacing: .3px }
+
+/* Ritmo del mes: % días transcurridos vs % cumplimiento */
+.vs-goal-pace {
+    margin-top: 14px; position: relative; z-index: 2;
+    padding: 12px 14px; border-radius: 16px;
+    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.1);
+    backdrop-filter: blur(6px);
+}
+.vs-goal-pace-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px }
+.vs-goal-pace-title { font-size: 10px; letter-spacing: .8px; text-transform: uppercase; opacity: .75; font-weight: 700 }
+.vs-goal-pace-badge { font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: 999px; border: 1px solid transparent }
+.vs-goal-pace-badge.ok  { background: rgba(123,216,143,.18); color: #7BD88F; border-color: rgba(123,216,143,.35) }
+.vs-goal-pace-badge.mid { background: rgba(238,192,69,.18); color: #EEC045; border-color: rgba(238,192,69,.35) }
+.vs-goal-pace-badge.low { background: rgba(232,120,95,.2); color: #F0A08C; border-color: rgba(232,120,95,.4) }
+.vs-goal-pace-row { display: flex; align-items: center; gap: 10px; margin-top: 7px }
+.vs-goal-pace-row .lbl { font-size: 11px; opacity: .8; width: 104px; flex-shrink: 0 }
+.vs-goal-pace-row .val { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; width: 40px; text-align: right; flex-shrink: 0 }
+.vs-goal-pace-row .track { flex: 1; height: 8px; border-radius: 999px; background: rgba(255,255,255,.12); overflow: hidden }
+.vs-goal-pace-row .fill { height: 100%; border-radius: 999px; transition: width 1s cubic-bezier(.22,.61,.36,1) }
+.vs-goal-pace-row .fill.mes { background: rgba(255,255,255,.55) }
+.vs-goal-pace-row .fill.obj { background: #EEC045 }
 
 .vs-goal-daily {
     margin-top: 14px; position: relative; z-index: 2;

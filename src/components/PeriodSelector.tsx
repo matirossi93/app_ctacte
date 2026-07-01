@@ -14,6 +14,8 @@ interface Props {
     onChange: (p: ViewPeriod) => void;
     /** Cantidad de meses hacia atrás disponibles. Default 12. */
     monthsBack?: number;
+    /** Cantidad de meses hacia adelante (para precargar objetivos del mes que viene). Default 0. */
+    monthsForward?: number;
 }
 
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
@@ -28,14 +30,23 @@ function isCurrent(p: ViewPeriod): boolean {
     return p.year === t.year && p.month === t.month && (p.asOfDay == null);
 }
 
-function buildOptions(monthsBack: number): Array<{ year: number; month: number; label: string; isCurrent: boolean }> {
+function buildOptions(monthsBack: number, monthsForward: number): Array<{ year: number; month: number; label: string; isCurrent: boolean; isFuture: boolean }> {
     const t = nowYM();
-    const out: Array<{ year: number; month: number; label: string; isCurrent: boolean }> = [];
+    const out: Array<{ year: number; month: number; label: string; isCurrent: boolean; isFuture: boolean }> = [];
+    // Meses futuros primero (arriba en la lista), de +N hasta +1: sirven para
+    // precargar los objetivos del mes que viene antes de que empiece.
+    for (let i = monthsForward; i >= 1; i--) {
+        let m = t.month + i;
+        let y = t.year;
+        while (m > 12) { m -= 12; y += 1; }
+        out.push({ year: y, month: m, label: `${MESES[m - 1]} ${y}`, isCurrent: false, isFuture: true });
+    }
+    // Mes actual + meses hacia atrás.
     for (let i = 0; i < monthsBack; i++) {
         let m = t.month - i;
         let y = t.year;
         while (m <= 0) { m += 12; y -= 1; }
-        out.push({ year: y, month: m, label: `${MESES[m - 1]} ${y}`, isCurrent: i === 0 });
+        out.push({ year: y, month: m, label: `${MESES[m - 1]} ${y}`, isCurrent: i === 0, isFuture: false });
     }
     return out;
 }
@@ -58,14 +69,16 @@ function lastDayOfMonth(year: number, month: number): number {
 
 function pad2(n: number): string { return String(n).padStart(2, '0'); }
 
-export function PeriodSelector({ value, onChange, monthsBack = 12 }: Props) {
+export function PeriodSelector({ value, onChange, monthsBack = 12, monthsForward = 0 }: Props) {
     const [open, setOpen] = useState(false);
     const [tab, setTab] = useState<'mes' | 'corte'>('mes');
     const ref = useRef<HTMLDivElement | null>(null);
     const historic = !isCurrent(value);
-    const options = buildOptions(monthsBack);
+    const options = buildOptions(monthsBack, monthsForward);
     const today = nowYM();
     const isCurrentMonthSelected = value.year === today.year && value.month === today.month;
+    // ¿El período elegido es futuro? (para etiquetar "próximo" en vez de "histórico").
+    const isFutureSel = value.year > today.year || (value.year === today.year && value.month > today.month);
     const miercoles = useMemo(() => miercolesDelMes(value.year, value.month), [value.year, value.month]);
     const lastDay = lastDayOfMonth(value.year, value.month);
     // Permitir días futuros dentro del mes en curso: en Semillero se factura
@@ -114,7 +127,7 @@ export function PeriodSelector({ value, onChange, monthsBack = 12 }: Props) {
             >
                 <Calendar size={14} />
                 <span className="ps-pill-label">{pillLabel}</span>
-                {historic && <span className="ps-pill-tag">histórico</span>}
+                {historic && <span className="ps-pill-tag">{isFutureSel ? 'próximo' : 'histórico'}</span>}
             </button>
             {open && (
                 <div className="ps-popover" role="dialog">
@@ -154,6 +167,7 @@ export function PeriodSelector({ value, onChange, monthsBack = 12 }: Props) {
                                         <span className="ps-opt-label">
                                             {o.label}
                                             {o.isCurrent && <span className="ps-opt-tag">mes actual</span>}
+                                            {o.isFuture && <span className="ps-opt-tag ps-opt-tag--next">próximo</span>}
                                         </span>
                                         {selected && <Check size={14} />}
                                     </button>

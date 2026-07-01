@@ -533,7 +533,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                     </div>
                 </div>
                 <div className="vs-top-actions">
-                    <PeriodSelector value={viewPeriod} onChange={setViewPeriod} />
+                    <PeriodSelector value={viewPeriod} onChange={setViewPeriod} monthsForward={isAdmin ? 2 : 0} />
                     <NotificacionesBell />
                     <button className="vs-icon-btn" onClick={() => loadData(true)} title="Refrescar" disabled={loading}>
                         {loading ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
@@ -861,6 +861,15 @@ function WidgetPromesas({ items, isAdmin, onOpen, onGoToActividad }: { items: an
 }
 
 function WidgetAvance({ goal, onGoTo }: { goal: GoalData | null; onGoTo: () => void }) {
+    // Animación de entrada del anillo (arranca en 0). El hook va antes del early
+    // return para no romper el orden de hooks.
+    const targetPct = goal && goal.target_neto != null ? Math.min(1, goal.pct_cumplimiento ?? 0) : 0;
+    const [animPct, setAnimPct] = useState(0);
+    useEffect(() => {
+        let r2 = 0;
+        const r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => setAnimPct(targetPct)); });
+        return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); };
+    }, [targetPct]);
     if (!goal || goal.target_neto == null) {
         return (
             <div className="vs-widget vs-widget--avance">
@@ -872,7 +881,8 @@ function WidgetAvance({ goal, onGoTo }: { goal: GoalData | null; onGoTo: () => v
     const pct = goal.pct_cumplimiento ?? 0;
     const pctPct = Math.min(200, pct * 100);
     const circumference = 2 * Math.PI * 36;
-    const offset = circumference * (1 - Math.min(1, pct));
+    const offset = circumference * (1 - animPct);
+    const diasPctRound = goal.dias_habiles_total > 0 ? Math.round((goal.dias_habiles_transcurridos / goal.dias_habiles_total) * 100) : 0;
     const tone = pct >= 0.9 ? 'ok' : pct >= 0.5 ? 'mid' : 'low';
     return (
         <button className={`vs-widget vs-widget--avance vs-widget--${tone}`} onClick={onGoTo}>
@@ -895,7 +905,7 @@ function WidgetAvance({ goal, onGoTo }: { goal: GoalData | null; onGoTo: () => v
                     <div><span className="k">Necesario/día</span><strong>{formatMoney(goal.necesario_por_dia)}</strong></div>
                 </div>
             </div>
-            <div className="vs-widget-foot">{goal.dias_restantes}d restantes</div>
+            <div className="vs-widget-foot">{diasPctRound}% del mes · {goal.dias_restantes}d restantes</div>
         </button>
     );
 }
@@ -1201,6 +1211,25 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
     const [showPrint, setShowPrint] = useState(false);
     const [totales, setTotales] = useState<any>(null);
 
+    // Animación de entrada del anillo: arranca en 0 y transiciona al valor real
+    // cada vez que cambia el objetivo (período, vendedor o filtro de localidad).
+    // Sin esto React pinta el offset final de una y la transición CSS no corre
+    // (solo anima ante un cambio, no en el primer render). Doble rAF = el frame
+    // "vacío" se pinta antes de setear el valor real.
+    const animTarget = (() => {
+        if (!g) return 0;
+        const isLoc = !!localidad && !!seleccion;
+        const tgt = isLoc ? seleccion!.total_objetivo : g.target_neto;
+        const av = isLoc ? seleccion!.total_avance : g.avance;
+        return tgt && tgt > 0 ? Math.min(1, av / tgt) : 0;
+    })();
+    const [animPct, setAnimPct] = useState(0);
+    useEffect(() => {
+        let r2 = 0;
+        const r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => setAnimPct(animTarget)); });
+        return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); };
+    }, [animTarget]);
+
     // Cache local de respuestas {gr, cr} keyed por filtros. Vive la sesión y se
     // limpia cuando reloadTick cambia (tras import/sync). Stale-while-revalidate:
     // si hay hit, mostrar inmediatamente y refresh en background.
@@ -1476,9 +1505,24 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
     const pct = heroPct ?? 0;
     const pctPct = Math.min(200, pct * 100);
     const pctProyPct = heroPctProy != null ? Math.min(999, heroPctProy * 100) : null;
+    const reached = pct >= 1;
     const circumference = 2 * Math.PI * 54;
-    const offset = circumference * (1 - Math.min(1, pct));
+    const offset = circumference * (1 - animPct);
     const localidades = clientesStats?.localidades ?? [];
+
+    // Ritmo del mes: % de días hábiles transcurridos como "vara". A ritmo lineal
+    // deberías tener cumplido ~ese mismo % del objetivo. Solo tiene sentido en el
+    // mes en curso (en histórico el mes ya cerró; en futuro todavía no arrancó).
+    const nowD = new Date();
+    const isCurrentMonthView = viewPeriod.year === nowD.getUTCFullYear() && viewPeriod.month === (nowD.getUTCMonth() + 1) && !viewPeriod.asOfDay;
+    const diasPct = g.dias_habiles_total > 0 ? g.dias_habiles_transcurridos / g.dias_habiles_total : 0;
+    const diasPctRound = Math.round(diasPct * 100);
+    const paceDelta = pct - diasPct;
+    const pace = heroTarget == null ? null
+        : paceDelta >= 0.03 ? { label: 'Adelantado', cls: 'ok' }
+        : paceDelta <= -0.03 ? { label: 'Atrasado', cls: 'low' }
+        : { label: 'En ritmo', cls: 'mid' };
+    const showPace = isCurrentMonthView && heroTarget != null;
 
     return (
         <div className="vs-view">
@@ -1565,7 +1609,7 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                     <div className="vs-goal-ring">
                         <svg viewBox="0 0 120 120">
                             <circle className="track" cx="60" cy="60" r="54" />
-                            <circle className="fill" cx="60" cy="60" r="54"
+                            <circle className={`fill${reached ? ' is-done' : ''}`} cx="60" cy="60" r="54"
                                 style={{ strokeDasharray: circumference, strokeDashoffset: offset }} />
                         </svg>
                         <div className="vs-goal-ring-center">
@@ -1616,6 +1660,25 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                         </div>
                     </div>
                 </div>
+
+                {showPace && (
+                    <div className="vs-goal-pace">
+                        <div className="vs-goal-pace-head">
+                            <span className="vs-goal-pace-title">Ritmo del mes</span>
+                            {pace && <span className={`vs-goal-pace-badge ${pace.cls}`}>{pace.label}</span>}
+                        </div>
+                        <div className="vs-goal-pace-row">
+                            <span className="lbl">Mes transcurrido</span>
+                            <div className="track"><div className="fill mes" style={{ width: `${Math.min(100, diasPct * 100)}%` }} /></div>
+                            <span className="val">{diasPctRound}%</span>
+                        </div>
+                        <div className="vs-goal-pace-row">
+                            <span className="lbl">Cumplimiento</span>
+                            <div className="track"><div className="fill obj" style={{ width: `${Math.min(100, animPct * 100)}%` }} /></div>
+                            <span className="val">{Math.round(pctPct)}%</span>
+                        </div>
+                    </div>
+                )}
 
                 <div className="vs-goal-daily">
                     <div className="k-box">
