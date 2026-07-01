@@ -122,7 +122,7 @@
 .obj-ring-fill {
     fill: none; stroke: #EEC045; stroke-width: 10; stroke-linecap: round;
     filter: drop-shadow(0 0 10px rgba(238,192,69,.5));
-    transition: stroke-dashoffset .8s ease;
+    transition: stroke-dashoffset 1s cubic-bezier(.22,.61,.36,1), stroke .4s ease, filter .4s ease;
 }
 .obj-ring-center { position: absolute; inset: 0; display: grid; place-items: center; text-align: center }
 .obj-ring-pct { font-size: 28px; font-weight: 800; letter-spacing: -1px; line-height: 1 }
@@ -149,7 +149,33 @@
 .obj-daily-box { min-width: 150px }
 .obj-daily-box .k { font-size: 10px; opacity: .75; letter-spacing: .8px; text-transform: uppercase; font-weight: 600 }
 .obj-daily-box strong { display: block; font-size: 20px; font-weight: 800; color: #EEC045; margin-top: 3px; letter-spacing: -.3px }
-.obj-daily-note { font-size: 12px; opacity: .8; line-height: 1.4 }
+.obj-daily-note { font-size: 12px; opacity: .85; line-height: 1.4 }
+
+/* Anillo: estado cumplido (verde) + marcador de ritmo del mes */
+.obj-ring-fill.is-done { stroke: #7BD88F; filter: drop-shadow(0 0 12px rgba(123,216,143,.6)) }
+.obj-ring-pace { fill: #fff; stroke: rgba(10,20,10,.55); stroke-width: 2; filter: drop-shadow(0 0 3px rgba(0,0,0,.35)) }
+
+/* Ritmo del mes: barras comparativas (% mes vs % cumplimiento) */
+.obj-pace {
+    margin-top: 16px; position: relative; z-index: 2;
+    padding: 12px 14px; border-radius: 16px;
+    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.1);
+    backdrop-filter: blur(6px);
+}
+.obj-pace-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px }
+.obj-pace-title { font-size: 10px; letter-spacing: .8px; text-transform: uppercase; opacity: .75; font-weight: 700 }
+.obj-pace-badge { font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: 999px; border: 1px solid transparent }
+.obj-pace-badge.ok  { background: rgba(123,216,143,.18); color: #7BD88F; border-color: rgba(123,216,143,.35) }
+.obj-pace-badge.mid { background: rgba(238,192,69,.18); color: #EEC045; border-color: rgba(238,192,69,.35) }
+.obj-pace-badge.low { background: rgba(232,120,95,.18); color: #F0A08C; border-color: rgba(232,120,95,.4) }
+.obj-pace-row { display: flex; align-items: center; gap: 10px; margin-top: 7px }
+.obj-pace-lbl { font-size: 11px; opacity: .8; width: 108px; flex-shrink: 0 }
+.obj-pace-val { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; width: 40px; text-align: right; flex-shrink: 0 }
+.obj-pace-track { flex: 1; height: 8px; border-radius: 999px; background: rgba(255,255,255,.12); overflow: hidden }
+.obj-pace-fill { height: 100%; border-radius: 999px; transition: width .8s cubic-bezier(.22,.61,.36,1) }
+.obj-pace-fill.mes { background: rgba(255,255,255,.55) }
+.obj-pace-fill.obj { background: #EEC045 }
+.obj-pace-note { font-size: 11px; opacity: .7; margin-top: 10px }
 
 .obj-warn {
     margin-top: 14px; padding: 10px 14px; border-radius: 12px;
