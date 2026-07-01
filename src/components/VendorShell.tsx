@@ -894,7 +894,7 @@ function WidgetAvance({ goal, onGoTo }: { goal: GoalData | null; onGoTo: () => v
                 <div className="vs-avance-ring">
                     <svg viewBox="0 0 80 80">
                         <circle cx="40" cy="40" r="36" fill="none" stroke="rgba(20,24,20,.08)" strokeWidth="6" />
-                        <circle cx="40" cy="40" r="36" fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round"
+                        <circle cx="40" cy="40" r="36" fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="butt"
                             style={{ strokeDasharray: circumference, strokeDashoffset: offset, transform: 'rotate(-90deg)', transformOrigin: 'center' }} />
                     </svg>
                     <div className="vs-avance-pct">{fmtPct(pctPct)}<span>%</span></div>
@@ -902,7 +902,7 @@ function WidgetAvance({ goal, onGoTo }: { goal: GoalData | null; onGoTo: () => v
                 <div className="vs-avance-figs">
                     <div><span className="k">Target</span><strong>{formatMoney(goal.target_neto)}</strong></div>
                     <div><span className="k">Avance</span><strong className="gold">{formatMoney(goal.avance)}</strong></div>
-                    <div><span className="k">Necesario/día</span><strong>{formatMoney(goal.necesario_por_dia)}</strong></div>
+                    <div><span className="k">Nec./día</span><strong>{formatMoney(goal.necesario_por_dia)}</strong></div>
                 </div>
             </div>
             <div className="vs-widget-foot">{fmtPct(diasPctW)}% del mes · {goal.dias_restantes}d restantes</div>

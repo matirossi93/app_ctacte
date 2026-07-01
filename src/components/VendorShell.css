@@ -1187,7 +1187,10 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
 .vs-widget--low .vs-avance-ring { color: #A83E2B }
 .vs-avance-ring svg { width: 100%; height: 100% }
 .vs-avance-pct {
-    position: absolute; inset: 0; display: grid; place-items: center;
+    /* flex (no grid): así el número y el "%" fluyen en línea. Con grid,
+       "3.7" y <span>%</span> caían en filas separadas (el % debajo). */
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center; white-space: nowrap;
     font-size: 18px; font-weight: 800; letter-spacing: -.5px; color: #141814;
     font-variant-numeric: tabular-nums;
 }
@@ -1198,14 +1201,16 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
 }
 .vs-avance-figs > div {
     display: flex; flex-direction: column; gap: 2px;
-    padding: 6px 8px; background: #F5F1E8; border-radius: 10px;
+    padding: 6px 7px; background: #F5F1E8; border-radius: 10px;
     min-width: 0;
 }
 .vs-avance-figs .k {
-    font-size: 9px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
-    color: #6e7670;
+    font-size: 9px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase;
+    color: #6e7670; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.vs-avance-figs strong { font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; color: #141814; overflow-wrap: anywhere }
+/* nowrap: los montos NO deben partirse a mitad de número ("$1.000.0 / 00").
+   Fuente ajustada para que "$1.000.000" entre en la columna en mobile. */
+.vs-avance-figs strong { font-size: 10px; font-weight: 800; font-variant-numeric: tabular-nums; color: #141814; white-space: nowrap; letter-spacing: -.3px }
 .vs-avance-figs .gold { color: #06652F }
 
 /* Top 3 ranking en widget equipo */
@@ -1773,6 +1778,9 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
     position: relative;
     display: inline-flex;
 }
+/* El badge se ancla al BOTÓN (no al wrap), así en mobile podemos volver el wrap
+   `static` sin descolocar el badge. */
+.vs-notif-btn { position: relative; }
 
 .vs-notif-badge {
     position: absolute;
@@ -1811,6 +1819,21 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
     border: 1px solid rgba(20, 24, 20, 0.12);
     border-radius: 12px;
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+}
+/* Mobile: la campana no está en el borde de la pantalla (tiene refrescar + avatar
+   a la derecha), así que un panel anclado a ella con casi todo el ancho se salía
+   por la IZQUIERDA. Volvemos el wrap `static` para que el panel se ancle al header
+   (.vs-top, position:relative) y quede full-width, alineado a la pantalla. */
+@media (max-width: 560px) {
+    .vs-notif-wrap { position: static; }
+    .vs-notif-panel {
+        top: calc(100% + 4px);
+        left: 8px;
+        right: 8px;
+        width: auto;
+        max-width: none;
+        max-height: calc(100vh - 84px);
+    }
 }
 
 .vs-notif-head {
