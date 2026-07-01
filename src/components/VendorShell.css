@@ -65,39 +65,13 @@
     appearance: none; -webkit-appearance: none;
     max-width: 170px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* En mobile el select tiene que ceder ancho para que el gear/toggle entren. */
+/* En mobile el trigger de vendedores cede ancho para no empujar el avatar. */
 @media (max-width: 480px) {
     .vs-vendor-select { max-width: 120px; font-size: 12px }
 }
 .vs-vendor-select:focus { outline: none }
-.vs-inactivos-toggle {
-    display: inline-flex; align-items: center; gap: 4px;
-    margin-left: 10px; font-size: 10px; font-weight: 600;
-    color: #6e7670; cursor: pointer; user-select: none;
-    vertical-align: middle;
-    flex-shrink: 0;
-}
-.vs-inactivos-toggle input {
-    margin: 0; width: 12px; height: 12px; cursor: pointer;
-    accent-color: #06652F;
-}
-/* En mobile el label "Ver inactivos" comía demasiado ancho del header y
-   empujaba el avatar fuera del viewport. Queda solo el checkbox con title
-   visible al tocarlo (accesibilidad preservada). */
-@media (max-width: 480px) {
-    .vs-inactivos-toggle { margin-left: 6px; gap: 0 }
-    .vs-inactivos-toggle span { display: none }
-}
 
-/* Gear para configurar vendedores visibles en "Todos" */
-.vs-vendor-gear-wrap { position: relative; display: inline-flex; vertical-align: middle; margin-left: 4px }
-.vs-vendor-gear {
-    width: 22px; height: 22px; border-radius: 6px;
-    background: transparent; border: 1px solid rgba(6, 101, 47, .2);
-    display: grid; place-items: center; cursor: pointer; color: #06652F;
-    padding: 0;
-}
-.vs-vendor-gear:hover { background: rgba(6, 101, 47, .08) }
+/* Popover del multiselect de vendedores */
 .vs-vendores-menu {
     position: absolute; top: calc(100% + 8px); left: 0;
     min-width: 260px; max-width: 320px; z-index: 41;
@@ -109,13 +83,6 @@
     font-family: inherit;
     animation: vs-avatar-in .14s ease;
 }
-.vs-vendores-menu-header {
-    display: flex; flex-direction: column; gap: 6px;
-    padding: 6px 8px 10px;
-    border-bottom: 1px solid rgba(20, 24, 20, .06);
-    margin-bottom: 4px;
-}
-.vs-vendores-menu-header strong { font-size: 12px; color: #141814; font-weight: 700 }
 .vs-vendores-menu-quick {
     display: flex; gap: 4px; flex-wrap: wrap;
 }
@@ -140,6 +107,48 @@
     margin: 0; width: 14px; height: 14px; cursor: pointer;
     accent-color: #06652F;
 }
+
+/* ── Multiselect único de vendedores (reemplaza dropdown + gear + toggle) ── */
+.vs-vendor-ms { position: relative; display: inline-flex; vertical-align: middle; min-width: 0 }
+/* El trigger reusa el look del viejo <select> pero es un <button>. */
+.vs-vendor-ms-trigger {
+    display: inline-flex; align-items: center; gap: 3px;
+    background-image: none; padding-right: 2px; max-width: 100%;
+}
+.vs-vendor-ms-trigger > span, .vs-vendor-ms-trigger { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.vs-vendores-menu-search {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 8px; margin-bottom: 6px;
+    background: rgba(20, 24, 20, .05); border-radius: 8px; color: #6e7670;
+}
+.vs-vendores-menu-search input {
+    border: 0; background: transparent; outline: none; flex: 1; min-width: 0;
+    font-family: inherit; font-size: 12px; color: #141814;
+}
+.vs-vendor-check-main {
+    display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; cursor: pointer;
+}
+.vs-vendor-check-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.vs-vendor-solo {
+    font-family: inherit; font-size: 10px; font-weight: 600; flex-shrink: 0;
+    padding: 2px 8px; border-radius: 6px; border: 0; cursor: pointer;
+    background: rgba(6, 101, 47, .08); color: #06652F;
+    opacity: 0; transition: opacity .12s;
+}
+.vs-vendor-check:hover .vs-vendor-solo { opacity: 1 }
+.vs-vendor-solo:hover { background: rgba(6, 101, 47, .18) }
+.vs-vendores-menu-inactivos {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+    padding: 9px 10px 3px; margin-top: 4px;
+    border-top: 1px solid rgba(20, 24, 20, .06);
+    font-size: 11px; font-weight: 600; color: #6e7670;
+}
+.vs-vendores-menu-inactivos input {
+    margin: 0; width: 13px; height: 13px; accent-color: #06652F; cursor: pointer;
+}
+.vs-vendores-empty { padding: 14px; text-align: center; font-size: 12px; color: #6e7670 }
+/* En touch no hay hover: el atajo "solo" queda siempre visible. */
+@media (hover: none) { .vs-vendor-solo { opacity: 1 } }
 
 /* Avatar menu */
 .vs-avatar-wrap { position: relative }

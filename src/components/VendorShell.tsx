@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
-    DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, Settings2, MapPin,
+    DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, MapPin,
     Sun, ChevronRight, ChevronDown, AlertTriangle, Download, Trash2, Pencil, Bell, Wallet, Send, Store
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser } from '../utils/auth';
@@ -16,6 +16,7 @@ import { PeriodSelector, type ViewPeriod } from './PeriodSelector';
 import { HistoricBanner } from './HistoricBanner';
 import { PrintAvanceView } from './PrintAvanceView';
 import { ComisionesView } from './ComisionesView';
+import { VendorMultiSelect } from './VendorMultiSelect';
 import { ensurePushSubscription } from '../utils/webPush';
 import { telHref, waHref, phoneStatus } from '../utils/phone';
 import './VendorShell.css';
@@ -293,30 +294,27 @@ export const VendorShell = ({ onLogout }: Props) => {
         return () => document.removeEventListener('click', onFirstClick);
     }, []);
 
-    // Vendedor activo: vendedor usa el propio; admin elige (null = Todos)
-    const [selectedVendor, setSelectedVendor] = useState<number | null>(
-        user?.rol === 'vendedor' ? (user?.cod_vendedor ?? null) : null
-    );
     const [vendedores, setVendedores] = useState<Array<{ cod_vendedor: number; nombre: string; activo: boolean }>>([]);
     const [showInactivos, setShowInactivos] = useState(false);
 
-    // Vendedores que cuentan en la vista "Todos los vendedores" (admin-only).
-    // Persiste en localStorage. Primera vez se siembra con todos los activos que trae /api/goals.
-    const [visibleCods, setVisibleCods] = useState<Set<number>>(() => {
+    // Fuente ÚNICA de verdad de la selección de vendedores (admin-only): qué
+    // vendedores se están mirando. Persiste en localStorage. Primera vez se
+    // siembra con todos los activos que trae /api/goals. De acá se derivan
+    // selectedVendor (ver UNO puntual) y codsQs (ver un subconjunto del total).
+    const [selectedCods, setSelectedCods] = useState<Set<number>>(() => {
         const saved = localStorage.getItem('vendedoresVisibles');
         if (saved) {
             try { return new Set(JSON.parse(saved) as number[]); } catch { /* ignore */ }
         }
         return new Set();
     });
-    const [visiblesSeeded, setVisiblesSeeded] = useState(() => localStorage.getItem('vendedoresVisibles') !== null);
-    const [vendoresMenuOpen, setVendoresMenuOpen] = useState(false);
+    const [selCodsSeeded, setSelCodsSeeded] = useState(() => localStorage.getItem('vendedoresVisibles') !== null);
 
     useEffect(() => {
-        if (visiblesSeeded) {
-            localStorage.setItem('vendedoresVisibles', JSON.stringify([...visibleCods]));
+        if (selCodsSeeded) {
+            localStorage.setItem('vendedoresVisibles', JSON.stringify([...selectedCods]));
         }
-    }, [visibleCods, visiblesSeeded]);
+    }, [selectedCods, selCodsSeeded]);
 
     // Data fetching
     const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -327,13 +325,18 @@ export const VendorShell = ({ onLogout }: Props) => {
     const [refrescandoContactos, setRefrescandoContactos] = useState(false);
     const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
 
-    // Filtro multi en vista "Todos": siempre se aplica cuando hay seed, así Andrea/etc.
-    // quedan fuera por default aunque no aparezcan en la lista de /api/goals.
-    // El admin amplía tildando más en el popover si quiere verlos.
-    const customCodsActive = isAdmin && selectedVendor == null && visiblesSeeded && visibleCods.size > 0;
-    const codsQs = customCodsActive ? [...visibleCods].join(',') : '';
-    // Mostrar conteo solo cuando tiene sentido (hay lista cargada y el filtro achica)
-    const showCustomBadge = customCodsActive && vendedores.length > 0 && visibleCods.size < vendedores.length;
+    // Derivados del multiselect (selectedCods es la única fuente).
+    //   - vendedor logueado (no admin): siempre su propio cod.
+    //   - admin con 1 tildado           → selectedVendor = ese (vista de UN vendedor).
+    //   - admin con varios tildados     → codsQs = lista EXPLÍCITA (vista "Todos" filtrada).
+    //   - admin con 0 tildados          → sin filtro (backend trae todo).
+    // Importante: la lista se manda SIEMPRE (no se colapsa a '' cuando están todos
+    // los activos), para que los inactivos que no están tildados sigan quedando
+    // FUERA del total, como en el comportamiento previo (no ensuciar "Todos").
+    const selectedVendor: number | null = !isAdmin
+        ? (user?.cod_vendedor ?? null)
+        : (selectedCods.size === 1 ? [...selectedCods][0] : null);
+    const codsQs = (isAdmin && selectedVendor == null && selectedCods.size > 0) ? [...selectedCods].join(',') : '';
 
     const loadData = async (force = false) => {
         setLoading(true); setErr(null);
@@ -385,14 +388,14 @@ export const VendorShell = ({ onLogout }: Props) => {
                     const list = j.items.map((i: any) => ({ cod_vendedor: i.cod_vendedor, nombre: i.nombre, activo: i.activo !== false }));
                     setVendedores(list);
                     // Primera vez (sin localStorage): sembrar con todos los activos.
-                    if (!visiblesSeeded) {
-                        setVisibleCods(new Set(list.filter((v: any) => v.activo).map((v: any) => v.cod_vendedor)));
-                        setVisiblesSeeded(true);
+                    if (!selCodsSeeded) {
+                        setSelectedCods(new Set(list.filter((v: any) => v.activo).map((v: any) => v.cod_vendedor)));
+                        setSelCodsSeeded(true);
                     }
                 }
             })
             .catch(() => { });
-    }, [isAdmin, showInactivos, visiblesSeeded]);
+    }, [isAdmin, showInactivos, selCodsSeeded]);
 
     // Agrupar por cliente (solo saldo > 0)
     // Umbral $2000 para ignorar facturas con saldo despreciable (ajustes contables,
@@ -486,69 +489,13 @@ export const VendorShell = ({ onLogout }: Props) => {
                         <span className="eyebrow">SEMILLERO</span>
                         <span className="name">
                             {isAdmin && vendedores.length > 0 ? (
-                                <>
-                                    <select className="vs-vendor-select"
-                                        value={selectedVendor ?? ''}
-                                        onChange={e => setSelectedVendor(e.target.value ? Number(e.target.value) : null)}>
-                                        <option value="">
-                                            {showCustomBadge
-                                                ? `Todos (${visibleCods.size} de ${vendedores.length})`
-                                                : 'Todos los vendedores'}
-                                        </option>
-                                        {vendedores.map(v => (
-                                            <option key={v.cod_vendedor} value={v.cod_vendedor}>
-                                                {v.nombre}{!v.activo && ' (inactivo)'}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    <div className="vs-vendor-gear-wrap">
-                                        <button className="vs-vendor-gear"
-                                            onClick={() => setVendoresMenuOpen(v => !v)}
-                                            title="Configurar vendedores visibles en 'Todos'"
-                                            aria-label="Configurar vendedores visibles">
-                                            <Settings2 size={14} />
-                                        </button>
-                                        {vendoresMenuOpen && (
-                                            <>
-                                                <div className="vs-avatar-scrim" onClick={() => setVendoresMenuOpen(false)} />
-                                                <div className="vs-vendores-menu" role="menu">
-                                                    <div className="vs-vendores-menu-header">
-                                                        <strong>Incluir en "Todos los vendedores"</strong>
-                                                        <div className="vs-vendores-menu-quick">
-                                                            <button type="button" onClick={() => setVisibleCods(new Set(vendedores.map(v => v.cod_vendedor)))}>Todos</button>
-                                                            <button type="button" onClick={() => setVisibleCods(new Set(vendedores.filter(v => v.activo).map(v => v.cod_vendedor)))}>Solo activos</button>
-                                                            <button type="button" onClick={() => setVisibleCods(new Set())}>Ninguno</button>
-                                                        </div>
-                                                    </div>
-                                                    <div className="vs-vendores-menu-list">
-                                                        {vendedores.map(v => (
-                                                            <label key={v.cod_vendedor} className="vs-vendor-check">
-                                                                <input type="checkbox"
-                                                                    checked={visibleCods.has(v.cod_vendedor)}
-                                                                    onChange={() => {
-                                                                        setVisibleCods(prev => {
-                                                                            const next = new Set(prev);
-                                                                            if (next.has(v.cod_vendedor)) next.delete(v.cod_vendedor);
-                                                                            else next.add(v.cod_vendedor);
-                                                                            return next;
-                                                                        });
-                                                                        if (!visiblesSeeded) setVisiblesSeeded(true);
-                                                                    }} />
-                                                                <span>{v.nombre}{!v.activo && ' (inactivo)'}</span>
-                                                            </label>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            </>
-                                        )}
-                                    </div>
-                                    <label className="vs-inactivos-toggle" title="Incluir vendedores inactivos / históricos">
-                                        <input type="checkbox"
-                                            checked={showInactivos}
-                                            onChange={e => setShowInactivos(e.target.checked)} />
-                                        <span>Ver inactivos</span>
-                                    </label>
-                                </>
+                                <VendorMultiSelect
+                                    vendedores={vendedores}
+                                    selected={selectedCods}
+                                    onChange={setSelectedCods}
+                                    showInactivos={showInactivos}
+                                    onToggleInactivos={setShowInactivos}
+                                />
                             ) : 'Panel Vendedor'}
                         </span>
                     </div>
