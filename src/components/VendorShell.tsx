@@ -882,7 +882,7 @@ function WidgetAvance({ goal, onGoTo }: { goal: GoalData | null; onGoTo: () => v
     const pctPct = Math.min(200, pct * 100);
     const circumference = 2 * Math.PI * 36;
     const offset = circumference * (1 - animPct);
-    const diasPctRound = goal.dias_habiles_total > 0 ? Math.round((goal.dias_habiles_transcurridos / goal.dias_habiles_total) * 100) : 0;
+    const diasPctW = goal.dias_habiles_total > 0 ? (goal.dias_habiles_transcurridos / goal.dias_habiles_total) * 100 : 0;
     const tone = pct >= 0.9 ? 'ok' : pct >= 0.5 ? 'mid' : 'low';
     return (
         <button className={`vs-widget vs-widget--avance vs-widget--${tone}`} onClick={onGoTo}>
@@ -897,7 +897,7 @@ function WidgetAvance({ goal, onGoTo }: { goal: GoalData | null; onGoTo: () => v
                         <circle cx="40" cy="40" r="36" fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round"
                             style={{ strokeDasharray: circumference, strokeDashoffset: offset, transform: 'rotate(-90deg)', transformOrigin: 'center' }} />
                     </svg>
-                    <div className="vs-avance-pct">{Math.round(pctPct)}<span>%</span></div>
+                    <div className="vs-avance-pct">{fmtPct(pctPct)}<span>%</span></div>
                 </div>
                 <div className="vs-avance-figs">
                     <div><span className="k">Target</span><strong>{formatMoney(goal.target_neto)}</strong></div>
@@ -905,7 +905,7 @@ function WidgetAvance({ goal, onGoTo }: { goal: GoalData | null; onGoTo: () => v
                     <div><span className="k">Necesario/día</span><strong>{formatMoney(goal.necesario_por_dia)}</strong></div>
                 </div>
             </div>
-            <div className="vs-widget-foot">{diasPctRound}% del mes · {goal.dias_restantes}d restantes</div>
+            <div className="vs-widget-foot">{fmtPct(diasPctW)}% del mes · {goal.dias_restantes}d restantes</div>
         </button>
     );
 }
@@ -1516,11 +1516,15 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
     const nowD = new Date();
     const isCurrentMonthView = viewPeriod.year === nowD.getUTCFullYear() && viewPeriod.month === (nowD.getUTCMonth() + 1) && !viewPeriod.asOfDay;
     const diasPct = g.dias_habiles_total > 0 ? g.dias_habiles_transcurridos / g.dias_habiles_total : 0;
-    const diasPctRound = Math.round(diasPct * 100);
-    const paceDelta = pct - diasPct;
-    const pace = heroTarget == null ? null
-        : paceDelta >= 0.03 ? { label: 'Adelantado', cls: 'ok' }
-        : paceDelta <= -0.03 ? { label: 'Atrasado', cls: 'low' }
+    // Ritmo = proyección/target (a este ritmo, cuánto cerrás el mes). Es EL MISMO
+    // número que la "Proyección", así el badge, las barras y la proyección cuentan
+    // la misma historia. Antes se comparaba cumplimiento vs mes con umbral absoluto,
+    // que a principio de mes daba "iguales" por redondeo mientras la proyección
+    // (que divide por un mes-transcurrido diminuto) decía otra cosa.
+    const paceRatio = heroPctProy;
+    const pace = (heroTarget == null || paceRatio == null) ? null
+        : paceRatio >= 1.03 ? { label: 'Adelantado', cls: 'ok' }
+        : paceRatio <= 0.97 ? { label: 'Atrasado', cls: 'low' }
         : { label: 'En ritmo', cls: 'mid' };
     const showPace = isCurrentMonthView && heroTarget != null;
 
@@ -1627,7 +1631,7 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                             </g>
                         </svg>
                         <div className="vs-goal-ring-center">
-                            <div className="pct">{Math.round(pctPct)}<span>%</span></div>
+                            <div className="pct">{fmtPct(pctPct)}<span>%</span></div>
                             <div className="sub">cumplimiento</div>
                         </div>
                     </div>
@@ -1662,14 +1666,14 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                             <span className="k">Avance</span>
                             <span className="v gold">
                                 {formatMoney(heroAvance)}
-                                {pctPct > 0 && <span className="vs-goal-pct"> · {Math.round(pctPct)}%</span>}
+                                {pctPct > 0 && <span className="vs-goal-pct"> · {fmtPct(pctPct)}%</span>}
                             </span>
                         </div>
                         <div>
                             <span className="k">Proyección</span>
                             <span className="v">
                                 {formatMoney(heroProyeccion)}
-                                {pctProyPct != null && <span className="vs-goal-pct"> · {Math.round(pctProyPct)}%</span>}
+                                {pctProyPct != null && <span className="vs-goal-pct"> · {fmtPct(pctProyPct)}%</span>}
                             </span>
                         </div>
                     </div>
@@ -1684,13 +1688,16 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                         <div className="vs-goal-pace-row">
                             <span className="lbl">Mes transcurrido</span>
                             <div className="track"><div className="fill mes" style={{ width: `${Math.min(100, diasPct * 100)}%` }} /></div>
-                            <span className="val">{diasPctRound}%</span>
+                            <span className="val">{fmtPct(diasPct * 100)}%</span>
                         </div>
                         <div className="vs-goal-pace-row">
                             <span className="lbl">Cumplimiento</span>
                             <div className="track"><div className="fill obj" style={{ width: `${Math.min(100, animPct * 100)}%` }} /></div>
-                            <span className="val">{Math.round(pctPct)}%</span>
+                            <span className="val">{fmtPct(pctPct)}%</span>
                         </div>
+                        {pctProyPct != null && (
+                            <div className="vs-goal-pace-foot">A este ritmo cerrás el mes en <strong>{fmtPct(pctProyPct)}%</strong></div>
+                        )}
                     </div>
                 )}
 
@@ -2449,6 +2456,14 @@ function HolidayPickerGrid({ year, month, initialHolidays, saving, onSave, onCan
 function formatMoney(n: number | null | undefined): string {
     if (n == null) return '—';
     return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n);
+}
+
+// Formatea un porcentaje: 1 decimal si es chico (>0 y <10%), entero si no. A
+// principio de mes cumplimiento y "mes transcurrido" son ~3-4% y al redondear a
+// entero se ven IGUALES aunque no lo sean (ej: 3.7% vs 4.0%), lo que hace que la
+// proyección (= cumplimiento/mes) parezca inconsistente. El decimal lo transparenta.
+function fmtPct(v: number): string {
+    return v > 0 && v < 10 ? v.toFixed(1) : String(Math.round(v));
 }
 function formatDay(iso: string): string {
     const d = new Date(iso + 'T00:00:00');
