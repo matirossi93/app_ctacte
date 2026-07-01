@@ -427,14 +427,18 @@
 @media (min-width: 720px) {
     .vs-goal-ring { width: 128px; height: 128px }
 }
-.vs-goal-ring svg { width: 100%; height: 100%; transform: rotate(-90deg) }
-.vs-goal-ring .track { fill: none; stroke: rgba(255,255,255,.14); stroke-width: 8 }
+/* overflow visible: el glow del bead se sale del viewBox y no debe recortarse */
+.vs-goal-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible }
+.vs-goal-ring .track { fill: none; stroke: rgba(255,255,255,.12); stroke-width: 9 }
 .vs-goal-ring .fill {
-    fill: none; stroke: #EEC045; stroke-width: 8; stroke-linecap: round;
-    filter: drop-shadow(0 0 10px rgba(238,192,69,.5));
-    transition: stroke-dashoffset 1s cubic-bezier(.22,.61,.36,1), stroke .4s ease, filter .4s ease;
+    fill: none; stroke: url(#vsGoalGold); stroke-width: 9; stroke-linecap: butt;
+    filter: drop-shadow(0 0 8px rgba(238,192,69,.45));
+    transition: stroke-dashoffset 1s cubic-bezier(.22,.61,.36,1), filter .4s ease;
 }
-.vs-goal-ring .fill.is-done { stroke: #7BD88F; filter: drop-shadow(0 0 12px rgba(123,216,143,.6)) }
+.vs-goal-ring .fill.is-done { stroke: url(#vsGoalGreen); filter: drop-shadow(0 0 11px rgba(123,216,143,.55)) }
+/* Bead líder (cabeza que corre por el anillo) */
+.vs-goal-ring .bead-g { transform-box: view-box; transform-origin: center; transition: transform 1s cubic-bezier(.22,.61,.36,1), opacity .4s ease }
+.vs-goal-ring .bead { fill: #FFF4D6; filter: drop-shadow(0 0 6px rgba(255,225,150,.95)) }
 .vs-goal-ring-center { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 10px }
 .vs-goal-ring-center .pct { font-size: 24px; font-weight: 800; letter-spacing: -0.8px; line-height: 1 }
 .vs-goal-ring-center .pct span { font-size: 13px; font-weight: 600; margin-left: 1px }

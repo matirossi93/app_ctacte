@@ -1608,9 +1608,23 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                 <div className="vs-goal-main">
                     <div className="vs-goal-ring">
                         <svg viewBox="0 0 120 120">
+                            <defs>
+                                <linearGradient id="vsGoalGold" x1="0" y1="0" x2="1" y2="1">
+                                    <stop offset="0" stopColor="#FCD97A" /><stop offset="1" stopColor="#E0A322" />
+                                </linearGradient>
+                                <linearGradient id="vsGoalGreen" x1="0" y1="0" x2="1" y2="1">
+                                    <stop offset="0" stopColor="#A6E9B5" /><stop offset="1" stopColor="#4FBF6E" />
+                                </linearGradient>
+                            </defs>
                             <circle className="track" cx="60" cy="60" r="54" />
                             <circle className={`fill${reached ? ' is-done' : ''}`} cx="60" cy="60" r="54"
                                 style={{ strokeDasharray: circumference, strokeDashoffset: offset }} />
+                            {/* Bead líder: corre por el anillo en sync con el relleno (misma
+                                duración/easing por CSS). transform-box:view-box lo rota sobre el
+                                centro. Se oculta en 0% y al completar. */}
+                            <g className="bead-g" style={{ transform: `rotate(${animPct * 360}deg)`, opacity: animPct > 0.015 && animPct < 0.995 ? 1 : 0 }}>
+                                <circle className="bead" cx="114" cy="60" r="5.5" />
+                            </g>
                         </svg>
                         <div className="vs-goal-ring-center">
                             <div className="pct">{Math.round(pctPct)}<span>%</span></div>
