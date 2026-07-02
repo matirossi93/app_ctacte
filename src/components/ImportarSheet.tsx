@@ -14,7 +14,7 @@ export const ImportarSheet = ({ onClose, onImported }: Props) => {
     const [file, setFile] = useState<File | null>(null);
     const [saving, setSaving] = useState(false);
     const [err, setErr] = useState<string | null>(null);
-    const [result, setResult] = useState<{ rows_importadas: number; rows_descartadas: number; rows_leidas: number; rows_con_objetivo?: number; history_imported?: number; warning?: string; headers_detectados?: string[] } | null>(null);
+    const [result, setResult] = useState<{ rows_importadas: number; rows_descartadas: number; rows_leidas: number; rows_duplicadas?: number; rows_con_objetivo?: number; history_imported?: number; warning?: string; headers_detectados?: string[] } | null>(null);
     // Modo histórico: permite elegir qué hoja del XLSX importar (ej. "ENERO" para
     // poblar el snapshot histórico del enero 2026). Si está off, usa "mes actual".
     const [modoHist, setModoHist] = useState(false);
@@ -74,6 +74,9 @@ export const ImportarSheet = ({ onClose, onImported }: Props) => {
                                 <li><strong>{result.rows_con_objetivo}</strong> con objetivo cargado en el sheet</li>
                             )}
                             <li><strong>{result.rows_descartadas}</strong> descartados (sin código)</li>
+                            {(result.rows_duplicadas ?? 0) > 0 && (
+                                <li><strong>{result.rows_duplicadas}</strong> filas duplicadas (se usó la última de cada código)</li>
+                            )}
                             {result.history_imported != null && (
                                 <li><strong>{result.history_imported}</strong> snapshots guardados en histórico</li>
                             )}

@@ -322,6 +322,16 @@
     color: #eec045;
 }
 
+/* Tag "próximo" (meses futuros): ámbar, distinto del verde de "mes actual" */
+.ps-opt-tag--next {
+    background: rgba(209, 138, 60, 0.14);
+    color: #8A5518;
+}
+[data-theme="dark"] .ps-opt-tag--next {
+    background: rgba(209, 138, 60, 0.22);
+    color: #F0C58C;
+}
+
 @media (max-width: 600px) {
     .ps-popover {
         min-width: 220px;

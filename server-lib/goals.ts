@@ -264,7 +264,7 @@ async function computeGoalItems(year: number, month: number, incluirInactivos: b
         goal_updated_at: goal?.updated_at ?? null,
       };
     });
-    return { items, isCurrentMonth, diasTotal, diasAuto, diasConFeriados, diasTrans, diasRestantes, holidays, cfg };
+    return { items, isCurrentMonth, isFutureMonth, diasTotal, diasAuto, diasConFeriados, diasTrans, diasRestantes, holidays, cfg };
 }
 
 export async function listGoals(req: Request & { user?: JwtPayload }, res: Response) {
@@ -286,7 +286,7 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
     }
 
     const incluirInactivos = String(req.query.incluir_inactivos ?? '') === 'true';
-    const { items, isCurrentMonth, diasTotal, diasAuto, diasConFeriados, diasTrans, diasRestantes, holidays, cfg } = await computeGoalItems(year, month, incluirInactivos);
+    const { items, isCurrentMonth, isFutureMonth, diasTotal, diasAuto, diasConFeriados, diasTrans, diasRestantes, holidays, cfg } = await computeGoalItems(year, month, incluirInactivos);
 
     // Filtrar por rol
     const visible = user.rol === 'vendedor'
@@ -315,6 +315,9 @@ export async function listGoals(req: Request & { user?: JwtPayload }, res: Respo
       ok: true,
       year, month,
       is_historic: !isCurrentMonth,
+      // Distingue mes FUTURO (precarga de objetivos) de mes pasado: ambos son
+      // "no actuales" pero el futuro es editable, no un cierre (auditoría 02/07).
+      is_future: isFutureMonth,
       dias_habiles_total: diasTotal,
       dias_habiles_auto: diasAuto,
       dias_habiles_con_feriados: diasConFeriados,
@@ -351,11 +354,11 @@ export async function botGoals(req: Request, res: Response) {
     const cacheKey = `goals-bot:${year}-${month}:${cod}`;
     const cached = getResponseCached(cacheKey);
     if (cached) { res.setHeader('X-Cache', 'HIT'); res.json(cached); return; }
-    const { items, isCurrentMonth, diasTotal, diasTrans, diasRestantes } = await computeGoalItems(year, month, false);
+    const { items, isCurrentMonth, isFutureMonth, diasTotal, diasTrans, diasRestantes } = await computeGoalItems(year, month, false);
     const item = items.find(it => it.cod_vendedor === cod);
     if (!item) { res.status(404).json({ ok: false, error: 'vendedor sin datos para ese período' }); return; }
     const body = {
-      ok: true, year, month, is_historic: !isCurrentMonth,
+      ok: true, year, month, is_historic: !isCurrentMonth, is_future: isFutureMonth,
       dias_habiles_total: diasTotal, dias_habiles_transcurridos: diasTrans, dias_restantes: diasRestantes,
       item,
     };
@@ -422,6 +425,7 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
     const year = Number(req.query.year) || t.year;
     const month = Number(req.query.month) || t.month;
     const isCurrent = year === t.year && month === t.month;
+    const isFuture = year > t.year || (year === t.year && month > t.month);
 
     // Cache hit: response final ya armado para combinación de filtros. TTL 3min.
     // Se invalida ante cualquier mutation de goals/sheet/sync.
@@ -454,18 +458,21 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
     // esperar al primer fetch para encadenar el segundo.
     type HistRow = { cod_cliente: number; cod_vendedor: number | null; objetivo_mes: number | null; fact_mes_pasado: number | null; fact_prom_3m: number | null; tipo_abc: string | null };
 
-    const histPromise = (!isCurrent
-      ? (() => {
-          let qH = sb().from('client_objectives_history')
-            .select('cod_cliente, cod_vendedor, objetivo_mes, fact_mes_pasado, fact_prom_3m, tipo_abc')
-            .eq('tenant_id', TENANT_ID)
-            .eq('year', year).eq('month', month);
-          if (codVend != null) qH = qH.eq('cod_vendedor', codVend);
-          else if (codsList) qH = qH.in('cod_vendedor', codsList);
-          return qH.limit(5000);
-        })()
-      : Promise.resolve({ data: [] as HistRow[], error: null as any })
-    );
+    // History se consulta SIEMPRE (también en mes actual): si el Maestro del mes
+    // se importó ANTES de que el mes empezara (precarga de mes futuro), el import
+    // escribió SOLO client_objectives_history — client_operational sigue con el
+    // mes anterior y su rollover guard daría "sin_objetivo" para todos hasta
+    // re-importar. Con esto, el objetivo del mes en curso cae al snapshot de
+    // history cuando operational no matchea (auditoría 02/07, hallazgo #1).
+    const histPromise = (() => {
+      let qH = sb().from('client_objectives_history')
+        .select('cod_cliente, cod_vendedor, objetivo_mes, fact_mes_pasado, fact_prom_3m, tipo_abc')
+        .eq('tenant_id', TENANT_ID)
+        .eq('year', year).eq('month', month);
+      if (codVend != null) qH = qH.eq('cod_vendedor', codVend);
+      else if (codsList) qH = qH.in('cod_vendedor', codsList);
+      return qH.limit(5000);
+    })();
 
     let opQuery = sb().from('client_operational')
       .select('cod_cliente, cod_vendedor, razon_social, localidad, frecuencia, dia_visita, tipo_abc, direccion, repartidor, hoja_ruta, dia_entrega, cond_pago, notas, objetivo_mes, objetivo_year, objetivo_month, fact_mes_pasado, fact_prom_3m, saldo_cta_cte')
@@ -495,7 +502,7 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
     // En histórico, si no hay snapshot, devolvemos lista vacía con flag.
     if (!isCurrent && histByCliente.size === 0) {
       const emptyBody = {
-        ok: true, year, month, is_historic: true, items: [],
+        ok: true, year, month, is_historic: true, is_future: isFuture, items: [],
         seleccion: { localidad: null, total_clientes: 0, con_objetivo: 0, total_objetivo: 0, total_avance: 0, num_comprobantes: 0, pct: null },
         stats: { total_clientes: 0, con_objetivo: 0, completados: 0, parciales: 0, sin_compras: 0, sin_objetivo: 0, total_objetivo: 0, total_avance: 0, pct_equipo: null, localidades: [] },
         historic_empty: true,
@@ -527,7 +534,11 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
       let tipoAbc: string | null;
       if (isCurrent) {
         const objetivoMatches = c.objetivo_year === year && c.objetivo_month === month;
-        objetivo = (objetivoMatches && c.objetivo_mes != null) ? Number(c.objetivo_mes) : null;
+        // Fallback a history: cubre el Maestro importado como mes futuro
+        // (precarga) que nunca escribió operational para este mes.
+        const hPre = histByCliente.get(c.cod_cliente);
+        objetivo = (objetivoMatches && c.objetivo_mes != null) ? Number(c.objetivo_mes)
+          : (hPre?.objetivo_mes != null ? Number(hPre.objetivo_mes) : null);
         codVendedorEfectivo = c.cod_vendedor ?? null;
         factMesPasado = c.fact_mes_pasado != null ? Number(c.fact_mes_pasado) : null;
         factProm3m = c.fact_prom_3m != null ? Number(c.fact_prom_3m) : null;
@@ -654,7 +665,7 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
       pct: selObjetivo > 0 ? selAvance / selObjetivo : null,
     };
 
-    const responseBody = { ok: true, year, month, is_historic: !isCurrent, items: filtered, stats, seleccion };
+    const responseBody = { ok: true, year, month, is_historic: !isCurrent, is_future: isFuture, items: filtered, stats, seleccion };
     setResponseCached(cacheKey, responseBody);
     res.setHeader('X-Cache', 'MISS');
     res.json(responseBody);
@@ -1005,7 +1016,11 @@ export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res
       .map((d: any) => Number(d))
       .filter((d: number) => Number.isInteger(d) && d >= 1 && d <= 31);
     const diasTotal = cfg?.dias_habiles ?? businessDaysInMonth(year, month, holidays);
-    const diasTrans = businessDaysElapsed(year, month, asOfDay, holidays);
+    // Mes futuro: 0 días transcurridos (espeja computeGoalItems). Sin este guard,
+    // un corte "Mié 12" de un mes que no arrancó reportaba ~10 días hábiles
+    // transcurridos y necesario_por_dia inflado (auditoría 02/07, hallazgo #2).
+    const isFutureMonthSnap = year > t.year || (year === t.year && month > t.month);
+    const diasTrans = isFutureMonthSnap ? 0 : businessDaysElapsed(year, month, asOfDay, holidays);
     const diasRestantes = Math.max(0, diasTotal - diasTrans);
 
     const COD_VENDEDORES_VISIBLES = COD_VENDEDORES_VISIBLES_SHARED;
@@ -1074,7 +1089,9 @@ export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res
     // en RAM (byCliente), no del cache mensual de Supabase.
     type HistRow = { cod_cliente: number; cod_vendedor: number | null; objetivo_mes: number | null; fact_mes_pasado: number | null; fact_prom_3m: number | null; tipo_abc: string | null };
     const histByCliente = new Map<number, HistRow>();
-    if (isHistoric) {
+    {
+      // Siempre (también mes actual): fallback para Maestro precargado como mes
+      // futuro que solo escribió history — ver listClientesObjetivo.
       let qH = sb().from('client_objectives_history')
         .select('cod_cliente, cod_vendedor, objetivo_mes, fact_mes_pasado, fact_prom_3m, tipo_abc')
         .eq('tenant_id', TENANT_ID)
@@ -1131,7 +1148,9 @@ export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res
         tipoAbc = h?.tipo_abc ?? c.tipo_abc ?? null;
       } else {
         const matches = c.objetivo_year === year && c.objetivo_month === month;
-        objetivo = (matches && c.objetivo_mes != null) ? Number(c.objetivo_mes) : null;
+        const hPre = histByCliente.get(c.cod_cliente);
+        objetivo = (matches && c.objetivo_mes != null) ? Number(c.objetivo_mes)
+          : (hPre?.objetivo_mes != null ? Number(hPre.objetivo_mes) : null);
         codVendedorEfectivo = c.cod_vendedor ?? null;
         factMesPasado = c.fact_mes_pasado != null ? Number(c.fact_mes_pasado) : null;
         factProm3m = c.fact_prom_3m != null ? Number(c.fact_prom_3m) : null;

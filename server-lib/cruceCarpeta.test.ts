@@ -1,0 +1,302 @@
+import { describe, it, expect, vi } from 'vitest';
+import * as XLSX from 'xlsx';
+
+// cruceCarpeta.ts importa conciliacion.js, que a su vez importa infomanager.js
+// (process.exit si falta el secret) y supabase.js. Mockeamos SOLO esas hojas
+// con side-effects; conciliacion.js se carga real (clasificarRecibos real).
+vi.mock('./infomanager.js', () => ({
+  fetchComprobPendientes: vi.fn(),
+  fetchClientesIMCached: vi.fn(),
+  fetchVendedores: vi.fn(),
+}));
+vi.mock('./supabase.js', () => ({
+  sb: vi.fn(),
+  TENANT_ID: 'test-tenant',
+  hasSupabase: () => true,
+}));
+
+import {
+  normalizarNombre,
+  scoreNombres,
+  parseFechaCarpeta,
+  parseMontoCarpeta,
+  parseCarpeta,
+  resolverLadoSistema,
+  cruzarVendedor,
+  cruzarCarpeta,
+  UMBRAL_MATCH,
+  type ClienteCarpeta,
+  type ClienteSistema,
+  type CarpetaParseada,
+} from './cruceCarpeta.js';
+import type { PendienteIM, ClienteMaestro, ReciboTransito } from './conciliacion.js';
+
+/**
+ * Tests del motor de cruce carpeta vs sistema. Los casos vienen del cruce
+ * REAL de junio 2026: DANTE/DONET (falso match del greedy ingenuo), MONTERO
+ * (cliente anotado en la carpeta de un vendedor pero asignado a otro en IM),
+ * SARACHO (typo de fecha 21/11/2026 con saldo correcto).
+ */
+
+const CORTE = '2026-06-30';
+
+// Serial de Excel para una fecha UTC dada (días desde 1899-12-30).
+function serialExcel(y: number, m: number, d: number): number {
+  return Date.UTC(y, m - 1, d) / 86400000 + 25569;
+}
+
+function wbCarpeta(pestanas: Record<string, any[][]>): XLSX.WorkBook {
+  const wb = XLSX.utils.book_new();
+  for (const [nombre, filas] of Object.entries(pestanas)) {
+    // fila 1 título + fila 2 headers, datos desde fila 3 (como el Sheet real)
+    const aoa = [['CARPETA JUNIO'], ['FECHA', 'CLIENTE', 'SALDO'], ...filas];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), nombre);
+  }
+  return wb;
+}
+
+function cs(cod: number, nombre: string, saldo: number, codVend: number | null = 3): ClienteSistema {
+  return { cod_cliente: cod, nombre, saldo, cod_vendedor: codVend };
+}
+function cc(nombre: string, saldo: number): ClienteCarpeta {
+  return { nombre, saldo, n_filas: 1 };
+}
+
+describe('normalización y scoring de nombres', () => {
+  it("'CORDOBA, David  (Jujuy)' ≈ 'CORDOBA DAVID' con score ≥ 0.9", () => {
+    expect(normalizarNombre('CORDOBA, David  (Jujuy)')).toBe('CORDOBA DAVID');
+    expect(scoreNombres('CORDOBA, David  (Jujuy)', 'CORDOBA DAVID')).toBeGreaterThanOrEqual(0.9);
+  });
+
+  it("'DANTE' vs 'DONET' queda debajo del umbral de match", () => {
+    expect(scoreNombres('DANTE', 'DONET')).toBeLessThan(UMBRAL_MATCH);
+  });
+
+  it('quita acentos y ñ vía NFD', () => {
+    expect(normalizarNombre('Ñandú Pérez')).toBe('NANDU PEREZ');
+  });
+});
+
+describe('parseFechaCarpeta / parseMontoCarpeta', () => {
+  it('parsea serial de Excel, dd/mm/yyyy, dd/mm (año del corte) y rechaza typos', () => {
+    expect(parseFechaCarpeta(serialExcel(2026, 6, 10), 2026)).toBe('2026-06-10');
+    expect(parseFechaCarpeta('21/11/2026', 2026)).toBe('2026-11-21');
+    expect(parseFechaCarpeta('05/06', 2026)).toBe('2026-06-05');
+    expect(parseFechaCarpeta('2*/05', 2026)).toBeNull();
+    expect(parseFechaCarpeta(null, 2026)).toBeNull();
+  });
+
+  it('parsea montos number y string estilo AR', () => {
+    expect(parseMontoCarpeta(1234.56)).toBe(1234.56);
+    expect(parseMontoCarpeta('$ 1.234,56')).toBe(1234.56);
+    expect(parseMontoCarpeta('1.234')).toBe(1234);       // punto de miles
+    expect(parseMontoCarpeta('1234.5')).toBe(1234.5);    // punto decimal
+    expect(parseMontoCarpeta('')).toBeNull();
+  });
+});
+
+describe('parseCarpeta', () => {
+  it('suma varias filas del mismo cliente (comprobantes) y saltea filas vacías', () => {
+    const wb = wbCarpeta({
+      JULIO: [
+        ['01/06/2026', 'PEREZ JUAN', 1000],
+        [null, null, null],                                  // fila vacía intercalada
+        [serialExcel(2026, 6, 15), 'PEREZ JUAN', 500.5],     // serial Excel
+        ['20/06/2026', 'GOMEZ ANA', '$ 2.000,00'],           // monto string AR
+      ],
+    });
+    const out = parseCarpeta(wb, CORTE);
+
+    expect(out.vendedores).toHaveLength(1);
+    expect(out.vendedores[0].cod_vendedor).toBe(4); // JULIO
+    const perez = out.vendedores[0].clientes.find(c => c.nombre === 'PEREZ JUAN')!;
+    expect(perez.saldo).toBeCloseTo(1500.5, 2);
+    expect(perez.n_filas).toBe(2);
+    expect(out.vendedores[0].clientes.find(c => c.nombre === 'GOMEZ ANA')!.saldo).toBe(2000);
+  });
+
+  it('excluye filas con fecha > corte y las lista (caso SARACHO typo 21/11)', () => {
+    const wb = wbCarpeta({
+      MARCELO: [
+        ['15/06/2026', 'LOPEZ MARIA', 800],
+        ['21/11/2026', 'SARACHO', 5000],   // typo de fecha, saldo correcto
+      ],
+    });
+    const out = parseCarpeta(wb, CORTE);
+
+    expect(out.excluidas_por_fecha).toEqual([
+      { vendedor: 'MARCELO', fila: 4, fecha: '2026-11-21', cliente: 'SARACHO', monto: 5000 },
+    ]);
+    expect(out.vendedores[0].clientes.map(c => c.nombre)).toEqual(['LOPEZ MARIA']);
+  });
+
+  it("incluye filas sin fecha parseable ('2*/05') pero las lista en sin_fecha", () => {
+    const wb = wbCarpeta({ SEBA: [['2*/05', 'LOPEZ RAUL', 300]] });
+    const out = parseCarpeta(wb, CORTE);
+
+    expect(out.sin_fecha).toEqual([
+      { vendedor: 'SEBA', fila: 3, cliente: 'LOPEZ RAUL', monto: 300, valor_fecha: '2*/05' },
+    ]);
+    expect(out.vendedores[0].clientes).toEqual([{ nombre: 'LOPEZ RAUL', saldo: 300, n_filas: 1 }]);
+  });
+
+  it('ignora pestañas que no son de vendedor y matchea SEBASTIAN→SEBA', () => {
+    const wb = wbCarpeta({
+      CLIENTES: [['01/06/2026', 'NO DEBERIA APARECER', 1]],
+      Hoja1: [['01/06/2026', 'TAMPOCO', 1]],
+      SEBASTIAN: [['01/06/2026', 'CLIENTE SEBA', 100]],
+    });
+    const out = parseCarpeta(wb, CORTE);
+
+    expect(out.pestanas_ignoradas.sort()).toEqual(['CLIENTES', 'Hoja1']);
+    expect(out.vendedores).toHaveLength(1);
+    expect(out.vendedores[0].cod_vendedor).toBe(2); // SEBA
+  });
+});
+
+describe('cruzarVendedor — matching best-first', () => {
+  it('el par exacto le gana al débil: DANTE no se casa con DONET', () => {
+    const carpeta = [cc('DONET HERMANOS', 1000), cc('DANTE', 500)];
+    const sistema = [cs(10, 'DONET HERMANOS', 1000)];
+    const r = cruzarVendedor(carpeta, sistema, 20, false);
+
+    expect(r.matches).toHaveLength(1);
+    expect(r.matches[0].carpeta).toBe('DONET HERMANOS');
+    expect(r.matches[0].score).toBe(1);
+    // DANTE queda sin match (no roba a DONET aunque el greedy ingenuo lo haría)
+    expect(r.solo_carpeta.map(s => s.cliente)).toEqual(['DANTE']);
+  });
+
+  it('best-first global: el score alto se asigna primero aunque aparezca después', () => {
+    // 'MANOLO' (carpeta) tiene containment alto contra 'MANOLO GOMEZ' (sistema),
+    // pero el par exacto MANOLO GOMEZ↔MANOLO GOMEZ debe ganar ese lugar.
+    const carpeta = [cc('MANOLO', 700), cc('MANOLO GOMEZ', 1000)];
+    const sistema = [cs(1, 'MANOLO GOMEZ', 1000), cs(2, 'ARMANDO MANOLO', 700)];
+    const r = cruzarVendedor(carpeta, sistema, 20, false);
+
+    const porCarpeta = new Map(r.matches.map(m => [m.carpeta, m]));
+    expect(porCarpeta.get('MANOLO GOMEZ')!.cod_cliente).toBe(1);
+    expect(porCarpeta.get('MANOLO')!.cod_cliente).toBe(2);
+  });
+
+  it('tolerancia: dif de $1-2 cuenta como CUADRA con tolerancia 20', () => {
+    const r = cruzarVendedor(
+      [cc('PEREZ JUAN', 1000), cc('GOMEZ ANA', 5000)],
+      [cs(1, 'PEREZ JUAN', 998), cs(2, 'GOMEZ ANA', 4000)],
+      20,
+      false,
+    );
+    const porCod = new Map(r.matches.map(m => [m.cod_cliente, m]));
+    expect(porCod.get(1)!.estado).toBe('CUADRA');       // dif $2 ≤ 20
+    expect(porCod.get(1)!.dif).toBe(2);
+    expect(porCod.get(2)!.estado).toBe('DIFERENCIA');   // dif $1000
+  });
+});
+
+describe('cruzarCarpeta — integrador', () => {
+  const maestro: ClienteMaestro[] = [
+    { cod_cliente: 100, razon_social: 'LOPEZ MARIA', cod_vendedor: 3 },     // MARCELO
+    { cod_cliente: 900, razon_social: 'MONTERO LUIS', cod_vendedor: 12 },   // BRIAN
+    { cod_cliente: 200, razon_social: 'RUIZ PEDRO', cod_vendedor: 6 },      // ANDREA
+  ];
+  const sistemaRows: PendienteIM[] = [
+    { cod_cliente: 100, nombre: 'LOPEZ MARIA', saldo: 800, tipo_comprobante: 'FA', fecha_factura: '2026-06-10' },
+    { cod_cliente: 900, nombre: 'MONTERO LUIS', saldo: 5000, tipo_comprobante: 'FA', fecha_factura: '2026-06-12' },
+    { cod_cliente: 200, nombre: 'RUIZ PEDRO', saldo: 1500, tipo_comprobante: 'FA', fecha_factura: '2026-06-05' },
+    { cod_cliente: 652, nombre: 'SUCURSAL SAN JUAN', saldo: 99999, tipo_comprobante: 'FA', fecha_factura: '2026-06-01' },
+  ];
+
+  function carpetaDe(vendedores: CarpetaParseada['vendedores']): CarpetaParseada {
+    return { vendedores, excluidas_por_fecha: [], sin_fecha: [], pestanas_ignoradas: [] };
+  }
+
+  it('cross-vendedor: MONTERO en carpeta de MARCELO existe bajo BRIAN → anotado', () => {
+    const carpeta = carpetaDe([
+      { pestana: 'MARCELO', cod_vendedor: 3, clientes: [cc('LOPEZ MARIA', 800), cc('MONTERO LUIS', 5000)] },
+    ]);
+    const r = cruzarCarpeta({
+      carpeta, sistemaRows, maestro, recibos: [], corte: CORTE, tolerancia: 20,
+      corteExacto: true, advertencia: null,
+    });
+
+    const marcelo = r.vendedores[0];
+    expect(marcelo.matches.map(m => m.cod_cliente)).toEqual([100]); // LOPEZ matchea
+    expect(marcelo.solo_carpeta).toHaveLength(1);
+    const montero = marcelo.solo_carpeta[0];
+    expect(montero.cliente).toBe('MONTERO LUIS');
+    expect(montero.cross_vendedor).toBeDefined();
+    expect(montero.cross_vendedor!.cod_cliente).toBe(900);
+    expect(montero.cross_vendedor!.vendedor).toBe('BRIAN');
+  });
+
+  it('ANDREA: todos sus matches quedan tentativo:true', () => {
+    const carpeta = carpetaDe([
+      { pestana: 'ANDREA', cod_vendedor: 6, clientes: [cc('RUIZ PEDRO', 1500)] },
+    ]);
+    const r = cruzarCarpeta({
+      carpeta, sistemaRows, maestro, recibos: [], corte: CORTE, tolerancia: 20,
+      corteExacto: true, advertencia: null,
+    });
+
+    expect(r.vendedores[0].tentativo).toBe(true);
+    expect(r.vendedores[0].matches[0].tentativo).toBe(true);
+  });
+
+  it('anota transito_al_corte en el match (recibos en la app con fecha ≤ corte)', () => {
+    const recibos: ReciboTransito[] = [
+      { id: 'r1', cod_cliente: 100, monto: 300, fecha_comprobante: '2026-06-20', status: 'pendiente_revision' },
+      { id: 'r2', cod_cliente: 100, monto: 999, fecha_comprobante: '2026-07-05', status: 'pendiente_revision' }, // posterior al corte: NO
+      { id: 'a1', cod_cliente: 100, monto: 555, fecha_comprobante: '2026-06-15', status: 'aprobado' },           // anticipo: NO es tránsito
+    ];
+    const carpeta = carpetaDe([
+      { pestana: 'MARCELO', cod_vendedor: 3, clientes: [cc('LOPEZ MARIA', 1100)] }, // dif 300 vs sistema 800
+    ]);
+    const r = cruzarCarpeta({
+      carpeta, sistemaRows, maestro, recibos, corte: CORTE, tolerancia: 20,
+      corteExacto: true, advertencia: null,
+    });
+
+    const m = r.vendedores[0].matches[0];
+    expect(m.estado).toBe('DIFERENCIA');
+    expect(m.transito_al_corte).toEqual([{ monto: 300, fecha: '2026-06-20', status: 'pendiente_revision' }]);
+  });
+
+  it('internas quedan fuera del cruce, con su saldo al corte', () => {
+    const carpeta = carpetaDe([
+      { pestana: 'MARCELO', cod_vendedor: 3, clientes: [cc('LOPEZ MARIA', 800)] },
+    ]);
+    const r = cruzarCarpeta({
+      carpeta, sistemaRows, maestro, recibos: [], corte: CORTE, tolerancia: 20,
+      corteExacto: true, advertencia: null,
+    });
+
+    expect(r.internas).toEqual([{ cod_cliente: 652, nombre: 'SUCURSAL SAN JUAN', saldo: 99999 }]);
+    // La sucursal no aparece como solo_sistema de nadie
+    for (const v of r.vendedores) {
+      expect(v.solo_sistema.find(s => s.cod_cliente === 652)).toBeUndefined();
+    }
+  });
+});
+
+describe('resolverLadoSistema — snapshot vs foto viva', () => {
+  const vivo: PendienteIM[] = [
+    { cod_cliente: 1, saldo: 100, fecha_factura: '2026-06-15' },
+    { cod_cliente: 2, saldo: 200, fecha_factura: '2026-07-05' },  // posterior al corte
+    { cod_cliente: 3, saldo: 300 },                                // sin fecha → se conserva
+  ];
+
+  it('con snapshot → corte_exacto true, sin advertencia, usa el snapshot tal cual', () => {
+    const snap: PendienteIM[] = [{ cod_cliente: 9, saldo: 999, fecha_factura: '2026-06-01' }];
+    const r = resolverLadoSistema(snap, vivo, CORTE);
+    expect(r.corte_exacto).toBe(true);
+    expect(r.advertencia).toBeNull();
+    expect(r.rows).toBe(snap);
+  });
+
+  it('sin snapshot → corte_exacto false + advertencia + filtra fecha_factura > corte', () => {
+    const r = resolverLadoSistema(null, vivo, CORTE);
+    expect(r.corte_exacto).toBe(false);
+    expect(r.advertencia).toMatch(/foto ACTUAL/i);
+    expect(r.rows.map(x => x.cod_cliente)).toEqual([1, 3]);
+  });
+});

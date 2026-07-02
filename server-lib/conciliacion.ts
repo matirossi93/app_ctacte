@@ -203,7 +203,7 @@ interface RecibosClasificados {
  *    lo que deja el cron caducarRecibosPendientes tras 30 días sin imputar —
  *    basura por depurar, no un rechazo real de IM. Se cuentan aparte.
  */
-function clasificarRecibos(recs: ReciboTransito[]): RecibosClasificados {
+export function clasificarRecibos(recs: ReciboTransito[]): RecibosClasificados {
   const transito: ReciboTransitoConc[] = [];
   const anticipos: AnticipoConc[] = [];
   let enTransito = 0;
@@ -401,7 +401,7 @@ const PENDIENTES_TTL_MS = 10 * 60 * 1000;
 const pendientesCache = new Map<number, { rows: PendienteIM[]; fetchedAt: number }>();
 const pendientesPending = new Map<number, Promise<PendienteIM[]>>();
 
-async function fetchPendientesCached(codEmpresa: number, force: boolean): Promise<{ rows: PendienteIM[]; fetchedAt: number }> {
+export async function fetchPendientesCached(codEmpresa: number, force: boolean): Promise<{ rows: PendienteIM[]; fetchedAt: number }> {
   const hit = pendientesCache.get(codEmpresa);
   if (!force && hit && (Date.now() - hit.fetchedAt) < PENDIENTES_TTL_MS) return hit;
   // Dedup de llamadas concurrentes (dos admins abriendo el panel a la vez)
@@ -434,7 +434,7 @@ const TRANSITO_MAX_ROWS = 2000;
  * viene NULL y hoy caería en el bucket de Casa Central). Opciones: derivar la
  * empresa del cliente, o pedir cod_empresa al subir el comprobante.
  */
-async function fetchRecibosTransito(codEmpresa: number): Promise<ReciboTransito[]> {
+export async function fetchRecibosTransito(codEmpresa: number): Promise<ReciboTransito[]> {
   let q = sb().from('comprobantes_pago')
     .select('id, cod_cliente, monto, fecha_comprobante, created_at, status, cod_empresa, error_msg')
     .eq('tenant_id', TENANT_ID)
@@ -565,6 +565,71 @@ export async function exportConciliacion(req: Request & { user?: JwtPayload }, r
     res.send(buf);
   } catch (err: any) {
     console.error('exportConciliacion error:', err);
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+// ─── Snapshot diario de la cta cte (para cortes exactos del Cruce carpeta) ──
+// El reporte comprob_pendientes_clientes es una foto de HOY: sin snapshot, un
+// corte al 30/06 corrido el 05/07 es solo aproximable. Un cron (~23:50 ART)
+// guarda las filas crudas por día en conciliacion_snapshot (migración 013).
+
+/** Fecha de HOY en Argentina (UTC-3 fijo, AR no tiene horario de verano). */
+export function hoyISOArgentina(): string {
+  return new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+/**
+ * Saca la foto del reporte IM y la guarda (upsert por fecha → idempotente:
+ * si el cron corre dos veces el mismo día, pisa con la foto más nueva).
+ * Fetch DIRECTO a IM (sin cache): es la foto oficial del día.
+ */
+export async function guardarSnapshotConciliacion(codEmpresa: number, fecha?: string): Promise<{ fecha: string; n_rows: number }> {
+  const f = fecha ?? hoyISOArgentina();
+  const rows = await fetchComprobPendientes(codEmpresa, 0);
+  const { error } = await sb().from('conciliacion_snapshot').upsert({
+    tenant_id: TENANT_ID,
+    cod_empresa: codEmpresa,
+    fecha: f,
+    rows,
+    n_rows: rows.length,
+  }, { onConflict: 'tenant_id,cod_empresa,fecha' });
+  if (error) throw new Error(`conciliacion_snapshot upsert: ${error.message}`);
+  console.log(`[snapshot conciliacion] emp${codEmpresa} ${f}: ${rows.length} filas guardadas`);
+  return { fecha: f, n_rows: rows.length };
+}
+
+/** Filas crudas del snapshot de una fecha, o null si no existe. */
+export async function getSnapshotRows(codEmpresa: number, fecha: string): Promise<PendienteIM[] | null> {
+  const { data, error } = await sb().from('conciliacion_snapshot')
+    .select('rows')
+    .eq('tenant_id', TENANT_ID)
+    .eq('cod_empresa', codEmpresa)
+    .eq('fecha', fecha)
+    .maybeSingle();
+  if (error) throw new Error(`conciliacion_snapshot select: ${error.message}`);
+  return data?.rows ?? null;
+}
+
+/**
+ * GET /api/conciliacion/snapshots?cod_empresa=1 — fechas con snapshot (para
+ * que la UI marque qué cortes son exactos). Auth admin/gerente.
+ */
+export async function listSnapshotsConciliacion(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    const codEmpresa = Number(req.query.cod_empresa) || 1;
+    const { data, error } = await sb().from('conciliacion_snapshot')
+      .select('fecha, n_rows')
+      .eq('tenant_id', TENANT_ID)
+      .eq('cod_empresa', codEmpresa)
+      .order('fecha', { ascending: false })
+      .limit(400);
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    res.json({ ok: true, cod_empresa: codEmpresa, fechas: (data ?? []).map((r: any) => String(r.fecha)) });
+  } catch (err: any) {
+    console.error('listSnapshotsConciliacion error:', err);
     res.status(500).json({ error: err?.message ?? 'error' });
   }
 }

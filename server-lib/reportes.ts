@@ -56,14 +56,28 @@ async function getObjetivosPorCliente(year: number, month: number): Promise<Map<
       });
     });
   } else {
-    const { data } = await sb().from('client_operational')
-      .select('cod_cliente, cod_vendedor, objetivo_mes, objetivo_year, objetivo_month, fact_mes_pasado, fact_prom_3m, tipo_abc')
-      .eq('tenant_id', TENANT_ID)
-      .limit(5000);
-    (data ?? []).forEach((r: any) => {
+    // History en paralelo: fallback para Maestro importado como mes FUTURO
+    // (precarga), que escribió solo client_objectives_history y dejaría a todos
+    // "sin objetivo" el día 1 del mes — ver goals.ts listClientesObjetivo.
+    const [opRes, histRes] = await Promise.all([
+      sb().from('client_operational')
+        .select('cod_cliente, cod_vendedor, objetivo_mes, objetivo_year, objetivo_month, fact_mes_pasado, fact_prom_3m, tipo_abc')
+        .eq('tenant_id', TENANT_ID)
+        .limit(5000),
+      sb().from('client_objectives_history')
+        .select('cod_cliente, objetivo_mes')
+        .eq('tenant_id', TENANT_ID)
+        .eq('year', year).eq('month', month)
+        .limit(5000),
+    ]);
+    const histObj = new Map<number, number>();
+    (histRes.data ?? []).forEach((h: any) => {
+      if (h.objetivo_mes != null) histObj.set(Number(h.cod_cliente), Number(h.objetivo_mes));
+    });
+    (opRes.data ?? []).forEach((r: any) => {
       const matches = r.objetivo_year === year && r.objetivo_month === month;
       m.set(Number(r.cod_cliente), {
-        objetivo_mes: matches ? Number(r.objetivo_mes ?? 0) : 0,
+        objetivo_mes: matches ? Number(r.objetivo_mes ?? 0) : (histObj.get(Number(r.cod_cliente)) ?? 0),
         cod_vendedor: r.cod_vendedor ?? null,
         fact_mes_pasado: r.fact_mes_pasado != null ? Number(r.fact_mes_pasado) : null,
         fact_prom_3m: r.fact_prom_3m != null ? Number(r.fact_prom_3m) : null,

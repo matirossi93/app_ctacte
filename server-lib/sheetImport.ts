@@ -304,9 +304,14 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
   // limpie el sheet antes de la reunión).
   const warnings: string[] = [];
   // 1) Códigos repetidos en el sheet: importamos la última aparición de cada uno.
+  // La lista se capea a 20 códigos para que un sheet muy roto no genere un
+  // warning de miles de caracteres en la UI.
   if (dupCods.length > 0) {
+    const MAX_DUP_LIST = 20;
+    const listado = dupCods.slice(0, MAX_DUP_LIST).join(', ')
+      + (dupCods.length > MAX_DUP_LIST ? ` y ${dupCods.length - MAX_DUP_LIST} más` : '');
     warnings.push(
-      `El sheet tenía ${dupCods.length} código(s) de cliente repetido(s) (${dupCods.join(', ')}). `
+      `El sheet tenía ${dupCods.length} código(s) de cliente repetido(s) (${listado}). `
       + `Importé la última fila de cada uno; limpiá las filas duplicadas en la hoja "${sheetKey}".`,
     );
   }
@@ -326,6 +331,9 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
     rows_leidas: rows.length - 1,
     rows_importadas: okCount,
     rows_descartadas: descartadas,
+    // Filas pisadas por el dedup (N-1 por código repetido): mantiene la
+    // invariante leidas = importadas + descartadas + duplicadas.
+    rows_duplicadas: (rows.length - 1) - out.length - descartadas,
     rows_con_objetivo: conObjetivo,
     history_imported: historyOk,
     headers_detectados: Object.keys(fieldIdx),

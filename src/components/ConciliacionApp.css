@@ -280,3 +280,65 @@
     padding: 7px 0; border-top: 1px solid rgba(20,24,20,.05);
     font-size: 13px;
 }
+
+/* ═══════════ CRUCE CARPETA ═══════════ */
+
+/* Switcher de modo (En vivo | Cruce carpeta) */
+.conc-switch {
+    display: inline-flex; gap: 4px; margin-bottom: 14px;
+    background: rgba(20,24,20,.05);
+    border: 1px solid rgba(20,24,20,.08);
+    border-radius: 12px; padding: 3px;
+}
+.conc-switch-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 14px; border: 0; border-radius: 9px;
+    background: transparent; cursor: pointer;
+    font-family: inherit; font-size: 12.5px; font-weight: 600; color: #4a534b;
+}
+.conc-switch-btn.is-active { background: #fff; color: #06652f; box-shadow: 0 1px 3px rgba(0,0,0,.08) }
+
+/* Formulario del cruce */
+.conc-cruce-form {
+    display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end;
+    background: #fff; border: 1px solid rgba(20,24,20,.08);
+    border-radius: 16px; padding: 14px; margin-bottom: 14px;
+}
+.conc-cruce-field { display: flex; flex-direction: column; gap: 4px; min-width: 150px }
+.conc-cruce-field > span { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: #6e7670 }
+.conc-cruce-field input[type="date"],
+.conc-cruce-field input[type="number"] {
+    padding: 7px 10px; border: 1px solid rgba(20,24,20,.14);
+    border-radius: 10px; font-family: inherit; font-size: 13px; background: #fff;
+}
+.conc-cruce-field input[type="file"] { font-size: 12px; max-width: 260px }
+.conc-cruce-field small { font-size: 10.5px; color: #9ca39d }
+.conc-hint-ok { display: inline-flex; align-items: center; gap: 4px; color: #06652f !important; font-weight: 600 }
+.conc-hint-warn { display: inline-flex; align-items: center; gap: 4px; color: #a06a00 !important; font-weight: 600 }
+.conc-cruzar-btn { height: 38px }
+
+/* Banners de resultado */
+.conc-banner {
+    display: flex; align-items: flex-start; gap: 8px;
+    border-radius: 12px; padding: 10px 14px; margin-bottom: 12px;
+    font-size: 12.5px;
+}
+.conc-banner--ok { background: rgba(6,101,47,.07); border: 1px solid rgba(6,101,47,.2); color: #06652f }
+.conc-banner--warn { background: rgba(199,141,0,.08); border: 1px solid rgba(199,141,0,.25); color: #8a6100 }
+.conc-banner--info { background: rgba(20,24,20,.04); border: 1px solid rgba(20,24,20,.1); color: #4a534b }
+.conc-banner--inset { margin: 10px 0 }
+.conc-banner-list { margin: 6px 0 0; padding-left: 18px; font-size: 11.5px }
+.conc-banner-list li { margin: 2px 0 }
+
+/* Detalle de un vendedor en el cruce */
+.conc-cruce-detalle { padding: 4px 14px 14px; border-top: 1px solid rgba(20,24,20,.06) }
+.conc-cruce-subtitulo {
+    margin: 12px 0 8px; font-size: 11.5px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .05em; color: #6e7670;
+}
+.conc-cruce-solo-row {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 6px 0; border-top: 1px solid rgba(20,24,20,.05);
+    font-size: 12.5px;
+}
+.conc-cruce-solo-row strong { margin-left: auto }

@@ -884,7 +884,7 @@ function WidgetAvance({ goal, onGoTo }: { goal: GoalData | null; onGoTo: () => v
                     <svg viewBox="0 0 80 80">
                         <circle cx="40" cy="40" r="36" fill="none" stroke="rgba(20,24,20,.08)" strokeWidth="6" />
                         <circle cx="40" cy="40" r="36" fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="butt"
-                            style={{ strokeDasharray: circumference, strokeDashoffset: offset, transform: 'rotate(-90deg)', transformOrigin: 'center' }} />
+                            style={{ strokeDasharray: circumference, strokeDashoffset: offset, transform: 'rotate(-90deg)', transformOrigin: 'center', transition: 'stroke-dashoffset 1s cubic-bezier(.22,.61,.36,1)' }} />
                     </svg>
                     <div className="vs-avance-pct">{fmtPct(pctPct)}<span>%</span></div>
                 </div>
@@ -1511,11 +1511,16 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
     // que a principio de mes daba "iguales" por redondeo mientras la proyección
     // (que divide por un mes-transcurrido diminuto) decía otra cosa.
     const paceRatio = heroPctProy;
-    const pace = (heroTarget == null || paceRatio == null) ? null
+    // Sin días hábiles transcurridos (mes que arranca en domingo) todavía no hay
+    // ritmo que juzgar: badge oculto en vez de un "Atrasado" injusto.
+    const pace = (heroTarget == null || paceRatio == null || diasPct === 0) ? null
         : paceRatio >= 1.03 ? { label: 'Adelantado', cls: 'ok' }
         : paceRatio <= 0.97 ? { label: 'Atrasado', cls: 'low' }
         : { label: 'En ritmo', cls: 'mid' };
-    const showPace = isCurrentMonthView && heroTarget != null;
+    // target 0 no es un target real: sin bloque de ritmo (igual que sin target).
+    const showPace = isCurrentMonthView && heroTarget != null && heroTarget > 0;
+    const isFutureView = viewPeriod.year > nowD.getUTCFullYear()
+        || (viewPeriod.year === nowD.getUTCFullYear() && viewPeriod.month > (nowD.getUTCMonth() + 1));
 
     return (
         <div className="vs-view">
@@ -1525,9 +1530,11 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                     <span className="dot" /> {monthName(viewPeriod.month)} {viewPeriod.year}
                     {viewPeriod.asOfDay
                         ? <> · <strong>corte al día {viewPeriod.asOfDay}</strong> · día hábil {g.dias_habiles_transcurridos} de {g.dias_habiles_total}</>
-                        : isHistoricMode
-                            ? <> · <strong>cierre histórico</strong></>
-                            : <> · {g.dias_habiles_transcurridos}/{g.dias_habiles_total} días · {g.dias_restantes} restantes</>}
+                        : isFutureView
+                            ? <> · <strong>mes próximo</strong> · podés precargar objetivos</>
+                            : isHistoricMode
+                                ? <> · <strong>cierre histórico</strong></>
+                                : <> · {g.dias_habiles_transcurridos}/{g.dias_habiles_total} días · {g.dias_restantes} restantes</>}
                 </p>
                 <button
                     type="button"
@@ -2452,7 +2459,9 @@ function formatMoney(n: number | null | undefined): string {
 // entero se ven IGUALES aunque no lo sean (ej: 3.7% vs 4.0%), lo que hace que la
 // proyección (= cumplimiento/mes) parezca inconsistente. El decimal lo transparenta.
 function fmtPct(v: number): string {
-    return v > 0 && v < 10 ? v.toFixed(1) : String(Math.round(v));
+    // Piso 0.1: un avance positivo minúsculo (ej 0.04%) no debe mostrarse "0.0%"
+    // — contradice que haya avance. Se redondea hacia arriba al primer decimal.
+    return v > 0 && v < 10 ? Math.max(v, 0.1).toFixed(1) : String(Math.round(v));
 }
 function formatDay(iso: string): string {
     const d = new Date(iso + 'T00:00:00');
@@ -2790,6 +2799,27 @@ function NotificacionesBell() {
     const [open, setOpen] = useState(false);
     const [loading, setLoading] = useState(false);
     const [readIds, setReadIds] = useState<Set<string>>(() => loadReadSet());
+    const wrapRef = useRef<HTMLDivElement | null>(null);
+
+    // Cierre por click-afuera a nivel document (mismo patrón que PeriodSelector).
+    // El scrim solo no alcanza: vive dentro de .vs-top, cuyo backdrop-filter lo
+    // vuelve containing block de descendientes fixed → el scrim queda confinado
+    // a la franja del header y tocar el contenido de abajo no cerraba el panel.
+    useEffect(() => {
+        if (!open) return;
+        const onDown = (e: MouseEvent | TouchEvent) => {
+            if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+        };
+        const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+        document.addEventListener('mousedown', onDown);
+        document.addEventListener('touchstart', onDown);
+        document.addEventListener('keydown', onEsc);
+        return () => {
+            document.removeEventListener('mousedown', onDown);
+            document.removeEventListener('touchstart', onDown);
+            document.removeEventListener('keydown', onEsc);
+        };
+    }, [open]);
 
     const load = async () => {
         setLoading(true);
@@ -2865,7 +2895,7 @@ function NotificacionesBell() {
     };
 
     return (
-        <div className="vs-notif-wrap">
+        <div className="vs-notif-wrap" ref={wrapRef}>
             <button
                 className="vs-icon-btn vs-notif-btn"
                 onClick={() => setOpen(o => !o)}
