@@ -42,6 +42,7 @@ import {
 } from './server-lib/usuarios.js';
 import { importMaestroClientes } from './server-lib/sheetImport.js';
 import { descargarReporte } from './server-lib/reportes.js';
+import { getConciliacion, exportConciliacion } from './server-lib/conciliacion.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -539,7 +540,7 @@ const denyRepartidor = (req: express.Request & { user?: JwtPayload }, res: expre
 for (const prefix of [
     '/api/data', '/api/goals', '/api/comisiones', '/api/activity',
     '/api/month-config', '/api/reportes', '/api/cuentas', '/api/sheet-import',
-    '/api/overrides', '/api/client-thresholds', '/api/debug',
+    '/api/overrides', '/api/client-thresholds', '/api/debug', '/api/conciliacion',
 ]) {
     app.use(prefix, maybeJwt, denyRepartidor);
 }
@@ -590,6 +591,11 @@ app.post('/api/recibos/:id/elegir-match', requireJwt, (req: any, res) => elegirM
 
 // Reportes admin-only (xlsx)
 app.get('/api/reportes/:tipo', requireJwt, (req: any, res) => descargarReporte(req, res));
+
+// Conciliación de cta cte de clientes (admin/gerente): saldo IM + cobranzas
+// en tránsito de la app, agrupado por vendedor. Export xlsx con 3 hojas.
+app.get('/api/conciliacion', requireJwt, (req: any, res) => getConciliacion(req, res));
+app.get('/api/conciliacion/export', requireJwt, (req: any, res) => exportConciliacion(req, res));
 app.get('/api/cuentas/debug', requireJwt, (req: any, res) => cuentasDebug(req, res));
 app.get('/api/cuentas/efectivo', requireJwt, (req: any, res) => cuentasEfectivo(req, res));
 

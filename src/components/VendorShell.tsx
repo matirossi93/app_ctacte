@@ -3,10 +3,11 @@ import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
     DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, MapPin,
-    Sun, ChevronRight, ChevronDown, AlertTriangle, Download, Trash2, Pencil, Bell, Wallet, Send, Store
+    Sun, ChevronRight, ChevronDown, AlertTriangle, Download, Trash2, Pencil, Bell, Wallet, Send, Store, Scale
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser } from '../utils/auth';
 import { RecibosApp } from './RecibosApp';
+import { ConciliacionApp } from './ConciliacionApp';
 import { CambiarPassword } from './CambiarPassword';
 import { UsuariosAdmin } from './UsuariosAdmin';
 import { ImportarSheet } from './ImportarSheet';
@@ -249,6 +250,7 @@ export const VendorShell = ({ onLogout }: Props) => {
     const [showImportSheet, setShowImportSheet] = useState(false);
     const [showReportes, setShowReportes] = useState(false);
     const [showComisionesSucursal, setShowComisionesSucursal] = useState(false);
+    const [showConciliacion, setShowConciliacion] = useState(false);
     const [reloadObjetivosTick, setReloadObjetivosTick] = useState(0);
 
     // Período visible para tabs Objetivos y Reportes. Default = mes actual.
@@ -546,6 +548,11 @@ export const VendorShell = ({ onLogout }: Props) => {
                                             <Store size={14} /> Comisiones sucursal San Martín
                                         </button>
                                     )}
+                                    {isAdmin && (
+                                        <button onClick={() => { setAvatarMenu(false); setShowConciliacion(true); }}>
+                                            <Scale size={14} /> Conciliación cta cte
+                                        </button>
+                                    )}
                                     <div className="vs-avatar-sep" />
                                     <button className="danger" onClick={() => { setAvatarMenu(false); clearToken(); onLogout(); }}>
                                         <LogOut size={14} /> Cerrar sesión
@@ -654,6 +661,12 @@ export const VendorShell = ({ onLogout }: Props) => {
             />}
             {showReportes && <ReportesModal onClose={() => setShowReportes(false)} period={viewPeriod} />}
             {showComisionesSucursal && <ComisionesSucursalModal onClose={() => setShowComisionesSucursal(false)} period={viewPeriod} />}
+            {showConciliacion && (
+                <ConciliacionApp
+                    onClose={() => setShowConciliacion(false)}
+                    onOpenRecibos={() => { setShowConciliacion(false); setShowRecibos(true); }}
+                />
+            )}
         </div>
     );
 };

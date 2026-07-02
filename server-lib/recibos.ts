@@ -8,7 +8,13 @@ import { getFormaPagoIM, isValidMedio } from './mediosPago.js';
 import { resolveCuentaCod, debugCuentasResolver, invalidateCuentasCache, listCuentasEfectivo } from './cuentasResolver.js';
 import { buscarPagoEnMP, todayISO_AR, mpConfigStatus, type MPMatch, type MPCuenta } from './mercadopago.js';
 import { ajustarImputacionIM } from './recibosImputacion.js';
+import { CADUCADO_PREFIX } from './recibosShared.js';
 import type { JwtPayload } from './auth.js';
+
+// Fuente única de los estados de comprobantes_pago (coincide con el CHECK de la
+// migración 001). Definidos en recibosShared.ts (módulo sin side-effects) y
+// re-exportados acá para los consumidores que ya importan recibos.ts.
+export { RECIBO_STATUSES, CADUCADO_PREFIX, type ReciboStatus } from './recibosShared.js';
 
 const { env } = process;
 const IM_USUARIO = env.INFOMANAGER_USUARIO || '';
@@ -232,7 +238,7 @@ const LIST_COLUMNS = 'id,cod_cliente,cod_vendedor,monto,fecha_comprobante,medio_
 export async function caducarRecibosPendientes(diasMax = 30): Promise<{ caducados: number; ids: string[] }> {
   const corte = new Date(Date.now() - diasMax * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await sb().from('comprobantes_pago')
-    .update({ status: 'error', error_msg: `[CADUCADO] Más de ${diasMax} días en pendiente_revisión sin imputar — revisar y reprocesar o descartar.` })
+    .update({ status: 'error', error_msg: `${CADUCADO_PREFIX} Más de ${diasMax} días en pendiente_revisión sin imputar — revisar y reprocesar o descartar.` })
     .eq('tenant_id', TENANT_ID)
     .eq('status', 'pendiente_revision')
     .lt('created_at', corte)
