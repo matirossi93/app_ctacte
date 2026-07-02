@@ -79,6 +79,8 @@ export interface ReciboTransito {
   created_at?: string | null;
   status: string;
   error_msg?: string | null;
+  /** Solo viene en el cruce carpeta: recibos imputados DESPUÉS del corte. */
+  imputado_at?: string | null;
 }
 
 export interface VendedorIM { cod_vendedor: number; nombre: string }
@@ -579,36 +581,71 @@ export function hoyISOArgentina(): string {
   return new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
+/** Maestro cliente→vendedor congelado dentro del snapshot. */
+export type MaestroSnapshot = Record<string, { cod_vendedor: number | null; nombre: string }>;
+
 /**
  * Saca la foto del reporte IM y la guarda (upsert por fecha → idempotente:
  * si el cron corre dos veces el mismo día, pisa con la foto más nueva).
  * Fetch DIRECTO a IM (sin cache): es la foto oficial del día.
+ * Congela también el MAESTRO cliente→vendedor del momento (un cliente
+ * reasignado de vendedor después del corte no debe mover el cruce histórico).
+ * Si IM devuelve 0 filas NO persiste (una foto vacía envenenaría el corte
+ * "exacto": todo caería en solo-carpeta).
  */
-export async function guardarSnapshotConciliacion(codEmpresa: number, fecha?: string): Promise<{ fecha: string; n_rows: number }> {
+export async function guardarSnapshotConciliacion(codEmpresa: number, fecha?: string): Promise<{ fecha: string; n_rows: number; guardado: boolean }> {
   const f = fecha ?? hoyISOArgentina();
-  const rows = await fetchComprobPendientes(codEmpresa, 0);
+  const [rows, clientes] = await Promise.all([
+    fetchComprobPendientes(codEmpresa, 0),
+    fetchClientesIMCached(),
+  ]);
+  if (rows.length === 0) {
+    console.warn(`[snapshot conciliacion] emp${codEmpresa} ${f}: IM devolvió 0 filas — NO se guarda (probable falla de IM)`);
+    return { fecha: f, n_rows: 0, guardado: false };
+  }
+  const maestro: MaestroSnapshot = {};
+  for (const c of clientes) {
+    maestro[String(c.cod_cliente)] = { cod_vendedor: c.cod_vendedor ?? null, nombre: c.razon_social ?? '' };
+  }
   const { error } = await sb().from('conciliacion_snapshot').upsert({
     tenant_id: TENANT_ID,
     cod_empresa: codEmpresa,
     fecha: f,
     rows,
+    maestro,
     n_rows: rows.length,
+    // created_at explícito: el upsert-update de un refresh intradía debe pisar
+    // el timestamp para que el banner "foto de hoy a las HH:MM" sea veraz.
+    created_at: new Date().toISOString(),
   }, { onConflict: 'tenant_id,cod_empresa,fecha' });
   if (error) throw new Error(`conciliacion_snapshot upsert: ${error.message}`);
   console.log(`[snapshot conciliacion] emp${codEmpresa} ${f}: ${rows.length} filas guardadas`);
-  return { fecha: f, n_rows: rows.length };
+  return { fecha: f, n_rows: rows.length, guardado: true };
 }
 
-/** Filas crudas del snapshot de una fecha, o null si no existe. */
-export async function getSnapshotRows(codEmpresa: number, fecha: string): Promise<PendienteIM[] | null> {
+export interface SnapshotConciliacion {
+  rows: PendienteIM[];
+  /** null en snapshots viejos sin maestro congelado → usar el vivo + advertir. */
+  maestro: MaestroSnapshot | null;
+  created_at: string;
+}
+
+/**
+ * Snapshot completo de una fecha, o null si no existe. Un snapshot con 0
+ * filas se trata como INEXISTENTE (jamás debería persistirse, pero si llegó
+ * a existir no puede pasar por corte "exacto" con sistema vacío).
+ */
+export async function getSnapshotConciliacion(codEmpresa: number, fecha: string): Promise<SnapshotConciliacion | null> {
   const { data, error } = await sb().from('conciliacion_snapshot')
-    .select('rows')
+    .select('rows, maestro, created_at')
     .eq('tenant_id', TENANT_ID)
     .eq('cod_empresa', codEmpresa)
     .eq('fecha', fecha)
     .maybeSingle();
   if (error) throw new Error(`conciliacion_snapshot select: ${error.message}`);
-  return data?.rows ?? null;
+  const rows: PendienteIM[] = Array.isArray(data?.rows) ? data.rows : [];
+  if (!data || rows.length === 0) return null;
+  return { rows, maestro: data.maestro ?? null, created_at: String(data.created_at) };
 }
 
 /**

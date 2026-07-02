@@ -602,9 +602,28 @@ app.get('/api/conciliacion/export', requireJwt, (req: any, res) => exportConcili
 // carpeta física y lo cruza contra la cta cte IM a una fecha de corte.
 // El xlsx del cruce va en memoria (memoryStorage): archivos chicos (~100KB),
 // se parsean al toque y no tocan disco — a diferencia de las fotos de recibos.
-const uploadXlsxMem = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+// fileFilter rechaza ANTES de bufferizar 10MB de cualquier cosa que no sea
+// una planilla (extensión .xlsx/.xlsm o mimetype de spreadsheet).
+const uploadXlsxMem = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+        const okExt = /\.(xlsx|xlsm)$/i.test(file.originalname ?? '');
+        const okMime = /spreadsheet|excel|octet-stream/i.test(file.mimetype ?? '');
+        if (okExt || okMime) cb(null, true);
+        else cb(new Error('Solo se aceptan planillas .xlsx/.xlsm'));
+    },
+});
 app.get('/api/conciliacion/snapshots', requireJwt, (req: any, res) => listSnapshotsConciliacion(req, res));
-app.post('/api/conciliacion/cruce', requireJwt, uploadXlsxMem.single('file'), (req: any, res) => cruceCarpetaHandler(req, res));
+// Wrapper del middleware de multer para responder JSON 400 ante rechazo del
+// fileFilter o archivo demasiado grande (sin esto, el error caía al handler
+// default de Express como HTML 500).
+app.post('/api/conciliacion/cruce', requireJwt, (req: any, res) => {
+    uploadXlsxMem.single('file')(req, res, (err: any) => {
+        if (err) { res.status(400).json({ error: err?.message ?? 'Archivo inválido' }); return; }
+        cruceCarpetaHandler(req, res);
+    });
+});
 app.get('/api/conciliacion/cruce/export', requireJwt, (req: any, res) => exportCruceHandler(req, res));
 app.get('/api/cuentas/debug', requireJwt, (req: any, res) => cuentasDebug(req, res));
 app.get('/api/cuentas/efectivo', requireJwt, (req: any, res) => cuentasEfectivo(req, res));
@@ -1365,19 +1384,21 @@ if (hasSupabase()) {
 }
 
 // ─── Cron: snapshot diario de la cta cte para Conciliación ───────────────────
-// 02:50 UTC = 23:50 ART (server corre en UTC; AR no tiene horario de verano).
+// 23:50 ART con timezone EXPLÍCITA (autodocumenta y no depende del TZ del
+// host). Los demás crons del archivo quedan en la convención UTC histórica.
 // Guarda la foto del reporte comprob_pendientes de IM en conciliacion_snapshot
 // para que el "Cruce carpeta" pueda usar cortes EXACTOS a cualquier fecha.
 // Idempotente: upsert por (empresa, fecha) — correrlo dos veces pisa la foto.
 if (hasSupabase()) {
-    cron.schedule('50 2 * * *', async () => {
+    cron.schedule('50 23 * * *', async () => {
         try {
             const r = await guardarSnapshotConciliacion(1);
-            console.log(`[cron snapshot conciliacion] ${r.fecha}: ${r.n_rows} filas`);
+            if (r.guardado) console.log(`[cron snapshot conciliacion] ${r.fecha}: ${r.n_rows} filas`);
+            else console.warn(`[cron snapshot conciliacion] ${r.fecha}: IM devolvió 0 filas, snapshot NO guardado`);
         } catch (err: any) {
             console.warn(`[cron snapshot conciliacion] fallo: ${err?.message ?? err}`);
         }
-    });
-    console.log('Cron snapshot conciliacion (23:50 ART): 50 2 * * *');
+    }, { timezone: 'America/Argentina/Buenos_Aires' });
+    console.log('Cron snapshot conciliacion: 50 23 * * * (America/Argentina/Buenos_Aires)');
 }
 

@@ -1,12 +1,15 @@
 import * as XLSX from 'xlsx';
 import { randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
+import { sb, TENANT_ID } from './supabase.js';
 import { fetchClientesIMCached } from './infomanager.js';
 import { COD_CLIENTES_INTERNOS } from './comisionesShared.js';
 import {
-  clasificarRecibos, fetchPendientesCached, fetchRecibosTransito,
-  getSnapshotRows, guardarSnapshotConciliacion, hoyISOArgentina,
+  clasificarRecibos, fetchPendientesCached, hoyISOArgentina,
+  getSnapshotConciliacion, guardarSnapshotConciliacion,
+  ESTADOS_NO_TERMINALES,
   type PendienteIM, type ClienteMaestro, type ReciboTransito,
+  type MaestroSnapshot, type SnapshotConciliacion,
 } from './conciliacion.js';
 import type { JwtPayload } from './auth.js';
 
@@ -19,7 +22,8 @@ import type { JwtPayload } from './auth.js';
 // DE CORTE (snapshot exacto si existe, foto viva aproximada si no) y matchea
 // clientes por similitud de nombre con asignación best-first global.
 // Algoritmo portado del cruce manual de junio 2026 (validado contra casos
-// reales: DANTE/DONET, MONTERO cross-vendedor, SARACHO fecha typo).
+// reales: DANTE/DONET, MONTERO cross-vendedor, SARACHO fecha typo,
+// SUPER EMANUEL saldo ~$0 en IM con $730k en carpeta).
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** Pestaña del Sheet → cod_vendedor IM. Matching case-insensitive por prefijo. */
@@ -35,18 +39,29 @@ const PESTANA_POR_COD: Record<number, string> = Object.fromEntries(
   Object.entries(SHEET_VENDEDOR).map(([k, v]) => [v, k]),
 );
 
+/** Grupo sintético para clientes del sistema sin pestaña de carpeta. */
+export const PESTANA_OTROS = 'OTROS (sin pestaña)';
+const COD_VENDEDOR_OTROS = -1;
+
 /** Score mínimo para considerar match dentro del vendedor. */
 export const UMBRAL_MATCH = 0.66;
 /** Score mínimo (más exigente) para sugerir contraparte en OTRO vendedor. */
 export const UMBRAL_CROSS_VENDEDOR = 0.82;
 /** Diferencia carpeta-sistema tolerada como "CUADRA" (residuos de centavos IM). */
 export const TOLERANCIA_DEFAULT = 20;
+/** Si el runner-up de una entrada de carpeta queda a menos de esto del elegido → ambiguo. */
+const MARGEN_AMBIGUO = 0.03;
 
-/** Ruido de centavos del lado sistema (mismo criterio que el panel en vivo). */
+/** Ruido de centavos: umbral SOLO para emitir la lista solo_sistema (ver X6). */
 const UMBRAL_RUIDO = 1;
 
 function r2(n: number): number { return Math.round(n * 100) / 100; }
 function pad2(n: number): string { return String(n).padStart(2, '0'); }
+
+/** Fecha ART (UTC-3 fijo) de un timestamp ISO. */
+function fechaART(ts: string): string {
+  return new Date(new Date(ts).getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
 
 // ─── Normalización y scoring de nombres ──────────────────────────────────────
 
@@ -128,11 +143,16 @@ export function scoreNombres(a: string, b: string): number {
 /**
  * Fecha de una celda de la carpeta → ISO YYYY-MM-DD, o null si no parseable.
  * Realidades del archivo de junio: datetime serial de Excel (number), Date,
- * strings dd/mm/yyyy, dd/mm/yy, dd/mm (asume el año del corte) y basura con
- * typos tipo "2✱/05" con asterisco (→ null → la fila va a `sin_fecha` pero SE
- * INCLUYE en el cruce).
+ * strings dd/mm/yyyy, dd/mm/yy, dd/mm y basura con typos tipo "2✱/05" con
+ * asterisco (→ null → la fila va a `sin_fecha` pero SE INCLUYE en el cruce).
+ *
+ * dd/mm SIN año: se prueba primero el año del corte; si la fecha queda
+ * POSTERIOR al corte se prueba el año anterior (diciembre anotado en un cruce
+ * de enero NO es un typo). Solo si ambas quedan posteriores se devuelve la del
+ * año del corte (y el llamador la excluirá como fecha > corte).
  */
-export function parseFechaCarpeta(v: any, anioDefault: number): string | null {
+export function parseFechaCarpeta(v: any, corte: string): string | null {
+  const anioCorte = Number(corte.slice(0, 4));
   if (typeof v === 'number' && Number.isFinite(v)) {
     // Serial Excel (días desde 1899-12-30). Rango sano ≈ 1954..2064.
     if (v < 20000 || v > 60000) return null;
@@ -154,14 +174,23 @@ export function parseFechaCarpeta(v: any, anioDefault: number): string | null {
     m = s.match(/^(\d{1,2})\/(\d{1,2})$/);
     if (m) {
       const d = +m[1], mo = +m[2];
-      if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12) return `${anioDefault}-${pad2(mo)}-${pad2(d)}`;
-      return null;
+      if (!(d >= 1 && d <= 31 && mo >= 1 && mo <= 12)) return null;
+      const candCorte = `${anioCorte}-${pad2(mo)}-${pad2(d)}`;
+      if (candCorte <= corte) return candCorte;
+      const candAnterior = `${anioCorte - 1}-${pad2(mo)}-${pad2(d)}`;
+      if (candAnterior <= corte) return candAnterior;
+      return candCorte; // ambas posteriores: quedará excluida como fecha > corte
     }
   }
   return null;
 }
 
-/** Monto de celda: number directo o string estilo AR ('$ 1.234,56', '1234.5'). */
+/**
+ * Monto de celda: number directo o string estilo AR ('$ 1.234,56', '1234.5').
+ * SUPUESTO formato AR: sin coma decimal, un punto con exactamente 3 dígitos
+ * detrás se lee como separador de MILES ('1.500' → 1500, no 1.5) — así se
+ * anotan los saldos en la carpeta. Punto con 1-2 decimales se lee decimal.
+ */
 export function parseMontoCarpeta(v: any): number | null {
   if (typeof v === 'number' && Number.isFinite(v)) return v;
   if (typeof v !== 'string') return null;
@@ -180,6 +209,21 @@ export function parseMontoCarpeta(v: any): number | null {
   const n = Number(s);
   if (!Number.isFinite(n)) return null;
   return neg ? -n : n;
+}
+
+/**
+ * Tolerancia del cruce: vacío/undefined/no-numérico → default $20 (Number('')
+ * es 0 y convertía "campo vacío" en tolerancia cero: todo residuo de centavos
+ * pasaba a DIFERENCIA). Solo un negativo EXPLÍCITO devuelve null (rechazar).
+ */
+export function parseTolerancia(raw: unknown): number | null {
+  if (raw === undefined || raw === null) return TOLERANCIA_DEFAULT;
+  const s = String(raw).trim();
+  if (s === '') return TOLERANCIA_DEFAULT;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return TOLERANCIA_DEFAULT;
+  if (n < 0) return null;
+  return n;
 }
 
 export interface ClienteCarpeta { nombre: string; saldo: number; n_filas: number }
@@ -211,7 +255,6 @@ function vendedorDePestana(sheetName: string): string | null {
  * parseable SE INCLUYEN pero se listan en `sin_fecha`.
  */
 export function parseCarpeta(wb: XLSX.WorkBook, corte: string): CarpetaParseada {
-  const anioCorte = Number(corte.slice(0, 4));
   const out: CarpetaParseada = { vendedores: [], excluidas_por_fecha: [], sin_fecha: [], pestanas_ignoradas: [] };
 
   for (const sheetName of wb.SheetNames) {
@@ -230,7 +273,7 @@ export function parseCarpeta(wb: XLSX.WorkBook, corte: string): CarpetaParseada 
       if (!cliente || monto == null) continue; // fila vacía/incompleta intercalada
 
       const filaNum = i + 1; // 1-based, como se ve en el Sheet
-      const fecha = parseFechaCarpeta(rawFecha, anioCorte);
+      const fecha = parseFechaCarpeta(rawFecha, corte);
       if (fecha == null) {
         // Sin fecha parseable: INCLUIR en el cruce pero avisar.
         out.sin_fecha.push({
@@ -259,23 +302,29 @@ export function parseCarpeta(wb: XLSX.WorkBook, corte: string): CarpetaParseada 
 
 /**
  * Resuelve las filas del lado sistema para el corte:
- *  - hay snapshot de esa fecha → corte EXACTO;
- *  - no hay → reporte vivo filtrando comprobantes con fecha_factura > corte,
+ *  - snapshot NO vacío de esa fecha → corte EXACTO (un snapshot con 0 filas
+ *    se trata como inexistente: nunca puede pasar por "exacto" con sistema
+ *    vacío — todo caería en solo-carpeta);
+ *  - si no → reporte vivo filtrando comprobantes con fecha_factura > corte,
  *    corte APROXIMADO con advertencia (los pagos posteriores al corte ya
- *    están aplicados a los saldos de la foto actual).
+ *    están aplicados; las filas SIN fecha_factura no se pueden filtrar y se
+ *    conservan — se informa cuántas).
  */
 export function resolverLadoSistema(
   snapshotRows: PendienteIM[] | null,
   vivoRows: PendienteIM[],
   corte: string,
 ): { rows: PendienteIM[]; corte_exacto: boolean; advertencia: string | null } {
-  if (snapshotRows) return { rows: snapshotRows, corte_exacto: true, advertencia: null };
+  if (snapshotRows && snapshotRows.length > 0) {
+    return { rows: snapshotRows, corte_exacto: true, advertencia: null };
+  }
+  const sinFecha = vivoRows.filter(r => !r.fecha_factura).length;
   const rows = vivoRows.filter(r => !r.fecha_factura || String(r.fecha_factura).slice(0, 10) <= corte);
-  return {
-    rows,
-    corte_exacto: false,
-    advertencia: 'Sin snapshot para esa fecha: se usa la foto ACTUAL de IM aproximada al corte. Los comprobantes posteriores al corte se excluyen, pero los pagos posteriores YA están aplicados a los saldos.',
-  };
+  let advertencia = 'Sin snapshot para esa fecha: se usa la foto ACTUAL de IM aproximada al corte. Los comprobantes posteriores al corte se excluyen, pero los pagos posteriores YA están aplicados a los saldos.';
+  if (sinFecha > 0) {
+    advertencia += ` Incluye ${sinFecha} comprobante${sinFecha !== 1 ? 's' : ''} sin fecha que no se pudieron filtrar al corte.`;
+  }
+  return { rows, corte_exacto: false, advertencia };
 }
 
 export interface ClienteSistema {
@@ -287,17 +336,30 @@ export interface ClienteSistema {
 
 interface SistemaArmado {
   porVendedor: Map<number, ClienteSistema[]>;
+  /** Clientes de vendedores SIN hoja en ESTA carpeta (grupo OTROS). */
+  otros: ClienteSistema[];
   todos: ClienteSistema[];
   internas: Array<{ cod_cliente: number; nombre: string; saldo: number }>;
 }
 
 /**
  * Agrupa las filas IM por cliente (SUM saldo — misma regla que el panel),
- * asigna vendedor por MAESTRO y separa internas. Filtra |saldo| < $1 (ruido).
- * `todos` incluye también clientes de vendedores fuera de las 5 pestañas
- * (p/ búsqueda cross-vendedor), pero esos no participan del cruce por grupo.
+ * asigna vendedor por MAESTRO y separa internas.
+ * Prioridad de maestro: el CONGELADO en el snapshot (asignación del momento
+ * del corte) > el vivo (fallback para clientes nuevos o snapshots viejos).
+ * `vendedoresConCarpeta` = cods con hoja en ESTE archivo: los clientes de
+ * cualquier otro vendedor (sin pestaña teórica O con pestaña pero sin hoja
+ * subida) van a `otros` — si no, desaparecen del total del cruce.
+ * NO se filtra por saldo acá: un cliente con saldo ~$0 en IM pero $730k en la
+ * carpeta (caso real SUPER EMANUEL) DEBE matchear y gritar la DIFERENCIA —
+ * el umbral de ruido se aplica recién al emitir la lista solo_sistema.
  */
-function armarSistema(rows: PendienteIM[], maestro: ClienteMaestro[]): SistemaArmado {
+function armarSistema(
+  rows: PendienteIM[],
+  maestro: ClienteMaestro[],
+  maestroSnapshot: MaestroSnapshot | null | undefined,
+  vendedoresConCarpeta: Set<number>,
+): SistemaArmado {
   const maestroMap = new Map<number, ClienteMaestro>();
   for (const c of maestro) maestroMap.set(Number(c.cod_cliente), c);
 
@@ -311,30 +373,41 @@ function armarSistema(rows: PendienteIM[], maestro: ClienteMaestro[]): SistemaAr
     else porCliente.set(cod, { nombre: String(row.nombre ?? '').trim(), saldo: r2(saldo) });
   }
 
-  const out: SistemaArmado = { porVendedor: new Map(), todos: [], internas: [] };
+  const out: SistemaArmado = { porVendedor: new Map(), otros: [], todos: [], internas: [] };
   for (const [cod, agg] of porCliente) {
+    const snap = maestroSnapshot?.[String(cod)];
     const m = maestroMap.get(cod);
-    const nombre = String(m?.razon_social || agg.nombre || `Cliente ${cod}`).trim();
+    const nombre = String(snap?.nombre || m?.razon_social || agg.nombre || `Cliente ${cod}`).trim();
     if (COD_CLIENTES_INTERNOS.has(cod)) {
       out.internas.push({ cod_cliente: cod, nombre, saldo: agg.saldo });
       continue;
     }
-    if (Math.abs(agg.saldo) < UMBRAL_RUIDO) continue;
-    const codVend = m?.cod_vendedor != null && Number.isFinite(Number(m.cod_vendedor)) ? Number(m.cod_vendedor) : null;
+    // Vendedor: snapshot congelado primero; si el cod no está ahí, el vivo.
+    const codVendRaw = snap !== undefined ? snap.cod_vendedor : (m?.cod_vendedor ?? null);
+    const codVend = codVendRaw != null && Number.isFinite(Number(codVendRaw)) ? Number(codVendRaw) : null;
     const cli: ClienteSistema = { cod_cliente: cod, nombre, saldo: agg.saldo, cod_vendedor: codVend };
     out.todos.push(cli);
-    if (codVend != null && PESTANA_POR_COD[codVend]) {
+    if (codVend != null && vendedoresConCarpeta.has(codVend)) {
       const arr = out.porVendedor.get(codVend);
       if (arr) arr.push(cli); else out.porVendedor.set(codVend, [cli]);
+    } else {
+      out.otros.push(cli);
     }
   }
   out.internas.sort((a, b) => Math.abs(b.saldo) - Math.abs(a.saldo));
+  out.otros.sort((a, b) => Math.abs(b.saldo) - Math.abs(a.saldo));
   return out;
 }
 
 // ─── Matching best-first ─────────────────────────────────────────────────────
 
-export interface TransitoAlCorte { monto: number; fecha: string | null; status: string }
+export interface TransitoAlCorte {
+  monto: number;
+  fecha: string | null;
+  status: string;
+  /** Solo para status='imputado': cuándo se imputó (post-corte). */
+  imputado_at?: string | null;
+}
 
 export interface MatchCruce {
   carpeta: string;
@@ -346,7 +419,9 @@ export interface MatchCruce {
   score: number;
   estado: 'CUADRA' | 'DIFERENCIA';
   tentativo?: boolean;
-  /** Recibos en tránsito en la app con fecha ≤ corte: explican diferencias. */
+  /** El runner-up de esta entrada quedó a <0.03 del elegido: confirmar identidad. */
+  ambiguo?: boolean;
+  /** Recibos de la app que estaban EN TRÁNSITO AL corte: explican diferencias. */
   transito_al_corte?: TransitoAlCorte[];
 }
 
@@ -354,7 +429,15 @@ export interface SoloCarpeta {
   cliente: string;
   saldo: number;
   /** Contraparte probable bajo OTRO vendedor (score ≥ 0.82) — caso MONTERO. */
-  cross_vendedor?: { cod_cliente: number; nombre: string; saldo: number; vendedor: string; score: number };
+  cross_vendedor?: {
+    cod_cliente: number;
+    nombre: string;
+    saldo: number;
+    vendedor: string;
+    score: number;
+    /** true si esa contraparte quedó sin matchear (está en el solo-sistema de ese grupo). */
+    en_solo_sistema: boolean;
+  };
 }
 
 export interface CruceVendedor {
@@ -375,6 +458,11 @@ export interface CruceVendedor {
  * los pares con score ≥ 0.66, se ordenan por score desc y se asignan greedy
  * sin repetir ninguno de los dos lados. Esto evita que un match débil robe el
  * lugar de uno perfecto (bug real de junio: DANTE se comía a DONET).
+ * Si el runner-up de la MISMA entrada de carpeta queda a <0.03 del elegido,
+ * el match se marca `ambiguo` (típico: apellido solo que containment-matchea
+ * igual contra varios clientes del sistema).
+ * solo_sistema emite únicamente |saldo| ≥ $1 (residuos de centavos afuera),
+ * pero TODOS los clientes participan del matching.
  */
 export function cruzarVendedor(
   carpeta: ClienteCarpeta[],
@@ -391,6 +479,13 @@ export function cruzarVendedor(
   }
   pares.sort((a, b) => b.score - a.score);
 
+  // Para el flag de ambigüedad: todos los scores candidatos por entrada de carpeta.
+  const paresPorCarpeta = new Map<number, Array<{ j: number; score: number }>>();
+  for (const p of pares) {
+    const arr = paresPorCarpeta.get(p.i);
+    if (arr) arr.push({ j: p.j, score: p.score }); else paresPorCarpeta.set(p.i, [{ j: p.j, score: p.score }]);
+  }
+
   const usadoC = new Set<number>();
   const usadoS = new Set<number>();
   const matches: MatchCruce[] = [];
@@ -401,6 +496,10 @@ export function cruzarVendedor(
     const c = carpeta[p.i];
     const s = sistema[p.j];
     const dif = r2(c.saldo - s.saldo);
+    const runnerUp = Math.max(0, ...(paresPorCarpeta.get(p.i) ?? [])
+      .filter(x => x.j !== p.j)
+      .map(x => x.score));
+    const ambiguo = runnerUp > p.score - MARGEN_AMBIGUO;
     matches.push({
       carpeta: c.nombre,
       sistema: s.nombre,
@@ -411,6 +510,7 @@ export function cruzarVendedor(
       score: Math.round(p.score * 1000) / 1000,
       estado: Math.abs(dif) <= tolerancia ? 'CUADRA' : 'DIFERENCIA',
       ...(tentativo ? { tentativo: true } : {}),
+      ...(ambiguo ? { ambiguo: true } : {}),
     });
   }
   matches.sort((a, b) => Math.abs(b.dif) - Math.abs(a.dif));
@@ -418,8 +518,11 @@ export function cruzarVendedor(
   const solo_carpeta: SoloCarpeta[] = carpeta
     .filter((_, i) => !usadoC.has(i))
     .map(c => ({ cliente: c.nombre, saldo: c.saldo }));
+  // Umbral de ruido SOLO acá: los residuos participan del matching pero no
+  // ensucian la lista de faltantes del sistema.
   const solo_sistema = sistema
     .filter((_, j) => !usadoS.has(j))
+    .filter(s => Math.abs(s.saldo) >= UMBRAL_RUIDO)
     .sort((a, b) => Math.abs(b.saldo) - Math.abs(a.saldo));
   return { matches, solo_carpeta, solo_sistema };
 }
@@ -450,7 +553,9 @@ export interface OpcionesCruce {
   carpeta: CarpetaParseada;
   sistemaRows: PendienteIM[];
   maestro: ClienteMaestro[];
-  /** Filas crudas de comprobantes_pago no terminales (se clasifican adentro). */
+  /** Maestro congelado del snapshot (asignación de vendedor AL corte). */
+  maestroSnapshot?: MaestroSnapshot | null;
+  /** Filas de comprobantes_pago: no terminales + imputados post-corte. */
   recibos: ReciboTransito[];
   corte: string;
   tolerancia: number;
@@ -460,10 +565,9 @@ export interface OpcionesCruce {
 
 export function cruzarCarpeta(opts: OpcionesCruce): ResultadoCruce {
   const { carpeta, corte, tolerancia } = opts;
-  const sistema = armarSistema(opts.sistemaRows, opts.maestro);
+  const vendedoresConCarpeta = new Set(carpeta.vendedores.map(g => g.cod_vendedor));
+  const sistema = armarSistema(opts.sistemaRows, opts.maestro, opts.maestroSnapshot, vendedoresConCarpeta);
 
-  // Recibos EN TRÁNSITO (pendiente/error real — no anticipos ni caducados)
-  // con fecha ≤ corte, indexados por cliente: explican diferencias solas.
   const recibosPorCliente = new Map<number, ReciboTransito[]>();
   for (const rec of opts.recibos) {
     const cod = Number(rec.cod_cliente);
@@ -471,49 +575,53 @@ export function cruzarCarpeta(opts: OpcionesCruce): ResultadoCruce {
     const arr = recibosPorCliente.get(cod);
     if (arr) arr.push(rec); else recibosPorCliente.set(cod, [rec]);
   }
+
+  /**
+   * Recibos que estaban EN TRÁNSITO AL corte para un cliente:
+   *  - no terminales HOY (pendiente/error real, no anticipos ni caducados)
+   *    con fecha ≤ corte → "aún en tránsito";
+   *  - IMPUTADOS DESPUÉS del corte con fecha de comprobante ≤ corte → al
+   *    momento del corte estaban en tránsito (el caso MÁS común del flujo
+   *    real: corte 30/06 corrido el 05/07, recibo imputado el 02/07 — sin
+   *    esto la diferencia quedaba "inexplicable").
+   */
   const transitoAlCorte = (cod: number): TransitoAlCorte[] => {
     const recs = recibosPorCliente.get(cod);
     if (!recs?.length) return [];
-    return clasificarRecibos(recs).transito
-      .filter(t => t.fecha != null && t.fecha <= corte)
-      .map(t => ({ monto: t.monto, fecha: t.fecha, status: t.status }));
+    const out: TransitoAlCorte[] = [];
+    const noTerminales = recs.filter(r => r.status !== 'imputado');
+    for (const t of clasificarRecibos(noTerminales).transito) {
+      if (t.fecha != null && t.fecha <= corte) {
+        out.push({ monto: t.monto, fecha: t.fecha, status: t.status });
+      }
+    }
+    for (const rec of recs) {
+      if (rec.status !== 'imputado' || !rec.imputado_at) continue;
+      const fecha = rec.fecha_comprobante
+        ? String(rec.fecha_comprobante).slice(0, 10)
+        : (rec.created_at ? String(rec.created_at).slice(0, 10) : null);
+      const impFechaART = fechaART(String(rec.imputado_at));
+      if (fecha != null && fecha <= corte && impFechaART > corte) {
+        out.push({ monto: r2(Number(rec.monto) || 0), fecha, status: 'imputado', imputado_at: impFechaART });
+      }
+    }
+    return out;
   };
 
+  // ── FASE 1: matching por pestaña ─────────────────────────────────────────
   const vendedores: CruceVendedor[] = [];
   const totales = { carpeta: 0, sistema: 0, n_cuadra: 0, n_diferencia: 0, n_solo_carpeta: 0, n_solo_sistema: 0 };
+  const codsMatcheados = new Set<number>();
 
   for (const grupo of carpeta.vendedores) {
     const sistemaVend = sistema.porVendedor.get(grupo.cod_vendedor) ?? [];
     const tentativo = grupo.cod_vendedor === SHEET_VENDEDOR.ANDREA;
     const r = cruzarVendedor(grupo.clientes, sistemaVend, tolerancia, tentativo);
 
-    // Anotar tránsito al corte en los matches (clave para explicar diferencias)
     for (const m of r.matches) {
+      codsMatcheados.add(m.cod_cliente);
       const tr = transitoAlCorte(m.cod_cliente);
       if (tr.length) m.transito_al_corte = tr;
-    }
-
-    // Cross-vendedor: para cada solo-carpeta, buscar contraparte en TODO el
-    // sistema bajo OTRO vendedor con score exigente (caso MONTERO: cliente en
-    // la carpeta de MARCELO pero asignado a BRIAN en el maestro).
-    for (const sc of r.solo_carpeta) {
-      let best: { cli: ClienteSistema; score: number } | null = null;
-      for (const cli of sistema.todos) {
-        if (cli.cod_vendedor === grupo.cod_vendedor) continue;
-        const score = scoreNombres(sc.cliente, cli.nombre);
-        if (score >= UMBRAL_CROSS_VENDEDOR && (!best || score > best.score)) best = { cli, score };
-      }
-      if (best) {
-        sc.cross_vendedor = {
-          cod_cliente: best.cli.cod_cliente,
-          nombre: best.cli.nombre,
-          saldo: best.cli.saldo,
-          vendedor: best.cli.cod_vendedor != null
-            ? (PESTANA_POR_COD[best.cli.cod_vendedor] ?? `Vendedor #${best.cli.cod_vendedor}`)
-            : 'Sin vendedor',
-          score: Math.round(best.score * 1000) / 1000,
-        };
-      }
     }
 
     const totalCarpeta = r2(grupo.clientes.reduce((a, c) => a + c.saldo, 0));
@@ -539,6 +647,64 @@ export function cruzarCarpeta(opts: OpcionesCruce): ResultadoCruce {
     totales.n_diferencia += nDif;
     totales.n_solo_carpeta += r.solo_carpeta.length;
     totales.n_solo_sistema += r.solo_sistema.length;
+  }
+
+  // ── Grupo OTROS: clientes del sistema sin hoja en ESTA carpeta ───────────
+  // (vendedor sin pestaña teórica O con pestaña definida pero sin hoja en el
+  // archivo subido). Sin esto desaparecían del cruce y el "Total sistema" no
+  // cuadraba contra la cartera real. No hay carpeta contra la cual
+  // matchearlos: van como solo_sistema (con umbral de ruido) y su subtotal
+  // suma al total.
+  if (sistema.otros.length > 0) {
+    const totalOtros = r2(sistema.otros.reduce((a, c) => a + c.saldo, 0));
+    const listadosOtros = sistema.otros.filter(c => Math.abs(c.saldo) >= UMBRAL_RUIDO);
+    vendedores.push({
+      pestana: PESTANA_OTROS,
+      cod_vendedor: COD_VENDEDOR_OTROS,
+      tentativo: false,
+      total_carpeta: 0,
+      total_sistema: totalOtros,
+      n_cuadra: 0,
+      n_diferencia: 0,
+      matches: [],
+      solo_carpeta: [],
+      solo_sistema: listadosOtros,
+    });
+    totales.sistema = r2(totales.sistema + totalOtros);
+    totales.n_solo_sistema += listadosOtros.length;
+  }
+
+  // ── FASE 2: cross-vendedor (después de TODOS los matchings) ─────────────
+  // Se excluyen los cod_cliente YA matcheados en cualquier pestaña: ofrecer
+  // como "posible contraparte" a un cliente que ya cuadró en su vendedor
+  // invita a un doble cómputo. Si el candidato quedó en el solo-sistema de
+  // otro grupo, se anota (es el caso útil: MONTERO sin matchear bajo BRIAN).
+  const soloSistemaSet = new Set<number>();
+  for (const v of vendedores) for (const s of v.solo_sistema) soloSistemaSet.add(s.cod_cliente);
+
+  for (const v of vendedores) {
+    if (v.cod_vendedor === COD_VENDEDOR_OTROS) continue;
+    for (const sc of v.solo_carpeta) {
+      let best: { cli: ClienteSistema; score: number } | null = null;
+      for (const cli of sistema.todos) {
+        if (cli.cod_vendedor === v.cod_vendedor) continue;
+        if (codsMatcheados.has(cli.cod_cliente)) continue;
+        const score = scoreNombres(sc.cliente, cli.nombre);
+        if (score >= UMBRAL_CROSS_VENDEDOR && (!best || score > best.score)) best = { cli, score };
+      }
+      if (best) {
+        sc.cross_vendedor = {
+          cod_cliente: best.cli.cod_cliente,
+          nombre: best.cli.nombre,
+          saldo: best.cli.saldo,
+          vendedor: best.cli.cod_vendedor != null
+            ? (PESTANA_POR_COD[best.cli.cod_vendedor] ?? `Vendedor #${best.cli.cod_vendedor}`)
+            : PESTANA_OTROS,
+          score: Math.round(best.score * 1000) / 1000,
+          en_solo_sistema: soloSistemaSet.has(best.cli.cod_cliente),
+        };
+      }
+    }
   }
 
   return {
@@ -585,9 +751,13 @@ function buildXlsxMulti(sheets: SheetDef[]): Buffer {
 function notaMatch(m: MatchCruce): string {
   const partes: string[] = [];
   if (m.transito_al_corte?.length) {
-    const tot = r2(m.transito_al_corte.reduce((a, t) => a + t.monto, 0));
-    partes.push(`$${tot} en tránsito al corte (${m.transito_al_corte.length} recibo/s sin imputar en IM)`);
+    for (const t of m.transito_al_corte) {
+      partes.push(t.status === 'imputado'
+        ? `$${t.monto} imputado el ${t.imputado_at ?? '?'} (post-corte)`
+        : `$${t.monto} aún en tránsito (${t.status})`);
+    }
   }
+  if (m.ambiguo) partes.push('⚠ ambiguo — confirmar identidad');
   if (m.tentativo) partes.push('match tentativo (nombre de pila)');
   return partes.join(' · ');
 }
@@ -624,13 +794,27 @@ export function buildCruceXlsx(r: ResultadoCruce): Buffer {
       ] as (string | number | null)[]),
   };
 
+  // Los CUADRA también van al archivo: sin ellos el TOTAL del Resumen no se
+  // puede auditar desde el detalle.
+  const cuadrados: SheetDef = {
+    name: 'Cuadrados (OK)',
+    headers: ['vendedor', 'cliente_carpeta', 'cliente_sistema', 'cod_cliente', 'saldo_carpeta', 'saldo_sistema', 'dif', 'score', 'nota'],
+    rows: r.vendedores
+      .flatMap(v => v.matches.filter(m => m.estado === 'CUADRA').map(m => ({ v, m })))
+      .sort((a, b) => Math.abs(b.m.saldo_carpeta) - Math.abs(a.m.saldo_carpeta))
+      .map(({ v, m }) => [
+        v.pestana, m.carpeta, m.sistema, m.cod_cliente,
+        m.saldo_carpeta, m.saldo_sistema, m.dif, m.score, notaMatch(m),
+      ] as (string | number | null)[]),
+  };
+
   const soloCarpeta: SheetDef = {
     name: 'Solo carpeta',
     headers: ['vendedor', 'cliente', 'saldo', 'posible_cross_vendedor'],
     rows: r.vendedores.flatMap(v => v.solo_carpeta.map(sc => [
       v.pestana, sc.cliente, sc.saldo,
       sc.cross_vendedor
-        ? `existe bajo ${sc.cross_vendedor.vendedor}: ${sc.cross_vendedor.nombre} (#${sc.cross_vendedor.cod_cliente}) $${sc.cross_vendedor.saldo} · score ${sc.cross_vendedor.score}`
+        ? `${sc.cross_vendedor.en_solo_sistema ? 'coincide con el solo-sistema de' : 'existe bajo'} ${sc.cross_vendedor.vendedor}: ${sc.cross_vendedor.nombre} (#${sc.cross_vendedor.cod_cliente}) $${sc.cross_vendedor.saldo} · score ${sc.cross_vendedor.score}`
         : '',
     ] as (string | number | null)[])),
   };
@@ -662,10 +846,39 @@ export function buildCruceXlsx(r: ResultadoCruce): Buffer {
     rows: r.internas.map(i => [i.cod_cliente, i.nombre, i.saldo]),
   };
 
-  return buildXlsxMulti([resumen, diferencias, soloCarpeta, soloSistema, excluidas, internas]);
+  return buildXlsxMulti([resumen, diferencias, cuadrados, soloCarpeta, soloSistema, excluidas, internas]);
 }
 
 // ─── Handlers HTTP ───────────────────────────────────────────────────────────
+
+/**
+ * Recibos relevantes para el cruce a una fecha de corte:
+ *  - no terminales (pendiente_revision / aprobado / error) — se clasifican
+ *    en la función pura;
+ *  - imputados DESPUÉS del corte (imputado_at > corte): al corte estaban en
+ *    tránsito. La query trae con margen (gte fecha del corte en UTC) y el
+ *    filtro fino por fecha ART lo hace la función pura.
+ */
+async function fetchRecibosParaCruce(codEmpresa: number, corte: string): Promise<ReciboTransito[]> {
+  let q = sb().from('comprobantes_pago')
+    .select('id, cod_cliente, monto, fecha_comprobante, created_at, status, cod_empresa, error_msg, imputado_at')
+    .eq('tenant_id', TENANT_ID)
+    .or(`status.in.(${ESTADOS_NO_TERMINALES.join(',')}),and(status.eq.imputado,imputado_at.gte.${corte})`)
+    .order('created_at', { ascending: false })
+    .limit(4000);
+  if (codEmpresa === 1) {
+    q = q.or('cod_empresa.eq.1,cod_empresa.is.null');
+  } else {
+    q = q.eq('cod_empresa', codEmpresa);
+  }
+  const { data, error } = await q;
+  if (error) throw new Error(`comprobantes_pago (cruce): ${error.message}`);
+  const rows = (data ?? []) as ReciboTransito[];
+  if (rows.length === 4000) {
+    console.warn('[cruce] comprobantes_pago devolvió 4000 filas (el tope): posible truncación');
+  }
+  return rows;
+}
 
 /**
  * POST /api/conciliacion/cruce — multipart: file (.xlsx), corte (YYYY-MM-DD),
@@ -682,8 +895,8 @@ export async function cruceCarpetaHandler(req: Request & { user?: JwtPayload; fi
 
     const corte = String(req.body?.corte ?? '').trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(corte)) { res.status(400).json({ error: 'corte inválido: usar YYYY-MM-DD' }); return; }
-    const tolRaw = Number(req.body?.tolerancia);
-    const tolerancia = Number.isFinite(tolRaw) && tolRaw >= 0 ? tolRaw : TOLERANCIA_DEFAULT;
+    const tolerancia = parseTolerancia(req.body?.tolerancia);
+    if (tolerancia === null) { res.status(400).json({ error: 'La tolerancia no puede ser negativa' }); return; }
     const codEmpresa = Number(req.body?.cod_empresa) || 1;
 
     let wb: XLSX.WorkBook;
@@ -699,34 +912,72 @@ export async function cruceCarpetaHandler(req: Request & { user?: JwtPayload; fi
       return;
     }
 
-    // Lado sistema: snapshot exacto si existe; si el corte es HOY y todavía no
-    // hay snapshot, sacamos la foto en el momento (on-demand).
-    let snapshotRows = await getSnapshotRows(codEmpresa, corte);
-    if (!snapshotRows && corte === hoyISOArgentina()) {
+    // ── Lado sistema ────────────────────────────────────────────────────────
+    // corte < hoy con snapshot → EXACTO. corte = hoy → SIEMPRE se refresca la
+    // foto antes de cruzar (una foto de las 08:00 reusada a las 15:00 no puede
+    // venderse como "exacta") y el banner dice la hora. Sin snapshot → foto
+    // viva aproximada.
+    const hoy = hoyISOArgentina();
+    let snap: SnapshotConciliacion | null = null;
+    if (corte === hoy) {
       try {
         await guardarSnapshotConciliacion(codEmpresa);
-        snapshotRows = await getSnapshotRows(codEmpresa, corte);
       } catch (e: any) {
-        console.warn('[cruce] snapshot on-demand falló, sigo con foto viva:', e?.message ?? e);
+        console.warn('[cruce] refresh de snapshot de hoy falló, sigo con lo que haya:', e?.message ?? e);
       }
     }
-    const vivo = snapshotRows ? { rows: [] as PendienteIM[] } : await fetchPendientesCached(codEmpresa, false);
-    const lado = resolverLadoSistema(snapshotRows, vivo.rows, corte);
+    try {
+      snap = await getSnapshotConciliacion(codEmpresa, corte);
+    } catch (e: any) {
+      console.warn('[cruce] lectura de snapshot falló, sigo con foto viva:', e?.message ?? e);
+    }
+
+    let sistemaRows: PendienteIM[];
+    let corteExacto: boolean;
+    let advertencia: string | null;
+    let maestroSnapshot: MaestroSnapshot | null = null;
+
+    if (snap) {
+      sistemaRows = snap.rows;
+      maestroSnapshot = snap.maestro;
+      if (corte === hoy) {
+        // "Exacto" queda reservado a fechas cerradas (< hoy).
+        corteExacto = false;
+        const hora = new Date(snap.created_at).toLocaleTimeString('es-AR', {
+          hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires',
+        });
+        advertencia = `Cruce contra la foto de HOY a las ${hora} hs (ART): el día no cerró, los saldos pueden seguir moviéndose.`;
+      } else {
+        corteExacto = true;
+        advertencia = null;
+      }
+      if (!maestroSnapshot) {
+        advertencia = [advertencia, 'El snapshot no guardó el maestro del corte: la asignación de vendedor es la ACTUAL y puede diferir de la del corte.']
+          .filter(Boolean).join(' ');
+      }
+    } else {
+      const vivo = await fetchPendientesCached(codEmpresa, false);
+      const lado = resolverLadoSistema(null, vivo.rows, corte);
+      sistemaRows = lado.rows;
+      corteExacto = false;
+      advertencia = lado.advertencia;
+    }
 
     const [maestro, recibos] = await Promise.all([
       fetchClientesIMCached(),
-      fetchRecibosTransito(codEmpresa),
+      fetchRecibosParaCruce(codEmpresa, corte),
     ]);
 
     const resultado = cruzarCarpeta({
       carpeta,
-      sistemaRows: lado.rows,
+      sistemaRows,
       maestro,
+      maestroSnapshot,
       recibos,
       corte,
       tolerancia,
-      corteExacto: lado.corte_exacto,
-      advertencia: lado.advertencia,
+      corteExacto,
+      advertencia,
     });
 
     // Workbook del export listo en RAM, canjeable por token durante 30min.

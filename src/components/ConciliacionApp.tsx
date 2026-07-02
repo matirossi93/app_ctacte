@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
     X, RefreshCw, Download, Loader2, AlertCircle, ChevronDown, ChevronRight,
     Search, Clock, Receipt, ExternalLink, Scale, ShieldAlert,
@@ -98,7 +98,7 @@ interface ConciliacionResponse {
 
 // ─── Tipos del Cruce carpeta (espejo del JSON de /api/conciliacion/cruce) ────
 
-interface TransitoAlCorte { monto: number; fecha: string | null; status: string }
+interface TransitoAlCorte { monto: number; fecha: string | null; status: string; imputado_at?: string | null }
 
 interface MatchCruce {
     carpeta: string;
@@ -110,13 +110,14 @@ interface MatchCruce {
     score: number;
     estado: 'CUADRA' | 'DIFERENCIA';
     tentativo?: boolean;
+    ambiguo?: boolean;
     transito_al_corte?: TransitoAlCorte[];
 }
 
 interface SoloCarpetaCruce {
     cliente: string;
     saldo: number;
-    cross_vendedor?: { cod_cliente: number; nombre: string; saldo: number; vendedor: string; score: number };
+    cross_vendedor?: { cod_cliente: number; nombre: string; saldo: number; vendedor: string; score: number; en_solo_sistema: boolean };
 }
 
 interface SoloSistemaCruce { cod_cliente: number; nombre: string; saldo: number }
@@ -168,6 +169,10 @@ const EMPRESA_CC = 1;
 export const ConciliacionApp = ({ onClose, onOpenRecibos }: Props) => {
     // Modo del panel: "vivo" = saldos actuales; "cruce" = carpeta vs sistema.
     const [modo, setModo] = useState<'vivo' | 'cruce'>('vivo');
+    // La vista cruce se monta al primer uso y NUNCA se desmonta (se oculta):
+    // desmontarla perdía resultado, archivo elegido y download_token al pasar
+    // por "En vivo" y volver.
+    const [cruceMontado, setCruceMontado] = useState(false);
     const [data, setData] = useState<ConciliacionResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
@@ -323,12 +328,16 @@ export const ConciliacionApp = ({ onClose, onOpenRecibos }: Props) => {
                         <button className={`conc-switch-btn ${modo === 'vivo' ? 'is-active' : ''}`} onClick={() => setModo('vivo')}>
                             En vivo
                         </button>
-                        <button className={`conc-switch-btn ${modo === 'cruce' ? 'is-active' : ''}`} onClick={() => setModo('cruce')}>
+                        <button className={`conc-switch-btn ${modo === 'cruce' ? 'is-active' : ''}`} onClick={() => { setModo('cruce'); setCruceMontado(true); }}>
                             <FileSpreadsheet size={13} /> Cruce carpeta
                         </button>
                     </div>
 
-                    {modo === 'cruce' && <CruceCarpetaView />}
+                    {cruceMontado && (
+                        <div hidden={modo !== 'cruce'}>
+                            <CruceCarpetaView />
+                        </div>
+                    )}
 
                     {modo === 'vivo' && err && <div className="conc-error"><AlertCircle size={16} /> {err}</div>}
 
@@ -567,25 +576,43 @@ function ultimoDiaMesAnterior(): string {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/**
+ * Errores no-JSON del gateway (timeout, archivo grande): mensajes humanos en
+ * vez de "HTTP 504" crudo — son los fallos MÁS probables de una operación
+ * lenta con upload.
+ */
+function mensajeErrorHTTP(status: number): string {
+    if (status === 504 || status === 502) return 'El cruce tardó demasiado — probá de nuevo en un momento.';
+    if (status === 413) return 'El archivo es muy grande.';
+    return 'Error de conexión con el servidor — reintentá.';
+}
+
 function CruceCarpetaView() {
     const [corte, setCorte] = useState<string>(ultimoDiaMesAnterior);
     const [tolerancia, setTolerancia] = useState<string>('20');
     const [file, setFile] = useState<File | null>(null);
     const [snapshots, setSnapshots] = useState<string[]>([]);
+    // Estado del fetch de /snapshots: mientras carga NO afirmamos "sin snapshot"
+    // (contradecía al banner del resultado); si falló, no se muestra nada y la
+    // verdad la dice el banner que devuelve el server.
+    const [snapState, setSnapState] = useState<'loading' | 'ok' | 'error'>('loading');
     const [resultado, setResultado] = useState<ResultadoCruce | null>(null);
     const [cruzando, setCruzando] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [err, setErr] = useState<string | null>(null);
     const [openVend, setOpenVend] = useState<Set<number>>(new Set());
-    const fileRef = useRef<HTMLInputElement>(null);
 
     // Fechas con snapshot: marcan qué cortes son EXACTOS (foto guardada ese día).
     useEffect(() => {
         let alive = true;
         fetch(`/api/conciliacion/snapshots?cod_empresa=${EMPRESA_CC}`, { headers: authHeaders() })
             .then(r => r.json())
-            .then(j => { if (alive && j.ok && Array.isArray(j.fechas)) setSnapshots(j.fechas); })
-            .catch(() => { /* silencioso: el hint queda en "aproximado" */ });
+            .then(j => {
+                if (!alive) return;
+                if (j.ok && Array.isArray(j.fechas)) { setSnapshots(j.fechas); setSnapState('ok'); }
+                else setSnapState('error');
+            })
+            .catch(() => { if (alive) setSnapState('error'); });
         return () => { alive = false; };
     }, []);
 
@@ -600,15 +627,17 @@ function CruceCarpetaView() {
             const fd = new FormData();
             fd.append('file', file);
             fd.append('corte', corte);
-            fd.append('tolerancia', tolerancia || '20');
+            fd.append('tolerancia', tolerancia);
             fd.append('cod_empresa', String(EMPRESA_CC));
             const res = await fetch('/api/conciliacion/cruce', { method: 'POST', headers: authHeaders(), body: fd });
-            const j = await res.json().catch(() => ({}));
-            if (!res.ok || !j.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
+            const j = await res.json().catch(() => null);
+            if (!res.ok || !j?.ok) throw new Error(j?.error ?? mensajeErrorHTTP(res.status));
             setResultado(j);
             setOpenVend(new Set());
         } catch (e: any) {
-            setErr(e?.message ?? 'Error al cruzar');
+            setErr(e instanceof TypeError
+                ? 'Error de conexión con el servidor — reintentá.'
+                : (e?.message ?? 'Error al cruzar'));
         } finally {
             setCruzando(false);
         }
@@ -620,8 +649,8 @@ function CruceCarpetaView() {
         try {
             const res = await fetch(`/api/conciliacion/cruce/export?token=${encodeURIComponent(resultado.download_token)}`, { headers: authHeaders() });
             if (!res.ok) {
-                const j = await res.json().catch(() => ({}));
-                throw new Error(j.error ?? `HTTP ${res.status}`);
+                const j = await res.json().catch(() => null);
+                throw new Error(j?.error ?? mensajeErrorHTTP(res.status));
             }
             const blob = await res.blob();
             const cd = res.headers.get('content-disposition') || '';
@@ -657,11 +686,15 @@ function CruceCarpetaView() {
                 <label className="conc-cruce-field">
                     <span>Fecha de corte</span>
                     <input type="date" value={corte} onChange={e => setCorte(e.target.value)} />
-                    {corte && (
-                        tieneSnapshot
-                            ? <small className="conc-hint-ok"><CheckCircle2 size={12} /> hay snapshot: corte exacto</small>
-                            : <small className="conc-hint-warn"><AlertTriangle size={12} /> sin snapshot: cruce aproximado con la foto actual</small>
+                    {corte && snapState === 'loading' && (
+                        <small><Loader2 size={11} className="conc-spin" /> verificando snapshot…</small>
                     )}
+                    {corte && snapState === 'ok' && (
+                        tieneSnapshot
+                            ? <small className="conc-hint-ok"><CheckCircle2 size={12} /> hay foto del corte</small>
+                            : <small className="conc-hint-warn"><AlertTriangle size={12} /> sin foto: será aproximado</small>
+                    )}
+                    {/* snapState 'error': sin afirmación — el banner del resultado dice la verdad */}
                 </label>
                 <label className="conc-cruce-field">
                     <span>Tolerancia ($)</span>
@@ -671,9 +704,11 @@ function CruceCarpetaView() {
                 <label className="conc-cruce-field conc-cruce-file">
                     <span>Sheet de la carpeta (.xlsx)</span>
                     <input
-                        ref={fileRef}
                         type="file"
                         accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        // Limpiar el value en el click permite re-subir el MISMO
+                        // archivo corregido (change no dispara con value igual).
+                        onClick={e => { (e.currentTarget as HTMLInputElement).value = ''; }}
                         onChange={e => setFile(e.target.files?.[0] ?? null)}
                     />
                     <small>pestañas por vendedor: JULIO / MARCELO / SEBA / BRIAN / ANDREA</small>
@@ -794,11 +829,21 @@ function CruceCarpetaView() {
                                                                     <td className="num">{formatCurrency2(m.saldo_sistema)}</td>
                                                                     <td className={`num ${m.dif < 0 ? 'is-neg' : ''}`}>{formatCurrency2(m.dif)}</td>
                                                                     <td>
-                                                                        {m.transito_al_corte?.length ? (
-                                                                            <span className="conc-badge conc-badge--transit" title="Cobranzas cargadas en la app con fecha anterior al corte, aún sin imputar en IM — probablemente explican la diferencia">
-                                                                                <Receipt size={11} /> {formatCurrency(m.transito_al_corte.reduce((a, t) => a + t.monto, 0))} en tránsito al corte
+                                                                        {m.transito_al_corte?.map((t, k) => (
+                                                                            <span key={k} className="conc-badge conc-badge--transit" title="Cobranza de la app que al corte estaba sin imputar en IM — probablemente explica la diferencia">
+                                                                                <Receipt size={11} /> {formatCurrency(t.monto)} {t.status === 'imputado'
+                                                                                    ? `imputado el ${t.imputado_at ?? '?'} (post-corte)`
+                                                                                    : 'aún en tránsito'}
                                                                             </span>
-                                                                        ) : m.tentativo ? <span className="conc-badge conc-badge--amber">tentativo</span> : null}
+                                                                        ))}
+                                                                        {m.ambiguo && (
+                                                                            <span className="conc-badge conc-badge--warn" title="Otro cliente del sistema tiene un score casi igual: verificá que sea la persona correcta">
+                                                                                ⚠ ambiguo — confirmar identidad
+                                                                            </span>
+                                                                        )}
+                                                                        {m.tentativo && !m.transito_al_corte?.length && !m.ambiguo && (
+                                                                            <span className="conc-badge conc-badge--amber">tentativo</span>
+                                                                        )}
                                                                     </td>
                                                                 </tr>
                                                             ))}
@@ -817,7 +862,10 @@ function CruceCarpetaView() {
                                                         <strong>{formatCurrency2(sc.saldo)}</strong>
                                                         {sc.cross_vendedor && (
                                                             <span className="conc-badge conc-badge--warn" title={`Score ${sc.cross_vendedor.score}`}>
-                                                                ¿es {sc.cross_vendedor.nombre} (#{sc.cross_vendedor.cod_cliente}) bajo {sc.cross_vendedor.vendedor}? {formatCurrency(sc.cross_vendedor.saldo)}
+                                                                {sc.cross_vendedor.en_solo_sistema
+                                                                    ? `coincide con el solo-sistema de ${sc.cross_vendedor.vendedor}: `
+                                                                    : `¿es de ${sc.cross_vendedor.vendedor}? `}
+                                                                {sc.cross_vendedor.nombre} (#{sc.cross_vendedor.cod_cliente}) {formatCurrency(sc.cross_vendedor.saldo)}
                                                             </span>
                                                         )}
                                                     </div>
