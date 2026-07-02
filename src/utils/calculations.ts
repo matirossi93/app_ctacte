@@ -19,9 +19,13 @@ export const processInvoices = (
         // Get client from DB
         const clientDbDetails = clientDbMap.get(clientId);
         
-        // Determine system threshold based on Frecuencia
+        // Plazo real de pago = columna VISITA del maestro ('7'/'15'). "Frecuencia"
+        // NO es el plazo (incidente cobranzas 02/07/2026) — queda como fallback.
         let defaultThreshold = 0;
-        if (clientDbDetails?.Frecuencia) {
+        const visita = String(clientDbDetails?.Visita ?? clientDbDetails?.VISITA ?? '').trim();
+        if (visita === '7') defaultThreshold = 7;
+        else if (visita === '15') defaultThreshold = 15;
+        else if (clientDbDetails?.Frecuencia) {
             const freq = clientDbDetails.Frecuencia.toUpperCase();
             if (freq.includes('SEMANAL')) defaultThreshold = 7;
             else if (freq.includes('QUINCENAL')) defaultThreshold = 15;
@@ -159,9 +163,12 @@ export const processInvoices = (
         if (!clientSummary) {
             const dbDetails = clientDbMap.get(inv.clientId);
             
-            // Determine default threshold for reporting/UI
+            // Plazo para reporte/UI: VISITA ('7'/'15') primero, Frecuencia como fallback
             let defaultThreshold = 0;
-            if (dbDetails?.Frecuencia) {
+            const visitaCli = String(dbDetails?.Visita ?? dbDetails?.VISITA ?? '').trim();
+            if (visitaCli === '7') defaultThreshold = 7;
+            else if (visitaCli === '15') defaultThreshold = 15;
+            else if (dbDetails?.Frecuencia) {
                 const freq = dbDetails.Frecuencia.toUpperCase();
                 if (freq.includes('SEMANAL')) defaultThreshold = 7;
                 else if (freq.includes('QUINCENAL')) defaultThreshold = 15;

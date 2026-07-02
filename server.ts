@@ -306,7 +306,7 @@ async function fetchIMData(codEmpresa?: number): Promise<NormalizedData> {
         vendedorMap.set(v.cod_vendedor, v.nombre);
     });
 
-    // Build clientDb from Google Sheet (for Localidad/Frecuencia — IM doesn't have these)
+    // Build clientDb from Google Sheet (for Localidad/Frecuencia/VISITA — IM doesn't have these)
     const clientDbMap: Record<string, any> = {};
     if (clientsSheetRes?.data) {
         const clientsParsed = parse(clientsSheetRes.data, { header: true, skipEmptyLines: true }).data as any[];
@@ -318,6 +318,9 @@ async function fetchIMData(codEmpresa?: number): Promise<NormalizedData> {
                     'Razon Social': c['Razon Social'] || '',
                     Localidad: c.Localidad?.trim() || '',
                     Frecuencia: c.Frecuencia?.trim() || '',
+                    // Plazo de pago de la cta cte en días ('7'/'15'). OJO: distinto de
+                    // "visita" (minúscula, SI/NO) que agrega Supabase client_operational.
+                    Visita: c.VISITA?.toString().trim() || '',
                 };
             }
         });
@@ -1023,7 +1026,7 @@ app.get('/api/bot', requireBotToken, async (req: express.Request, res: express.R
         const data = await fetchData();
 
         let invoicesRaw: any[];
-        const clientDbMap = new Map<string, { localidad: string; frecuencia: string }>();
+        const clientDbMap = new Map<string, { localidad: string; frecuencia: string; visita: string }>();
 
         if (data.source === 'infomanager') {
             invoicesRaw = data.invoices;
@@ -1031,7 +1034,8 @@ app.get('/api/bot', requireBotToken, async (req: express.Request, res: express.R
             Object.entries(data.clientDbMap).forEach(([cod, c]: [string, any]) => {
                 clientDbMap.set(cod, {
                     localidad: c.Localidad || '',
-                    frecuencia: c.Frecuencia || 'MENSUAL'
+                    frecuencia: c.Frecuencia || 'MENSUAL',
+                    visita: c.Visita?.toString().trim() || ''
                 });
             });
         } else {
@@ -1043,7 +1047,8 @@ app.get('/api/bot', requireBotToken, async (req: express.Request, res: express.R
                 if (cod) {
                     clientDbMap.set(cod, {
                         localidad: c.Localidad?.trim() || c.LOCALIDAD?.trim() || '',
-                        frecuencia: c.Frecuencia?.trim() || 'MENSUAL'
+                        frecuencia: c.Frecuencia?.trim() || 'MENSUAL',
+                        visita: c.VISITA?.toString().trim() || ''
                     });
                 }
             });
@@ -1083,8 +1088,13 @@ app.get('/api/bot', requireBotToken, async (req: express.Request, res: express.R
             }
 
             const clientDb = clientDbMap.get(clientId);
+            // Plazo real de pago = columna VISITA del maestro ('7'/'15').
+            // "Frecuencia" NO es el plazo (incidente cobranzas 02/07/2026: 6 avisos
+            // indebidos) — queda solo como fallback para filas sin VISITA.
             let threshold = 15;
-            if (clientDb?.frecuencia === 'SEMANAL') threshold = 7;
+            if (clientDb?.visita === '7') threshold = 7;
+            else if (clientDb?.visita === '15') threshold = 15;
+            else if (clientDb?.frecuencia === 'SEMANAL') threshold = 7;
             else if (clientDb?.frecuencia === 'MENSUAL') threshold = 30;
 
             const balance = parseNum(raw.SALDO);

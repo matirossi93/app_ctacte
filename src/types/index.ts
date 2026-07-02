@@ -47,7 +47,9 @@ export interface ClientDBType {
     Cod: string | number;
     'Razon Social'?: string;
     Localidad?: string;
-    Frecuencia?: string; // e.g. 'SEMANAL', 'QUINCENAL', 'MENSUAL'
+    Frecuencia?: string; // e.g. 'SEMANAL', 'QUINCENAL', 'MENSUAL' — NO es el plazo de pago
+    Visita?: string | number;  // plazo cta cte en días: '7'/'15' (col VISITA, via server)
+    VISITA?: string | number;  // idem, con header crudo (fallback CSV parseado en el front)
     // Campos extra del maestro Supabase (client_operational) — opcionales
     direccion?: string | null;
     dia_visita?: string | null;
