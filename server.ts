@@ -48,6 +48,17 @@ import { cruceCarpetaHandler, exportCruceHandler } from './server-lib/cruceCarpe
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Red de seguridad global: en Node 22 una promesa rechazada sin catch MATA el
+// proceso (y el contenedor entra en crash-loop, incidente 06/07). Acá logueamos
+// y seguimos: para esta app la disponibilidad pesa más que el riesgo teórico de
+// continuar tras un error no manejado. El stack queda en los logs del contenedor.
+process.on('unhandledRejection', (reason: any) => {
+    console.error('[unhandledRejection]', reason instanceof Error ? reason.stack : reason);
+});
+process.on('uncaughtException', (err: any) => {
+    console.error('[uncaughtException]', err?.stack ?? err);
+});
+
 const app = express();
 const PORT = process.env.PORT || 80;
 
@@ -1220,7 +1231,9 @@ if (hasSupabase()) {
         }
     });
     if (process.env.SYNC_ON_START === 'true') {
-        syncVentasMesActual().then(r => console.log('[sync on start]', r));
+        syncVentasMesActual()
+            .then(r => console.log('[sync on start]', r))
+            .catch(err => console.error('[sync on start] fallo:', err?.message ?? err));
     }
     console.log('Cron syncVentasMesActual: */30 * * * *');
 
@@ -1265,13 +1278,20 @@ cron.schedule('*/8 * * * *', async () => {
     }
 });
 // Primer pre-warm al arrancar el server (3s de delay para no competir con boot).
-setTimeout(() => {
+// PREWARM_BOOT=off lo apaga por env var (sin rebuild): escape para diagnóstico
+// si el contenedor muere durante el arranque (ej. OOM). Los caches se ganan
+// on-demand igual, solo que el primer request de cada cosa es más lento.
+const PREWARM_BOOT = process.env.PREWARM_BOOT !== 'off';
+if (PREWARM_BOOT) setTimeout(() => {
     fetchData(true)
         .then(() => console.log('[pre-warm on start] /api/data cache listo'))
         .catch(err => console.warn('[pre-warm on start] fallo:', err?.message));
     // Resolver de cod_cuenta desde /planes de InfoManager — evita env vars manuales
-    import('./server-lib/cuentasResolver.js').then(m => m.prewarmCuentasCache());
+    import('./server-lib/cuentasResolver.js')
+        .then(m => m.prewarmCuentasCache())
+        .catch(err => console.warn('[pre-warm cuentas] fallo:', err?.message ?? err));
 }, 3000);
+else console.log('Pre-warm de boot DESACTIVADO (PREWARM_BOOT=off)');
 console.log('Cron pre-warm /api/data: */8 * * * *');
 
 // Pre-warm del snapshotCache: trae las ventas crudas de los últimos 3 meses
@@ -1296,17 +1316,12 @@ async function prewarmSnapshotCache() {
         while (m <= 0) { m += 12; y -= 1; }
         meses.push({ year: y, month: m });
     }
-    // Dos fases paralelas:
-    //  - Fase 1 (trimestre actual): los 3 meses más recientes en paralelo.
-    //    Es lo crítico para snapshot, comisiones e historial fast-path.
-    //  - Fase 2 (trimestre anterior): los 3 anteriores en paralelo.
-    //    Sólo alimenta alertas + comparación trimestral, no es bloqueante.
-    // En vez de 6 fetches secuenciales (~2-3 min cold), arrancamos con 3
-    // en paralelo (~30s) y después los otros 3. Esto reduce el tiempo hasta
-    // que el endpoint historial-compras pueda responder rápido a < 1 min
-    // tras boot frío.
-    const fase1 = meses.slice(0, 3);
-    const fase2 = meses.slice(3);
+    // SECUENCIAL, del mes más reciente al más viejo. Antes iba en dos fases de
+    // 3 meses en paralelo (6 fetches gordos de ventas+items en vuelo a la vez):
+    // ese pico de RAM ~15-20s post-boot coincidía con el crash-loop del 06/07
+    // (OOM sospechado). Secuencial tarda más el warm frío (~2-3 min) pero el
+    // pico de memoria es 1 mes en vez de 3, y los endpoints igual se ganan el
+    // cache on-demand con stale-while-revalidate mientras tanto.
     async function warmMes({ year, month }: { year: number; month: number }) {
         try {
             const t0 = Date.now();
@@ -1319,8 +1334,7 @@ async function prewarmSnapshotCache() {
             console.warn(`[snapshot prewarm] ${year}-${String(month).padStart(2, '0')} fail: ${e?.message ?? e}`);
         }
     }
-    await Promise.all(fase1.map(warmMes));
-    await Promise.all(fase2.map(warmMes));
+    for (const mes of meses) await warmMes(mes);
     // Catálogo de artículos (precio_venta + cod_rubro) para comisiones.
     try {
         const t0 = Date.now();
@@ -1330,8 +1344,10 @@ async function prewarmSnapshotCache() {
         console.warn(`[snapshot prewarm] articulos catalogo fail: ${e?.message ?? e}`);
     }
 }
-// Boot warm con delay 3s para no competir con el resto del startup.
-setTimeout(() => { prewarmSnapshotCache().catch(() => { }); }, 3000);
+// Boot warm con delay 60s: escalonado respecto del pre-warm de /api/data (+3s)
+// para que los dos picos de memoria/red no se sumen durante el arranque.
+// También respeta PREWARM_BOOT=off como escape sin rebuild.
+if (PREWARM_BOOT) setTimeout(() => { prewarmSnapshotCache().catch(() => { }); }, 60_000);
 // Cron cada 20 min: refresca los 6 meses agresivamente para que el cache
 // histórico (TTL 24h) y el actual (TTL 5min) nunca lleguen vencidos a un
 // request real. Combinado con stale-while-revalidate en snapshotCache, esto
