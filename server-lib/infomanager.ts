@@ -25,22 +25,33 @@ export async function imToken(): Promise<string> {
   return _pending;
 }
 
+/** Descarta el token cacheado: el próximo imToken() re-loguea contra IM. */
+export function invalidateImToken(): void { _token = null; }
+
 export async function imClient(): Promise<AxiosInstance> {
-  const t = await imToken();
-  return axios.create({
+  const cli = axios.create({
     baseURL: BASE,
     // 25s para fallar antes que el reverse-proxy de EasyPanel corte a ~30s.
     // Si IM no responde en ese tiempo, axios tira error y el backend puede
     // responder JSON estructurado en lugar de quedar colgado y devolver HTML 502.
     timeout: 25000,
-    headers: { Authorization: `Bearer ${t}` }
   });
+  // El token se resuelve POR REQUEST (interceptor), no fijado al crear la
+  // instancia: si invalidateImToken() renueva la credencial, las instancias
+  // ya creadas toman el token nuevo en el siguiente request en vez de seguir
+  // pegándole a IM con el token muerto.
+  cli.interceptors.request.use(async (config) => {
+    config.headers.Authorization = `Bearer ${await imToken()}`;
+    return config;
+  });
+  return cli;
 }
 
 /**
  * Reintenta una llamada IDEMPOTENTE (GET) ante fallos TRANSITORIOS de IM:
- * timeout (ECONNABORTED), error de red sin respuesta, 5xx o 429. NO reintenta
- * 4xx (errores del cliente, no transitorios). Backoff exponencial 1s/2s/4s.
+ * timeout (ECONNABORTED), error de red sin respuesta, 5xx, 429 o 401 (token
+ * invalidado server-side). NO reintenta el resto de los 4xx (errores del
+ * cliente, no transitorios). Backoff exponencial 1s/2s/4s.
  * IM tuvo episodios de sobrecarga documentados; un transient de 10-20s a mitad
  * de una página paginada tiraba el sync entero. SOLO para GET — NO usar en
  * POST/crearRecibo sin hacerlo idempotente primero.
@@ -53,8 +64,13 @@ export async function imGetRetry<T>(fn: () => Promise<T>, label: string, attempt
     } catch (err: any) {
       lastErr = err;
       const status = err?.response?.status;
-      const transitorio = status === undefined || status >= 500 || status === 429
+      const transitorio = status === undefined || status >= 500 || status === 429 || status === 401
         || ['ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN'].includes(err?.code);
+      // IM puede matar sesiones server-side antes del exp del JWT y responder
+      // 500 body vacío o 401 con token 'vigente' (incidente 06-07/07/2026)
+      // → renovar credencial antes de reintentar. Se invalida incluso si ya no
+      // quedan intentos: que el PRÓXIMO request arranque con login fresco.
+      if (status === 401 || (typeof status === 'number' && status >= 500)) invalidateImToken();
       if (!transitorio || intento === attempts) break;
       const backoff = 1000 * Math.pow(2, intento - 1); // 1s, 2s, 4s
       console.warn(`[IM retry] ${label}: intento ${intento}/${attempts} falló (${status ?? err?.code ?? err?.message}); reintento en ${backoff}ms`);
