@@ -70,8 +70,32 @@ function fechaART(ts: string): string {
  * comas, acentos/ñ (NFD + strip de diacríticos), uppercase, solo [A-Z0-9 ],
  * espacios colapsados.
  */
+/**
+ * InfoManager devuelve texto con mojibake CP850 sistem\u00e1tico (verificado en
+ * datos reales de junio-26): Jos\u00da=Jos\u00e9, Mar\u00dda=Mar\u00eda, Famaill\u00df=Famaill\u00e1,
+ * Concepci\u00ben=Concepci\u00f3n, Ra\u00b7l=Ra\u00fal, NI\u00d0O=NI\u00d1O, Do\u00b1a=Do\u00f1a, A\u250cN=A\u00daN, \u2534=\u00c1.
+ * Sin este mapeo, NI\u00d1O (carpeta) vs NI\u00d0O (sistema) da score 0.33 \u2192 no matchea.
+ * \u00da es la \u00fanica ambigua (\u00e9 mojibake en "Jos\u00da" vs \u00da leg\u00edtima en "N\u00da\u00d1EZ"):
+ * se mapea a E solo pegada a min\u00fasculas; en contexto may\u00fascula la NFD la
+ * baja a U como corresponde.
+ */
+function decodificarMojibakeIM(s: string): string {
+  return s
+    .replace(/\u00da(?=[a-z\u00f1\u00e1\u00e9\u00ed\u00f3\u00fa\u00fc])/g, 'e')
+    .replace(/(?<=[a-z\u00f1\u00e1\u00e9\u00ed\u00f3\u00fa\u00fc])\u00da/g, 'e')
+    .replace(/\u00dd/g, 'i')
+    .replace(/\u00df/g, 'a')
+    .replace(/\u00be/g, 'o')
+    .replace(/\u00b7/g, 'u')
+    .replace(/\u00d0/g, '\u00d1')
+    .replace(/\u00b1/g, '\u00f1')
+    .replace(/\u250c/g, 'U')
+    .replace(/\u2534/g, 'A')
+    .replace(/\ufffd/g, '');
+}
+
 export function normalizarNombre(s: string): string {
-  return String(s ?? '')
+  const base = decodificarMojibakeIM(String(s ?? ''))
     .replace(/\([^)]*\)/g, ' ')
     .replace(/,/g, ' ')
     .normalize('NFD')
@@ -80,6 +104,24 @@ export function normalizarNombre(s: string): string {
     .replace(/[^A-Z0-9 ]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+  // Colapsar corridas de iniciales sueltas: "V Y H" \u2192 "VYH". Sin esto,
+  // "AUTOSERVICIO V Y H" queda con un solo token significativo y el
+  // containment le regala 0.95 contra cualquier "AUTOSERVICIO X"
+  // (cruz\u00f3 NFAMILY\u2194VYH en la validaci\u00f3n con el Sheet real de junio).
+  const tokens = base.split(' ');
+  const out: string[] = [];
+  let run: string[] = [];
+  const flush = () => {
+    if (run.length >= 2) out.push(run.join(''));
+    else out.push(...run);
+    run = [];
+  };
+  for (const t of tokens) {
+    if (t.length === 1) run.push(t);
+    else { flush(); out.push(t); }
+  }
+  flush();
+  return out.join(' ');
 }
 
 /** Dice coefficient de bigramas (multiset) — equivalente práctico de difflib.ratio. */

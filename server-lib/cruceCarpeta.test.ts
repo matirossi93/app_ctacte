@@ -82,6 +82,33 @@ describe('normalización y scoring de nombres', () => {
   it('quita acentos y ñ vía NFD', () => {
     expect(normalizarNombre('Ñandú Pérez')).toBe('NANDU PEREZ');
   });
+
+  // Mojibake CP850 real de InfoManager (casos verificados en junio-26)
+  it('decodifica el mojibake CP850 de IM: NIÐO, A┌N Nicolßs, JosÚ, Ra·l, Do±a, Concepci¾n', () => {
+    expect(normalizarNombre('NIÐO')).toBe('NIÑO'.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase());
+    expect(scoreNombres('NIÑO', 'NIÐO')).toBeGreaterThanOrEqual(0.9);
+    expect(scoreNombres('AUN NICOLAS', 'A┌N, Nicolßs (Concepci¾n)')).toBeGreaterThanOrEqual(0.9);
+    expect(normalizarNombre('MARTINEZ, JosÚ (Y. B.)')).toBe('MARTINEZ JOSE');
+    expect(normalizarNombre('VERGARA, Ra·l (Yerba Buena)')).toBe('VERGARA RAUL');
+    expect(normalizarNombre('FORRAJERIA Do±a Negrita (Trinidad)')).toBe('FORRAJERIA DONA NEGRITA');
+  });
+
+  it('Ú legítima en contexto mayúscula sigue siendo U (NÚÑEZ), pero JosÚ→JOSE', () => {
+    expect(normalizarNombre('NÚÑEZ')).toBe('NUNEZ');
+    expect(normalizarNombre('JosÚ')).toBe('JOSE');
+  });
+
+  // Iniciales sueltas colapsadas: sin esto "AUTOSERVICIO V Y H" queda con un
+  // solo token significativo y el containment cruza NFAMILY↔VYH (visto en la
+  // validación con el Sheet real de junio).
+  it("colapsa iniciales sueltas: 'V Y H'→'VYH' y VYH matchea a su cliente, no NFAMILY", () => {
+    expect(normalizarNombre('AUTOSERVICIO  V Y H   (LEON ROUGES)')).toBe('AUTOSERVICIO VYH');
+    const vyh = scoreNombres('AUTOSERVICIO VYH', 'AUTOSERVICIO  V Y H   (LEON ROUGES)');
+    const nfamilyVsVyh = scoreNombres('AUTOSERVICIO NFAMILY', 'AUTOSERVICIO  V Y H   (LEON ROUGES)');
+    const nfamilyVsFamily = scoreNombres('AUTOSERVICIO NFAMILY', 'AUTOSERVICIO Family (Concepci¾n)');
+    expect(vyh).toBeGreaterThanOrEqual(0.95);
+    expect(nfamilyVsFamily).toBeGreaterThan(nfamilyVsVyh);
+  });
 });
 
 describe('parseFechaCarpeta / parseMontoCarpeta / parseTolerancia', () => {
