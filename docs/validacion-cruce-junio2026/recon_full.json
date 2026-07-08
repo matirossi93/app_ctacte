@@ -1,0 +1,3680 @@
+{
+ "recon": {
+  "JULIO": {
+   "match": [
+    {
+     "fis": "VILLALBA IRIS",
+     "fsal": 7888186.0,
+     "sis": "VILLALBA, Iris (Ciudadela)",
+     "scod": 726,
+     "ssal": 7854962.12,
+     "dif": 33223.87999999989,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "VILLALBA IRIS",
+       3033223.0
+      ],
+      [
+       "VILLALBA IRIS",
+       4854963.0
+      ]
+     ]
+    },
+    {
+     "fis": "VELEZ MARCOS",
+     "fsal": 400874.0,
+     "sis": "VELEZ, Marcos (Yerba Buena)",
+     "scod": 714,
+     "ssal": 400874.63,
+     "dif": -0.6300000000046566,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "VELEZ MARCOS",
+       400874.0
+      ]
+     ]
+    },
+    {
+     "fis": "VEGAS DAVID",
+     "fsal": 334958.0,
+     "sis": "VEGAS, David (Lules)",
+     "scod": 711,
+     "ssal": 334958.98,
+     "dif": -0.9799999999813735,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "VEGAS DAVID",
+       334958.0
+      ]
+     ]
+    },
+    {
+     "fis": "TALAMAZZI FABIO",
+     "fsal": 145799.0,
+     "sis": "TALAMAZZI, Fabio (Ciudadela)",
+     "scod": 686,
+     "ssal": 145799.03,
+     "dif": -0.029999999998835847,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "TALAMAZZI FABIO",
+       145799.0
+      ]
+     ]
+    },
+    {
+     "fis": "SORIA ROSARIO",
+     "fsal": 199274.0,
+     "sis": "SORIA, Rosario  (Y. B.)",
+     "scod": 148,
+     "ssal": 199274.09,
+     "dif": -0.08999999999650754,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "SORIA ROSARIO",
+       199274.0
+      ]
+     ]
+    },
+    {
+     "fis": "SILVA PATRICIA",
+     "fsal": 112633.0,
+     "sis": "SILVA, Patricia (Lules)",
+     "scod": 682,
+     "ssal": 112633.47,
+     "dif": -0.47000000000116415,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "SILVA PATRICIA",
+       102394.0
+      ],
+      [
+       "SILVA PATRICIA",
+       10239.0
+      ]
+     ]
+    },
+    {
+     "fis": "SEGUER VIVIANA",
+     "fsal": 949345.0,
+     "sis": "SEGUER, Viviana (Centro)",
+     "scod": 665,
+     "ssal": 949345.84,
+     "dif": -0.8399999999674037,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "SEGUER VIVIANA",
+       949345.0
+      ]
+     ]
+    },
+    {
+     "fis": "SARAVIA LAURA",
+     "fsal": 311275.0,
+     "sis": "SARAVIA, Laura (Oeste II)",
+     "scod": 478,
+     "ssal": 311275.39,
+     "dif": -0.39000000001396984,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "SARAVIA LAURA",
+       311275.0
+      ]
+     ]
+    },
+    {
+     "fis": "REYNOSO ROBERTO",
+     "fsal": 2804761.0,
+     "sis": "REYNOSO, Roberto (Alderetes)",
+     "scod": 904,
+     "ssal": 2789250.57,
+     "dif": 15510.430000000168,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "REYNOSO ROBERTO",
+       2682511.0
+      ],
+      [
+       "REYNOSO ROBERTO",
+       122250.0
+      ]
+     ]
+    },
+    {
+     "fis": "PEREZ HERNAN",
+     "fsal": 669689.0,
+     "sis": "PEREZ, Hernan (Jujuy)",
+     "scod": 587,
+     "ssal": 669689.68,
+     "dif": -0.6800000000512227,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "PEREZ HERNAN",
+       669689.0
+      ]
+     ]
+    },
+    {
+     "fis": "PEDRAZA SERGIO",
+     "fsal": 417238.0,
+     "sis": "PEDRAZA, Sergio (Jujuy)",
+     "scod": 583,
+     "ssal": 417239.28,
+     "dif": -1.2800000000279397,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "PEDRAZA SERGIO",
+       417238.0
+      ]
+     ]
+    },
+    {
+     "fis": "PAZ VANESA",
+     "fsal": 867550.0,
+     "sis": "PAZ, Vanesa (Jujuy)",
+     "scod": 581,
+     "ssal": 867550.21,
+     "dif": -0.2099999999627471,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "PAZ VANESA",
+       867550.0
+      ]
+     ]
+    },
+    {
+     "fis": "PAZ MARIA",
+     "fsal": 1089907.0,
+     "sis": "PAZ, Maria (Banda)",
+     "scod": 580,
+     "ssal": 1089907.75,
+     "dif": -0.75,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "PAZ MARIA",
+       1089907.0
+      ]
+     ]
+    },
+    {
+     "fis": "OVIEDO PABLO",
+     "fsal": 655322.0,
+     "sis": "OVIEDO, Pablo (Jujuy)",
+     "scod": 174,
+     "ssal": 655322.18,
+     "dif": -0.18000000005122274,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "OVIEDO PABLO",
+       655322.0
+      ]
+     ]
+    },
+    {
+     "fis": "MARTIN MARCELO",
+     "fsal": 437583.0,
+     "sis": "MARTIN, Marcelo (Y. B)",
+     "scod": 474,
+     "ssal": 436764.34,
+     "dif": 818.6599999999744,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "MARTIN MARCELO",
+       437583.0
+      ]
+     ]
+    },
+    {
+     "fis": "MARTIN FACUNDO",
+     "fsal": 596797.0,
+     "sis": "MARTIN, Facundo  (Y. B.)",
+     "scod": 740,
+     "ssal": 596798.39,
+     "dif": -1.3900000000139698,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "MARTIN FACUNDO",
+       596797.0
+      ]
+     ]
+    },
+    {
+     "fis": "MARQUEZ CAROLINA",
+     "fsal": 401300.0,
+     "sis": "MARQUEZ, Carolina (Lules)",
+     "scod": 470,
+     "ssal": 401299.84,
+     "dif": 0.15999999997438863,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "MARQUEZ CAROLINA",
+       401300.0
+      ]
+     ]
+    },
+    {
+     "fis": "MANTARAS MARIANO",
+     "fsal": 476378.0,
+     "sis": "MANTARAS, Mariano (Centro)",
+     "scod": 457,
+     "ssal": 433649.48,
+     "dif": 42728.52000000002,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "MANTARAS MARIANO",
+       476378.0
+      ]
+     ]
+    },
+    {
+     "fis": "LOPEZ DANIEL",
+     "fsal": 227246.0,
+     "sis": "LOPEZ, Daniel (Ciudadela)",
+     "scod": 432,
+     "ssal": 227247.39,
+     "dif": -1.3900000000139698,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "LOPEZ DANIEL",
+       227246.0
+      ]
+     ]
+    },
+    {
+     "fis": "GONZALEZ GONZALO",
+     "fsal": 811277.0,
+     "sis": "GONZALEZ, Gonzalo ( Y. B.)",
+     "scod": 217,
+     "ssal": 811278.54,
+     "dif": -1.540000000037253,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "GONZALEZ GONZALO",
+       811277.0
+      ]
+     ]
+    },
+    {
+     "fis": "GOMEZ FABIAN",
+     "fsal": 100219.0,
+     "sis": "GOMEZ, Fabian (Ciudadela)",
+     "scod": 335,
+     "ssal": 100219.37,
+     "dif": -0.3699999999953434,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "GOMEZ FABIAN",
+       100219.0
+      ]
+     ]
+    },
+    {
+     "fis": "FORRAJERIA MATEO",
+     "fsal": 477953.0,
+     "sis": "FORRAJERIA Mateo  (Banda)",
+     "scod": 1242,
+     "ssal": 477953.99,
+     "dif": -0.9899999999906868,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "FORRAJERIA MATEO",
+       477953.0
+      ]
+     ]
+    },
+    {
+     "fis": "FORRAJERIA HUELLITAS",
+     "fsal": 256633.0,
+     "sis": "FORRAJERIA Huellitas (Lules)",
+     "scod": 698,
+     "ssal": 256635.13,
+     "dif": -2.1300000000046566,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "FORRAJERIA HUELLITAS",
+       256633.0
+      ]
+     ]
+    },
+    {
+     "fis": "FORRAJERIA GRAMAJO",
+     "fsal": 232722.0,
+     "sis": "FORRAJERIA, Gramajo (Lules)",
+     "scod": 909,
+     "ssal": 232722.16,
+     "dif": -0.16000000000349246,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "FORRAJERIA GRAMAJO",
+       232722.0
+      ]
+     ]
+    },
+    {
+     "fis": "FORRAJERIA CHOC",
+     "fsal": 260202.0,
+     "sis": "FORRAJERIA CHOC (Yerba Buena)",
+     "scod": 1058,
+     "ssal": 260203.29,
+     "dif": -1.290000000008149,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "FORRAJERIA CHOC",
+       260202.0
+      ]
+     ]
+    },
+    {
+     "fis": "FILGUEIRAS MARIA",
+     "fsal": 222089.0,
+     "sis": "FILGUEIRAS, Maria (Y. B.)",
+     "scod": 284,
+     "ssal": 222089.6,
+     "dif": -0.6000000000058208,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "FILGUEIRAS MARIA",
+       222089.0
+      ]
+     ]
+    },
+    {
+     "fis": "ERAZO VICTOR",
+     "fsal": 100822.0,
+     "sis": "ERAZO, Victor (Lules)",
+     "scod": 852,
+     "ssal": 100822.83,
+     "dif": -0.8300000000017462,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "ERAZO VICTOR",
+       100822.0
+      ]
+     ]
+    },
+    {
+     "fis": "EL GAUCHO",
+     "fsal": 237787.0,
+     "sis": "EL GAUCHO (Ciudadela)",
+     "scod": 216,
+     "ssal": 237787.18,
+     "dif": -0.17999999999301508,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "EL GAUCHO",
+       237787.0
+      ]
+     ]
+    },
+    {
+     "fis": "EL ESTABLO",
+     "fsal": 187032.0,
+     "sis": "EL ESTABLO (Ciudadela)",
+     "scod": 246,
+     "ssal": 187032.75,
+     "dif": -0.75,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "EL ESTABLO",
+       187032.0
+      ]
+     ]
+    },
+    {
+     "fis": "DISTRI CANIN",
+     "fsal": 133108.0,
+     "sis": "DISTRI CANIN (Yeba Buena)",
+     "scod": 236,
+     "ssal": 133108.47,
+     "dif": -0.47000000000116415,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "DISTRI CANIN",
+       133108.0
+      ]
+     ]
+    },
+    {
+     "fis": "COSTILLA CLAUDIA",
+     "fsal": 309358.0,
+     "sis": "COSTILLA, Claudia (Alderetes)",
+     "scod": 200,
+     "ssal": 343768.95,
+     "dif": -34410.95000000001,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "COSTILLA CLAUDIA",
+       309358.0
+      ]
+     ]
+    },
+    {
+     "fis": "CORDOBA MARCELO",
+     "fsal": 815374.0,
+     "sis": "CORDOBA, Marcelo (Oeste II)",
+     "scod": 193,
+     "ssal": 815374.29,
+     "dif": -0.2900000000372529,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "CORDOBA MARCELO",
+       815374.0
+      ]
+     ]
+    },
+    {
+     "fis": "CORDOBA DAVID",
+     "fsal": 1707024.0,
+     "sis": "CORDOBA, David  (Jujuy)",
+     "scod": 27,
+     "ssal": 1707024.49,
+     "dif": -0.4899999999906868,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "CORDOBA DAVID",
+       1707024.0
+      ]
+     ]
+    },
+    {
+     "fis": "CORDOBA CARLOS",
+     "fsal": 585677.0,
+     "sis": "CORDOBA, Carlos (Lules)",
+     "scod": 187,
+     "ssal": 585677.98,
+     "dif": -0.9799999999813735,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "CORDOBA CARLOS",
+       585677.0
+      ]
+     ]
+    },
+    {
+     "fis": "COCO FORRAJERIA",
+     "fsal": 1009127.0,
+     "sis": "COCO Forrajeria (Lomas de Tafi)",
+     "scod": 451,
+     "ssal": 1060894.34,
+     "dif": -51767.340000000084,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "COCO FORRAJERIA",
+       1009127.0
+      ]
+     ]
+    },
+    {
+     "fis": "CANO ALEJANDRA",
+     "fsal": 181104.0,
+     "sis": "CANO, Alejandra (Centro)",
+     "scod": 615,
+     "ssal": 181104.0,
+     "dif": 0.0,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "CANO ALEJANDRA",
+       29476.0
+      ],
+      [
+       "CANO ALEJANDRA",
+       75875.0
+      ],
+      [
+       "CANO ALEJANDRA",
+       75753.0
+      ]
+     ]
+    },
+    {
+     "fis": "BRABE MANUEL",
+     "fsal": 214375.0,
+     "sis": "BRABE, Manuel (Lules)",
+     "scod": 102,
+     "ssal": 214375.88,
+     "dif": -0.8800000000046566,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "BRABE MANUEL",
+       214375.0
+      ]
+     ]
+    },
+    {
+     "fis": "ARTAZA ROMINA",
+     "fsal": 162476.0,
+     "sis": "ARTAZA, Romina (Ciudadela)",
+     "scod": 58,
+     "ssal": 162476.45,
+     "dif": -0.45000000001164153,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "ARTAZA ROMINA",
+       162476.0
+      ]
+     ]
+    },
+    {
+     "fis": "AMADO GRACIELA",
+     "fsal": 231396.0,
+     "sis": "AMADO, Graciela (Lules)",
+     "scod": 34,
+     "ssal": 231396.74,
+     "dif": -0.7399999999906868,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "AMADO GRACIELA",
+       231396.0
+      ]
+     ]
+    },
+    {
+     "fis": "ALVAREZ MATIAS",
+     "fsal": 1244639.0,
+     "sis": "ALVAREZ, Matias (Ciudadela)",
+     "scod": 622,
+     "ssal": 1245048.07,
+     "dif": -409.0700000000652,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "ALVAREZ MATIAS",
+       1244639.0
+      ]
+     ]
+    },
+    {
+     "fis": "FORRAJERIA ORDOÑEZ",
+     "fsal": 1072874.0,
+     "sis": "FORRAJERIA ORDOÐEZ (Oeste II)",
+     "scod": 722,
+     "ssal": 1077874.59,
+     "dif": -5000.590000000084,
+     "sc": 0.97,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "FORRAJERIA ORDOÑEZ",
+       1072874.0
+      ]
+     ]
+    },
+    {
+     "fis": "GONZALEZ MARIA CRISTINA",
+     "fsal": 427706.0,
+     "sis": "GONZALEZ, MarÝa Cristina (Jujuy)",
+     "scod": 350,
+     "ssal": 427706.42,
+     "dif": -0.41999999998370185,
+     "sc": 0.96,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "GONZALEZ MARIA CRISTINA",
+       427706.0
+      ]
+     ]
+    },
+    {
+     "fis": "FERNANDEZ DANIEL",
+     "fsal": 233308.0,
+     "sis": "FERNANDEZ, Daniel Gustavo (Este)",
+     "scod": 1054,
+     "ssal": 233308.5,
+     "dif": -0.5,
+     "sc": 0.95,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "FERNANDEZ DANIEL",
+       233308.0
+      ]
+     ]
+    },
+    {
+     "fis": "MARTINEZ JOSE",
+     "fsal": 110556.0,
+     "sis": "MARTINEZ, JosÚ (Y. B.)",
+     "scod": 476,
+     "ssal": 110556.28,
+     "dif": -0.27999999999883585,
+     "sc": 0.92,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "MARTINEZ JOSE",
+       110556.0
+      ]
+     ]
+    },
+    {
+     "fis": "DARIUS DARIO",
+     "fsal": 113426.0,
+     "sis": "DARUIS, Dario (Jujuy)",
+     "scod": 213,
+     "ssal": 113426.28,
+     "dif": -0.27999999999883585,
+     "sc": 0.92,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "DARIUS DARIO",
+       113426.0
+      ]
+     ]
+    },
+    {
+     "fis": "RUIZ MARIA",
+     "fsal": 662663.0,
+     "sis": "RUIZ, MarÝa (Oeste II)",
+     "scod": 313,
+     "ssal": 707257.75,
+     "dif": -44594.75,
+     "sc": 0.9,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "RUIZ MARIA",
+       662663.0
+      ]
+     ]
+    }
+   ],
+   "fis_only": [],
+   "sis_only": [
+    {
+     "sis": "BRUNO, Mayra (Alderetes)",
+     "scod": 17,
+     "ssal": -348.32
+    },
+    {
+     "sis": "ALVARADO, Julio (Jujuy)",
+     "scod": 28,
+     "ssal": 0
+    },
+    {
+     "sis": "ANTA, Margarita (Jujuy)",
+     "scod": 43,
+     "ssal": 40.28
+    },
+    {
+     "sis": "CAJCHAYA, Pina (Jujuy)",
+     "scod": 139,
+     "ssal": 0
+    },
+    {
+     "sis": "FIGUEREDO, Lidia (Y. B.)",
+     "scod": 278,
+     "ssal": 0
+    },
+    {
+     "sis": "FIOL, Maria (Jujuy)",
+     "scod": 285,
+     "ssal": -497.07
+    },
+    {
+     "sis": "FORRAJERIA Don Blas",
+     "scod": 296,
+     "ssal": -17550.0
+    },
+    {
+     "sis": "FORRAJERIA Los Changos  (Oeste II)",
+     "scod": 300,
+     "ssal": -0.38
+    },
+    {
+     "sis": "FORRAJERIA, San Cayetano (Lules)",
+     "scod": 302,
+     "ssal": 195535.69
+    },
+    {
+     "sis": "FIGUEROA, Walter (Ciudadela)",
+     "scod": 380,
+     "ssal": -1.58
+    },
+    {
+     "sis": "JUAREZ, Daniel (Ciudadela)",
+     "scod": 408,
+     "ssal": 8.4
+    },
+    {
+     "sis": "AVELLANEDA, Gisel (Alderetes)",
+     "scod": 429,
+     "ssal": 0
+    },
+    {
+     "sis": "LUCERO, Daniel (Jujuy)",
+     "scod": 441,
+     "ssal": 1.03
+    },
+    {
+     "sis": "GIBILISCO, Domingo (Manantial)",
+     "scod": 466,
+     "ssal": -604.5
+    },
+    {
+     "sis": "MEDINA DORA (Jujuy)",
+     "scod": 487,
+     "ssal": 1.7
+    },
+    {
+     "sis": "HADAD, Alfredo (Yerba Buena)",
+     "scod": 542,
+     "ssal": 4.32
+    },
+    {
+     "sis": "PALAVECINO, Viviana (Villa)",
+     "scod": 543,
+     "ssal": 0.47
+    },
+    {
+     "sis": "NUTRIMUNDO (Ciudadela)",
+     "scod": 547,
+     "ssal": -251.97
+    },
+    {
+     "sis": "PETERSEN, Cristian (Oeste II)",
+     "scod": 601,
+     "ssal": 286808.97
+    },
+    {
+     "sis": "FORRAJERIA Mi Pipita (Alderetes)",
+     "scod": 693,
+     "ssal": 0
+    },
+    {
+     "sis": "VARELA, Benito (Y. B)",
+     "scod": 702,
+     "ssal": 0.9
+    },
+    {
+     "sis": "VARGAS, Emilio (Lules)",
+     "scod": 707,
+     "ssal": -2.65
+    },
+    {
+     "sis": "VERGARA, Ra·l (Yerba Buena)",
+     "scod": 717,
+     "ssal": 222020.95
+    },
+    {
+     "sis": "TORRES, Fernando (Y. B.)",
+     "scod": 763,
+     "ssal": 1.68
+    },
+    {
+     "sis": "FRADEJAS, MarÝa Lucia (Rosario de la Frontera)",
+     "scod": 814,
+     "ssal": 2.81
+    },
+    {
+     "sis": "FORRAJERIA Los Mellis (Yerba Buena)",
+     "scod": 929,
+     "ssal": 0.53
+    },
+    {
+     "sis": "DELGADO, Josefina (Yerba Buena)",
+     "scod": 954,
+     "ssal": -1073.82
+    },
+    {
+     "sis": "GIJON, Tamara (Los Ralos)",
+     "scod": 1006,
+     "ssal": 0.07
+    },
+    {
+     "sis": "ANIMA GROUP S.R.L (Yerba Buena)",
+     "scod": 1015,
+     "ssal": 0.04
+    },
+    {
+     "sis": "MONTES, Liliana (Ciudadela)",
+     "scod": 1030,
+     "ssal": 1.09
+    },
+    {
+     "sis": "GOMEZ, Cintya (Las Talitas)",
+     "scod": 1082,
+     "ssal": 1.86
+    }
+   ]
+  },
+  "MARCELO": {
+   "match": [
+    {
+     "fis": "VARGAS CINTIA",
+     "fsal": 123600.0,
+     "sis": "VARGAS, Cintia (Marcelo)",
+     "scod": 706,
+     "ssal": 123600.51,
+     "dif": -0.5099999999947613,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "VARGAS CINTIA",
+       123600.0
+      ]
+     ]
+    },
+    {
+     "fis": "SUPERMERCADO SERANIL",
+     "fsal": 512168.0,
+     "sis": "SUPERMERCADO Seranil (Lules)",
+     "scod": 756,
+     "ssal": 512167.55,
+     "dif": 0.45000000001164153,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "SUPERMERCADO SERANIL",
+       512168.0
+      ]
+     ]
+    },
+    {
+     "fis": "SARACHO JONATHAN",
+     "fsal": -8858.0,
+     "sis": "SARACHO, Jonathan (Cruz Alta)",
+     "scod": 305,
+     "ssal": -8858.03,
+     "dif": 0.030000000000654836,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "SARACHO JONATHAN",
+       -8858.0
+      ]
+     ]
+    },
+    {
+     "fis": "SALVATIERRA ROMINA",
+     "fsal": -49127.0,
+     "sis": "SALVATIERRA, Romina (Simoca)",
+     "scod": 234,
+     "ssal": -49127.43,
+     "dif": 0.43000000000029104,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "SALVATIERRA ROMINA",
+       -49127.0
+      ]
+     ]
+    },
+    {
+     "fis": "ROSEDO GUILLERMO",
+     "fsal": 744048.0,
+     "sis": "ROSEDO, Guillermo (Acheral)",
+     "scod": 442,
+     "ssal": 744048.14,
+     "dif": -0.14000000001396984,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "ROSEDO GUILLERMO",
+       676408.0
+      ],
+      [
+       "ROSEDO GUILLERMO",
+       67640.0
+      ]
+     ]
+    },
+    {
+     "fis": "ROMANO DEBORA",
+     "fsal": 137059.0,
+     "sis": "ROMANO, Debora (Leales)",
+     "scod": 842,
+     "ssal": 137059.38,
+     "dif": -0.3800000000046566,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "ROMANO DEBORA",
+       137059.0
+      ]
+     ]
+    },
+    {
+     "fis": "RENGEL FERNANDO",
+     "fsal": 158025.0,
+     "sis": "RENGEL, Fernando (Famaillß)",
+     "scod": 614,
+     "ssal": 158025.61,
+     "dif": -0.6099999999860302,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "RENGEL FERNANDO",
+       158025.0
+      ]
+     ]
+    },
+    {
+     "fis": "QUIPILDOR MIGUEL",
+     "fsal": 384932.0,
+     "sis": "QUIPILDOR MIGUEL (LEALES)",
+     "scod": 82,
+     "ssal": 384217.24,
+     "dif": 714.7600000000093,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "QUIPILDOR MIGUEL",
+       384932.0
+      ]
+     ]
+    },
+    {
+     "fis": "PEREZ PEDRO",
+     "fsal": 640801.0,
+     "sis": "PEREZ, Pedro (Villa)",
+     "scod": 590,
+     "ssal": 640801.54,
+     "dif": -0.5400000000372529,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "PEREZ PEDRO",
+       640801.0
+      ]
+     ]
+    },
+    {
+     "fis": "OLIVARES LUIS",
+     "fsal": 431598.0,
+     "sis": "OLIVARES, Luis (Monteros)",
+     "scod": 383,
+     "ssal": 431598.72,
+     "dif": -0.7199999999720603,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "OLIVARES LUIS",
+       431598.0
+      ]
+     ]
+    },
+    {
+     "fis": "OBEID LAUTARO",
+     "fsal": 3392609.0,
+     "sis": "OBEID LAUTARO (CONTADO)",
+     "scod": 549,
+     "ssal": 3392610.62,
+     "dif": -1.6200000001117587,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "OBEID LAUTARO",
+       3392609.0
+      ]
+     ]
+    },
+    {
+     "fis": "NARCHER PAMELA",
+     "fsal": 977281.0,
+     "sis": "NARCHER, Pamela (Este)",
+     "scod": 605,
+     "ssal": 976629.45,
+     "dif": 651.5500000000466,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "NARCHER PAMELA",
+       977281.0
+      ]
+     ]
+    },
+    {
+     "fis": "MERCADO OSVALDO",
+     "fsal": 328546.0,
+     "sis": "MERCADO, Osvaldo (GarcÝa Fernandez)",
+     "scod": 692,
+     "ssal": 337591.61,
+     "dif": -9045.609999999986,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "MERCADO OSVALDO",
+       328546.0
+      ]
+     ]
+    },
+    {
+     "fis": "MEJIAS NESTOR",
+     "fsal": 664151.0,
+     "sis": "MEJIAS, Nestor (Alderetes)",
+     "scod": 496,
+     "ssal": 664151.6,
+     "dif": -0.5999999999767169,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "MEJIAS NESTOR",
+       664151.0
+      ]
+     ]
+    },
+    {
+     "fis": "MAZZONE MARIA",
+     "fsal": 51295.0,
+     "sis": "MAZZONE, Maria (Lules)",
+     "scod": 485,
+     "ssal": 51295.22,
+     "dif": -0.22000000000116415,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "MAZZONE MARIA",
+       51295.0
+      ]
+     ]
+    },
+    {
+     "fis": "LUNA DIANA",
+     "fsal": 106869.0,
+     "sis": "LUNA, Diana (Lules)",
+     "scod": 477,
+     "ssal": 372014.86,
+     "dif": -265145.86,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "LUNA DIANA",
+       106869.0
+      ]
+     ]
+    },
+    {
+     "fis": "LOPEZ JAVIER",
+     "fsal": 125275.0,
+     "sis": "LOPEZ, Javier (Acheral)",
+     "scod": 657,
+     "ssal": 124559.89,
+     "dif": 715.1100000000006,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "LOPEZ JAVIER",
+       125275.0
+      ]
+     ]
+    },
+    {
+     "fis": "LOBO IGNACIO",
+     "fsal": 426370.0,
+     "sis": "LOBO, Ignacio (Alderetes)",
+     "scod": 428,
+     "ssal": 426327.96,
+     "dif": 42.039999999979045,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "LOBO IGNACIO",
+       426370.0
+      ]
+     ]
+    },
+    {
+     "fis": "JUAREZ FEDERICO",
+     "fsal": 2204099.0,
+     "sis": "JUAREZ, Federico (Monteros)",
+     "scod": 446,
+     "ssal": 2204099.63,
+     "dif": -0.6299999998882413,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "JUAREZ FEDERICO",
+       2204099.0
+      ]
+     ]
+    },
+    {
+     "fis": "JACOBO ALVARO",
+     "fsal": 716965.0,
+     "sis": "JACOBO ALVARO",
+     "scod": 395,
+     "ssal": 716965.7,
+     "dif": -0.6999999999534339,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "JACOBO ALVARO",
+       716965.0
+      ]
+     ]
+    },
+    {
+     "fis": "HERRERA ZULMA",
+     "fsal": 116548.0,
+     "sis": "HERRERA, Zulma (Leales)",
+     "scod": 969,
+     "ssal": 93713.44,
+     "dif": 22834.559999999998,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "HERRERA ZULMA",
+       116548.0
+      ]
+     ]
+    },
+    {
+     "fis": "HERRERA MAXI",
+     "fsal": 678089.0,
+     "sis": "HERRERA, Maxi (Lules)",
+     "scod": 375,
+     "ssal": 678088.78,
+     "dif": 0.21999999997206032,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "HERRERA MAXI",
+       678089.0
+      ]
+     ]
+    },
+    {
+     "fis": "GRAMAJO LUCAS",
+     "fsal": 278061.0,
+     "sis": "GRAMAJO, Lucas (Lules)",
+     "scod": 1233,
+     "ssal": 278061.15,
+     "dif": -0.15000000002328306,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "GRAMAJO LUCAS",
+       278061.0
+      ]
+     ]
+    },
+    {
+     "fis": "GONZALEZ JUAN DAVID",
+     "fsal": 99965.0,
+     "sis": "GONZALEZ, Juan David (Leales)",
+     "scod": 347,
+     "ssal": 99965.89,
+     "dif": -0.8899999999994179,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "GONZALEZ JUAN DAVID",
+       99965.0
+      ]
+     ]
+    },
+    {
+     "fis": "GOMEZ MAXI",
+     "fsal": 170991.0,
+     "sis": "GOMEZ, Maxi (Concepcion)",
+     "scod": 1089,
+     "ssal": 170991.39,
+     "dif": -0.39000000001396984,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "GOMEZ MAXI",
+       155447.0
+      ],
+      [
+       "GOMEZ MAXI",
+       15544.0
+      ]
+     ]
+    },
+    {
+     "fis": "FIGUEROA ENZO",
+     "fsal": 320226.0,
+     "sis": "FIGUEROA, Enzo (Famaillß)",
+     "scod": 279,
+     "ssal": 320226.93,
+     "dif": -0.9299999999930151,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "FIGUEROA ENZO",
+       320226.0
+      ]
+     ]
+    },
+    {
+     "fis": "DIAZ ARIEL",
+     "fsal": 1036537.0,
+     "sis": "DIAZ, Ariel (Alderetes)",
+     "scod": 228,
+     "ssal": 1036537.96,
+     "dif": -0.9599999999627471,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "DIAZ ARIEL",
+       1036537.0
+      ]
+     ]
+    },
+    {
+     "fis": "DIAZ ALFREDO",
+     "fsal": 2326347.0,
+     "sis": "DIAZ, Alfredo (Este)",
+     "scod": 812,
+     "ssal": 2326347.3,
+     "dif": -0.2999999998137355,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "DIAZ ALFREDO",
+       2326347.0
+      ]
+     ]
+    },
+    {
+     "fis": "DECIMA DIEGO",
+     "fsal": 236994.0,
+     "sis": "DECIMA, Diego (Banda)",
+     "scod": 219,
+     "ssal": 236994.29,
+     "dif": -0.2900000000081491,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "DECIMA DIEGO",
+       236994.0
+      ]
+     ]
+    },
+    {
+     "fis": "CHAHLE MARCOS",
+     "fsal": 1358486.0,
+     "sis": "CHAHLE, Marcos (Leales)",
+     "scod": 167,
+     "ssal": 1358487.42,
+     "dif": -1.4199999999254942,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "CHAHLE MARCOS",
+       1358486.0
+      ]
+     ]
+    },
+    {
+     "fis": "BUSTOS ROBERTO",
+     "fsal": 262745.0,
+     "sis": "BUSTOS, Roberto (Banda)",
+     "scod": 124,
+     "ssal": 262745.21,
+     "dif": -0.21000000002095476,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "BUSTOS ROBERTO",
+       262745.0
+      ]
+     ]
+    },
+    {
+     "fis": "BUSTOS RAFAEL",
+     "fsal": 853982.0,
+     "sis": "BUSTOS, Rafael (La Florida)",
+     "scod": 522,
+     "ssal": 854047.83,
+     "dif": -65.82999999995809,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "BUSTOS RAFAEL",
+       853982.0
+      ]
+     ]
+    },
+    {
+     "fis": "BUSTOS LUIS",
+     "fsal": 912533.0,
+     "sis": "BUSTOS, Luis (Banda)",
+     "scod": 122,
+     "ssal": 912533.0,
+     "dif": 0.0,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "BUSTOS LUIS",
+       912533.0
+      ]
+     ]
+    },
+    {
+     "fis": "BRITO BRAHIAN",
+     "fsal": 791640.0,
+     "sis": "BRITO, Brahian (157)",
+     "scod": 109,
+     "ssal": 791640.2,
+     "dif": -0.19999999995343387,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "BRITO BRAHIAN",
+       791640.0
+      ]
+     ]
+    },
+    {
+     "fis": "BALBOA ROQUE",
+     "fsal": 610670.0,
+     "sis": "BALBOA, Roque (157)",
+     "scod": 73,
+     "ssal": 658663.14,
+     "dif": -47993.140000000014,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "BALBOA ROQUE",
+       610670.0
+      ]
+     ]
+    },
+    {
+     "fis": "AVILA SERGIO",
+     "fsal": 1290378.0,
+     "sis": "AVILA, Sergio (157)",
+     "scod": 65,
+     "ssal": 1290378.57,
+     "dif": -0.5700000000651926,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "AVILA SERGIO",
+       1290378.0
+      ]
+     ]
+    },
+    {
+     "fis": "ARRIETA YAQUELIN",
+     "fsal": 1395229.0,
+     "sis": "ARRIETA, Yaquelin (Monteros)",
+     "scod": 1049,
+     "ssal": 1592555.58,
+     "dif": -197326.58000000007,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "ARRIETA YAQUELIN",
+       460926.0
+      ],
+      [
+       "ARRIETA YAQUELIN",
+       785803.0
+      ],
+      [
+       "ARRIETA YAQUELIN",
+       148500.0
+      ]
+     ]
+    },
+    {
+     "fis": "ARON DAVID",
+     "fsal": 92969.0,
+     "sis": "ARON, David (Lules)",
+     "scod": 52,
+     "ssal": 252433.78,
+     "dif": -159464.78,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "ARON DAVID",
+       92969.0
+      ]
+     ]
+    },
+    {
+     "fis": "ANDRADES",
+     "fsal": 1464413.0,
+     "sis": "ANDRADES ( Este)",
+     "scod": 40,
+     "ssal": 1464412.2,
+     "dif": 0.8000000000465661,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "ANDRADES",
+       1464413.0
+      ]
+     ]
+    },
+    {
+     "fis": "URUEÑA FRANCISCO",
+     "fsal": 555236.0,
+     "sis": "URUEÐA, Francisco (Monteros)",
+     "scod": 430,
+     "ssal": 555235.72,
+     "dif": 0.2800000000279397,
+     "sc": 0.97,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "URUEÑA FRANCISCO",
+       555236.0
+      ]
+     ]
+    },
+    {
+     "fis": "GONZALEZ FACUNDO",
+     "fsal": 667228.0,
+     "sis": "GONZALES, Facundo (Banda)",
+     "scod": 340,
+     "ssal": 519417.34,
+     "dif": 147810.65999999997,
+     "sc": 0.94,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "GONZALEZ FACUNDO",
+       667228.0
+      ]
+     ]
+    },
+    {
+     "fis": "IBRAHIM ZULEMA",
+     "fsal": 559130.0,
+     "sis": "IBRAHIN, Zulema (Monteros)",
+     "scod": 773,
+     "ssal": 559130.77,
+     "dif": -0.7700000000186265,
+     "sc": 0.93,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "IBRAHIM ZULEMA",
+       559130.0
+      ]
+     ]
+    },
+    {
+     "fis": "LOGARZO JOSE",
+     "fsal": 1833839.0,
+     "sis": "LOGARZO, JosÚ (Monteros)",
+     "scod": 741,
+     "ssal": 1833839.25,
+     "dif": -0.25,
+     "sc": 0.92,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "LOGARZO JOSE",
+       1786964.0
+      ],
+      [
+       "LOGARZO JOSE",
+       46875.0
+      ]
+     ]
+    },
+    {
+     "fis": "DANDE MARIA",
+     "fsal": 259433.0,
+     "sis": "DANDE, MarÝa (Alderetes)",
+     "scod": 628,
+     "ssal": 259361.93,
+     "dif": 71.07000000000698,
+     "sc": 0.91,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "DANDE MARIA",
+       259433.0
+      ]
+     ]
+    },
+    {
+     "fis": "AUN NICOLAS",
+     "fsal": 1429293.0,
+     "sis": "A┌N, Nicolßs (Concepci¾n)",
+     "scod": 627,
+     "ssal": 1429294.18,
+     "dif": -1.1799999999348074,
+     "sc": 0.9,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "AUN NICOLAS",
+       1429293.0
+      ]
+     ]
+    },
+    {
+     "fis": "IBAÑEZ NANCY",
+     "fsal": 949130.0,
+     "sis": "IBAÐEZ, Nancy Roxana (Alderetes)",
+     "scod": 1039,
+     "ssal": 949130.73,
+     "dif": -0.7299999999813735,
+     "sc": 0.73,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "IBAÑEZ NANCY",
+       949130.0
+      ]
+     ]
+    }
+   ],
+   "fis_only": [
+    {
+     "fis": "MONTERO FERNANDO",
+     "fsal": 146427.0,
+     "xven": "en sistema bajo otro vendedor: MONTERO, Fernando (Monteros) ($146,517) cod184",
+     "xsc": 1.0,
+     "rows": [
+      [
+       "MONTERO FERNANDO",
+       146427.0
+      ]
+     ]
+    }
+   ],
+   "sis_only": [
+    {
+     "sis": "ARON, Jorge (Lules)",
+     "scod": 53,
+     "ssal": -9581.0
+    },
+    {
+     "sis": "CASERES, Maria (Centro)",
+     "scod": 72,
+     "ssal": 0
+    },
+    {
+     "sis": "BEKI, Yanina  (CONTADO)",
+     "scod": 88,
+     "ssal": -0.01
+    },
+    {
+     "sis": "BRAIN, Hugo (Famaillß)",
+     "scod": 103,
+     "ssal": 0
+    },
+    {
+     "sis": "CAMINO, Mario (157)",
+     "scod": 146,
+     "ssal": 0.14
+    },
+    {
+     "sis": "GONZALEZ, Vilma (Lules)",
+     "scod": 226,
+     "ssal": 0.8
+    },
+    {
+     "sis": "GRAMAJO, Marcela (Monteros)",
+     "scod": 232,
+     "ssal": 0.37
+    },
+    {
+     "sis": "BIANCONI, Paola ( ESTE)",
+     "scod": 233,
+     "ssal": 295000.64
+    },
+    {
+     "sis": "ISA, Cristian (Famaillß)",
+     "scod": 248,
+     "ssal": 315444.17
+    },
+    {
+     "sis": "RODRIGUEZ, Sergio (Monteros)",
+     "scod": 318,
+     "ssal": 8.38
+    },
+    {
+     "sis": "GUERRA, Juan (Sur)",
+     "scod": 360,
+     "ssal": -0.03
+    },
+    {
+     "sis": "LUNA JAVIER",
+     "scod": 444,
+     "ssal": 0.43
+    },
+    {
+     "sis": "MARRADES, Benito (Leales)",
+     "scod": 472,
+     "ssal": -598.71
+    },
+    {
+     "sis": "OBEID, Maxi (Famaillß)",
+     "scod": 548,
+     "ssal": 301.68
+    },
+    {
+     "sis": "OVIEDO, Enrique (Leales)",
+     "scod": 563,
+     "ssal": 0.52
+    },
+    {
+     "sis": "RIVAS, Juan (Aguilares)",
+     "scod": 618,
+     "ssal": 300000.0
+    },
+    {
+     "sis": "SORIA MARCELO (Leon Rouges)",
+     "scod": 672,
+     "ssal": 3600.1
+    },
+    {
+     "sis": "VALLEJO, Esteban (Leales)",
+     "scod": 700,
+     "ssal": -1997.22
+    },
+    {
+     "sis": "VALLEJO, Agustina (Leales)",
+     "scod": 1011,
+     "ssal": 1.07
+    },
+    {
+     "sis": "SORIA, Soledad (Simoca)",
+     "scod": 1092,
+     "ssal": 0.9
+    },
+    {
+     "sis": "ACOSTA, Jesus (Lules)",
+     "scod": 1232,
+     "ssal": -5100.2
+    }
+   ]
+  },
+  "SEBA": {
+   "match": [
+    {
+     "fis": "VIOJO ESTEBAN",
+     "fsal": 1550791.0,
+     "sis": "VIOJO, Esteban (Villa)",
+     "scod": 776,
+     "ssal": 1550760.49,
+     "dif": 30.510000000009313,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "VIOJO ESTEBAN",
+       1550791.0
+      ]
+     ]
+    },
+    {
+     "fis": "SORIA ROSALIA",
+     "fsal": 274863.0,
+     "sis": "SORIA, Rosalia (Oeste II)",
+     "scod": 675,
+     "ssal": 274863.22,
+     "dif": -0.21999999997206032,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "SORIA ROSALIA",
+       274863.0
+      ]
+     ]
+    },
+    {
+     "fis": "SIR VICTOR",
+     "fsal": 2582312.0,
+     "sis": "SIR, Victor (Villa)",
+     "scod": 669,
+     "ssal": 2582312.89,
+     "dif": -0.8900000001303852,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "SIR VICTOR",
+       2582312.0
+      ]
+     ]
+    },
+    {
+     "fis": "ROCHA SILVIA",
+     "fsal": 151093.0,
+     "sis": "ROCHA, Silvia (Villa)",
+     "scod": 621,
+     "ssal": 151093.5,
+     "dif": -0.5,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "ROCHA SILVIA",
+       151093.0
+      ]
+     ]
+    },
+    {
+     "fis": "REYES ROLDAN JULIETA",
+     "fsal": 184682.0,
+     "sis": "REYES ROLDAN, JULIETA (Villa)",
+     "scod": 366,
+     "ssal": 184682.12,
+     "dif": -0.11999999999534339,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "REYES ROLDAN JULIETA",
+       184682.0
+      ]
+     ]
+    },
+    {
+     "fis": "RAMIREZ MATIAS",
+     "fsal": 454119.0,
+     "sis": "RAMIREZ MATIAS (Oeste II)",
+     "scod": 613,
+     "ssal": 454119.09,
+     "dif": -0.09000000002561137,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "RAMIREZ MATIAS",
+       454119.0
+      ]
+     ]
+    },
+    {
+     "fis": "PASTERIS LUIS",
+     "fsal": 297715.0,
+     "sis": "PASTERIS, Luis (Centro)",
+     "scod": 1070,
+     "ssal": 297715.91,
+     "dif": -0.9099999999743886,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "PASTERIS LUIS",
+       297715.0
+      ]
+     ]
+    },
+    {
+     "fis": "OTTONELLI LUCAS",
+     "fsal": 675316.0,
+     "sis": "OTTONELLI , Lucas ( Villa)",
+     "scod": 447,
+     "ssal": 675316.71,
+     "dif": -0.7099999999627471,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "OTTONELLI LUCAS",
+       675316.0
+      ]
+     ]
+    },
+    {
+     "fis": "NAVARRO ANDREA",
+     "fsal": 119131.0,
+     "sis": "NAVARRO, Andrea (Centro)",
+     "scod": 770,
+     "ssal": 119131.91,
+     "dif": -0.9100000000034925,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "NAVARRO ANDREA",
+       119131.0
+      ]
+     ]
+    },
+    {
+     "fis": "LAVAQUE NIEVES",
+     "fsal": 184651.0,
+     "sis": "LAVAQUE, Nieves (Jujuy)",
+     "scod": 418,
+     "ssal": 184672.66,
+     "dif": -21.660000000003492,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "LAVAQUE NIEVES",
+       184651.0
+      ]
+     ]
+    },
+    {
+     "fis": "ISLA VERDE",
+     "fsal": 1980038.0,
+     "sis": "ISLA VERDE (Centro)",
+     "scod": 390,
+     "ssal": 1980038.14,
+     "dif": -0.13999999989755452,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "ISLA VERDE",
+       1980038.0
+      ]
+     ]
+    },
+    {
+     "fis": "HERRERA FERNANDO",
+     "fsal": 113824.0,
+     "sis": "HERRERA, Fernando (Centro)",
+     "scod": 374,
+     "ssal": 113915.44,
+     "dif": -91.44000000000233,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "HERRERA FERNANDO",
+       113824.0
+      ]
+     ]
+    },
+    {
+     "fis": "HARO TRINIDAD",
+     "fsal": 107705.0,
+     "sis": "HARO, Trinidad (Tafi Viejo)",
+     "scod": 369,
+     "ssal": 107705.05,
+     "dif": -0.05000000000291038,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "HARO TRINIDAD",
+       107705.0
+      ]
+     ]
+    },
+    {
+     "fis": "GRAMAJO MARIA CONSTANZA",
+     "fsal": 78450.0,
+     "sis": "GRAMAJO, Maria Constanza (Centro)",
+     "scod": 354,
+     "ssal": 78449.75,
+     "dif": 0.25,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "GRAMAJO MARIA CONSTANZA",
+       78450.0
+      ]
+     ]
+    },
+    {
+     "fis": "GOMEZ OSVALDO",
+     "fsal": 411657.0,
+     "sis": "GOMEZ, Osvaldo (Las Talitas)",
+     "scod": 915,
+     "ssal": 411657.67,
+     "dif": -0.6699999999837019,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "GOMEZ OSVALDO",
+       411657.0
+      ]
+     ]
+    },
+    {
+     "fis": "GIMENEZ ROMINA",
+     "fsal": 321282.0,
+     "sis": "GIMENEZ, Romina (Ciudadela)",
+     "scod": 331,
+     "ssal": 321281.75,
+     "dif": 0.25,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "GIMENEZ ROMINA",
+       321282.0
+      ]
+     ]
+    },
+    {
+     "fis": "FIORENZA GUSTAVO",
+     "fsal": 119262.0,
+     "sis": "FIORENZA, Gustavo (Oeste II)",
+     "scod": 286,
+     "ssal": 119262.64,
+     "dif": -0.6399999999994179,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "FIORENZA GUSTAVO",
+       119262.0
+      ]
+     ]
+    },
+    {
+     "fis": "FERNANDEZ LUCAS",
+     "fsal": 490498.0,
+     "sis": "FERNANDEZ, Lucas (Oeste II)",
+     "scod": 938,
+     "ssal": 490498.89,
+     "dif": -0.8900000000139698,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "FERNANDEZ LUCAS",
+       490498.0
+      ]
+     ]
+    },
+    {
+     "fis": "ESTRADA VICTOR",
+     "fsal": 1109771.0,
+     "sis": "ESTRADA, Victor (Jujuy)",
+     "scod": 266,
+     "ssal": 1109771.29,
+     "dif": -0.2900000000372529,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "ESTRADA VICTOR",
+       1109771.0
+      ]
+     ]
+    },
+    {
+     "fis": "ESPINOZA ALEXIS",
+     "fsal": 493011.0,
+     "sis": "ESPINOZA, Alexis (Jujuy)",
+     "scod": 264,
+     "ssal": 493011.76,
+     "dif": -0.7600000000093132,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "ESPINOZA ALEXIS",
+       493011.0
+      ]
+     ]
+    },
+    {
+     "fis": "ELIAS JORGE",
+     "fsal": 634773.0,
+     "sis": "ELIAS, Jorge (Jujuy)",
+     "scod": 201,
+     "ssal": 634773.53,
+     "dif": -0.5300000000279397,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "ELIAS JORGE",
+       634773.0
+      ]
+     ]
+    },
+    {
+     "fis": "EL CEIBAL",
+     "fsal": 164946.0,
+     "sis": "EL CEIBAL (Oeste II)",
+     "scod": 245,
+     "ssal": 164946.23,
+     "dif": -0.23000000001047738,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "EL CEIBAL",
+       164946.0
+      ]
+     ]
+    },
+    {
+     "fis": "EL CEBILAR",
+     "fsal": 542920.0,
+     "sis": "EL CEBILAR (Centro)",
+     "scod": 244,
+     "ssal": 542920.97,
+     "dif": -0.9699999999720603,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "EL CEBILAR",
+       542920.0
+      ]
+     ]
+    },
+    {
+     "fis": "DIAZ ROSA",
+     "fsal": 266277.0,
+     "sis": "DIAZ, Rosa (Banda)",
+     "scod": 231,
+     "ssal": 266177.6,
+     "dif": 99.40000000002328,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "DIAZ ROSA",
+       266277.0
+      ]
+     ]
+    },
+    {
+     "fis": "BUSTOS MARIA",
+     "fsal": 254081.0,
+     "sis": "BUSTOS, Maria (Banda)",
+     "scod": 123,
+     "ssal": 254081.25,
+     "dif": -0.25,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "BUSTOS MARIA",
+       254081.0
+      ]
+     ]
+    },
+    {
+     "fis": "BUSTOS JAVIER",
+     "fsal": 919797.0,
+     "sis": "BUSTOS, Javier (Villa)",
+     "scod": 121,
+     "ssal": 919798.23,
+     "dif": -1.2299999999813735,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "BUSTOS JAVIER",
+       919797.0
+      ]
+     ]
+    },
+    {
+     "fis": "BUSTOS CESAR",
+     "fsal": 259092.0,
+     "sis": "BUSTOS, Cesar (Banda)",
+     "scod": 119,
+     "ssal": 259092.61,
+     "dif": -0.6099999999860302,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "BUSTOS CESAR",
+       259092.0
+      ]
+     ]
+    },
+    {
+     "fis": "BEJAS MATIAS",
+     "fsal": 570681.0,
+     "sis": "BEJAS, Matias (Oeste II)",
+     "scod": 87,
+     "ssal": 570681.89,
+     "dif": -0.8900000000139698,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "BEJAS MATIAS",
+       570681.0
+      ]
+     ]
+    },
+    {
+     "fis": "BEJAS DIEGO",
+     "fsal": 425970.0,
+     "sis": "BEJAS, Diego  (Centro)",
+     "scod": 86,
+     "ssal": 425970.49,
+     "dif": -0.4899999999906868,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "BEJAS DIEGO",
+       425970.0
+      ]
+     ]
+    },
+    {
+     "fis": "AUAD MARIANA",
+     "fsal": 999149.0,
+     "sis": "AUAD, Mariana (Oeste II)",
+     "scod": 18,
+     "ssal": 999149.09,
+     "dif": -0.08999999996740371,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "AUAD MARIANA",
+       999149.0
+      ]
+     ]
+    },
+    {
+     "fis": "BUSTOS SEBASTIAN",
+     "fsal": 913867.0,
+     "sis": "BUSTOS, Sebastißn (Este)",
+     "scod": 125,
+     "ssal": 913867.38,
+     "dif": -0.3800000000046566,
+     "sc": 0.97,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "BUSTOS SEBASTIAN",
+       913867.0
+      ]
+     ]
+    },
+    {
+     "fis": "IBAÑEZ NAHUEL",
+     "fsal": 656770.0,
+     "sis": "IBAÐEZ, Nahuel (Villa)",
+     "scod": 381,
+     "ssal": 656770.66,
+     "dif": -0.6600000000325963,
+     "sc": 0.96,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "IBAÑEZ NAHUEL",
+       656770.0
+      ]
+     ]
+    },
+    {
+     "fis": "GIACOSA",
+     "fsal": 198479.0,
+     "sis": "GIACOSA Y CIA SRL",
+     "scod": 1246,
+     "ssal": 198479.13,
+     "dif": -0.1300000000046566,
+     "sc": 0.95,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "GIACOSA",
+       198479.0
+      ]
+     ]
+    },
+    {
+     "fis": "DIAZ ABRAHAM",
+     "fsal": 5143513.0,
+     "sis": "DIAZ, Abrahan (Jujuy)",
+     "scod": 227,
+     "ssal": 5143513.68,
+     "dif": -0.6799999997019768,
+     "sc": 0.92,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "DIAZ ABRAHAM",
+       5143513.0
+      ]
+     ]
+    },
+    {
+     "fis": "EL JATIB",
+     "fsal": 803622.0,
+     "sis": "ELJATIB, Dario (Tafi Viejo)",
+     "scod": 252,
+     "ssal": 803621.77,
+     "dif": 0.22999999998137355,
+     "sc": 0.67,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "EL JATIB",
+       803622.0
+      ]
+     ]
+    }
+   ],
+   "fis_only": [],
+   "sis_only": [
+    {
+     "sis": "CABRERA, Olga (Oeste II)",
+     "scod": 13,
+     "ssal": 0.87
+    },
+    {
+     "sis": "ALVARADO, Olga (Banda)",
+     "scod": 29,
+     "ssal": 111604.31
+    },
+    {
+     "sis": "BALCEDA, Fabiana (Oeste II)",
+     "scod": 74,
+     "ssal": -0.02
+    },
+    {
+     "sis": "BUSTOS, Denisse (Banda)",
+     "scod": 126,
+     "ssal": 280746.22
+    },
+    {
+     "sis": "BRANDAN, Maria Laura (Banda)",
+     "scod": 156,
+     "ssal": 0
+    },
+    {
+     "sis": "FORRAJERIA, San Francisco (Oeste II)",
+     "scod": 238,
+     "ssal": 0.01
+    },
+    {
+     "sis": "EL BAGUAL (Centro)",
+     "scod": 243,
+     "ssal": -0.42
+    },
+    {
+     "sis": "ESCOBAR, Javier Jujuy)",
+     "scod": 256,
+     "ssal": 0.27
+    },
+    {
+     "sis": "ESCOBAR, Sergio (Banda)",
+     "scod": 261,
+     "ssal": -5900.0
+    },
+    {
+     "sis": "ESPIN, Ely (Oeste II)",
+     "scod": 263,
+     "ssal": 0.85
+    },
+    {
+     "sis": "GONZALEZ, Jorge (Oeste II)",
+     "scod": 346,
+     "ssal": -4.21
+    },
+    {
+     "sis": "ANDOAIN, Amalia (Centro)",
+     "scod": 355,
+     "ssal": 0.2
+    },
+    {
+     "sis": "HUERTA   NORA (Oeste II)",
+     "scod": 379,
+     "ssal": 0
+    },
+    {
+     "sis": "QUIROZ, Vanesa (Jujuy)",
+     "scod": 611,
+     "ssal": -0.03
+    },
+    {
+     "sis": "GUZM┴N, MatÝas (Banda)",
+     "scod": 631,
+     "ssal": 0.98
+    },
+    {
+     "sis": "SUPPA, Victorio (Jujuy)",
+     "scod": 684,
+     "ssal": 250971.08
+    },
+    {
+     "sis": "WALDO, Lucas  (Oeste II)",
+     "scod": 732,
+     "ssal": -2610.33
+    },
+    {
+     "sis": "POTOLICCHIO, Juan (Centro)",
+     "scod": 758,
+     "ssal": 0.1
+    },
+    {
+     "sis": "GRAMAJO, Paula (Centro)",
+     "scod": 765,
+     "ssal": -17783.0
+    },
+    {
+     "sis": "MORALES, MarÝa Celeste (Salta)",
+     "scod": 821,
+     "ssal": -3206.36
+    },
+    {
+     "sis": "CASAS, Pablo (Banda)",
+     "scod": 827,
+     "ssal": 0.01
+    },
+    {
+     "sis": "FALCO, Diego Suc II  (Oeste II)",
+     "scod": 930,
+     "ssal": 44279.29
+    },
+    {
+     "sis": "HERRERA, Jonathan (Las Talitas)",
+     "scod": 952,
+     "ssal": -266.48
+    },
+    {
+     "sis": "ACOSTA, Alvaro (Centro)",
+     "scod": 1013,
+     "ssal": 0.66
+    },
+    {
+     "sis": "MANTARAS PALIZA, Federico",
+     "scod": 1041,
+     "ssal": 0.46
+    },
+    {
+     "sis": "Rodriguez, Silvia Roxana (Centro)",
+     "scod": 1059,
+     "ssal": 0.39
+    }
+   ]
+  },
+  "BRIAN": {
+   "match": [
+    {
+     "fis": "SUPER EMANUEL",
+     "fsal": 730483.0,
+     "sis": "SUPER Emanuel (Simoca)",
+     "scod": 772,
+     "ssal": 1.94,
+     "dif": 730481.06,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "SUPER EMANUEL",
+       730483.0
+      ]
+     ]
+    },
+    {
+     "fis": "SUPER DEYUV",
+     "fsal": 363667.0,
+     "sis": "SUPER DEYUV (Concepci¾n)",
+     "scod": 719,
+     "ssal": 363669.05,
+     "dif": -2.0499999999883585,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "SUPER DEYUV",
+       363667.0
+      ]
+     ]
+    },
+    {
+     "fis": "SANCHEZ TELLO",
+     "fsal": 31571.0,
+     "sis": "SANCHEZ TELLO (Monteros)",
+     "scod": 656,
+     "ssal": 39571.97,
+     "dif": -8000.970000000001,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "SANCHEZ TELLO",
+       31571.0
+      ]
+     ]
+    },
+    {
+     "fis": "RADINO SUSANA",
+     "fsal": 229388.0,
+     "sis": "RADINO, Susana (Concepci¾n)",
+     "scod": 612,
+     "ssal": 229390.75,
+     "dif": -2.75,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "RADINO SUSANA",
+       229388.0
+      ]
+     ]
+    },
+    {
+     "fis": "NUESTRO CAMPO",
+     "fsal": 174605.0,
+     "sis": "NUESTRO CAMPO",
+     "scod": 544,
+     "ssal": 148139.09,
+     "dif": 26465.910000000003,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "NUESTRO CAMPO",
+       174605.0
+      ]
+     ]
+    },
+    {
+     "fis": "MONESTEROLO MERCEDES",
+     "fsal": 347998.0,
+     "sis": "MONESTEROLO, Mercedes (Monteros)",
+     "scod": 504,
+     "ssal": 347998.22,
+     "dif": -0.21999999997206032,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "MONESTEROLO MERCEDES",
+       347998.0
+      ]
+     ]
+    },
+    {
+     "fis": "MAYORISTA REYES",
+     "fsal": 468178.0,
+     "sis": "MAYORISTA Reyes (Concepci¾n)",
+     "scod": 798,
+     "ssal": 468178.84,
+     "dif": -0.8400000000256114,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "MAYORISTA REYES",
+       468178.0
+      ]
+     ]
+    },
+    {
+     "fis": "HERRERA SILVIO",
+     "fsal": 276327.0,
+     "sis": "HERRERA, Silvio  (SIMOCA)",
+     "scod": 746,
+     "ssal": 276327.74,
+     "dif": -0.7399999999906868,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "HERRERA SILVIO",
+       276327.0
+      ]
+     ]
+    },
+    {
+     "fis": "HERNANDEZ EMILSE",
+     "fsal": 96187.0,
+     "sis": "HERNANDEZ, Emilse (Aguilares)",
+     "scod": 945,
+     "ssal": 95338.57,
+     "dif": 848.429999999993,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "HERNANDEZ EMILSE",
+       96187.0
+      ]
+     ]
+    },
+    {
+     "fis": "GOMEZ ANGEL",
+     "fsal": 116187.0,
+     "sis": "GOMEZ, Angel (157)",
+     "scod": 333,
+     "ssal": 116188.15,
+     "dif": -1.1499999999941792,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "GOMEZ ANGEL",
+       116187.0
+      ]
+     ]
+    },
+    {
+     "fis": "GIMENEZ CECILIA",
+     "fsal": 532638.0,
+     "sis": "GIMENEZ, Cecilia (Concepci¾n)",
+     "scod": 762,
+     "ssal": 1314138.63,
+     "dif": -781500.6299999999,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "GIMENEZ CECILIA",
+       532638.0
+      ]
+     ]
+    },
+    {
+     "fis": "EL PICANTE",
+     "fsal": 256631.0,
+     "sis": "EL PICANTE (Concepci¾n)",
+     "scod": 1066,
+     "ssal": 256631.84,
+     "dif": -0.8399999999965075,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "EL PICANTE",
+       256631.0
+      ]
+     ]
+    },
+    {
+     "fis": "DIP EZEQUIEL",
+     "fsal": 87609.0,
+     "sis": "DIP, Ezequiel (Alberdi)",
+     "scod": 529,
+     "ssal": 87609.61,
+     "dif": -0.6100000000005821,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "DIP EZEQUIEL",
+       79645.0
+      ],
+      [
+       "DIP EZEQUIEL",
+       7964.0
+      ]
+     ]
+    },
+    {
+     "fis": "DARWICH MARIELA",
+     "fsal": 532638.0,
+     "sis": "DARWICH, Mariela (Sur)",
+     "scod": 215,
+     "ssal": 532638.4,
+     "dif": -0.40000000002328306,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "DARWICH MARIELA",
+       532638.0
+      ]
+     ]
+    },
+    {
+     "fis": "DANUN JUAN",
+     "fsal": 143469.0,
+     "sis": "DANUN, Juan (Monteros)",
+     "scod": 212,
+     "ssal": 143468.94,
+     "dif": 0.059999999997671694,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "DANUN JUAN",
+       143469.0
+      ]
+     ]
+    },
+    {
+     "fis": "CEREALES SAN VICENTE",
+     "fsal": 409542.0,
+     "sis": "CEREALES SAN VICENTE (Alberdi)",
+     "scod": 723,
+     "ssal": 409542.21,
+     "dif": -0.21000000002095476,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "CEREALES SAN VICENTE",
+       409542.0
+      ]
+     ]
+    },
+    {
+     "fis": "CASTILLO PANCHO",
+     "fsal": 663625.0,
+     "sis": "CASTILLO, Pancho (157)",
+     "scod": 160,
+     "ssal": 348625.0,
+     "dif": 315000.0,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "CASTILLO PANCHO",
+       663625.0
+      ]
+     ]
+    },
+    {
+     "fis": "CABRERA ROQUE",
+     "fsal": 965074.0,
+     "sis": "CABRERA, Roque (Concepci¾n)",
+     "scod": 1081,
+     "ssal": 965073.76,
+     "dif": 0.23999999999068677,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "CABRERA ROQUE",
+       565433.0
+      ],
+      [
+       "CABRERA ROQUE",
+       399641.0
+      ]
+     ]
+    },
+    {
+     "fis": "BAZAN DIEGO",
+     "fsal": 180781.0,
+     "sis": "BAZAN,Diego (Santa Lucia)",
+     "scod": 918,
+     "ssal": 180781.39,
+     "dif": -0.39000000001396984,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "BAZAN DIEGO",
+       144074.0
+      ],
+      [
+       "BAZAN DIEGO",
+       36707.0
+      ]
+     ]
+    },
+    {
+     "fis": "AUTOSERVICIO ANDRADA",
+     "fsal": 1416554.0,
+     "sis": "AUTOSERVICIO Andrada  (SIMOCA)",
+     "scod": 735,
+     "ssal": 1416554.22,
+     "dif": -0.21999999997206032,
+     "sc": 1.0,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "AUTOSERVICIO ANDRADA",
+       1416554.0
+      ]
+     ]
+    },
+    {
+     "fis": "AUTOSERVICIO NFAMILY",
+     "fsal": 495363.0,
+     "sis": "AUTOSERVICIO Family (Concepci¾n)",
+     "scod": 749,
+     "ssal": 495363.71,
+     "dif": -0.7100000000209548,
+     "sc": 0.97,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "AUTOSERVICIO NFAMILY",
+       495363.0
+      ]
+     ]
+    },
+    {
+     "fis": "JIMENEZ JOSE LEANDRO",
+     "fsal": 161628.0,
+     "sis": "JIMENEZ, JosÚ Leandro (La Cocha)",
+     "scod": 235,
+     "ssal": 161629.58,
+     "dif": -1.5799999999871943,
+     "sc": 0.95,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "JIMENEZ JOSE LEANDRO",
+       161628.0
+      ]
+     ]
+    },
+    {
+     "fis": "CEREALES Y LEGUMBRES",
+     "fsal": 317522.0,
+     "sis": "Cereales y Legumbres del Norte   S.A.S (Concepci¾n)",
+     "scod": 988,
+     "ssal": 317523.67,
+     "dif": -1.6699999999837019,
+     "sc": 0.95,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "CEREALES Y LEGUMBRES",
+       317522.0
+      ]
+     ]
+    },
+    {
+     "fis": "AUTOSERVICIO VYH",
+     "fsal": 252674.0,
+     "sis": "AUTOSERVICIO  V Y H   (LEON ROUGES)",
+     "scod": 8,
+     "ssal": 252675.62,
+     "dif": -1.6199999999953434,
+     "sc": 0.95,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "AUTOSERVICIO VYH",
+       252674.0
+      ]
+     ]
+    },
+    {
+     "fis": "CARDENAS WALTER",
+     "fsal": 610727.0,
+     "sis": "CARDENES, Walter (Alberdi)",
+     "scod": 742,
+     "ssal": 610727.9,
+     "dif": -0.9000000000232831,
+     "sc": 0.93,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "CARDENAS WALTER",
+       610727.0
+      ]
+     ]
+    },
+    {
+     "fis": "VICENTE JOSE",
+     "fsal": -5403.0,
+     "sis": "VICENTE, JosÚ (Simoca)",
+     "scod": 239,
+     "ssal": -5402.7,
+     "dif": -0.3000000000001819,
+     "sc": 0.92,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "VICENTE JOSE",
+       -5403.0
+      ]
+     ]
+    },
+    {
+     "fis": "MINISERVICIO LAURA",
+     "fsal": 779223.0,
+     "sis": "MINISERVICE Laura (Santa Lucia)",
+     "scod": 806,
+     "ssal": 779224.07,
+     "dif": -1.0699999999487773,
+     "sc": 0.91,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "MINISERVICIO LAURA",
+       779223.0
+      ]
+     ]
+    },
+    {
+     "fis": "MORENO JOSE MARIA",
+     "fsal": -17743.0,
+     "sis": "MORENO, JosÚ MarÝa (Sur)",
+     "scod": 306,
+     "ssal": -17743.0,
+     "dif": 0.0,
+     "sc": 0.88,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "MORENO JOSE MARIA",
+       -17743.0
+      ]
+     ]
+    },
+    {
+     "fis": "SUPERHERRERA",
+     "fsal": 786321.0,
+     "sis": "SUPER Herrera Maxi (Simoca)",
+     "scod": 747,
+     "ssal": 786321.07,
+     "dif": -0.06999999994877726,
+     "sc": 0.8,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "SUPERHERRERA",
+       786321.0
+      ]
+     ]
+    }
+   ],
+   "fis_only": [],
+   "sis_only": [
+    {
+     "sis": "ARGAÐARAZ, Susana (Alberdi)",
+     "scod": 919,
+     "ssal": 3.41
+    },
+    {
+     "sis": "AUTOSERVICIO El sigal (Concepci¾n)",
+     "scod": 832,
+     "ssal": 1.13
+    },
+    {
+     "sis": "AUTOSERVICIO Jaime (Aguilares)",
+     "scod": 751,
+     "ssal": 298040.81
+    },
+    {
+     "sis": "BARRIONUEVO, Ingrid (Simoca)",
+     "scod": 1218,
+     "ssal": 0.2
+    },
+    {
+     "sis": "BIMA S.A.S (Concepci¾n)",
+     "scod": 755,
+     "ssal": 0.72
+    },
+    {
+     "sis": "BURGOS, Hernan (Santa Lucia)",
+     "scod": 853,
+     "ssal": 0
+    },
+    {
+     "sis": "DAVILA, ┴ngel (Aguilares)",
+     "scod": 942,
+     "ssal": 0.53
+    },
+    {
+     "sis": "El Escobero (Alberdi)",
+     "scod": 783,
+     "ssal": 1.57
+    },
+    {
+     "sis": "ESQUENDEFE, Joaquin (Simoca)",
+     "scod": 37,
+     "ssal": 0.69
+    },
+    {
+     "sis": "FORRAJERIA  Moreno (La Cocha)",
+     "scod": 761,
+     "ssal": 10.56
+    },
+    {
+     "sis": "FORRAJERIA Do±a Negrita (Trinidad)",
+     "scod": 315,
+     "ssal": 0.95
+    },
+    {
+     "sis": "FORRAJERIA Huellitas (Concepci¾n)",
+     "scod": 721,
+     "ssal": 0.14
+    },
+    {
+     "sis": "FORRAJERIA Lanzy (Aguilares)",
+     "scod": 753,
+     "ssal": -993.31
+    },
+    {
+     "sis": "GALVAN, Adrian (Taco Ralo)",
+     "scod": 933,
+     "ssal": 0.33
+    },
+    {
+     "sis": "GUERRA, Javier (Sur)",
+     "scod": 359,
+     "ssal": 0
+    },
+    {
+     "sis": "LA ESTANCIA",
+     "scod": 413,
+     "ssal": 3.22
+    },
+    {
+     "sis": "LEDESMA, Carlos (Simoca)",
+     "scod": 526,
+     "ssal": 0.26
+    },
+    {
+     "sis": "MINISERVICE, El Le¾n (Alberdi)",
+     "scod": 777,
+     "ssal": 0.04
+    },
+    {
+     "sis": "MONTERO, Fernando (Monteros)",
+     "scod": 184,
+     "ssal": 146517.02
+    },
+    {
+     "sis": "MORELLI MAYORISTA (Concepcion)",
+     "scod": 819,
+     "ssal": 0.4
+    },
+    {
+     "sis": "MORENO, MarÝa JosÚ (Villa Quinteros)",
+     "scod": 997,
+     "ssal": 0.88
+    },
+    {
+     "sis": "REIDEN, Carin (Rio Seco)",
+     "scod": 292,
+     "ssal": 161005.18
+    },
+    {
+     "sis": "RUIZ, Nadia (Concepci¾n)",
+     "scod": 941,
+     "ssal": -1.3
+    },
+    {
+     "sis": "SUPER Abasto (Concepci¾n)",
+     "scod": 759,
+     "ssal": -0.03
+    },
+    {
+     "sis": "SUPER ASIA (Lamadrid)",
+     "scod": 454,
+     "ssal": 0.6
+    },
+    {
+     "sis": "SUPER Ladela (Simoca)",
+     "scod": 1023,
+     "ssal": 0.79
+    },
+    {
+     "sis": "SUPER TANIA (Concepci¾n)",
+     "scod": 96,
+     "ssal": 50.84
+    },
+    {
+     "sis": "VARGAS (Concepci¾n)",
+     "scod": 703,
+     "ssal": 0
+    }
+   ]
+  },
+  "ANDREA": {
+   "match": [
+    {
+     "fis": "VICTOR",
+     "fsal": 62964.0,
+     "sis": "VICTOR",
+     "scod": 720,
+     "ssal": 25575.0,
+     "dif": 37389.0,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "VICTOR",
+       62964.0
+      ]
+     ]
+    },
+    {
+     "fis": "SUSANA",
+     "fsal": 53540.0,
+     "sis": "SUSANA",
+     "scod": 685,
+     "ssal": 5150.0,
+     "dif": 48390.0,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "SUSANA",
+       53540.0
+      ]
+     ]
+    },
+    {
+     "fis": "SERGIO",
+     "fsal": 54076.0,
+     "sis": "SERGIO (CHIVO)",
+     "scod": 667,
+     "ssal": 96479.0,
+     "dif": -42403.0,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "SERGIO",
+       54076.0
+      ]
+     ]
+    },
+    {
+     "fis": "SEBA",
+     "fsal": 33661.0,
+     "sis": "SEBA",
+     "scod": 664,
+     "ssal": 86195.0,
+     "dif": -52534.0,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "SEBA",
+       33661.0
+      ]
+     ]
+    },
+    {
+     "fis": "RODRIGO",
+     "fsal": 609272.0,
+     "sis": "RODRIGO",
+     "scod": 225,
+     "ssal": 857586.89,
+     "dif": -248314.89,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "RODRIGO",
+       609272.0
+      ]
+     ]
+    },
+    {
+     "fis": "NESTOR",
+     "fsal": 29483.0,
+     "sis": "NESTOR",
+     "scod": 539,
+     "ssal": 25421.0,
+     "dif": 4062.0,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "NESTOR",
+       29483.0
+      ]
+     ]
+    },
+    {
+     "fis": "MATIAS",
+     "fsal": 33186.0,
+     "sis": "MATIAS",
+     "scod": 483,
+     "ssal": 2976.32,
+     "dif": 30209.68,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "MATIAS",
+       33186.0
+      ]
+     ]
+    },
+    {
+     "fis": "MARCELO",
+     "fsal": 162244.0,
+     "sis": "MARCELO",
+     "scod": 465,
+     "ssal": 135254.0,
+     "dif": 26990.0,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "MARCELO",
+       162244.0
+      ]
+     ]
+    },
+    {
+     "fis": "MANOLO",
+     "fsal": 83000.0,
+     "sis": "MANOLO",
+     "scod": 25,
+     "ssal": 20760.0,
+     "dif": 62240.0,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "MANOLO",
+       83000.0
+      ]
+     ]
+    },
+    {
+     "fis": "JULIO",
+     "fsal": 16034.0,
+     "sis": "JULIO",
+     "scod": 411,
+     "ssal": 28967.0,
+     "dif": -12933.0,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "JULIO",
+       16034.0
+      ]
+     ]
+    },
+    {
+     "fis": "GRAMAJO LAURA",
+     "fsal": 40621.0,
+     "sis": "GRAMAJO, Laura  (Monteros)",
+     "scod": 495,
+     "ssal": 253871.26,
+     "dif": -213250.26,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "GRAMAJO LAURA",
+       40621.0
+      ]
+     ]
+    },
+    {
+     "fis": "DANIEL",
+     "fsal": 101413.0,
+     "sis": "DANIEL",
+     "scod": 208,
+     "ssal": 90886.38,
+     "dif": 10526.619999999995,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "DANIEL",
+       101413.0
+      ]
+     ]
+    },
+    {
+     "fis": "ANTONELLA",
+     "fsal": 28947.0,
+     "sis": "ANTONELLA",
+     "scod": 811,
+     "ssal": 54183.1,
+     "dif": -25236.1,
+     "sc": 1.0,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "ANTONELLA",
+       28947.0
+      ]
+     ]
+    },
+    {
+     "fis": "PABLO",
+     "fsal": 43040.0,
+     "sis": "PABLO BRANDAN",
+     "scod": 565,
+     "ssal": 115471.0,
+     "dif": -72431.0,
+     "sc": 0.95,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "PABLO",
+       43040.0
+      ]
+     ]
+    },
+    {
+     "fis": "GUSTAVO",
+     "fsal": 1920372.0,
+     "sis": "GUSTAVO VENDRAMINI",
+     "scod": 1053,
+     "ssal": 824335.65,
+     "dif": 1096036.35,
+     "sc": 0.95,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "GUSTAVO",
+       470162.0
+      ],
+      [
+       "GUSTAVO",
+       19858.0
+      ],
+      [
+       "GUSTAVO",
+       1430352.0
+      ]
+     ]
+    },
+    {
+     "fis": "BRIAN",
+     "fsal": 48251.0,
+     "sis": "BRIAN ISCARA",
+     "scod": 951,
+     "ssal": 132080.0,
+     "dif": -83829.0,
+     "sc": 0.95,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "BRIAN",
+       48251.0
+      ]
+     ]
+    },
+    {
+     "fis": "NIÑO",
+     "fsal": 9480.0,
+     "sis": "NIÐO",
+     "scod": 541,
+     "ssal": 63922.0,
+     "dif": -54442.0,
+     "sc": 0.86,
+     "estado": "DIFERENCIA",
+     "rows": [
+      [
+       "NIÑO",
+       9480.0
+      ]
+     ]
+    },
+    {
+     "fis": "ANDRADES",
+     "fsal": 199210.0,
+     "sis": "ANDRADE LUIS",
+     "scod": 39,
+     "ssal": 199210.08,
+     "dif": -0.07999999998719431,
+     "sc": 0.8,
+     "estado": "CUADRA",
+     "rows": [
+      [
+       "ANDRADES",
+       199210.0
+      ]
+     ]
+    }
+   ],
+   "fis_only": [
+    {
+     "fis": "ANTONIO",
+     "fsal": 57052.0,
+     "xven": "",
+     "xsc": 0.62,
+     "rows": [
+      [
+       "ANTONIO",
+       57052.0
+      ]
+     ]
+    },
+    {
+     "fis": "DANTE",
+     "fsal": 41756.0,
+     "xven": "",
+     "xsc": 0.53,
+     "rows": [
+      [
+       "DANTE",
+       41756.0
+      ]
+     ]
+    },
+    {
+     "fis": "FEDERICO ORDOÑEZ",
+     "fsal": 466200.0,
+     "xven": "",
+     "xsc": 0.67,
+     "rows": [
+      [
+       "FEDERICO ORDOÑEZ",
+       220200.0
+      ],
+      [
+       "FEDERICO ORDOÑEZ",
+       246000.0
+      ]
+     ]
+    },
+    {
+     "fis": "GIULIANO",
+     "fsal": 193521.0,
+     "xven": "",
+     "xsc": 0.48,
+     "rows": [
+      [
+       "GIULIANO",
+       193521.0
+      ]
+     ]
+    },
+    {
+     "fis": "JO",
+     "fsal": 39356.0,
+     "xven": "",
+     "xsc": 0.33,
+     "rows": [
+      [
+       "JO",
+       39356.0
+      ]
+     ]
+    },
+    {
+     "fis": "RUIZ NADIA",
+     "fsal": 408494.0,
+     "xven": "en sistema bajo otro vendedor: RUIZ, Nadia (Concepci¾n) ($-1) cod941",
+     "xsc": 1.0,
+     "rows": [
+      [
+       "RUIZ NADIA",
+       408494.0
+      ]
+     ]
+    },
+    {
+     "fis": "SUAREZ LUIS",
+     "fsal": 19854.0,
+     "xven": "",
+     "xsc": 0.67,
+     "rows": [
+      [
+       "SUAREZ LUIS",
+       19854.0
+      ]
+     ]
+    },
+    {
+     "fis": "WALTER",
+     "fsal": 71106.0,
+     "xven": "posible ORDONEZ WALTER (cod555 $147.600) pero DUDOSO: Andrea anota Ordonez con nombre completo -> CONFIRMAR",
+     "xsc": 0.95,
+     "rows": [
+      [
+       "WALTER",
+       30800.0
+      ],
+      [
+       "WALTER",
+       40306.0
+      ]
+     ]
+    }
+   ],
+   "sis_only": [
+    {
+     "sis": "ANDREA M",
+     "scod": 41,
+     "ssal": 30604.53
+    },
+    {
+     "sis": "ARMANDO (BANDA)",
+     "scod": 51,
+     "ssal": 86274.0
+    },
+    {
+     "sis": "CASAL GONZALO",
+     "scod": 157,
+     "ssal": -0.03
+    },
+    {
+     "sis": "CASTRO EDUARDO",
+     "scod": 178,
+     "ssal": 63113.17
+    },
+    {
+     "sis": "JORGELINA",
+     "scod": 403,
+     "ssal": 38351.0
+    },
+    {
+     "sis": "MAURO (BANDA)",
+     "scod": 473,
+     "ssal": 46670.8
+    },
+    {
+     "sis": "PEPE OBRA",
+     "scod": 502,
+     "ssal": 20584.38
+    },
+    {
+     "sis": "DANIEL PORTERO",
+     "scod": 545,
+     "ssal": 10618.0
+    },
+    {
+     "sis": "ROBLES MIGUEL",
+     "scod": 620,
+     "ssal": 8183.0
+    },
+    {
+     "sis": "DONET",
+     "scod": 809,
+     "ssal": 2872437.74
+    },
+    {
+     "sis": "PALACIOS RODOLFO",
+     "scod": 833,
+     "ssal": 471810.78
+    },
+    {
+     "sis": "COSSIO (WALTER)",
+     "scod": 846,
+     "ssal": 200.0
+    },
+    {
+     "sis": "POCHI Daniel (OrBor)",
+     "scod": 1001,
+     "ssal": 13230.12
+    },
+    {
+     "sis": "ORDONEZ WALTER",
+     "scod": 555,
+     "ssal": 147600.0
+    }
+   ]
+  }
+ },
+ "internas": [
+  {
+   "cod": 1,
+   "ven": "ANDREA",
+   "nom": "CONSUMIDOR FINAL",
+   "sal": 270088047.01
+  },
+  {
+   "cod": 652,
+   "ven": "ANDREA",
+   "nom": "SAN JUAN",
+   "sal": 1716211.08
+  },
+  {
+   "cod": 666,
+   "ven": "ANDREA",
+   "nom": "SEMILLERO EL MANANTIAL BRS",
+   "sal": 14393715.96
+  },
+  {
+   "cod": 861,
+   "ven": "ANDREA",
+   "nom": "MENTESANA, Enzo",
+   "sal": 21649102.64
+  }
+ ],
+ "tot_sistema": 417348015.23,
+ "tot_clientes": 109500938.54,
+ "tot_internas": 307847076.69,
+ "suspects": [
+  {
+   "cod": 809,
+   "nom": "DONET",
+   "sal": 2872438,
+   "nota": "Saldo alto, nombre no personal -> confirmar si es cliente real o cuenta puente/empresa"
+  },
+  {
+   "cod": 861,
+   "nom": "MENTESANA, Enzo",
+   "sal": 21649103,
+   "nota": "Ya listada como interna (socio) - verificar naturaleza"
+  },
+  {
+   "cod": 951,
+   "nom": "BRIAN ISCARA",
+   "sal": 132080,
+   "nota": "Mismo nombre que el vendedor BRIAN -> confirmar si es cuenta del propio vendedor"
+  },
+  {
+   "cod": 465,
+   "nom": "MARCELO",
+   "sal": 135254,
+   "nota": "Nombre igual a vendedor -> confirmar que es cliente y no cuenta interna"
+  },
+  {
+   "cod": 565,
+   "nom": "PABLO BRANDAN",
+   "sal": 115471,
+   "nota": "Comparte apellido con vendedor JULIO (Brandan) -> posible familiar/empleado/interno"
+  },
+  {
+   "cod": 664,
+   "nom": "SEBA",
+   "sal": 86195,
+   "nota": "Mismo nombre que vendedor SEBA -> posible cuenta interna del vendedor"
+  },
+  {
+   "cod": 411,
+   "nom": "JULIO",
+   "sal": 28967,
+   "nota": "Nombre igual a vendedor -> confirmar que es cliente"
+  },
+  {
+   "cod": 483,
+   "nom": "MATIAS",
+   "sal": 2976,
+   "nota": "Homonimo del dueno; saldo minimo, casi seguro cliente"
+  }
+ ]
+}

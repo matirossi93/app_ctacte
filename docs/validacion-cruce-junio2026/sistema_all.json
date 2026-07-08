@@ -1,0 +1,2088 @@
+[
+{
+"row": 3,
+"cod": 1,
+"ven": "ANDREA",
+"nom": "CONSUMIDOR FINAL",
+"sal": 270088047.01
+},
+{
+"row": 4,
+"cod": 919,
+"ven": "BRIAN",
+"nom": "ARGAÐARAZ, Susana (Alberdi)",
+"sal": 3.41
+},
+{
+"row": 5,
+"cod": 13,
+"ven": "El eter Sebastian",
+"nom": "CABRERA, Olga (Oeste II)",
+"sal": 0.87
+},
+{
+"row": 6,
+"cod": 17,
+"ven": "Brandan Julio",
+"nom": "BRUNO, Mayra (Alderetes)",
+"sal": -348.32
+},
+{
+"row": 7,
+"cod": 18,
+"ven": "El eter Sebastian",
+"nom": "AUAD, Mariana (Oeste II)",
+"sal": 999149.09
+},
+{
+"row": 8,
+"cod": 25,
+"ven": "ANDREA",
+"nom": "MANOLO",
+"sal": 20760.0
+},
+{
+"row": 9,
+"cod": 27,
+"ven": "Brandan Julio",
+"nom": "CORDOBA, David  (Jujuy)",
+"sal": 1707024.49
+},
+{
+"row": 10,
+"cod": 28,
+"ven": "Brandan Julio",
+"nom": "ALVARADO, Julio (Jujuy)",
+"sal": 0
+},
+{
+"row": 11,
+"cod": 29,
+"ven": "El eter Sebastian",
+"nom": "ALVARADO, Olga (Banda)",
+"sal": 111604.31
+},
+{
+"row": 12,
+"cod": 34,
+"ven": "Brandan Julio",
+"nom": "AMADO, Graciela (Lules)",
+"sal": 231396.74
+},
+{
+"row": 13,
+"cod": 8,
+"ven": "BRIAN",
+"nom": "AUTOSERVICIO  V Y H   (LEON ROUGES)",
+"sal": 252675.62
+},
+{
+"row": 14,
+"cod": 39,
+"ven": "ANDREA",
+"nom": "ANDRADE LUIS",
+"sal": 199210.08
+},
+{
+"row": 15,
+"cod": 40,
+"ven": "Veliz Marcelo",
+"nom": "ANDRADES ( Este)",
+"sal": 1464412.2
+},
+{
+"row": 16,
+"cod": 41,
+"ven": "ANDREA",
+"nom": "ANDREA M",
+"sal": 30604.53
+},
+{
+"row": 17,
+"cod": 43,
+"ven": "Brandan Julio",
+"nom": "ANTA, Margarita (Jujuy)",
+"sal": 40.28
+},
+{
+"row": 18,
+"cod": 51,
+"ven": "ANDREA",
+"nom": "ARMANDO (BANDA)",
+"sal": 86274.0
+},
+{
+"row": 19,
+"cod": 52,
+"ven": "veliz Marcelo",
+"nom": "ARON, David (Lules)",
+"sal": 252433.78
+},
+{
+"row": 20,
+"cod": 53,
+"ven": "Veliz Marcelo",
+"nom": "ARON, Jorge (Lules)",
+"sal": -9581.0
+},
+{
+"row": 21,
+"cod": 58,
+"ven": "Brandan Julio",
+"nom": "ARTAZA, Romina (Ciudadela)",
+"sal": 162476.45
+},
+{
+"row": 22,
+"cod": 65,
+"ven": "Veliz Marcelo",
+"nom": "AVILA, Sergio (157)",
+"sal": 1290378.57
+},
+{
+"row": 23,
+"cod": 72,
+"ven": "Veliz Marcelo",
+"nom": "CASERES, Maria (Centro)",
+"sal": 0
+},
+{
+"row": 24,
+"cod": 73,
+"ven": "Veliz Marcelo",
+"nom": "BALBOA, Roque (157)",
+"sal": 658663.14
+},
+{
+"row": 25,
+"cod": 74,
+"ven": "El eter Sebastian",
+"nom": "BALCEDA, Fabiana (Oeste II)",
+"sal": -0.02
+},
+{
+"row": 26,
+"cod": 82,
+"ven": "Veliz Marcelo",
+"nom": "QUIPILDOR MIGUEL (LEALES)",
+"sal": 384217.24
+},
+{
+"row": 27,
+"cod": 86,
+"ven": "El eter Sebastian",
+"nom": "BEJAS, Diego  (Centro)",
+"sal": 425970.49
+},
+{
+"row": 28,
+"cod": 87,
+"ven": "El eter Sebastian",
+"nom": "BEJAS, Matias (Oeste II)",
+"sal": 570681.89
+},
+{
+"row": 29,
+"cod": 88,
+"ven": "Veliz Marcelo",
+"nom": "BEKI, Yanina  (CONTADO)",
+"sal": -0.01
+},
+{
+"row": 30,
+"cod": 735,
+"ven": "BRIAN",
+"nom": "AUTOSERVICIO Andrada  (SIMOCA)",
+"sal": 1416554.22
+},
+{
+"row": 31,
+"cod": 102,
+"ven": "Brandan Julio",
+"nom": "BRABE, Manuel (Lules)",
+"sal": 214375.88
+},
+{
+"row": 32,
+"cod": 103,
+"ven": "Veliz Marcelo",
+"nom": "BRAIN, Hugo (Famaillß)",
+"sal": 0
+},
+{
+"row": 33,
+"cod": 109,
+"ven": "Veliz Marcelo",
+"nom": "BRITO, Brahian (157)",
+"sal": 791640.2
+},
+{
+"row": 34,
+"cod": 119,
+"ven": "El eter Sebastian",
+"nom": "BUSTOS, Cesar (Banda)",
+"sal": 259092.61
+},
+{
+"row": 35,
+"cod": 121,
+"ven": "El eter Sebastian",
+"nom": "BUSTOS, Javier (Villa)",
+"sal": 919798.23
+},
+{
+"row": 36,
+"cod": 122,
+"ven": "Veliz Marcelo",
+"nom": "BUSTOS, Luis (Banda)",
+"sal": 912533.0
+},
+{
+"row": 37,
+"cod": 123,
+"ven": "El eter Sebastian",
+"nom": "BUSTOS, Maria (Banda)",
+"sal": 254081.25
+},
+{
+"row": 38,
+"cod": 124,
+"ven": "Veliz Marcelo",
+"nom": "BUSTOS, Roberto (Banda)",
+"sal": 262745.21
+},
+{
+"row": 39,
+"cod": 125,
+"ven": "El eter Sebastian",
+"nom": "BUSTOS, Sebastißn (Este)",
+"sal": 913867.38
+},
+{
+"row": 40,
+"cod": 126,
+"ven": "El eter Sebastian",
+"nom": "BUSTOS, Denisse (Banda)",
+"sal": 280746.22
+},
+{
+"row": 41,
+"cod": 139,
+"ven": "Brandan Julio",
+"nom": "CAJCHAYA, Pina (Jujuy)",
+"sal": 0
+},
+{
+"row": 42,
+"cod": 146,
+"ven": "Veliz Marcelo",
+"nom": "CAMINO, Mario (157)",
+"sal": 0.14
+},
+{
+"row": 43,
+"cod": 148,
+"ven": "Brandan Julio",
+"nom": "SORIA, Rosario  (Y. B.)",
+"sal": 199274.09
+},
+{
+"row": 44,
+"cod": 156,
+"ven": "El eter Sebastian",
+"nom": "BRANDAN, Maria Laura (Banda)",
+"sal": 0
+},
+{
+"row": 45,
+"cod": 157,
+"ven": "ANDREA",
+"nom": "CASAL GONZALO",
+"sal": -0.03
+},
+{
+"row": 46,
+"cod": 832,
+"ven": "BRIAN",
+"nom": "AUTOSERVICIO El sigal (Concepci¾n)",
+"sal": 1.13
+},
+{
+"row": 47,
+"cod": 167,
+"ven": "Veliz Marcelo",
+"nom": "CHAHLE, Marcos (Leales)",
+"sal": 1358487.42
+},
+{
+"row": 48,
+"cod": 174,
+"ven": "Brandan Julio",
+"nom": "OVIEDO, Pablo (Jujuy)",
+"sal": 655322.18
+},
+{
+"row": 49,
+"cod": 178,
+"ven": "ANDREA",
+"nom": "CASTRO EDUARDO",
+"sal": 63113.17
+},
+{
+"row": 50,
+"cod": 749,
+"ven": "BRIAN",
+"nom": "AUTOSERVICIO Family (Concepci¾n)",
+"sal": 495363.71
+},
+{
+"row": 51,
+"cod": 187,
+"ven": "Brandan Julio",
+"nom": "CORDOBA, Carlos (Lules)",
+"sal": 585677.98
+},
+{
+"row": 52,
+"cod": 193,
+"ven": "Brandan Julio",
+"nom": "CORDOBA, Marcelo (Oeste II)",
+"sal": 815374.29
+},
+{
+"row": 53,
+"cod": 200,
+"ven": "Brandan Julio",
+"nom": "COSTILLA, Claudia (Alderetes)",
+"sal": 343768.95
+},
+{
+"row": 54,
+"cod": 201,
+"ven": "El eter Sebastian",
+"nom": "ELIAS, Jorge (Jujuy)",
+"sal": 634773.53
+},
+{
+"row": 55,
+"cod": 208,
+"ven": "ANDREA",
+"nom": "DANIEL",
+"sal": 90886.38
+},
+{
+"row": 56,
+"cod": 751,
+"ven": "BRIAN",
+"nom": "AUTOSERVICIO Jaime (Aguilares)",
+"sal": 298040.81
+},
+{
+"row": 57,
+"cod": 213,
+"ven": "Brandan Julio",
+"nom": "DARUIS, Dario (Jujuy)",
+"sal": 113426.28
+},
+{
+"row": 58,
+"cod": 1218,
+"ven": "BRIAN",
+"nom": "BARRIONUEVO, Ingrid (Simoca)",
+"sal": 0.2
+},
+{
+"row": 59,
+"cod": 216,
+"ven": "Brandan Julio",
+"nom": "EL GAUCHO (Ciudadela)",
+"sal": 237787.18
+},
+{
+"row": 60,
+"cod": 217,
+"ven": "Brandan Julio",
+"nom": "GONZALEZ, Gonzalo ( Y. B.)",
+"sal": 811278.54
+},
+{
+"row": 61,
+"cod": 219,
+"ven": "Veliz Marcelo",
+"nom": "DECIMA, Diego (Banda)",
+"sal": 236994.29
+},
+{
+"row": 62,
+"cod": 225,
+"ven": "ANDREA",
+"nom": "RODRIGO",
+"sal": 857586.89
+},
+{
+"row": 63,
+"cod": 226,
+"ven": "veliz Marcelo",
+"nom": "GONZALEZ, Vilma (Lules)",
+"sal": 0.8
+},
+{
+"row": 64,
+"cod": 227,
+"ven": "El eter Sebastian",
+"nom": "DIAZ, Abrahan (Jujuy)",
+"sal": 5143513.68
+},
+{
+"row": 65,
+"cod": 228,
+"ven": "Veliz Marcelo",
+"nom": "DIAZ, Ariel (Alderetes)",
+"sal": 1036537.96
+},
+{
+"row": 66,
+"cod": 231,
+"ven": "El eter Sebastian",
+"nom": "DIAZ, Rosa (Banda)",
+"sal": 266177.6
+},
+{
+"row": 67,
+"cod": 232,
+"ven": "Veliz Marcelo",
+"nom": "GRAMAJO, Marcela (Monteros)",
+"sal": 0.37
+},
+{
+"row": 68,
+"cod": 233,
+"ven": "Veliz Marcelo",
+"nom": "BIANCONI, Paola ( ESTE)",
+"sal": 295000.64
+},
+{
+"row": 69,
+"cod": 234,
+"ven": "Veliz Marcelo",
+"nom": "SALVATIERRA, Romina (Simoca)",
+"sal": -49127.43
+},
+{
+"row": 70,
+"cod": 918,
+"ven": "BRIAN",
+"nom": "BAZAN,Diego (Santa Lucia)",
+"sal": 180781.39
+},
+{
+"row": 71,
+"cod": 236,
+"ven": "Brandan Julio",
+"nom": "DISTRI CANIN (Yeba Buena)",
+"sal": 133108.47
+},
+{
+"row": 72,
+"cod": 238,
+"ven": "El eter Sebastian",
+"nom": "FORRAJERIA, San Francisco (Oeste II)",
+"sal": 0.01
+},
+{
+"row": 73,
+"cod": 755,
+"ven": "BRIAN",
+"nom": "BIMA S.A.S (Concepci¾n)",
+"sal": 0.72
+},
+{
+"row": 74,
+"cod": 243,
+"ven": "El eter Sebastian",
+"nom": "EL BAGUAL (Centro)",
+"sal": -0.42
+},
+{
+"row": 75,
+"cod": 244,
+"ven": "El eter Sebastian",
+"nom": "EL CEBILAR (Centro)",
+"sal": 542920.97
+},
+{
+"row": 76,
+"cod": 245,
+"ven": "El eter Sebastian",
+"nom": "EL CEIBAL (Oeste II)",
+"sal": 164946.23
+},
+{
+"row": 77,
+"cod": 246,
+"ven": "Brandan Julio",
+"nom": "EL ESTABLO (Ciudadela)",
+"sal": 187032.75
+},
+{
+"row": 78,
+"cod": 248,
+"ven": "Veliz Marcelo",
+"nom": "ISA, Cristian (Famaillß)",
+"sal": 315444.17
+},
+{
+"row": 79,
+"cod": 252,
+"ven": "El eter Sebastian",
+"nom": "ELJATIB, Dario (Tafi Viejo)",
+"sal": 803621.77
+},
+{
+"row": 80,
+"cod": 256,
+"ven": "El eter Sebastian",
+"nom": "ESCOBAR, Javier Jujuy)",
+"sal": 0.27
+},
+{
+"row": 81,
+"cod": 261,
+"ven": "El eter Sebastian",
+"nom": "ESCOBAR, Sergio (Banda)",
+"sal": -5900.0
+},
+{
+"row": 82,
+"cod": 263,
+"ven": "El eter Sebastian",
+"nom": "ESPIN, Ely (Oeste II)",
+"sal": 0.85
+},
+{
+"row": 83,
+"cod": 264,
+"ven": "El eter Sebastian",
+"nom": "ESPINOZA, Alexis (Jujuy)",
+"sal": 493011.76
+},
+{
+"row": 84,
+"cod": 266,
+"ven": "El eter Sebastian",
+"nom": "ESTRADA, Victor (Jujuy)",
+"sal": 1109771.29
+},
+{
+"row": 85,
+"cod": 278,
+"ven": "Brandan Julio",
+"nom": "FIGUEREDO, Lidia (Y. B.)",
+"sal": 0
+},
+{
+"row": 86,
+"cod": 279,
+"ven": "Veliz Marcelo",
+"nom": "FIGUEROA, Enzo (Famaillß)",
+"sal": 320226.93
+},
+{
+"row": 87,
+"cod": 284,
+"ven": "Brandan Julio",
+"nom": "FILGUEIRAS, Maria (Y. B.)",
+"sal": 222089.6
+},
+{
+"row": 88,
+"cod": 285,
+"ven": "Brandan Julio",
+"nom": "FIOL, Maria (Jujuy)",
+"sal": -497.07
+},
+{
+"row": 89,
+"cod": 286,
+"ven": "El eter Sebastian",
+"nom": "FIORENZA, Gustavo (Oeste II)",
+"sal": 119262.64
+},
+{
+"row": 90,
+"cod": 853,
+"ven": "BRIAN",
+"nom": "BURGOS, Hernan (Santa Lucia)",
+"sal": 0
+},
+{
+"row": 91,
+"cod": 296,
+"ven": "Brandan Julio",
+"nom": "FORRAJERIA Don Blas",
+"sal": -17550.0
+},
+{
+"row": 92,
+"cod": 300,
+"ven": "Brandan Julio",
+"nom": "FORRAJERIA Los Changos  (Oeste II)",
+"sal": -0.38
+},
+{
+"row": 93,
+"cod": 302,
+"ven": "Brandan Julio",
+"nom": "FORRAJERIA, San Cayetano (Lules)",
+"sal": 195535.69
+},
+{
+"row": 94,
+"cod": 305,
+"ven": "Veliz Marcelo",
+"nom": "SARACHO, Jonathan (Cruz Alta)",
+"sal": -8858.03
+},
+{
+"row": 95,
+"cod": 1081,
+"ven": "BRIAN",
+"nom": "CABRERA, Roque (Concepci¾n)",
+"sal": 965073.76
+},
+{
+"row": 96,
+"cod": 313,
+"ven": "Brandan Julio",
+"nom": "RUIZ, MarÝa (Oeste II)",
+"sal": 707257.75
+},
+{
+"row": 97,
+"cod": 742,
+"ven": "BRIAN",
+"nom": "CARDENES, Walter (Alberdi)",
+"sal": 610727.9
+},
+{
+"row": 98,
+"cod": 318,
+"ven": "Veliz Marcelo",
+"nom": "RODRIGUEZ, Sergio (Monteros)",
+"sal": 8.38
+},
+{
+"row": 99,
+"cod": 331,
+"ven": "El eter Sebastian",
+"nom": "GIMENEZ, Romina (Ciudadela)",
+"sal": 321281.75
+},
+{
+"row": 100,
+"cod": 160,
+"ven": "BRIAN",
+"nom": "CASTILLO, Pancho (157)",
+"sal": 348625.0
+},
+{
+"row": 101,
+"cod": 335,
+"ven": "Brandan Julio",
+"nom": "GOMEZ, Fabian (Ciudadela)",
+"sal": 100219.37
+},
+{
+"row": 102,
+"cod": 340,
+"ven": "Veliz Marcelo",
+"nom": "GONZALES, Facundo (Banda)",
+"sal": 519417.34
+},
+{
+"row": 103,
+"cod": 346,
+"ven": "El eter Sebastian",
+"nom": "GONZALEZ, Jorge (Oeste II)",
+"sal": -4.21
+},
+{
+"row": 104,
+"cod": 347,
+"ven": "Veliz Marcelo",
+"nom": "GONZALEZ, Juan David (Leales)",
+"sal": 99965.89
+},
+{
+"row": 105,
+"cod": 350,
+"ven": "Brandan Julio",
+"nom": "GONZALEZ, MarÝa Cristina (Jujuy)",
+"sal": 427706.42
+},
+{
+"row": 106,
+"cod": 354,
+"ven": "El eter Sebastian",
+"nom": "GRAMAJO, Maria Constanza (Centro)",
+"sal": 78449.75
+},
+{
+"row": 107,
+"cod": 355,
+"ven": "El eter Sebastian",
+"nom": "ANDOAIN, Amalia (Centro)",
+"sal": 0.2
+},
+{
+"row": 108,
+"cod": 723,
+"ven": "BRIAN",
+"nom": "CEREALES SAN VICENTE (Alberdi)",
+"sal": 409542.21
+},
+{
+"row": 109,
+"cod": 360,
+"ven": "Veliz Marcelo",
+"nom": "GUERRA, Juan (Sur)",
+"sal": -0.03
+},
+{
+"row": 110,
+"cod": 366,
+"ven": "El eter Sebastian",
+"nom": "REYES ROLDAN, JULIETA (Villa)",
+"sal": 184682.12
+},
+{
+"row": 111,
+"cod": 369,
+"ven": "El eter Sebastian",
+"nom": "HARO, Trinidad (Tafi Viejo)",
+"sal": 107705.05
+},
+{
+"row": 112,
+"cod": 374,
+"ven": "El eter Sebastian",
+"nom": "HERRERA, Fernando (Centro)",
+"sal": 113915.44
+},
+{
+"row": 113,
+"cod": 375,
+"ven": "Veliz Marcelo",
+"nom": "HERRERA, Maxi (Lules)",
+"sal": 678088.78
+},
+{
+"row": 114,
+"cod": 379,
+"ven": "El eter Sebastian",
+"nom": "HUERTA   NORA (Oeste II)",
+"sal": 0
+},
+{
+"row": 115,
+"cod": 380,
+"ven": "Brandan Julio",
+"nom": "FIGUEROA, Walter (Ciudadela)",
+"sal": -1.58
+},
+{
+"row": 116,
+"cod": 381,
+"ven": "El eter Sebastian",
+"nom": "IBAÐEZ, Nahuel (Villa)",
+"sal": 656770.66
+},
+{
+"row": 117,
+"cod": 383,
+"ven": "Veliz Marcelo",
+"nom": "OLIVARES, Luis (Monteros)",
+"sal": 431598.72
+},
+{
+"row": 118,
+"cod": 390,
+"ven": "El eter Sebastian",
+"nom": "ISLA VERDE (Centro)",
+"sal": 1980038.14
+},
+{
+"row": 119,
+"cod": 395,
+"ven": "Veliz Marcelo",
+"nom": "JACOBO ALVARO",
+"sal": 716965.7
+},
+{
+"row": 120,
+"cod": 403,
+"ven": "ANDREA",
+"nom": "JORGELINA",
+"sal": 38351.0
+},
+{
+"row": 121,
+"cod": 408,
+"ven": "Brandan Julio",
+"nom": "JUAREZ, Daniel (Ciudadela)",
+"sal": 8.4
+},
+{
+"row": 122,
+"cod": 411,
+"ven": "ANDREA",
+"nom": "JULIO",
+"sal": 28967.0
+},
+{
+"row": 123,
+"cod": 988,
+"ven": "BRIAN",
+"nom": "Cereales y Legumbres del Norte   S.A.S (Concepci¾n)",
+"sal": 317523.67
+},
+{
+"row": 124,
+"cod": 418,
+"ven": "El eter Sebastian",
+"nom": "LAVAQUE, Nieves (Jujuy)",
+"sal": 184672.66
+},
+{
+"row": 125,
+"cod": 428,
+"ven": "Veliz Marcelo",
+"nom": "LOBO, Ignacio (Alderetes)",
+"sal": 426327.96
+},
+{
+"row": 126,
+"cod": 429,
+"ven": "Brandan Julio",
+"nom": "AVELLANEDA, Gisel (Alderetes)",
+"sal": 0
+},
+{
+"row": 127,
+"cod": 430,
+"ven": "Veliz Marcelo",
+"nom": "URUEÐA, Francisco (Monteros)",
+"sal": 555235.72
+},
+{
+"row": 128,
+"cod": 432,
+"ven": "Brandan Julio",
+"nom": "LOPEZ, Daniel (Ciudadela)",
+"sal": 227247.39
+},
+{
+"row": 129,
+"cod": 441,
+"ven": "Brandan Julio",
+"nom": "LUCERO, Daniel (Jujuy)",
+"sal": 1.03
+},
+{
+"row": 130,
+"cod": 442,
+"ven": "Veliz Marcelo",
+"nom": "ROSEDO, Guillermo (Acheral)",
+"sal": 744048.14
+},
+{
+"row": 131,
+"cod": 444,
+"ven": "Veliz Marcelo",
+"nom": "LUNA JAVIER",
+"sal": 0.43
+},
+{
+"row": 132,
+"cod": 446,
+"ven": "Veliz Marcelo",
+"nom": "JUAREZ, Federico (Monteros)",
+"sal": 2204099.63
+},
+{
+"row": 133,
+"cod": 447,
+"ven": "El eter Sebastian",
+"nom": "OTTONELLI , Lucas ( Villa)",
+"sal": 675316.71
+},
+{
+"row": 134,
+"cod": 451,
+"ven": "Brandan Julio",
+"nom": "COCO Forrajeria (Lomas de Tafi)",
+"sal": 1060894.34
+},
+{
+"row": 135,
+"cod": 212,
+"ven": "BRIAN",
+"nom": "DANUN, Juan (Monteros)",
+"sal": 143468.94
+},
+{
+"row": 136,
+"cod": 457,
+"ven": "Brandan Julio",
+"nom": "MANTARAS, Mariano (Centro)",
+"sal": 433649.48
+},
+{
+"row": 137,
+"cod": 465,
+"ven": "ANDREA",
+"nom": "MARCELO",
+"sal": 135254.0
+},
+{
+"row": 138,
+"cod": 466,
+"ven": "Brandan Julio",
+"nom": "GIBILISCO, Domingo (Manantial)",
+"sal": -604.5
+},
+{
+"row": 139,
+"cod": 470,
+"ven": "Brandan Julio",
+"nom": "MARQUEZ, Carolina (Lules)",
+"sal": 401299.84
+},
+{
+"row": 140,
+"cod": 472,
+"ven": "Veliz Marcelo",
+"nom": "MARRADES, Benito (Leales)",
+"sal": -598.71
+},
+{
+"row": 141,
+"cod": 473,
+"ven": "ANDREA",
+"nom": "MAURO (BANDA)",
+"sal": 46670.8
+},
+{
+"row": 142,
+"cod": 474,
+"ven": "Brandan Julio",
+"nom": "MARTIN, Marcelo (Y. B)",
+"sal": 436764.34
+},
+{
+"row": 143,
+"cod": 476,
+"ven": "Brandan Julio",
+"nom": "MARTINEZ, JosÚ (Y. B.)",
+"sal": 110556.28
+},
+{
+"row": 144,
+"cod": 477,
+"ven": "veliz Marcelo",
+"nom": "LUNA, Diana (Lules)",
+"sal": 372014.86
+},
+{
+"row": 145,
+"cod": 478,
+"ven": "Brandan Julio",
+"nom": "SARAVIA, Laura (Oeste II)",
+"sal": 311275.39
+},
+{
+"row": 146,
+"cod": 483,
+"ven": "ANDREA",
+"nom": "MATIAS",
+"sal": 2976.32
+},
+{
+"row": 147,
+"cod": 485,
+"ven": "veliz Marcelo",
+"nom": "MAZZONE, Maria (Lules)",
+"sal": 51295.22
+},
+{
+"row": 148,
+"cod": 487,
+"ven": "Brandan Julio",
+"nom": "MEDINA DORA (Jujuy)",
+"sal": 1.7
+},
+{
+"row": 149,
+"cod": 495,
+"ven": "ANDREA",
+"nom": "GRAMAJO, Laura  (Monteros)",
+"sal": 253871.26
+},
+{
+"row": 150,
+"cod": 496,
+"ven": "Veliz Marcelo",
+"nom": "MEJIAS, Nestor (Alderetes)",
+"sal": 664151.6
+},
+{
+"row": 151,
+"cod": 502,
+"ven": "ANDREA",
+"nom": "PEPE OBRA",
+"sal": 20584.38
+},
+{
+"row": 152,
+"cod": 215,
+"ven": "BRIAN",
+"nom": "DARWICH, Mariela (Sur)",
+"sal": 532638.4
+},
+{
+"row": 153,
+"cod": 522,
+"ven": "Veliz Marcelo",
+"nom": "BUSTOS, Rafael (La Florida)",
+"sal": 854047.83
+},
+{
+"row": 154,
+"cod": 942,
+"ven": "BRIAN",
+"nom": "DAVILA, ┴ngel (Aguilares)",
+"sal": 0.53
+},
+{
+"row": 155,
+"cod": 529,
+"ven": "BRIAN",
+"nom": "DIP, Ezequiel (Alberdi)",
+"sal": 87609.61
+},
+{
+"row": 156,
+"cod": 539,
+"ven": "ANDREA",
+"nom": "NESTOR",
+"sal": 25421.0
+},
+{
+"row": 157,
+"cod": 541,
+"ven": "ANDREA",
+"nom": "NIÐO",
+"sal": 63922.0
+},
+{
+"row": 158,
+"cod": 542,
+"ven": "Brandan Julio",
+"nom": "HADAD, Alfredo (Yerba Buena)",
+"sal": 4.32
+},
+{
+"row": 159,
+"cod": 543,
+"ven": "Brandan Julio",
+"nom": "PALAVECINO, Viviana (Villa)",
+"sal": 0.47
+},
+{
+"row": 160,
+"cod": 783,
+"ven": "BRIAN",
+"nom": "El Escobero (Alberdi)",
+"sal": 1.57
+},
+{
+"row": 161,
+"cod": 545,
+"ven": "ANDREA",
+"nom": "DANIEL PORTERO",
+"sal": 10618.0
+},
+{
+"row": 162,
+"cod": 547,
+"ven": "Brandan Julio",
+"nom": "NUTRIMUNDO (Ciudadela)",
+"sal": -251.97
+},
+{
+"row": 163,
+"cod": 548,
+"ven": "Veliz Marcelo",
+"nom": "OBEID, Maxi (Famaillß)",
+"sal": 301.68
+},
+{
+"row": 164,
+"cod": 549,
+"ven": "Veliz Marcelo",
+"nom": "OBEID LAUTARO (CONTADO)",
+"sal": 3392610.62
+},
+{
+"row": 165,
+"cod": 555,
+"ven": "ANDREA",
+"nom": "ORDOÐEZ WALTER",
+"sal": 147600.0
+},
+{
+"row": 166,
+"cod": 563,
+"ven": "Veliz Marcelo",
+"nom": "OVIEDO, Enrique (Leales)",
+"sal": 0.52
+},
+{
+"row": 167,
+"cod": 565,
+"ven": "ANDREA",
+"nom": "PABLO BRANDAN",
+"sal": 115471.0
+},
+{
+"row": 168,
+"cod": 580,
+"ven": "Brandan Julio",
+"nom": "PAZ, Maria (Banda)",
+"sal": 1089907.75
+},
+{
+"row": 169,
+"cod": 581,
+"ven": "Brandan Julio",
+"nom": "PAZ, Vanesa (Jujuy)",
+"sal": 867550.21
+},
+{
+"row": 170,
+"cod": 583,
+"ven": "Brandan Julio",
+"nom": "PEDRAZA, Sergio (Jujuy)",
+"sal": 417239.28
+},
+{
+"row": 171,
+"cod": 587,
+"ven": "Brandan Julio",
+"nom": "PEREZ, Hernan (Jujuy)",
+"sal": 669689.68
+},
+{
+"row": 172,
+"cod": 590,
+"ven": "Veliz Marcelo",
+"nom": "PEREZ, Pedro (Villa)",
+"sal": 640801.54
+},
+{
+"row": 173,
+"cod": 601,
+"ven": "Brandan Julio",
+"nom": "PETERSEN, Cristian (Oeste II)",
+"sal": 286808.97
+},
+{
+"row": 174,
+"cod": 605,
+"ven": "Veliz Marcelo",
+"nom": "NARCHER, Pamela (Este)",
+"sal": 976629.45
+},
+{
+"row": 175,
+"cod": 611,
+"ven": "El eter Sebastian",
+"nom": "QUIROZ, Vanesa (Jujuy)",
+"sal": -0.03
+},
+{
+"row": 176,
+"cod": 1066,
+"ven": "BRIAN",
+"nom": "EL PICANTE (Concepci¾n)",
+"sal": 256631.84
+},
+{
+"row": 177,
+"cod": 613,
+"ven": "El eter Sebastian",
+"nom": "RAMIREZ MATIAS (Oeste II)",
+"sal": 454119.09
+},
+{
+"row": 178,
+"cod": 614,
+"ven": "Veliz Marcelo",
+"nom": "RENGEL, Fernando (Famaillß)",
+"sal": 158025.61
+},
+{
+"row": 179,
+"cod": 615,
+"ven": "Brandan Julio",
+"nom": "CANO, Alejandra (Centro)",
+"sal": 181104.0
+},
+{
+"row": 180,
+"cod": 618,
+"ven": "Veliz Marcelo",
+"nom": "RIVAS, Juan (Aguilares)",
+"sal": 300000.0
+},
+{
+"row": 181,
+"cod": 620,
+"ven": "ANDREA",
+"nom": "ROBLES MIGUEL",
+"sal": 8183.0
+},
+{
+"row": 182,
+"cod": 621,
+"ven": "El eter Sebastian",
+"nom": "ROCHA, Silvia (Villa)",
+"sal": 151093.5
+},
+{
+"row": 183,
+"cod": 622,
+"ven": "Brandan Julio",
+"nom": "ALVAREZ, Matias (Ciudadela)",
+"sal": 1245048.07
+},
+{
+"row": 184,
+"cod": 627,
+"ven": "Veliz Marcelo",
+"nom": "A┌N, Nicolßs (Concepci¾n)",
+"sal": 1429294.18
+},
+{
+"row": 185,
+"cod": 628,
+"ven": "Veliz Marcelo",
+"nom": "DANDE, MarÝa (Alderetes)",
+"sal": 259361.93
+},
+{
+"row": 186,
+"cod": 631,
+"ven": "El eter Sebastian",
+"nom": "GUZM┴N, MatÝas (Banda)",
+"sal": 0.98
+},
+{
+"row": 187,
+"cod": 652,
+"ven": "ANDREA",
+"nom": "SAN JUAN",
+"sal": 1716211.08
+},
+{
+"row": 188,
+"cod": 37,
+"ven": "BRIAN",
+"nom": "ESQUENDEFE, Joaquin (Simoca)",
+"sal": 0.69
+},
+{
+"row": 189,
+"cod": 657,
+"ven": "Veliz Marcelo",
+"nom": "LOPEZ, Javier (Acheral)",
+"sal": 124559.89
+},
+{
+"row": 190,
+"cod": 664,
+"ven": "ANDREA",
+"nom": "SEBA",
+"sal": 86195.0
+},
+{
+"row": 191,
+"cod": 665,
+"ven": "Brandan Julio",
+"nom": "SEGUER, Viviana (Centro)",
+"sal": 949345.84
+},
+{
+"row": 192,
+"cod": 666,
+"ven": "ANDREA",
+"nom": "SEMILLERO EL MANANTIAL BRS",
+"sal": 14393715.96
+},
+{
+"row": 193,
+"cod": 667,
+"ven": "ANDREA",
+"nom": "SERGIO (CHIVO)",
+"sal": 96479.0
+},
+{
+"row": 194,
+"cod": 669,
+"ven": "El eter Sebastian",
+"nom": "SIR, Victor (Villa)",
+"sal": 2582312.89
+},
+{
+"row": 195,
+"cod": 672,
+"ven": "Veliz Marcelo",
+"nom": "SORIA MARCELO (Leon Rouges)",
+"sal": 3600.1
+},
+{
+"row": 196,
+"cod": 675,
+"ven": "El eter Sebastian",
+"nom": "SORIA, Rosalia (Oeste II)",
+"sal": 274863.22
+},
+{
+"row": 197,
+"cod": 682,
+"ven": "Brandan Julio",
+"nom": "SILVA, Patricia (Lules)",
+"sal": 112633.47
+},
+{
+"row": 198,
+"cod": 684,
+"ven": "El eter Sebastian",
+"nom": "SUPPA, Victorio (Jujuy)",
+"sal": 250971.08
+},
+{
+"row": 199,
+"cod": 685,
+"ven": "ANDREA",
+"nom": "SUSANA",
+"sal": 5150.0
+},
+{
+"row": 200,
+"cod": 686,
+"ven": "Brandan Julio",
+"nom": "TALAMAZZI, Fabio (Ciudadela)",
+"sal": 145799.03
+},
+{
+"row": 201,
+"cod": 692,
+"ven": "Veliz Marcelo",
+"nom": "MERCADO, Osvaldo (GarcÝa Fernandez)",
+"sal": 337591.61
+},
+{
+"row": 202,
+"cod": 693,
+"ven": "Brandan Julio",
+"nom": "FORRAJERIA Mi Pipita (Alderetes)",
+"sal": 0
+},
+{
+"row": 203,
+"cod": 698,
+"ven": "Brandan Julio",
+"nom": "FORRAJERIA Huellitas (Lules)",
+"sal": 256635.13
+},
+{
+"row": 204,
+"cod": 700,
+"ven": "Veliz Marcelo",
+"nom": "VALLEJO, Esteban (Leales)",
+"sal": -1997.22
+},
+{
+"row": 205,
+"cod": 702,
+"ven": "Brandan Julio",
+"nom": "VARELA, Benito (Y. B)",
+"sal": 0.9
+},
+{
+"row": 206,
+"cod": 761,
+"ven": "BRIAN",
+"nom": "FORRAJERIA  Moreno (La Cocha)",
+"sal": 10.56
+},
+{
+"row": 207,
+"cod": 706,
+"ven": "veliz Marcelo",
+"nom": "VARGAS, Cintia (Marcelo)",
+"sal": 123600.51
+},
+{
+"row": 208,
+"cod": 707,
+"ven": "Brandan Julio",
+"nom": "VARGAS, Emilio (Lules)",
+"sal": -2.65
+},
+{
+"row": 209,
+"cod": 711,
+"ven": "Brandan Julio",
+"nom": "VEGAS, David (Lules)",
+"sal": 334958.98
+},
+{
+"row": 210,
+"cod": 714,
+"ven": "Brandan Julio",
+"nom": "VELEZ, Marcos (Yerba Buena)",
+"sal": 400874.63
+},
+{
+"row": 211,
+"cod": 717,
+"ven": "Brandan Julio",
+"nom": "VERGARA, Ra·l (Yerba Buena)",
+"sal": 222020.95
+},
+{
+"row": 212,
+"cod": 315,
+"ven": "BRIAN",
+"nom": "FORRAJERIA Do±a Negrita (Trinidad)",
+"sal": 0.95
+},
+{
+"row": 213,
+"cod": 720,
+"ven": "ANDREA",
+"nom": "VICTOR",
+"sal": 25575.0
+},
+{
+"row": 214,
+"cod": 721,
+"ven": "BRIAN",
+"nom": "FORRAJERIA Huellitas (Concepci¾n)",
+"sal": 0.14
+},
+{
+"row": 215,
+"cod": 722,
+"ven": "Brandan Julio",
+"nom": "FORRAJERIA ORDOÐEZ (Oeste II)",
+"sal": 1077874.59
+},
+{
+"row": 216,
+"cod": 753,
+"ven": "BRIAN",
+"nom": "FORRAJERIA Lanzy (Aguilares)",
+"sal": -993.31
+},
+{
+"row": 217,
+"cod": 726,
+"ven": "Brandan Julio",
+"nom": "VILLALBA, Iris (Ciudadela)",
+"sal": 7854962.12
+},
+{
+"row": 218,
+"cod": 732,
+"ven": "El eter Sebastian",
+"nom": "WALDO, Lucas  (Oeste II)",
+"sal": -2610.33
+},
+{
+"row": 219,
+"cod": 933,
+"ven": "BRIAN",
+"nom": "GALVAN, Adrian (Taco Ralo)",
+"sal": 0.33
+},
+{
+"row": 220,
+"cod": 740,
+"ven": "Brandan Julio",
+"nom": "MARTIN, Facundo  (Y. B.)",
+"sal": 596798.39
+},
+{
+"row": 221,
+"cod": 741,
+"ven": "Veliz Marcelo",
+"nom": "LOGARZO, JosÚ (Monteros)",
+"sal": 1833839.25
+},
+{
+"row": 222,
+"cod": 762,
+"ven": "BRIAN",
+"nom": "GIMENEZ, Cecilia (Concepci¾n)",
+"sal": 1314138.63
+},
+{
+"row": 223,
+"cod": 333,
+"ven": "BRIAN",
+"nom": "GOMEZ, Angel (157)",
+"sal": 116188.15
+},
+{
+"row": 224,
+"cod": 359,
+"ven": "BRIAN",
+"nom": "GUERRA, Javier (Sur)",
+"sal": 0
+},
+{
+"row": 225,
+"cod": 945,
+"ven": "BRIAN",
+"nom": "HERNANDEZ, Emilse (Aguilares)",
+"sal": 95338.57
+},
+{
+"row": 226,
+"cod": 746,
+"ven": "BRIAN",
+"nom": "HERRERA, Silvio  (SIMOCA)",
+"sal": 276327.74
+},
+{
+"row": 227,
+"cod": 235,
+"ven": "BRIAN",
+"nom": "JIMENEZ, JosÚ Leandro (La Cocha)",
+"sal": 161629.58
+},
+{
+"row": 228,
+"cod": 413,
+"ven": "BRIAN",
+"nom": "LA ESTANCIA",
+"sal": 3.22
+},
+{
+"row": 229,
+"cod": 756,
+"ven": "veliz Marcelo",
+"nom": "SUPERMERCADO Seranil (Lules)",
+"sal": 512167.55
+},
+{
+"row": 230,
+"cod": 758,
+"ven": "El eter Sebastian",
+"nom": "POTOLICCHIO, Juan (Centro)",
+"sal": 0.1
+},
+{
+"row": 231,
+"cod": 526,
+"ven": "BRIAN",
+"nom": "LEDESMA, Carlos (Simoca)",
+"sal": 0.26
+},
+{
+"row": 232,
+"cod": 798,
+"ven": "BRIAN",
+"nom": "MAYORISTA Reyes (Concepci¾n)",
+"sal": 468178.84
+},
+{
+"row": 233,
+"cod": 806,
+"ven": "BRIAN",
+"nom": "MINISERVICE Laura (Santa Lucia)",
+"sal": 779224.07
+},
+{
+"row": 234,
+"cod": 763,
+"ven": "Brandan Julio",
+"nom": "TORRES, Fernando (Y. B.)",
+"sal": 1.68
+},
+{
+"row": 235,
+"cod": 765,
+"ven": "El eter Sebastian",
+"nom": "GRAMAJO, Paula (Centro)",
+"sal": -17783.0
+},
+{
+"row": 236,
+"cod": 770,
+"ven": "El eter Sebastian",
+"nom": "NAVARRO, Andrea (Centro)",
+"sal": 119131.91
+},
+{
+"row": 237,
+"cod": 777,
+"ven": "BRIAN",
+"nom": "MINISERVICE, El Le¾n (Alberdi)",
+"sal": 0.04
+},
+{
+"row": 238,
+"cod": 773,
+"ven": "Veliz Marcelo",
+"nom": "IBRAHIN, Zulema (Monteros)",
+"sal": 559130.77
+},
+{
+"row": 239,
+"cod": 776,
+"ven": "El eter Sebastian",
+"nom": "VIOJO, Esteban (Villa)",
+"sal": 1550760.49
+},
+{
+"row": 240,
+"cod": 504,
+"ven": "BRIAN",
+"nom": "MONESTEROLO, Mercedes (Monteros)",
+"sal": 347998.22
+},
+{
+"row": 241,
+"cod": 184,
+"ven": "BRIAN",
+"nom": "MONTERO, Fernando (Monteros)",
+"sal": 146517.02
+},
+{
+"row": 242,
+"cod": 819,
+"ven": "BRIAN",
+"nom": "MORELLI MAYORISTA (Concepcion)",
+"sal": 0.4
+},
+{
+"row": 243,
+"cod": 306,
+"ven": "BRIAN",
+"nom": "MORENO, JosÚ MarÝa (Sur)",
+"sal": -17743.0
+},
+{
+"row": 244,
+"cod": 809,
+"ven": "ANDREA",
+"nom": "DONET",
+"sal": 2872437.74
+},
+{
+"row": 245,
+"cod": 811,
+"ven": "ANDREA",
+"nom": "ANTONELLA",
+"sal": 54183.1
+},
+{
+"row": 246,
+"cod": 812,
+"ven": "Veliz Marcelo",
+"nom": "DIAZ, Alfredo (Este)",
+"sal": 2326347.3
+},
+{
+"row": 247,
+"cod": 814,
+"ven": "Brandan Julio",
+"nom": "FRADEJAS, MarÝa Lucia (Rosario de la Frontera)",
+"sal": 2.81
+},
+{
+"row": 248,
+"cod": 997,
+"ven": "BRIAN",
+"nom": "MORENO, MarÝa JosÚ (Villa Quinteros)",
+"sal": 0.88
+},
+{
+"row": 249,
+"cod": 821,
+"ven": "El eter Sebastian",
+"nom": "MORALES, MarÝa Celeste (Salta)",
+"sal": -3206.36
+},
+{
+"row": 250,
+"cod": 827,
+"ven": "El eter Sebastian",
+"nom": "CASAS, Pablo (Banda)",
+"sal": 0.01
+},
+{
+"row": 251,
+"cod": 544,
+"ven": "BRIAN",
+"nom": "NUESTRO CAMPO",
+"sal": 148139.09
+},
+{
+"row": 252,
+"cod": 833,
+"ven": "ANDREA",
+"nom": "PALACIOS RODOLFO",
+"sal": 471810.78
+},
+{
+"row": 253,
+"cod": 842,
+"ven": "Veliz Marcelo",
+"nom": "ROMANO, Debora (Leales)",
+"sal": 137059.38
+},
+{
+"row": 254,
+"cod": 846,
+"ven": "ANDREA",
+"nom": "COSSIO (WALTER)",
+"sal": 200.0
+},
+{
+"row": 255,
+"cod": 852,
+"ven": "Brandan Julio",
+"nom": "ERAZO, Victor (Lules)",
+"sal": 100822.83
+},
+{
+"row": 256,
+"cod": 612,
+"ven": "BRIAN",
+"nom": "RADINO, Susana (Concepci¾n)",
+"sal": 229390.75
+},
+{
+"row": 257,
+"cod": 861,
+"ven": "ANDREA",
+"nom": "MENTESANA, Enzo",
+"sal": 21649102.64
+},
+{
+"row": 258,
+"cod": 904,
+"ven": "Brandan Julio",
+"nom": "REYNOSO, Roberto (Alderetes)",
+"sal": 2789250.57
+},
+{
+"row": 259,
+"cod": 909,
+"ven": "Brandan Julio",
+"nom": "FORRAJERIA, Gramajo (Lules)",
+"sal": 232722.16
+},
+{
+"row": 260,
+"cod": 915,
+"ven": "El eter Sebastian",
+"nom": "GOMEZ, Osvaldo (Las Talitas)",
+"sal": 411657.67
+},
+{
+"row": 261,
+"cod": 292,
+"ven": "BRIAN",
+"nom": "REIDEN, Carin (Rio Seco)",
+"sal": 161005.18
+},
+{
+"row": 262,
+"cod": 941,
+"ven": "BRIAN",
+"nom": "RUIZ, Nadia (Concepci¾n)",
+"sal": -1.3
+},
+{
+"row": 263,
+"cod": 929,
+"ven": "Brandan Julio",
+"nom": "FORRAJERIA Los Mellis (Yerba Buena)",
+"sal": 0.53
+},
+{
+"row": 264,
+"cod": 930,
+"ven": "El eter Sebastian",
+"nom": "FALCO, Diego Suc II  (Oeste II)",
+"sal": 44279.29
+},
+{
+"row": 265,
+"cod": 656,
+"ven": "BRIAN",
+"nom": "SANCHEZ TELLO (Monteros)",
+"sal": 39571.97
+},
+{
+"row": 266,
+"cod": 938,
+"ven": "El eter Sebastian",
+"nom": "FERNANDEZ, Lucas (Oeste II)",
+"sal": 490498.89
+},
+{
+"row": 267,
+"cod": 759,
+"ven": "BRIAN",
+"nom": "SUPER Abasto (Concepci¾n)",
+"sal": -0.03
+},
+{
+"row": 268,
+"cod": 454,
+"ven": "BRIAN",
+"nom": "SUPER ASIA (Lamadrid)",
+"sal": 0.6
+},
+{
+"row": 269,
+"cod": 719,
+"ven": "BRIAN",
+"nom": "SUPER DEYUV (Concepci¾n)",
+"sal": 363669.05
+},
+{
+"row": 270,
+"cod": 951,
+"ven": "ANDREA",
+"nom": "BRIAN ISCARA",
+"sal": 132080.0
+},
+{
+"row": 271,
+"cod": 952,
+"ven": "El eter Sebastian",
+"nom": "HERRERA, Jonathan (Las Talitas)",
+"sal": -266.48
+},
+{
+"row": 272,
+"cod": 954,
+"ven": "Brandan Julio",
+"nom": "DELGADO, Josefina (Yerba Buena)",
+"sal": -1073.82
+},
+{
+"row": 273,
+"cod": 969,
+"ven": "Veliz Marcelo",
+"nom": "HERRERA, Zulma (Leales)",
+"sal": 93713.44
+},
+{
+"row": 274,
+"cod": 772,
+"ven": "BRIAN",
+"nom": "SUPER Emanuel (Simoca)",
+"sal": 1.94
+},
+{
+"row": 275,
+"cod": 747,
+"ven": "BRIAN",
+"nom": "SUPER Herrera Maxi (Simoca)",
+"sal": 786321.07
+},
+{
+"row": 276,
+"cod": 1001,
+"ven": "ANDREA",
+"nom": "POCHI Daniel (OrBor)",
+"sal": 13230.12
+},
+{
+"row": 277,
+"cod": 1006,
+"ven": "Brandan Julio",
+"nom": "GIJON, Tamara (Los Ralos)",
+"sal": 0.07
+},
+{
+"row": 278,
+"cod": 1011,
+"ven": "Veliz Marcelo",
+"nom": "VALLEJO, Agustina (Leales)",
+"sal": 1.07
+},
+{
+"row": 279,
+"cod": 1013,
+"ven": "El eter Sebastian",
+"nom": "ACOSTA, Alvaro (Centro)",
+"sal": 0.66
+},
+{
+"row": 280,
+"cod": 1015,
+"ven": "Brandan Julio",
+"nom": "ANIMA GROUP S.R.L (Yerba Buena)",
+"sal": 0.04
+},
+{
+"row": 281,
+"cod": 1023,
+"ven": "BRIAN",
+"nom": "SUPER Ladela (Simoca)",
+"sal": 0.79
+},
+{
+"row": 282,
+"cod": 1030,
+"ven": "Brandan Julio",
+"nom": "MONTES, Liliana (Ciudadela)",
+"sal": 1.09
+},
+{
+"row": 283,
+"cod": 1039,
+"ven": "Veliz Marcelo",
+"nom": "IBAÐEZ, Nancy Roxana (Alderetes)",
+"sal": 949130.73
+},
+{
+"row": 284,
+"cod": 1041,
+"ven": "El eter Sebastian",
+"nom": "MANTARAS PALIZA, Federico",
+"sal": 0.46
+},
+{
+"row": 285,
+"cod": 1049,
+"ven": "Veliz Marcelo",
+"nom": "ARRIETA, Yaquelin (Monteros)",
+"sal": 1592555.58
+},
+{
+"row": 286,
+"cod": 1053,
+"ven": "ANDREA",
+"nom": "GUSTAVO VENDRAMINI",
+"sal": 824335.65
+},
+{
+"row": 287,
+"cod": 1054,
+"ven": "Brandan Julio",
+"nom": "FERNANDEZ, Daniel Gustavo (Este)",
+"sal": 233308.5
+},
+{
+"row": 288,
+"cod": 1058,
+"ven": "Brandan Julio",
+"nom": "FORRAJERIA CHOC (Yerba Buena)",
+"sal": 260203.29
+},
+{
+"row": 289,
+"cod": 1059,
+"ven": "El eter Sebastian",
+"nom": "Rodriguez, Silvia Roxana (Centro)",
+"sal": 0.39
+},
+{
+"row": 290,
+"cod": 96,
+"ven": "BRIAN",
+"nom": "SUPER TANIA (Concepci¾n)",
+"sal": 50.84
+},
+{
+"row": 291,
+"cod": 1070,
+"ven": "El eter Sebastian",
+"nom": "PASTERIS, Luis (Centro)",
+"sal": 297715.91
+},
+{
+"row": 292,
+"cod": 703,
+"ven": "BRIAN",
+"nom": "VARGAS (Concepci¾n)",
+"sal": 0
+},
+{
+"row": 293,
+"cod": 1082,
+"ven": "Brandan Julio",
+"nom": "GOMEZ, Cintya (Las Talitas)",
+"sal": 1.86
+},
+{
+"row": 294,
+"cod": 1089,
+"ven": "Veliz Marcelo",
+"nom": "GOMEZ, Maxi (Concepcion)",
+"sal": 170991.39
+},
+{
+"row": 295,
+"cod": 1092,
+"ven": "Veliz Marcelo",
+"nom": "SORIA, Soledad (Simoca)",
+"sal": 0.9
+},
+{
+"row": 296,
+"cod": 239,
+"ven": "BRIAN",
+"nom": "VICENTE, JosÚ (Simoca)",
+"sal": -5402.7
+},
+{
+"row": 297,
+"cod": 1232,
+"ven": "Veliz Marcelo",
+"nom": "ACOSTA, Jesus (Lules)",
+"sal": -5100.2
+},
+{
+"row": 298,
+"cod": 1233,
+"ven": "Veliz Marcelo",
+"nom": "GRAMAJO, Lucas (Lules)",
+"sal": 278061.15
+},
+{
+"row": 299,
+"cod": 1242,
+"ven": "Brandan Julio",
+"nom": "FORRAJERIA Mateo  (Banda)",
+"sal": 477953.99
+},
+{
+"row": 300,
+"cod": 1246,
+"ven": "El eter Sebastian",
+"nom": "GIACOSA Y CIA SRL",
+"sal": 198479.13
+}
+]
