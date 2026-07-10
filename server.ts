@@ -437,8 +437,14 @@ const TOKEN_TTL = 8 * 60 * 60 * 1000; // 8 hours
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 
 const requireAuth = (req: express.Request, res: express.Response, next: express.NextFunction): void => {
-    if (!APP_PASSWORD) { next(); return; }
     const auth = req.headers.authorization;
+    // Un JWT válido (login v2) también sirve acá: el shell nuevo consume
+    // /api/data y los overrides legacy con authHeaders().
+    if (auth?.startsWith('Bearer ') && verifyJwt(auth.slice(7))) { next(); return; }
+    // Sin APP_PASSWORD el flujo legacy queda DESHABILITADO. Antes esto era
+    // next() a secas: con la env var sin setear, el dashboard con los saldos
+    // de todos los clientes quedaba abierto a internet sin login.
+    if (!APP_PASSWORD) { res.status(401).json({ error: 'No autorizado' }); return; }
     if (!auth?.startsWith('Bearer ')) { res.status(401).json({ error: 'No autorizado' }); return; }
     const token = auth.slice(7);
     const row = db.prepare('SELECT expiry FROM auth_tokens WHERE token = ?').get(token) as { expiry: number } | undefined;
@@ -463,7 +469,13 @@ app.post('/api/auth/login', (req: express.Request, res: express.Response) => {
     }
 
     const { password } = req.body as { password?: string };
-    if (!APP_PASSWORD || password === APP_PASSWORD) {
+    // Sin APP_PASSWORD no se emiten tokens legacy: antes cualquier password
+    // (incluso vacío) obtenía sesión. El acceso queda solo por login v2 (JWT).
+    if (!APP_PASSWORD) {
+        res.status(401).json({ success: false, error: 'Acceso deshabilitado: ingresá con tu usuario y contraseña.' });
+        return;
+    }
+    if (password === APP_PASSWORD) {
         loginAttempts.delete(ip); // Reset on success
         const token = randomUUID();
         db.prepare('INSERT INTO auth_tokens (token, expiry) VALUES (?, ?)').run(token, Date.now() + TOKEN_TTL);
