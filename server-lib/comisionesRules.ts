@@ -76,7 +76,10 @@ export function pctParaArticulo(
   return COMISION_RESTO;
 }
 
-export type CategoriaComision = '5%' | '4%' | '3.5%' | '1%';
+// 'especial' = comisión pisada por un objetivo por producto (product_goals.
+// comision_pct, fase 4): esas líneas se agrupan aparte para que el % custom no
+// se disfrace de "Resto (3.5%)" en el breakdown.
+export type CategoriaComision = '5%' | '4%' | '3.5%' | '1%' | 'especial';
 
 export function categoriaParaPct(pct: number): CategoriaComision {
   if (pct === COMISION_EXACT) return '5%';
@@ -90,4 +93,5 @@ export const CATEGORIA_LABELS: Record<CategoriaComision, string> = {
   '4%': 'Accesorios y Venenos (4%)',
   '3.5%': 'Resto (3.5%)',
   '1%': 'BELCAN/ZIMPI/GC/Piedras/Conejo (1%)',
+  'especial': 'Comisión especial (obj. producto)',
 };

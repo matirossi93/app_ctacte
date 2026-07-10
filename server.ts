@@ -45,6 +45,7 @@ import { descargarReporte } from './server-lib/reportes.js';
 import { getConciliacion, exportConciliacion, listSnapshotsConciliacion, guardarSnapshotConciliacion } from './server-lib/conciliacion.js';
 import { cruceCarpetaHandler, exportCruceHandler } from './server-lib/cruceCarpeta.js';
 import { listRebotes, listRecargos, syncRebotesNow, syncRebotes } from './server-lib/rebotes.js';
+import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos } from './server-lib/productGoals.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -814,6 +815,12 @@ app.delete('/api/comisiones/overrides/:id', requireJwt, requireAdmin, (req: any,
 app.get('/api/rebotes', requireJwt, (req: any, res) => listRebotes(req, res));
 app.get('/api/rebotes/recargos', requireJwt, (req: any, res) => listRecargos(req, res));
 app.post('/api/rebotes/sync-now', requireJwt, requireAdmin, (req: any, res) => syncRebotesNow(req, res));
+
+// ─── Objetivos por producto (productos estancados: unidades × vendedor) ──────
+app.get('/api/product-goals', requireJwt, (req: any, res) => listProductGoals(req, res));
+app.post('/api/product-goals', requireJwt, requireAdmin, (req: any, res) => upsertProductGoal(req, res));
+app.delete('/api/product-goals', requireJwt, requireAdmin, (req: any, res) => deleteProductGoal(req, res));
+app.get('/api/product-goals/articulos', requireJwt, requireAdmin, (req: any, res) => searchArticulos(req, res));
 
 // ─── Clientes lookup (maestro completo, con y sin deuda) ─────────────────────
 app.get('/api/clientes/lookup', requireJwt, (req: any, res) => listClientesLookup(req, res));

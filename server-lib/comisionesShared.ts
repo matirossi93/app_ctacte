@@ -11,8 +11,24 @@
  * exactamente eso. Centralizar acá evita que pase de nuevo.
  */
 
+import { tipoComprobante, isAnulada } from '../src/utils/ventas.js';
+
 /** Casa Central. Las sucursales tienen su propia estructura de comisión. */
 export const COD_EMPRESA_CASA_CENTRAL = 1;
+
+/**
+ * Tipo del comprobante para comisiones/avance: 'FA' (suma), 'NC' (resta) o
+ * null (no cuenta: ND, PR, RC, anuladas). Compartida para que comisiones y
+ * objetivos por producto clasifiquen IGUAL (misma lección del header).
+ */
+export function clasificarCabeceraComision(cab: any): 'FA' | 'NC' | null {
+  if (isAnulada(cab)) return null;
+  const tipo = tipoComprobante(cab);
+  if (tipo.startsWith('ND')) return null;
+  if (tipo.startsWith('NC')) return 'NC';
+  if (tipo.startsWith('F')) return 'FA';
+  return null;
+}
 
 /**
  * Clientes internos = sucursales propias. Las "ventas" a estos clientes son

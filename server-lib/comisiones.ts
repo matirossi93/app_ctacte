@@ -22,6 +22,7 @@ import {
 import { loadVendedorOverrides, resolveCodVendedor } from './comisionOverrides.js';
 import { getDescuentosRebotes } from './rebotes.js';
 import { rigenCargosRebotes, PCT_CARGO_REBOTE, type DescuentoRebotes } from './rebotesParser.js';
+import { getComisionPctOverrides } from './productGoals.js';
 
 interface BreakdownEntry { neto: number; comision: number; lineas: number }
 interface ComisionVendedor {
@@ -46,6 +47,7 @@ function emptyBreakdown(): Record<CategoriaComision, BreakdownEntry> {
     '4%':   { neto: 0, comision: 0, lineas: 0 },
     '3.5%': { neto: 0, comision: 0, lineas: 0 },
     '1%':   { neto: 0, comision: 0, lineas: 0 },
+    'especial': { neto: 0, comision: 0, lineas: 0 },
   };
 }
 
@@ -114,6 +116,13 @@ export async function getComisionesData(opts: GetComisionesOpts) {
   ]);
   const nombreCliente = new Map<number, string>();
   for (const c of clientesIM) nombreCliente.set(Number(c.cod_cliente), String((c as any).razon_social ?? ''));
+
+  // Comisión ESPECIAL por producto (objetivos por producto, fase 4): pisa la
+  // regla de comisionesRules SOLO para los pares (vendedor, artículo) con
+  // comision_pct definido este mes. Solo Casa Central.
+  const pctEspeciales = (codEmpresaTarget === COD_EMPRESA_CASA_CENTRAL && hasSupabase())
+    ? await getComisionPctOverrides(year, month)
+    : new Map<string, number>();
 
   // 2. Map id_comprobante → { signo (FA=+1, NC=-1), cod_vendedor }.
   // Solo cabeceras válidas. Las inválidas (PR, ND, anuladas) quedan fuera y
@@ -203,8 +212,9 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     const codRubro = articuloMeta?.cod_rubro ?? null;
     // Detalle viene en el item directo; si no, fallback al catálogo.
     const detalle = String((it as any).detalle ?? articuloMeta?.descripcion ?? '');
-    const pct = pctParaArticulo(codArt, codRubro, detalle);
-    const cat = categoriaParaPct(pct);
+    const pctEspecial = pctEspeciales.get(`${meta.cod_vendedor}:${codArt}`);
+    const pct = pctEspecial ?? pctParaArticulo(codArt, codRubro, detalle);
+    const cat = pctEspecial != null ? 'especial' : categoriaParaPct(pct);
     const comision = Math.round(importe * pct * 100) / 100;
 
     if (facturaAgg) {

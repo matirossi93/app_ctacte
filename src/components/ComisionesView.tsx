@@ -5,7 +5,7 @@ import type { ViewPeriod } from './PeriodSelector';
 import './ComisionesView.css';
 
 const MONTH_NAMES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-const CATEGORIA_ORDER = ['5%', '4%', '3.5%', '1%'] as const;
+const CATEGORIA_ORDER = ['5%', '4%', '3.5%', '1%', 'especial'] as const;
 const PRIVACY_STORAGE_KEY = 'ctacte:comisiones:privacy';
 const MASKED = '$ ••••';
 

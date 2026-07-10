@@ -18,6 +18,7 @@ import { HistoricBanner } from './HistoricBanner';
 import { PrintAvanceView } from './PrintAvanceView';
 import { ComisionesView } from './ComisionesView';
 import { RebotesView } from './RebotesView';
+import { ProductGoalsPanel } from './ProductGoalsPanel';
 import { VendorMultiSelect } from './VendorMultiSelect';
 import { ensurePushSubscription } from '../utils/webPush';
 import { telHref, waHref, phoneStatus } from '../utils/phone';
@@ -1724,6 +1725,11 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
             {/* ─── Ranking equipo (admin sin filtro) ─── */}
             {isAdmin && selectedVendor == null && !isLocFilter && rankingItems.length > 0 && (
                 <RankingEquipo items={rankingItems} />
+            )}
+
+            {/* ─── Objetivos por producto (productos estancados) ─── */}
+            {!isLocFilter && (
+                <ProductGoalsPanel isAdmin={isAdmin} viewPeriod={viewPeriod} selectedVendor={selectedVendor} />
             )}
 
             {/* ─── Objetivos por cliente ─── */}
