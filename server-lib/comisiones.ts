@@ -582,7 +582,7 @@ export async function topArticulos(req: Request & { user?: JwtPayload }, res: Re
 
     // Por categoría, top N por neto.
     const porCategoria: Record<CategoriaComision, ArtAcc[]> = {
-      '5%': [], '4%': [], '3.5%': [], '1%': [],
+      '5%': [], '4%': [], '3.5%': [], '1%': [], 'especial': [],
     };
     for (const a of acc.values()) {
       porCategoria[a.categoria].push(a);
@@ -674,7 +674,7 @@ export async function facturasVendedor(req: Request & { user?: JwtPayload }, res
         cod_cliente: Number(cab.cod_cliente ?? 0),
         neto_calculado: 0,
         neto_cabecera: Math.round((Number(cab.neto ?? cab.total ?? cab.fa_total ?? 0) * sign) * 100) / 100,
-        breakdown: { '5%': 0, '4%': 0, '3.5%': 0, '1%': 0 },
+        breakdown: { '5%': 0, '4%': 0, '3.5%': 0, '1%': 0, 'especial': 0 },
         lineas: 0,
       };
       facturas.push(fd);
