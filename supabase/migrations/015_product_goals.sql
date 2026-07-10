@@ -33,6 +33,13 @@ drop policy if exists product_goals_service_all on product_goals;
 create policy product_goals_service_all on product_goals
   for all to service_role using (true) with check (true);
 
+-- Autocontenida: recrea el helper por si esta base no corrió la migración 001
+-- completa (create or replace = inofensivo si ya existe).
+create or replace function set_updated_at()
+returns trigger language plpgsql as $$
+begin new.updated_at = now(); return new; end;
+$$;
+
 drop trigger if exists product_goals_updated_at on product_goals;
 create trigger product_goals_updated_at before update on product_goals
   for each row execute function set_updated_at();
