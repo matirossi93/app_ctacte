@@ -31,6 +31,7 @@ interface OverrideItem {
 type Categoria = typeof CATEGORIA_ORDER[number];
 
 interface BreakdownEntry { neto: number; comision: number; lineas: number }
+interface DescuentoRebotes { total_rebotado: number; descuento: number; renglones: number }
 interface ComisionVendedor {
     cod_vendedor: number;
     nombre: string;
@@ -38,6 +39,9 @@ interface ComisionVendedor {
     activo: boolean;
     neto_total: number;
     comision_total: number;
+    /** Descuento 3% por rebotes M.C. Vendedor (rige desde julio 2026). */
+    rebotes: DescuentoRebotes | null;
+    comision_neta: number;
     num_lineas: number;
     num_comprobantes: number;
     breakdown: Record<Categoria, BreakdownEntry>;
@@ -51,11 +55,15 @@ interface ComisionesResponse {
     totales: {
         neto_total: number;
         comision_total: number;
+        rebotes_descuento?: number;
+        comision_neta?: number;
         num_lineas: number;
         num_comprobantes: number;
         breakdown: Record<Categoria, BreakdownEntry>;
     };
     categoria_labels: Record<Categoria, string>;
+    rebotes_rige?: boolean;
+    rebotes_error?: boolean;
 }
 
 interface Props {
@@ -155,6 +163,12 @@ export const ComisionesView = ({ isAdmin, viewPeriod, userCodVendedor }: Props) 
 
             {err && <div className="cv-error"><AlertCircle size={16} /> {err}</div>}
 
+            {data?.rebotes_error && (
+                <div className="cv-error">
+                    <AlertCircle size={16} /> No pude leer los rebotes: la comisión mostrada es BRUTA (sin el descuento del 3%). Reintentá en un rato.
+                </div>
+            )}
+
             {loading && !data && (
                 <div className="cv-loading"><Loader2 size={32} className="cv-spin" /> Calculando comisiones…</div>
             )}
@@ -179,14 +193,22 @@ export const ComisionesView = ({ isAdmin, viewPeriod, userCodVendedor }: Props) 
 // ──────────────────────────── Vendedor: vista simple ────────────────────────
 
 interface SingleProps { item: ComisionVendedor; categoriaLabels: Record<Categoria, string>; hidden: boolean }
-const SingleVendorPanel = ({ item, categoriaLabels, hidden }: SingleProps) => (
+const SingleVendorPanel = ({ item, categoriaLabels, hidden }: SingleProps) => {
+    const descuento = item.rebotes?.descuento ?? 0;
+    return (
     <>
         <div className="cv-hero">
             <span className="cv-hero-label">Tu comisión acumulada</span>
-            <strong className="cv-hero-amount">{fmtMoneyMaybe(item.comision_total, hidden)}</strong>
+            <strong className="cv-hero-amount">{fmtMoneyMaybe(item.comision_neta ?? item.comision_total, hidden)}</strong>
             <span className="cv-hero-sub">
                 Sobre <strong>{fmtMoneyMaybe(item.neto_total, hidden)}</strong> facturado neto · {item.num_comprobantes} comprobantes · {item.num_lineas} líneas
             </span>
+            {descuento > 0 && item.rebotes && (
+                <span className="cv-hero-rebotes">
+                    Bruta {fmtMoneyMaybe(item.comision_total, hidden)} − <strong>{fmtMoneyMaybe(descuento, hidden)}</strong> por
+                    pedidos mal cargados (3% de {fmtMoneyMaybe(item.rebotes.total_rebotado, hidden)} rebotados · {item.rebotes.renglones} renglones — detalle en el tab Rebotes)
+                </span>
+            )}
         </div>
 
         <div className="cv-breakdown">
@@ -216,16 +238,33 @@ const SingleVendorPanel = ({ item, categoriaLabels, hidden }: SingleProps) => (
                 </tbody>
                 <tfoot>
                     <tr>
-                        <td>Total</td>
+                        <td>Total{descuento > 0 ? ' (bruta)' : ''}</td>
                         <td className="num">{fmtMoneyMaybe(item.neto_total, hidden)}</td>
                         <td className="num">{item.num_lineas}</td>
                         <td className="num cv-strong">{fmtMoneyMaybe(item.comision_total, hidden)}</td>
                     </tr>
+                    {descuento > 0 && item.rebotes && (
+                        <>
+                            <tr className="cv-rebotes-row">
+                                <td>Descuento rebotes (M.C. Vendedor)</td>
+                                <td className="num">{fmtMoneyMaybe(item.rebotes.total_rebotado, hidden)}</td>
+                                <td className="num">{item.rebotes.renglones}</td>
+                                <td className="num cv-rebotes-desc">−{fmtMoneyMaybe(descuento, hidden)}</td>
+                            </tr>
+                            <tr>
+                                <td>Comisión neta</td>
+                                <td className="num"></td>
+                                <td className="num"></td>
+                                <td className="num cv-strong">{fmtMoneyMaybe(item.comision_neta, hidden)}</td>
+                            </tr>
+                        </>
+                    )}
                 </tfoot>
             </table>
         </div>
     </>
-);
+    );
+};
 
 // ──────────────────────────── Admin: ranking ────────────────────────────────
 
@@ -236,9 +275,12 @@ const AdminPanel = ({ data, hidden, onReload }: AdminProps) => {
         <>
             <div className="cv-hero">
                 <span className="cv-hero-label">Total equipo</span>
-                <strong className="cv-hero-amount">{fmtMoneyMaybe(data.totales.comision_total, hidden)}</strong>
+                <strong className="cv-hero-amount">{fmtMoneyMaybe(data.totales.comision_neta ?? data.totales.comision_total, hidden)}</strong>
                 <span className="cv-hero-sub">
                     Sobre <strong>{fmtMoneyMaybe(data.totales.neto_total, hidden)}</strong> facturado neto · {data.totales.num_comprobantes} comprobantes
+                    {(data.totales.rebotes_descuento ?? 0) > 0 && (
+                        <> · <span className="cv-rebotes-desc">−{fmtMoneyMaybe(data.totales.rebotes_descuento!, hidden)} por rebotes</span></>
+                    )}
                 </span>
             </div>
 
@@ -267,7 +309,12 @@ const AdminPanel = ({ data, hidden, onReload }: AdminProps) => {
                                         <td>{v.nombre}</td>
                                         <td className="num">{fmtMoneyMaybe(v.neto_total, hidden)}</td>
                                         <td className="num">{v.num_comprobantes}</td>
-                                        <td className="num cv-strong">{fmtMoneyMaybe(v.comision_total, hidden)}</td>
+                                        <td className="num cv-strong">
+                                            {fmtMoneyMaybe(v.comision_neta ?? v.comision_total, hidden)}
+                                            {(v.rebotes?.descuento ?? 0) > 0 && (
+                                                <div className="cv-rebotes-min">−{fmtMoneyMaybe(v.rebotes!.descuento, hidden)} reb.</div>
+                                            )}
+                                        </td>
                                     </tr>
                                     {expanded === v.cod_vendedor && (
                                         <tr className="cv-detail">
@@ -284,6 +331,13 @@ const AdminPanel = ({ data, hidden, onReload }: AdminProps) => {
                                                             </div>
                                                         );
                                                     })}
+                                                    {(v.rebotes?.descuento ?? 0) > 0 && (
+                                                        <div className="cv-detail-cat cv-detail-cat--rebotes">
+                                                            <span className="cv-detail-cat-name">Rebotes M.C. Vendedor</span>
+                                                            <span className="cv-detail-cat-neto">Mal cargado {fmtMoneyMaybe(v.rebotes!.total_rebotado, hidden)} · {v.rebotes!.renglones} renglones</span>
+                                                            <strong className="cv-detail-cat-com cv-rebotes-desc">−{fmtMoneyMaybe(v.rebotes!.descuento, hidden)}</strong>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </td>
                                         </tr>

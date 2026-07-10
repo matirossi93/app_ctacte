@@ -134,7 +134,14 @@ export function parseFechaRebote(v: any, year: number, month: number): string | 
 
 // ─── Números ─────────────────────────────────────────────────────────────────
 
-/** Number directo, o string estilo AR ("$ 5.558,00" → 5558). */
+/**
+ * Number directo, o string en formato AR o US — el sheet MEZCLA ambos según
+ * el mes (realidad verificada 10/07: ene-may números crudos, JUNIO 1 fila
+ * texto y JULIO casi todo texto US "$ 435,420.00"). Regla: si hay coma y
+ * punto, el ÚLTIMO separador es el decimal; si hay uno solo, "x,ddd"/"x.ddd"
+ * con exactamente 3 dígitos por grupo se lee como MILES.
+ *   "$ 5.558,00" → 5558   ·   "$ 435,420.00" → 435420   ·   "1.500" → 1500
+ */
 export function parseNumeroRebote(v: any): number | null {
   if (typeof v === 'number' && Number.isFinite(v)) return Math.round(v * 100) / 100;
   if (typeof v !== 'string') return null;
@@ -142,7 +149,18 @@ export function parseNumeroRebote(v: any): number | null {
   if (!s) return null;
   const neg = s.startsWith('-');
   s = s.replace(/^-/, '');
-  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  const lastComma = s.lastIndexOf(',');
+  const lastDot = s.lastIndexOf('.');
+  if (lastComma !== -1 && lastDot !== -1) {
+    if (lastComma > lastDot) s = s.replace(/\./g, '').replace(/,/g, '.'); // AR: 5.558,00
+    else s = s.replace(/,/g, '');                                        // US: 435,420.00
+  } else if (lastComma !== -1) {
+    if (/^\d{1,3}(,\d{3})+$/.test(s)) s = s.replace(/,/g, '');           // 435,420 = miles
+    else if ((s.match(/,/g) ?? []).length === 1) s = s.replace(',', '.'); // 1234,56 = decimal AR
+    else return null;
+  } else if (lastDot !== -1) {
+    if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');         // 5.558 = miles AR
+  }
   const n = Number(s);
   if (!Number.isFinite(n)) return null;
   return Math.round((neg ? -n : n) * 100) / 100;
@@ -319,4 +337,60 @@ export function matchClientesRebotes(meses: RebotesMesParseado[], maestro: Clien
       row.cliente_match_score = m.score;
     }
   }
+}
+
+// ─── Cargos del 3% (fases 2 y 3) ─────────────────────────────────────────────
+
+/**
+ * Los cargos del 3% rigen desde JULIO 2026 (decisión de Mati 10/07/2026:
+ * "empieza a correr desde este mes, los meses anteriores no nos interesan").
+ * Los meses previos del sheet quedan como estadística: se ven en el tab
+ * Rebotes pero no descuentan comisión ni recargan al cliente.
+ */
+export const CARGOS_RIGEN_DESDE = { year: 2026, month: 7 } as const;
+
+export function rigenCargosRebotes(year: number, month: number): boolean {
+  return year > CARGOS_RIGEN_DESDE.year
+    || (year === CARGOS_RIGEN_DESDE.year && month >= CARGOS_RIGEN_DESDE.month);
+}
+
+export const PCT_CARGO_REBOTE = 0.03;
+
+export interface DescuentoRebotes {
+  /** Suma de TOTAL de los renglones rebotados por error del vendedor. */
+  total_rebotado: number;
+  /** 3% de total_rebotado — se resta de la comisión del mes. */
+  descuento: number;
+  renglones: number;
+}
+
+/**
+ * Agrupa por vendedor el descuento del 3% sobre lo rebotado por su error
+ * (motivos en MOTIVOS_DESCUENTO_VENDEDOR). Aplica SIEMPRE, también en
+ * devoluciones parciales (decisión de Mati 10/07). asOfDate recorta al día
+ * (consistente con el corte de comisiones); los renglones sin fecha cuentan
+ * siempre — mejor descontar de más un renglón dudoso que esconderlo.
+ * La vigencia (julio 2026+) la chequea el llamador con rigenCargosRebotes.
+ */
+export function calcDescuentosVendedor(
+  rows: Array<{ cod_vendedor: number | null; motivo: string; total: number | null; fecha: string | null }>,
+  asOfDate?: string | null,
+): Map<number, DescuentoRebotes> {
+  const out = new Map<number, DescuentoRebotes>();
+  for (const r of rows) {
+    if (r.cod_vendedor == null) continue;
+    if (!MOTIVOS_DESCUENTO_VENDEDOR.has(r.motivo as MotivoRebote)) continue;
+    const total = Number(r.total);
+    if (!Number.isFinite(total) || total <= 0) continue;
+    if (asOfDate && r.fecha && r.fecha > asOfDate) continue;
+    let d = out.get(r.cod_vendedor);
+    if (!d) { d = { total_rebotado: 0, descuento: 0, renglones: 0 }; out.set(r.cod_vendedor, d); }
+    d.total_rebotado += total;
+    d.renglones++;
+  }
+  for (const d of out.values()) {
+    d.total_rebotado = Math.round(d.total_rebotado * 100) / 100;
+    d.descuento = Math.round(d.total_rebotado * PCT_CARGO_REBOTE * 100) / 100;
+  }
+  return out;
 }

@@ -233,3 +233,15 @@
 [data-theme="dark"] .cv-ov-recalc-btn { background: #1f2521; color: #EEC045; border-color: #EEC045 }
 [data-theme="dark"] .cv-ov-recalc-msg { color: #EEC045; background: rgba(238, 192, 69, .1) }
 [data-theme="dark"] .cv-ov-toggle { color: #EEC045 }
+
+/* ─── Descuento por rebotes (3% M.C. Vendedor, rige desde julio 2026) ─── */
+.cv-hero-rebotes {
+    display: block; margin-top: 6px;
+    font-size: 12px; color: rgba(255,255,255,.75); line-height: 1.45;
+}
+.cv-hero-rebotes strong { color: #ff9c8a; font-weight: 700 }
+.cv-rebotes-desc { color: #b3372f; font-weight: 700 }
+.cv-rebotes-min { font-size: 10.5px; color: #b3372f; font-weight: 600; margin-top: 1px }
+.cv-rebotes-row td { color: #b3372f }
+.cv-detail-cat--rebotes { border-left: 3px solid rgba(220,68,68,.45); padding-left: 8px }
+[data-theme="dark"] .cv-rebotes-desc, [data-theme="dark"] .cv-rebotes-min, [data-theme="dark"] .cv-rebotes-row td { color: #ff9c8a }

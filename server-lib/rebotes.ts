@@ -16,8 +16,11 @@ import type { Request, Response } from 'express';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import { fetchClientesIMCached } from './infomanager.js';
 import {
-  parseRebotesWorkbook, matchClientesRebotes, type ClienteMaestro,
+  parseRebotesWorkbook, matchClientesRebotes, calcDescuentosVendedor, rigenCargosRebotes,
+  MOTIVOS_DESCUENTO_VENDEDOR,
+  type ClienteMaestro, type DescuentoRebotes,
 } from './rebotesParser.js';
+import { invalidateAll as invalidateGoalsCache } from './goalsResponseCache.js';
 import type { JwtPayload } from './auth.js';
 
 export const REBOTES_SHEET_ID = '1kT1rXU_KC0OiSZckfTx_IrEdjAnccjU4-DA0kHDW468';
@@ -109,6 +112,11 @@ export async function syncRebotes(opts: { buffer?: Buffer; importedBy?: string |
       });
     } catch { /* log best-effort */ }
 
+    // Las respuestas de /api/comisiones se cachean (goalsResponseCache): un
+    // sync que cambió rebotes debe invalidarlas para que el descuento del 3%
+    // se refleje al toque y no 3 minutos después.
+    invalidateGoalsCache();
+
     return {
       ok: errores.length === 0,
       error: errores.length ? errores.join(' · ') : undefined,
@@ -120,6 +128,31 @@ export async function syncRebotes(opts: { buffer?: Buffer; importedBy?: string |
   } finally {
     syncInFlight = false;
   }
+}
+
+// ─── Descuento 3% para comisiones (fase 2) ───────────────────────────────────
+
+/**
+ * Descuentos por rebotes M.C. VENDEDOR del mes, agrupados por cod_vendedor.
+ * Lo consume getComisionesData. Devuelve:
+ *   · Map vacío si el período es anterior a la vigencia (julio 2026) o no hay Supabase
+ *   · null si la query falló — el llamador debe AVISAR en vez de mostrar en
+ *     silencio una comisión sin descontar.
+ */
+export async function getDescuentosRebotes(
+  year: number, month: number, asOfDate?: string | null,
+): Promise<Map<number, DescuentoRebotes> | null> {
+  if (!rigenCargosRebotes(year, month) || !hasSupabase()) return new Map();
+  const { data, error } = await sb().from('rebotes')
+    .select('cod_vendedor, motivo, total, fecha')
+    .eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month)
+    .in('motivo', [...MOTIVOS_DESCUENTO_VENDEDOR])
+    .not('cod_vendedor', 'is', null);
+  if (error) {
+    console.error('[rebotes] getDescuentosRebotes:', error.message);
+    return null;
+  }
+  return calcDescuentosVendedor(data ?? [], asOfDate ?? null);
 }
 
 // ─── Endpoints ───────────────────────────────────────────────────────────────

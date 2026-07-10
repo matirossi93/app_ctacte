@@ -21,6 +21,7 @@ vi.mock('./supabase.js', () => ({
 import {
   normalizarMotivo, codVendedorRebote, parseFechaRebote, parseNumeroRebote,
   buildRebotesFieldIndex, parseRebotesWorkbook, matchClientesRebotes,
+  rigenCargosRebotes, calcDescuentosVendedor,
   MOTIVOS_DESCUENTO_VENDEDOR, MOTIVOS_RECARGO_CLIENTE,
 } from './rebotesParser.js';
 
@@ -125,8 +126,68 @@ describe('parseNumeroRebote', () => {
     expect(parseNumeroRebote(16674)).toBe(16674);
     expect(parseNumeroRebote('$ 5.558,00')).toBe(5558);
     expect(parseNumeroRebote('-1.234,50')).toBe(-1234.5);
+    expect(parseNumeroRebote('1.500')).toBe(1500);   // punto + 3 dígitos = miles AR
+    expect(parseNumeroRebote('14.50')).toBe(14.5);   // punto + 2 dígitos = decimal
     expect(parseNumeroRebote('')).toBe(null);
     expect(parseNumeroRebote('N/A')).toBe(null);
+  });
+
+  it('string formato US — realidad del sheet: JULIO viene como texto "$ 435,420.00"', () => {
+    expect(parseNumeroRebote('$ 435,420.00')).toBe(435420);
+    expect(parseNumeroRebote('$ 14,514.00')).toBe(14514);
+    expect(parseNumeroRebote('$ 1,234,567.89')).toBe(1234567.89);
+    expect(parseNumeroRebote('435,420')).toBe(435420); // coma + 3 dígitos = miles
+    expect(parseNumeroRebote('1234,56')).toBe(1234.56); // coma + 2 dígitos = decimal AR
+  });
+});
+
+// ─── Cargos del 3%: vigencia y cálculo del descuento al vendedor ─────────────
+
+describe('rigenCargosRebotes — rigen desde julio 2026 (decisión Mati 10/07)', () => {
+  it('meses anteriores a julio 2026 NO descuentan (son estadística)', () => {
+    expect(rigenCargosRebotes(2026, 6)).toBe(false);
+    expect(rigenCargosRebotes(2026, 1)).toBe(false);
+    expect(rigenCargosRebotes(2025, 12)).toBe(false);
+  });
+  it('julio 2026 en adelante SÍ', () => {
+    expect(rigenCargosRebotes(2026, 7)).toBe(true);
+    expect(rigenCargosRebotes(2026, 12)).toBe(true);
+    expect(rigenCargosRebotes(2027, 1)).toBe(true);
+  });
+});
+
+describe('calcDescuentosVendedor — 3% de lo rebotado por M.C. VENDEDOR', () => {
+  const row = (over: Partial<{ cod_vendedor: number | null; motivo: string; total: number | null; fecha: string | null }>) => ({
+    cod_vendedor: 3, motivo: 'mc_vendedor', total: 100000, fecha: '2026-07-05', ...over,
+  });
+
+  it('suma solo mc_vendedor, agrupa por vendedor y redondea a 2 decimales', () => {
+    const d = calcDescuentosVendedor([
+      row({ total: 100000 }),
+      row({ total: 33333 }),                        // 133333 × 3% = 3999.99
+      row({ cod_vendedor: 4, total: 50000 }),
+      row({ motivo: 'devolucion', total: 999999 }), // culpa del cliente: no descuenta
+      row({ motivo: 'mc_deposito', total: 999999 }),// culpa del depósito: no descuenta
+      row({ cod_vendedor: null, total: 999999 }),   // sin vendedor: no hay a quién
+      row({ total: null }),                          // sin total: no suma
+    ]);
+    expect(d.get(3)).toEqual({ total_rebotado: 133333, descuento: 3999.99, renglones: 2 });
+    expect(d.get(4)).toEqual({ total_rebotado: 50000, descuento: 1500, renglones: 1 });
+    expect(d.size).toBe(2);
+  });
+
+  it('asOfDate recorta al día; renglones sin fecha cuentan siempre', () => {
+    const d = calcDescuentosVendedor([
+      row({ fecha: '2026-07-05', total: 100 }),
+      row({ fecha: '2026-07-20', total: 900 }),  // después del corte
+      row({ fecha: null, total: 50 }),           // sin fecha: cuenta igual
+    ], '2026-07-10');
+    expect(d.get(3)).toEqual({ total_rebotado: 150, descuento: 4.5, renglones: 2 });
+  });
+
+  it('sin rebotes de vendedor → mapa vacío', () => {
+    expect(calcDescuentosVendedor([row({ motivo: 'devolucion' })]).size).toBe(0);
+    expect(calcDescuentosVendedor([]).size).toBe(0);
   });
 });
 
@@ -262,6 +323,22 @@ describe.skipIf(!fs.existsSync(FIXTURE))('parseRebotesWorkbook · sheet real ene
         expect(r.fecha.slice(0, 7)).toBe(`2026-${String(mes.month).padStart(2, '0')}`);
       }
     }
+  });
+
+  it('JULIO viene con montos en TEXTO formato US y aun así los totales dan bien', () => {
+    // Perfilado 10/07: en JULIO 26 de 29 filas tienen PRECIO/TOTAL como string
+    // "$ 435,420.00" (los demás meses traen números crudos). Si el parser
+    // leyera mal el formato US, este total daría centavos en vez de millones.
+    const julio = meses.find(m => m.month === 7)!;
+    const total = Math.round(julio.rows.reduce((a, r) => a + (r.total ?? 0), 0) * 100) / 100;
+    expect(total).toBe(2062851);
+  });
+
+  it('descuento 3% de julio (fixture real): solo MARCELO, $901.986 mal cargados → $27.059,58', () => {
+    const julio = meses.find(m => m.month === 7)!;
+    const d = calcDescuentosVendedor(julio.rows);
+    expect([...d.keys()]).toEqual([3]); // Marcelo
+    expect(d.get(3)).toEqual({ total_rebotado: 901986, descuento: 27059.58, renglones: 12 });
   });
 
   it('todo vendedor ESCRITO mapea a un cod; solo quedan null las celdas vacías (2 filas reales de FEBRERO)', () => {

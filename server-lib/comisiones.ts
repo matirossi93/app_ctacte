@@ -20,6 +20,8 @@ import {
   excluirClientesDe,
 } from './comisionesShared.js';
 import { loadVendedorOverrides, resolveCodVendedor } from './comisionOverrides.js';
+import { getDescuentosRebotes } from './rebotes.js';
+import { rigenCargosRebotes, PCT_CARGO_REBOTE, type DescuentoRebotes } from './rebotesParser.js';
 
 interface BreakdownEntry { neto: number; comision: number; lineas: number }
 interface ComisionVendedor {
@@ -29,6 +31,10 @@ interface ComisionVendedor {
   activo: boolean;
   neto_total: number;
   comision_total: number;
+  /** Descuento del 3% por rebotes M.C. VENDEDOR (rige desde julio 2026). */
+  rebotes: DescuentoRebotes | null;
+  /** comision_total − rebotes.descuento — lo que efectivamente se paga. */
+  comision_neta: number;
   num_lineas: number;
   num_comprobantes: number;
   breakdown: Record<CategoriaComision, BreakdownEntry>;
@@ -218,6 +224,8 @@ export async function getComisionesData(opts: GetComisionesOpts) {
         activo: true,
         neto_total: 0,
         comision_total: 0,
+        rebotes: null,
+        comision_neta: 0,
         num_lineas: 0,
         num_comprobantes: 0,
         breakdown: emptyBreakdown(),
@@ -247,6 +255,23 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     }
   }
 
+  // 4b. Descuento por rebotes: 3% de lo rebotado por M.C. VENDEDOR (error del
+  // vendedor al cargar el pedido). Rige desde julio 2026 y solo Casa Central
+  // (los repartos salen de acá; las sucursales no tienen hoja de ruta propia
+  // en el sheet). Si la consulta falla NO tapamos el error: devolvemos
+  // rebotes_error=true y la UI avisa que está mostrando comisión BRUTA —
+  // preferible a pagar de más en silencio.
+  const rebotesRige = codEmpresaTarget === COD_EMPRESA_CASA_CENTRAL && rigenCargosRebotes(year, month);
+  let rebotesError = false;
+  if (rebotesRige) {
+    const descuentos = await getDescuentosRebotes(year, month, asOfValid);
+    if (descuentos == null) rebotesError = true;
+    else for (const v of acc.values()) v.rebotes = descuentos.get(v.cod_vendedor) ?? null;
+  }
+  for (const v of acc.values()) {
+    v.comision_neta = Math.round((v.comision_total - (v.rebotes?.descuento ?? 0)) * 100) / 100;
+  }
+
   // 5. Enriquecer con datos de Supabase.
   if (hasSupabase()) {
     const cods = Array.from(acc.keys());
@@ -272,12 +297,14 @@ export async function getComisionesData(opts: GetComisionesOpts) {
   } else {
     items = items.filter(v => COD_VENDEDORES_VISIBLES.has(v.cod_vendedor));
   }
-  items.sort((a, b) => b.comision_total - a.comision_total);
+  items.sort((a, b) => b.comision_neta - a.comision_neta);
 
   // 7. Totales globales.
   const totales = {
     neto_total: Math.round(items.reduce((s, v) => s + v.neto_total, 0) * 100) / 100,
     comision_total: Math.round(items.reduce((s, v) => s + v.comision_total, 0) * 100) / 100,
+    rebotes_descuento: Math.round(items.reduce((s, v) => s + (v.rebotes?.descuento ?? 0), 0) * 100) / 100,
+    comision_neta: Math.round(items.reduce((s, v) => s + v.comision_neta, 0) * 100) / 100,
     num_lineas: items.reduce((s, v) => s + v.num_lineas, 0),
     num_comprobantes: items.reduce((s, v) => s + v.num_comprobantes, 0),
     breakdown: emptyBreakdown(),
@@ -353,6 +380,10 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     totales,
     facturas,
     categoria_labels: CATEGORIA_LABELS,
+    // Descuento por rebotes: rige desde julio 2026 en Casa Central.
+    rebotes_rige: rebotesRige,
+    rebotes_pct: PCT_CARGO_REBOTE,
+    rebotes_error: rebotesError || undefined,
     diagnostico: diag,
     cache_info: {
       ventas_cached: ventasRes.cached,
