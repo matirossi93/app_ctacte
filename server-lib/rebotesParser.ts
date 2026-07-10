@@ -395,26 +395,17 @@ export function calcDescuentosVendedor(
   return out;
 }
 
-// ─── Recargo 3% al cliente (fase 3): detección de pedido COMPLETO ────────────
+// ─── Recargo 3% al cliente (fase 3) ──────────────────────────────────────────
 //
-// Decisión de Mati 10/07: "cuando devuelva algo puntual no se le va a cobrar…
-// la idea es cobrarle cuando nos rebote el pedido completo". El sheet registra
-// renglones sueltos, no sabe si fue el pedido entero → lo inferimos cruzando
-// contra las facturas de InfoManager: agrupamos los renglones rebotados por
-// (cliente, fecha) = "evento" y buscamos una factura del cliente cercana en
-// fecha cuyo total coincida con lo rebotado. Coincide ≈ rebotó todo.
-
-/** Factura candidata para el match. `totales` trae las variantes de total de la
- *  cabecera IM (neto / total / fa_total) porque no sabemos con cuál está
- *  valorizado el sheet — el match prueba contra todas y usa la más cercana. */
-export interface FacturaCandidata {
-  id: number;
-  cod_cliente: number;
-  fecha: string; // YYYY-MM-DD
-  totales: number[];
-}
-
-export type EstadoRecargo = 'completo' | 'parcial' | 'sin_factura' | 'revisar';
+// Decisión de Mati (10/07/2026, REVISADA): se cobra el 3% de TODO lo que el
+// cliente rebota por su culpa (devolucion/sin_dinero/cerrado), sin importar si
+// fue el pedido completo o solo una parte. Queda simétrico con el descuento al
+// vendedor. (La primera versión cruzaba contra las facturas de IM para cobrar
+// solo el pedido completo; esa regla se descartó — ahora se cobra todo.)
+//
+// Agrupamos los renglones por (cliente, fecha) = "evento" solo para presentar:
+// una línea por cliente y día, con el contador de reincidencia del mes. El
+// cálculo es puro y NO depende de InfoManager (a diferencia de la v1).
 
 export interface EventoRecargo {
   cod_cliente: number | null;
@@ -425,49 +416,28 @@ export interface EventoRecargo {
   motivos: MotivoRebote[];
   total_rebotado: number;
   renglones: number;
-  match: {
-    estado: EstadoRecargo;
-    id_comprobante: number | null;
-    total_factura: number | null;
-    /** total_rebotado / total_factura — 1.0 = rebotó exactamente la factura. */
-    ratio: number | null;
-  };
-  /** 3% de total_rebotado — SOLO si el pedido rebotó completo. */
-  recargo: number | null;
+  /** 3% de total_rebotado — se cobra siempre (regla revisada 10/07). */
+  recargo: number;
   /** N° de evento del cliente en el mes (1 = primero): para marcar reincidentes. */
   reincidencia: number;
 }
 
-/** Si lo rebotado difiere del total de la factura en ≤5%, lo tratamos como
- *  pedido completo (tolera redondeos y pequeñas diferencias de valorización). */
-export const TOLERANCIA_PEDIDO_COMPLETO = 0.05;
-/** La factura rebotada puede ser de unos días antes del reparto. */
-export const VENTANA_DIAS_FACTURA = 7;
-
-function diffDias(a: string, b: string): number {
-  return Math.round((Date.parse(a + 'T00:00:00Z') - Date.parse(b + 'T00:00:00Z')) / 86400000);
-}
-
 /**
- * Detecta los eventos de recargo del mes. Puro: recibe los renglones de la
- * tabla rebotes y las facturas FA candidatas (el llamador las saca del cache
- * de ventas IM). Renglones sin fecha o sin match de cliente no pueden
- * cruzarse: van como evento 'sin_factura' para revisión manual del admin.
- * La vigencia (julio 2026+) la chequea el llamador con rigenCargosRebotes.
+ * Eventos de recargo del mes: renglones rebotados por culpa del cliente
+ * (devolucion/sin_dinero/cerrado) agrupados por (cliente, fecha). Cada evento
+ * lleva 3% de recargo sobre lo rebotado — SIEMPRE, sea el pedido completo o
+ * parcial. Puro y sin dependencia de IM: se calcula solo con los renglones de
+ * la tabla rebotes. La vigencia (julio 2026+) la chequea el llamador con
+ * rigenCargosRebotes.
  */
 export function detectarEventosRecargo(
   rows: Array<{
     cod_cliente: number | null; cliente_raw: string; cod_vendedor: number | null;
     vendedor_raw: string | null; fecha: string | null; motivo: string; total: number | null;
   }>,
-  facturas: FacturaCandidata[],
-  opts: { tolerancia?: number; ventanaDias?: number } = {},
 ): EventoRecargo[] {
-  const tolerancia = opts.tolerancia ?? TOLERANCIA_PEDIDO_COMPLETO;
-  const ventana = opts.ventanaDias ?? VENTANA_DIAS_FACTURA;
-
   // Agrupar por (cliente, fecha). Sin cod_cliente agrupamos por el nombre
-  // crudo; sin fecha usamos '' (no matcheable, pero visible).
+  // crudo; sin fecha usamos '' (igual se cobra, se ve en la lista).
   const grupos = new Map<string, EventoRecargo>();
   for (const r of rows) {
     if (!MOTIVOS_RECARGO_CLIENTE.has(r.motivo as MotivoRebote)) continue;
@@ -485,8 +455,7 @@ export function detectarEventosRecargo(
         motivos: [],
         total_rebotado: 0,
         renglones: 0,
-        match: { estado: 'sin_factura', id_comprobante: null, total_factura: null, ratio: null },
-        recargo: null,
+        recargo: 0,
         reincidencia: 1,
       };
       grupos.set(key, ev);
@@ -496,43 +465,10 @@ export function detectarEventosRecargo(
     if (!ev.motivos.includes(r.motivo as MotivoRebote)) ev.motivos.push(r.motivo as MotivoRebote);
   }
 
-  // Facturas por cliente para el match.
-  const porCliente = new Map<number, FacturaCandidata[]>();
-  for (const f of facturas) {
-    let arr = porCliente.get(f.cod_cliente);
-    if (!arr) { arr = []; porCliente.set(f.cod_cliente, arr); }
-    arr.push(f);
-  }
-
   const eventos = [...grupos.values()];
   for (const ev of eventos) {
     ev.total_rebotado = Math.round(ev.total_rebotado * 100) / 100;
-    if (ev.cod_cliente == null || !ev.fecha) continue; // sin_factura: no hay contra qué cruzar
-
-    // Candidatas: facturas del cliente de hasta `ventana` días antes del
-    // rebote (o 1 día después, por desfasajes de carga).
-    let best: { f: FacturaCandidata; total: number; dist: number } | null = null;
-    for (const f of porCliente.get(ev.cod_cliente) ?? []) {
-      const d = diffDias(ev.fecha, f.fecha);
-      if (d < -1 || d > ventana) continue;
-      for (const t of f.totales) {
-        if (!Number.isFinite(t) || t <= 0) continue;
-        const dist = Math.abs(1 - ev.total_rebotado / t);
-        if (!best || dist < best.dist) best = { f, total: t, dist };
-      }
-    }
-    if (!best) continue; // queda sin_factura
-
-    const ratio = Math.round((ev.total_rebotado / best.total) * 1000) / 1000;
-    ev.match = {
-      estado: best.dist <= tolerancia ? 'completo' : (ratio < 1 ? 'parcial' : 'revisar'),
-      id_comprobante: best.f.id,
-      total_factura: Math.round(best.total * 100) / 100,
-      ratio,
-    };
-    if (ev.match.estado === 'completo') {
-      ev.recargo = Math.round(ev.total_rebotado * PCT_CARGO_REBOTE * 100) / 100;
-    }
+    ev.recargo = Math.round(ev.total_rebotado * PCT_CARGO_REBOTE * 100) / 100;
   }
 
   // Reincidencia por cliente (orden cronológico dentro del mes).

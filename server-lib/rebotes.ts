@@ -19,11 +19,8 @@ import {
   parseRebotesWorkbook, matchClientesRebotes, calcDescuentosVendedor, rigenCargosRebotes,
   detectarEventosRecargo,
   MOTIVOS_DESCUENTO_VENDEDOR,
-  type ClienteMaestro, type DescuentoRebotes, type FacturaCandidata, type EventoRecargo,
+  type ClienteMaestro, type DescuentoRebotes, type EventoRecargo,
 } from './rebotesParser.js';
-import { getMonthlyVentasRaw } from './snapshotCache.js';
-import { tipoComprobante, isAnulada } from '../src/utils/ventas.js';
-import { COD_EMPRESA_CASA_CENTRAL, COD_CLIENTES_INTERNOS } from './comisionesShared.js';
 import { invalidateAll as invalidateGoalsCache } from './goalsResponseCache.js';
 import type { JwtPayload } from './auth.js';
 
@@ -161,30 +158,6 @@ export async function getDescuentosRebotes(
 
 // ─── Recargo 3% al cliente (fase 3) ──────────────────────────────────────────
 
-/** Cabeceras crudas de IM → facturas candidatas para el match de recargos:
- *  solo FA válidas de Casa Central, sin clientes internos. */
-function cabecerasACandidatas(ventas: any[]): FacturaCandidata[] {
-  const out: FacturaCandidata[] = [];
-  for (const v of ventas) {
-    const id = Number(v.id);
-    if (!Number.isFinite(id) || isAnulada(v)) continue;
-    if (!tipoComprobante(v).startsWith('F')) continue;
-    const codEmp = Number(v.cod_empresa);
-    if (Number.isFinite(codEmp) && codEmp !== COD_EMPRESA_CASA_CENTRAL) continue;
-    const codCli = Number(v.cod_cliente);
-    if (!Number.isFinite(codCli) || COD_CLIENTES_INTERNOS.has(codCli)) continue;
-    const fecha = String(v.fecha ?? v.fa_fecha ?? '').slice(0, 10);
-    if (!fecha) continue;
-    // No sabemos si el sheet valoriza como neto o total final → probamos todas.
-    const totales = [...new Set([v.neto, v.total, v.fa_total]
-      .map((t: any) => Number(t))
-      .filter((t: number) => Number.isFinite(t) && t > 0))];
-    if (!totales.length) continue;
-    out.push({ id, cod_cliente: codCli, fecha, totales });
-  }
-  return out;
-}
-
 export interface RecargosResult {
   rige: boolean;
   eventos: EventoRecargo[];
@@ -193,9 +166,9 @@ export interface RecargosResult {
 
 /**
  * Eventos de recargo del mes: renglones rebotados por culpa del cliente
- * (devolucion/sin_dinero/cerrado) agrupados por cliente+fecha y cruzados
- * contra las facturas IM del mes y el anterior (un rebote del 2 puede ser
- * de una factura del 30). Recargo 3% SOLO si rebotó el pedido completo.
+ * (devolucion/sin_dinero/cerrado) agrupados por cliente+fecha. Cada evento
+ * lleva 3% de recargo sobre lo rebotado (regla revisada 10/07: se cobra TODO
+ * lo rebotado, completo o parcial). Ya no cruza contra facturas IM.
  */
 export async function getRecargosClientes(year: number, month: number): Promise<RecargosResult> {
   if (!rigenCargosRebotes(year, month)) return { rige: false, eventos: [] };
@@ -207,13 +180,7 @@ export async function getRecargosClientes(year: number, month: number): Promise<
   if (error) return { rige: true, eventos: [], error: error.message };
   if (!data?.length) return { rige: true, eventos: [] };
 
-  const prev = month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
-  const [mesActual, mesPrevio] = await Promise.all([
-    getMonthlyVentasRaw(year, month),
-    getMonthlyVentasRaw(prev.year, prev.month).catch(() => ({ ventas: [] as any[] })),
-  ]);
-  const facturas = cabecerasACandidatas([...mesPrevio.ventas, ...mesActual.ventas]);
-  return { rige: true, eventos: detectarEventosRecargo(data, facturas) };
+  return { rige: true, eventos: detectarEventosRecargo(data) };
 }
 
 /**
@@ -235,16 +202,12 @@ export async function listRecargos(req: Request & { user?: JwtPayload }, res: Re
   if (!isAdmin) eventos = eventos.filter(e => e.cod_vendedor === (user.cod_vendedor ?? -1));
   else if (req.query.cod_vendedor) eventos = eventos.filter(e => e.cod_vendedor === Number(req.query.cod_vendedor));
 
-  const completos = eventos.filter(e => e.match.estado === 'completo');
   res.json({
     ok: true, year, month, rige: r.rige, eventos,
     resumen: {
       eventos: eventos.length,
-      completos: completos.length,
-      recargo_total: Math.round(completos.reduce((a, e) => a + (e.recargo ?? 0), 0) * 100) / 100,
-      parciales: eventos.filter(e => e.match.estado === 'parcial').length,
-      sin_factura: eventos.filter(e => e.match.estado === 'sin_factura').length,
-      revisar: eventos.filter(e => e.match.estado === 'revisar').length,
+      recargo_total: Math.round(eventos.reduce((a, e) => a + e.recargo, 0) * 100) / 100,
+      reincidentes: eventos.filter(e => e.reincidencia > 1).length,
     },
   });
 }

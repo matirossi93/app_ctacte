@@ -193,80 +193,66 @@ describe('calcDescuentosVendedor — 3% de lo rebotado por M.C. VENDEDOR', () =>
 
 // ─── Recargo 3% al cliente: detección de pedido COMPLETO vs facturas IM ──────
 
-describe('detectarEventosRecargo — recargo SOLO si rebotó el pedido completo', () => {
+describe('detectarEventosRecargo — 3% de TODO lo que rebota el cliente (regla revisada 10/07)', () => {
   const rowEv = (over: any = {}) => ({
     cod_cliente: 100, cliente_raw: 'SUPER DEYUV', cod_vendedor: 12, vendedor_raw: 'BRIAN',
     fecha: '2026-07-09', motivo: 'devolucion', total: 50000, ...over,
   });
-  const fact = (over: any = {}) => ({ id: 777, cod_cliente: 100, fecha: '2026-07-08', totales: [100000], ...over });
 
-  it('los renglones del mismo cliente+fecha se agrupan y matchean contra la factura: completo → 3%', () => {
-    const evs = detectarEventosRecargo(
-      [rowEv({ total: 60000 }), rowEv({ total: 40000 })],
-      [fact()],
-    );
+  it('agrupa los renglones del mismo cliente+fecha y cobra 3% de todo lo rebotado', () => {
+    const evs = detectarEventosRecargo([rowEv({ total: 60000 }), rowEv({ total: 40000 })]);
     expect(evs).toHaveLength(1);
     expect(evs[0].total_rebotado).toBe(100000);
     expect(evs[0].renglones).toBe(2);
-    expect(evs[0].match.estado).toBe('completo');
-    expect(evs[0].match.id_comprobante).toBe(777);
     expect(evs[0].recargo).toBe(3000);
   });
 
-  it('coincidencia dentro del 5% cuenta como completo (redondeos/valorización)', () => {
-    const evs = detectarEventosRecargo([rowEv({ total: 97000 })], [fact()]);
-    expect(evs[0].match.estado).toBe('completo');
-    expect(evs[0].recargo).toBe(2910);
+  it('devolución parcial también se cobra: 3% de lo rebotado (ya no exige pedido completo)', () => {
+    const evs = detectarEventosRecargo([rowEv({ total: 40000 })]);
+    expect(evs).toHaveLength(1);
+    expect(evs[0].recargo).toBe(1200);
   });
 
-  it('devolución parcial → sin recargo (decisión Mati: lo puntual no se cobra)', () => {
-    const evs = detectarEventosRecargo([rowEv({ total: 40000 })], [fact()]);
-    expect(evs[0].match.estado).toBe('parcial');
-    expect(evs[0].recargo).toBe(null);
-    expect(evs[0].match.ratio).toBe(0.4);
+  it('sin fecha o sin cod_cliente igual genera evento con su 3% (se ve en la lista)', () => {
+    expect(detectarEventosRecargo([rowEv({ fecha: null })])[0].recargo).toBe(1500);
+    expect(detectarEventosRecargo([rowEv({ cod_cliente: null })])[0].recargo).toBe(1500);
   });
 
-  it('rebotado MAYOR que toda factura cercana → revisar (no cobrar a ciegas)', () => {
-    const evs = detectarEventosRecargo([rowEv({ total: 150000 })], [fact()]);
-    expect(evs[0].match.estado).toBe('revisar');
-    expect(evs[0].recargo).toBe(null);
+  it('total inválido o ≤ 0 no cuenta', () => {
+    expect(detectarEventosRecargo([rowEv({ total: 0 }), rowEv({ total: null }), rowEv({ total: -5000 })])).toHaveLength(0);
   });
 
-  it('ventana de fechas: factura hasta 7 días antes o 1 después; más vieja no cruza', () => {
-    expect(detectarEventosRecargo([rowEv({ total: 100000 })], [fact({ fecha: '2026-07-02' })])[0].match.estado).toBe('completo');
-    expect(detectarEventosRecargo([rowEv({ total: 100000 })], [fact({ fecha: '2026-07-10' })])[0].match.estado).toBe('completo');
-    expect(detectarEventosRecargo([rowEv({ total: 100000 })], [fact({ fecha: '2026-06-25' })])[0].match.estado).toBe('sin_factura');
-    expect(detectarEventosRecargo([rowEv({ total: 100000 })], [fact({ fecha: '2026-07-11' })])[0].match.estado).toBe('sin_factura');
-  });
-
-  it('sin cod_cliente o sin fecha no hay contra qué cruzar → sin_factura (revisión manual)', () => {
-    expect(detectarEventosRecargo([rowEv({ cod_cliente: null })], [fact()])[0].match.estado).toBe('sin_factura');
-    expect(detectarEventosRecargo([rowEv({ fecha: null })], [fact()])[0].match.estado).toBe('sin_factura');
-  });
-
-  it('la cabecera IM trae varios totales (neto/total/fa_total): matchea contra el más cercano', () => {
-    const evs = detectarEventosRecargo([rowEv({ total: 100000 })], [fact({ totales: [82644.63, 100000] })]);
-    expect(evs[0].match.estado).toBe('completo');
-    expect(evs[0].match.total_factura).toBe(100000);
-  });
-
-  it('solo motivos de culpa del cliente generan evento (mc_vendedor/falto no)', () => {
-    const evs = detectarEventosRecargo(
-      [rowEv({ motivo: 'mc_vendedor' }), rowEv({ motivo: 'falto' }), rowEv({ motivo: 'sin_dinero', total: 100000 })],
-      [fact()],
-    );
+  it('solo motivos de culpa del cliente generan evento (mc_vendedor/falto/mc_deposito no)', () => {
+    const evs = detectarEventosRecargo([
+      rowEv({ motivo: 'mc_vendedor' }),
+      rowEv({ motivo: 'falto' }),
+      rowEv({ motivo: 'mc_deposito' }),
+      rowEv({ motivo: 'sin_dinero', total: 100000 }),
+    ]);
     expect(evs).toHaveLength(1);
     expect(evs[0].motivos).toEqual(['sin_dinero']);
-    expect(evs[0].match.estado).toBe('completo');
+    expect(evs[0].recargo).toBe(3000);
+  });
+
+  it('un evento agrupa varios motivos de cliente del mismo día', () => {
+    const evs = detectarEventosRecargo([
+      rowEv({ motivo: 'devolucion', total: 30000 }),
+      rowEv({ motivo: 'cerrado', total: 20000 }),
+    ]);
+    expect(evs).toHaveLength(1);
+    expect([...evs[0].motivos].sort()).toEqual(['cerrado', 'devolucion']);
+    expect(evs[0].total_rebotado).toBe(50000);
+    expect(evs[0].recargo).toBe(1500);
   });
 
   it('reincidencia: segundo rebote del mismo cliente en el mes queda marcado (y más reciente primero)', () => {
-    const evs = detectarEventosRecargo(
-      [rowEv({ fecha: '2026-07-03', total: 100000 }), rowEv({ fecha: '2026-07-20', total: 100000 })],
-      [fact({ fecha: '2026-07-02' }), fact({ id: 888, fecha: '2026-07-19' })],
-    );
+    const evs = detectarEventosRecargo([
+      rowEv({ fecha: '2026-07-03', total: 100000 }),
+      rowEv({ fecha: '2026-07-20', total: 50000 }),
+    ]);
     expect(evs.map(e => e.fecha)).toEqual(['2026-07-20', '2026-07-03']);
     expect(evs.map(e => e.reincidencia)).toEqual([2, 1]);
+    expect(evs.map(e => e.recargo)).toEqual([1500, 3000]);
   });
 });
 

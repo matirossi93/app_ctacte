@@ -73,13 +73,7 @@ interface EventoRecargo {
     motivos: string[];
     total_rebotado: number;
     renglones: number;
-    match: {
-        estado: 'completo' | 'parcial' | 'sin_factura' | 'revisar';
-        id_comprobante: number | null;
-        total_factura: number | null;
-        ratio: number | null;
-    };
-    recargo: number | null;
+    recargo: number;
     reincidencia: number;
 }
 
@@ -89,20 +83,10 @@ interface RecargosResponse {
     eventos: EventoRecargo[];
     resumen: {
         eventos: number;
-        completos: number;
         recargo_total: number;
-        parciales: number;
-        sin_factura: number;
-        revisar: number;
+        reincidentes: number;
     };
 }
-
-const ESTADO_META: Record<EventoRecargo['match']['estado'], { label: string; hint: string }> = {
-    completo: { label: 'Pedido completo', hint: 'Lo rebotado coincide con una factura: corresponde recargo 3%' },
-    parcial: { label: 'Parcial', hint: 'Devolvió una parte del pedido: sin recargo' },
-    sin_factura: { label: 'Sin factura', hint: 'No encontré factura para cruzar: revisar a mano' },
-    revisar: { label: 'Revisar', hint: 'Lo rebotado supera la factura más cercana: revisar a mano' },
-};
 
 interface Props {
     isAdmin: boolean;
@@ -293,47 +277,41 @@ export const RebotesView = ({ isAdmin, viewPeriod }: Props) => {
                         </div>
                     )}
 
-                    {/* ── 2. Recargo 3% al cliente (pedidos completos) ── */}
+                    {/* ── 2. Recargo 3% al cliente (todo lo que rebota por su culpa) ── */}
                     {recargos?.rige && recargos.eventos.length > 0 && (
                         <div className="rb-card rb-card--recargos">
                             <div className="rb-card-head">
-                                <h3>Recargo 3% al cliente</h3>
+                                <h3>Costo del rebote para el cliente (3%)</h3>
                                 <p>
-                                    Cuando el cliente rebota el <b>pedido completo</b> (devolución, sin dinero o cerrado), se le
-                                    cobra un 3% de recargo.{' '}
+                                    Todo lo que el cliente rebota por su culpa (devolución, sin dinero o cerrado) representa un
+                                    <b> 3%</b> extra, sea el pedido completo o solo una parte. Por ahora es <b>solo un aviso</b> —todavía
+                                    no se cobra—:{' '}
                                     {isAdmin
-                                        ? 'El recargo se factura a mano en InfoManager.'
-                                        : 'Avisale al cliente y recordáselo antes del próximo reparto.'}
+                                        ? 'cuando arranque el cobro se factura a mano en InfoManager.'
+                                        : 'mostrale el número a cada cliente para que entre todos bajemos los rebotes.'}
                                 </p>
-                                {recargos.resumen.completos > 0 && (
+                                {recargos.resumen.recargo_total > 0 && (
                                     <span className="rb-recargos-total">
-                                        {recargos.resumen.completos} pedido(s) completo(s) · {fmtMoney(recargos.resumen.recargo_total)} a recargar
+                                        {recargos.resumen.eventos} rebote(s) · 3% = {fmtMoney(recargos.resumen.recargo_total)}
                                     </span>
                                 )}
                             </div>
                             <div className="rb-recargos-list">
-                                {recargos.eventos.map((e, i) => {
-                                    const meta = ESTADO_META[e.match.estado];
-                                    return (
-                                        <div key={i} className={`rb-ev rb-ev--${e.match.estado}`}>
-                                            <div className="rb-ev-top">
-                                                <span className="rb-row-fecha">{fmtFecha(e.fecha || null)}</span>
-                                                <span className="rb-ev-cliente">
-                                                    {e.cliente_raw}
-                                                    {e.reincidencia > 1 && <span className="rb-ev-reinc" title="Rebotes de este cliente en el mes">{e.reincidencia}ª vez</span>}
-                                                </span>
-                                                <span className="rb-ev-estado" title={meta.hint}>{meta.label}</span>
-                                            </div>
-                                            <div className="rb-ev-bottom">
-                                                <span className="rb-ev-det">
-                                                    {fmtMoney(e.total_rebotado)} rebotado ({e.renglones} renglones)
-                                                    {isAdmin && e.match.total_factura != null && <> · factura {fmtMoney(e.match.total_factura)}{e.match.ratio != null ? ` (${Math.round(e.match.ratio * 100)}%)` : ''}</>}
-                                                </span>
-                                                {e.recargo != null && <span className="rb-ev-recargo">+{fmtMoney(e.recargo)}</span>}
-                                            </div>
+                                {recargos.eventos.map((e, i) => (
+                                    <div key={i} className="rb-ev">
+                                        <div className="rb-ev-top">
+                                            <span className="rb-row-fecha">{fmtFecha(e.fecha || null)}</span>
+                                            <span className="rb-ev-cliente">
+                                                {e.cliente_raw}
+                                                {e.reincidencia > 1 && <span className="rb-ev-reinc" title="Rebotes de este cliente en el mes">{e.reincidencia}ª vez</span>}
+                                            </span>
                                         </div>
-                                    );
-                                })}
+                                        <div className="rb-ev-bottom">
+                                            <span className="rb-ev-det">{fmtMoney(e.total_rebotado)} rebotado ({e.renglones} renglones)</span>
+                                            <span className="rb-ev-recargo">+{fmtMoney(e.recargo)}</span>
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     )}
