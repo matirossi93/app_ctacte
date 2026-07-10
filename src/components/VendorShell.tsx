@@ -3,7 +3,7 @@ import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
     DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, MapPin,
-    Sun, ChevronRight, ChevronDown, AlertTriangle, Download, Trash2, Pencil, Bell, Wallet, Send, Store, Scale
+    Sun, ChevronRight, ChevronDown, AlertTriangle, Download, Trash2, Pencil, Bell, Wallet, Send, Store, Scale, PackageX
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser } from '../utils/auth';
 import { RecibosApp } from './RecibosApp';
@@ -17,6 +17,7 @@ import { PeriodSelector, type ViewPeriod } from './PeriodSelector';
 import { HistoricBanner } from './HistoricBanner';
 import { PrintAvanceView } from './PrintAvanceView';
 import { ComisionesView } from './ComisionesView';
+import { RebotesView } from './RebotesView';
 import { VendorMultiSelect } from './VendorMultiSelect';
 import { ensurePushSubscription } from '../utils/webPush';
 import { telHref, waHref, phoneStatus } from '../utils/phone';
@@ -39,7 +40,7 @@ function isCurrentPeriod(p: ViewPeriod): boolean {
     return p.year === t.getUTCFullYear() && p.month === t.getUTCMonth() + 1 && (p.asOfDay == null);
 }
 
-type Tab = 'hoy' | 'cobranzas' | 'objetivos' | 'comisiones' | 'actividad';
+type Tab = 'hoy' | 'cobranzas' | 'objetivos' | 'comisiones' | 'rebotes' | 'actividad';
 
 interface Invoice {
     ID: string;
@@ -608,6 +609,8 @@ export const VendorShell = ({ onLogout }: Props) => {
 
                 {tab === 'comisiones' && <ComisionesView isAdmin={isAdmin} viewPeriod={viewPeriod} userCodVendedor={user?.cod_vendedor ?? null} />}
 
+                {tab === 'rebotes' && <RebotesView isAdmin={isAdmin} viewPeriod={viewPeriod} userCodVendedor={user?.cod_vendedor ?? null} />}
+
                 {tab === 'actividad' && <ActividadView
                     vendedorKey={user?.vendedor_key ?? null}
                     clientNameMap={clientDbMap}
@@ -638,6 +641,10 @@ export const VendorShell = ({ onLogout }: Props) => {
                 <button className={`vs-nav-btn ${tab === 'comisiones' ? 'is-active' : ''}`} onClick={() => setTab('comisiones')}>
                     <DollarSign size={22} />
                     <span>Comisiones</span>
+                </button>
+                <button className={`vs-nav-btn ${tab === 'rebotes' ? 'is-active' : ''}`} onClick={() => setTab('rebotes')}>
+                    <PackageX size={22} />
+                    <span>Rebotes</span>
                 </button>
                 <button className={`vs-nav-btn ${tab === 'actividad' ? 'is-active' : ''}`} onClick={() => setTab('actividad')}>
                     <ActivityIcon size={22} />

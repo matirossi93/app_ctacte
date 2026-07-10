@@ -44,6 +44,7 @@ import { importMaestroClientes } from './server-lib/sheetImport.js';
 import { descargarReporte } from './server-lib/reportes.js';
 import { getConciliacion, exportConciliacion, listSnapshotsConciliacion, guardarSnapshotConciliacion } from './server-lib/conciliacion.js';
 import { cruceCarpetaHandler, exportCruceHandler } from './server-lib/cruceCarpeta.js';
+import { listRebotes, syncRebotesNow, syncRebotes } from './server-lib/rebotes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -807,6 +808,12 @@ app.get('/api/comisiones/overrides', requireJwt, requireAdmin, (req: any, res) =
 app.post('/api/comisiones/overrides', requireJwt, requireAdmin, (req: any, res) => addOverride(req, res));
 app.delete('/api/comisiones/overrides/:id', requireJwt, requireAdmin, (req: any, res) => deleteOverride(req, res));
 
+// ─── Rebotes de reparto (sheet "Faltantes de mercadería") ────────────────────
+// Vendedor ve solo los suyos; admin todos. El sync corre por cron; sync-now
+// fuerza una corrida (admin, ej. después de cargar la hoja de ruta del día).
+app.get('/api/rebotes', requireJwt, (req: any, res) => listRebotes(req, res));
+app.post('/api/rebotes/sync-now', requireJwt, requireAdmin, (req: any, res) => syncRebotesNow(req, res));
+
 // ─── Clientes lookup (maestro completo, con y sin deuda) ─────────────────────
 app.get('/api/clientes/lookup', requireJwt, (req: any, res) => listClientesLookup(req, res));
 app.get('/api/clientes/:cod/historial-compras', requireJwt, (req: any, res) => historialComprasCliente(req, res));
@@ -1256,6 +1263,24 @@ if (hasSupabase()) {
         }
     });
     console.log('Cron syncVentasMeses(6): 0 4 * * *');
+
+    // Rebotes de reparto: sync del sheet "Faltantes de mercadería" cada 30 min,
+    // corrido a :10/:40 para no coincidir con syncVentas (:00/:30). El lock
+    // anti-overlap vive dentro de syncRebotes (lo comparte con /sync-now).
+    cron.schedule('10,40 * * * *', async () => {
+        const r = await syncRebotes().catch((e: any) => ({ ok: false, error: e?.message ?? String(e) }) as Awaited<ReturnType<typeof syncRebotes>>);
+        if (r.ok) console.log(`[cron rebotes] ok · ${r.filas} filas en ${r.meses?.length} meses · ${r.elapsedMs}ms`);
+        else console.error(`[cron rebotes] FAIL · ${r.error}`);
+        if (r.warnings?.length) r.warnings.forEach(w => console.warn(`[cron rebotes] ⚠ ${w}`));
+    });
+    console.log('Cron syncRebotes: 10,40 * * * *');
+    // Primer sync al boot (45s después, cuando el server ya está sirviendo):
+    // sin esto, tras un deploy la tabla queda vacía hasta el próximo :10/:40.
+    setTimeout(() => {
+        syncRebotes()
+            .then(r => console.log('[rebotes on start]', r.ok ? `ok · ${r.filas} filas` : `FAIL · ${r.error}`))
+            .catch(err => console.error('[rebotes on start] fallo:', err?.message ?? err));
+    }, 45_000);
 } else {
     console.log('Cron deshabilitado (Supabase no configurado)');
 }

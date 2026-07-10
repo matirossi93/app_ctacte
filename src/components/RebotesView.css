@@ -1,0 +1,101 @@
+/* Rebotes de reparto — mismo lenguaje visual que el resto del shell:
+   cards blancas con borde suave, chips, badges por responsable. */
+
+.rb-wrap { display: flex; flex-direction: column; gap: 12px; padding-bottom: 8px }
+
+.rb-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px }
+.rb-title { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 700; margin: 0 }
+.rb-sub { font-size: 12.5px; color: rgba(20,24,20,.55); margin-top: 2px }
+.rb-head-actions { display: flex; gap: 8px }
+
+.rb-btn {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 12px; border-radius: 12px; border: 1px solid rgba(20,24,20,.12);
+    background: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
+    font-family: inherit; color: inherit;
+}
+.rb-btn:disabled { opacity: .55; cursor: default }
+.rb-btn--icon { padding: 8px }
+
+.rb-spin { animation: rb-rot 1s linear infinite }
+@keyframes rb-rot { to { transform: rotate(360deg) } }
+
+.rb-error {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; border-radius: 12px;
+    background: rgba(220,68,68,.08); color: #b3372f; font-size: 13px;
+}
+.rb-loading { display: flex; align-items: center; gap: 8px; padding: 24px 0; color: rgba(20,24,20,.55); font-size: 14px }
+
+.rb-hero {
+    display: flex; gap: 10px;
+    background: #fff; border: 1px solid rgba(20,24,20,.08); border-radius: 14px;
+    padding: 14px 16px;
+}
+.rb-hero-item { flex: 1; display: flex; flex-direction: column; gap: 2px }
+.rb-hero-num { font-size: 20px; font-weight: 800; letter-spacing: -.3px }
+.rb-hero-label { font-size: 11.5px; color: rgba(20,24,20,.5) }
+
+.rb-warns { display: flex; flex-wrap: wrap; gap: 8px }
+.rb-warn {
+    font-size: 12px; font-weight: 600; padding: 6px 10px; border-radius: 10px;
+    background: rgba(238,192,69,.18); color: #8a6d1a;
+}
+.rb-warn--soft { background: rgba(20,24,20,.06); color: rgba(20,24,20,.6); font-weight: 500 }
+
+.rb-chips { display: flex; flex-wrap: wrap; gap: 6px }
+.rb-chip {
+    font-size: 12px; padding: 6px 10px; border-radius: 999px;
+    border: 1px solid rgba(20,24,20,.14); background: #fff; cursor: pointer;
+    font-family: inherit; color: rgba(20,24,20,.75);
+}
+.rb-chip b { font-weight: 700 }
+.rb-chip.is-active { background: #141814; color: #fff; border-color: #141814 }
+.rb-chip--vendedor { border-color: rgba(220,68,68,.4) }
+.rb-chip--cliente { border-color: rgba(124,77,255,.4) }
+
+.rb-empty {
+    padding: 28px 12px; text-align: center;
+    color: rgba(20,24,20,.5); font-size: 13.5px;
+    background: #fff; border: 1px dashed rgba(20,24,20,.15); border-radius: 14px;
+}
+
+.rb-list { display: flex; flex-direction: column; gap: 8px }
+.rb-row {
+    background: #fff; border: 1px solid rgba(20,24,20,.08); border-radius: 14px;
+    padding: 10px 12px; display: flex; flex-direction: column; gap: 4px;
+}
+.rb-row-top { display: flex; align-items: center; gap: 8px; min-width: 0 }
+.rb-row-fecha { font-size: 12px; font-weight: 700; color: rgba(20,24,20,.45); flex: 0 0 auto }
+.rb-row-cliente {
+    font-size: 13.5px; font-weight: 700; flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rb-dot { color: #d98324; margin-left: 5px; font-size: 9px; vertical-align: 2px }
+.rb-row-bottom { display: flex; align-items: baseline; justify-content: space-between; gap: 10px }
+.rb-row-art { font-size: 12.5px; color: rgba(20,24,20,.65); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.rb-row-art em { font-style: normal; font-weight: 700 }
+.rb-row-total { font-size: 13.5px; font-weight: 800; flex: 0 0 auto }
+.rb-row-vend { font-size: 11px; color: rgba(20,24,20,.45); font-weight: 600; text-transform: capitalize }
+
+.rb-badge {
+    flex: 0 0 auto; font-size: 10.5px; font-weight: 700; letter-spacing: .2px;
+    padding: 3px 8px; border-radius: 999px; white-space: nowrap;
+}
+/* Responsable del rebote → color: vendedor (rojo: fase 2 descuenta comisión),
+   cliente (violeta: fase 3 recarga 3%), empresa (gris), sin clasificar (punteado) */
+.rb-badge--vendedor { background: rgba(220,68,68,.12); color: #b3372f }
+.rb-badge--cliente { background: rgba(124,77,255,.12); color: #6a3fd8 }
+.rb-badge--empresa { background: rgba(20,24,20,.07); color: rgba(20,24,20,.6) }
+.rb-badge--otro { background: transparent; border: 1px dashed rgba(20,24,20,.3); color: rgba(20,24,20,.55) }
+
+.rb-foot { font-size: 11px; color: rgba(20,24,20,.4); text-align: center; padding-top: 2px }
+
+/* Desktop: lista un poco más respirada */
+@media (min-width: 900px) {
+    .rb-hero { max-width: 480px }
+    .rb-row { flex-direction: row; align-items: center; gap: 12px }
+    .rb-row-top { flex: 1 }
+    .rb-row-bottom { flex: 1; justify-content: flex-end; gap: 24px }
+    .rb-row-vend { flex: 0 0 90px; text-align: right }
+}
