@@ -7,10 +7,11 @@ import './RebotesView.css';
 const MONTH_NAMES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
 // Espejo de MotivoRebote en server-lib/rebotesParser.ts.
-// grupo: quién causó el rebote — define el color del badge y el orden de los chips.
+// grupo: quién causó el rebote — es el eje de TODA la vista (tiles + badges):
 //   vendedor → fase 2 le descuenta 3% de comisión (M.C. VENDEDOR)
 //   cliente  → fase 3 le recarga 3% si rebotó el pedido completo
-const MOTIVO_META: Record<string, { label: string; grupo: 'vendedor' | 'cliente' | 'empresa' | 'otro' }> = {
+type Grupo = 'vendedor' | 'cliente' | 'empresa' | 'otro';
+const MOTIVO_META: Record<string, { label: string; grupo: Grupo }> = {
     mc_vendedor: { label: 'M.C. Vendedor', grupo: 'vendedor' },
     devolucion: { label: 'Devolución', grupo: 'cliente' },
     sin_dinero: { label: 'Sin dinero', grupo: 'cliente' },
@@ -23,7 +24,15 @@ const MOTIVO_META: Record<string, { label: string; grupo: 'vendedor' | 'cliente'
     error_sistema: { label: 'Error sistema', grupo: 'empresa' },
     sin_clasificar: { label: 'Sin clasificar', grupo: 'otro' },
 };
-const MOTIVO_ORDER = Object.keys(MOTIVO_META);
+const grupoDe = (motivo: string): Grupo => MOTIVO_META[motivo]?.grupo ?? 'otro';
+
+const GRUPO_ORDER: Grupo[] = ['vendedor', 'cliente', 'empresa', 'otro'];
+const GRUPO_META: Record<Grupo, { label: string; sub: string }> = {
+    vendedor: { label: 'Error del vendedor', sub: '3% menos de comisión' },
+    cliente: { label: 'Culpa del cliente', sub: '3% de recargo si rebotó el pedido completo' },
+    empresa: { label: 'Empresa / depósito', sub: 'sin cargo' },
+    otro: { label: 'Sin clasificar', sub: 'revisar en la planilla' },
+};
 
 interface RebotesRow {
     fila: number;
@@ -116,7 +125,7 @@ export const RebotesView = ({ isAdmin, viewPeriod }: Props) => {
     const [loading, setLoading] = useState(false);
     const [syncing, setSyncing] = useState(false);
     const [err, setErr] = useState<string | null>(null);
-    const [filtroMotivo, setFiltroMotivo] = useState<string | null>(null);
+    const [filtroGrupo, setFiltroGrupo] = useState<Grupo | null>(null);
     const [filtroVendedor, setFiltroVendedor] = useState<number | null>(null);
     const abortRef = useRef<AbortController | null>(null);
 
@@ -187,14 +196,25 @@ export const RebotesView = ({ isAdmin, viewPeriod }: Props) => {
         }
     }
 
-    const visibles = rows.filter(r =>
-        (filtroMotivo == null || r.motivo === filtroMotivo)
-        && (filtroVendedor == null || (r.cod_vendedor ?? -1) === filtroVendedor)
+    // base = mes completo con corte de fecha y vendedor aplicados. Sobre esto
+    // se calculan el total del resumen y los tiles; el tile activo filtra el
+    // detalle de abajo.
+    const base = rows.filter(r =>
+        (filtroVendedor == null || (r.cod_vendedor ?? -1) === filtroVendedor)
         && (asOfIso == null || r.fecha == null || r.fecha <= asOfIso),
     );
+    const visibles = filtroGrupo == null ? base : base.filter(r => grupoDe(r.motivo) === filtroGrupo);
+
+    const totalBase = Math.round(base.reduce((a, r) => a + (Number(r.total) || 0), 0) * 100) / 100;
     const totalVisible = Math.round(visibles.reduce((a, r) => a + (Number(r.total) || 0), 0) * 100) / 100;
 
-    const motivosDelMes = MOTIVO_ORDER.filter(m => (data?.resumen.por_motivo[m]?.filas ?? 0) > 0);
+    const porGrupo = new Map<Grupo, { filas: number; total: number }>();
+    for (const r of base) {
+        const g = grupoDe(r.motivo);
+        const s = porGrupo.get(g) ?? { filas: 0, total: 0 };
+        s.filas += 1; s.total += Number(r.total) || 0;
+        porGrupo.set(g, s);
+    }
 
     return (
         <div className="rb-wrap">
@@ -216,35 +236,81 @@ export const RebotesView = ({ isAdmin, viewPeriod }: Props) => {
                 </div>
             </div>
 
+            <p className="rb-explain">
+                Mercadería que salió a reparto y <b>volvió sin entregarse</b>. Se carga día a día en la
+                planilla de faltantes y acá se actualiza sola cada media hora.
+            </p>
+
             {err && <div className="rb-error"><AlertCircle size={16} /> {err}</div>}
 
             {loading && !data && <div className="rb-loading"><Loader2 size={22} className="rb-spin" /> Cargando…</div>}
 
-            {data && (
+            {data && rows.length === 0 && !err && (
+                <div className="rb-empty">
+                    Sin rebotes cargados en {monthLabel}. Cuando se carguen en la planilla de faltantes, aparecen acá solos.
+                </div>
+            )}
+
+            {data && rows.length > 0 && (
                 <>
-                    <div className="rb-hero">
-                        <div className="rb-hero-item">
-                            <span className="rb-hero-num">{fmtMoney(totalVisible)}</span>
-                            <span className="rb-hero-label">{filtroMotivo || filtroVendedor || asOfIso ? 'total filtrado' : 'total del mes'}</span>
+                    {/* ── 1. Resumen: cuánto rebotó y de quién fue la culpa ── */}
+                    <div className="rb-card">
+                        <div className="rb-hero">
+                            <span className="rb-hero-num">{fmtMoney(totalBase)}</span>
+                            <span className="rb-hero-label">
+                                rebotado ({base.length} renglones{asOfIso ? ` al día ${viewPeriod.asOfDay}` : ''})
+                            </span>
                         </div>
-                        <div className="rb-hero-item">
-                            <span className="rb-hero-num">{visibles.length}</span>
-                            <span className="rb-hero-label">renglones</span>
+                        <div className="rb-tiles">
+                            {GRUPO_ORDER.map(g => {
+                                const s = porGrupo.get(g);
+                                if (!s) return null;
+                                const meta = GRUPO_META[g];
+                                return (
+                                    <button
+                                        key={g}
+                                        className={`rb-tile rb-tile--${g} ${filtroGrupo === g ? 'is-active' : ''}`}
+                                        onClick={() => setFiltroGrupo(filtroGrupo === g ? null : g)}
+                                        title="Tocá para ver solo estos rebotes en el detalle"
+                                    >
+                                        <span className="rb-tile-label">{meta.label}</span>
+                                        <span className="rb-tile-num">{fmtMoney(s.total)}</span>
+                                        <span className="rb-tile-sub">{s.filas} renglones · {meta.sub}</span>
+                                    </button>
+                                );
+                            })}
                         </div>
                     </div>
 
+                    {isAdmin && (data.resumen.sin_clasificar > 0 || data.resumen.clientes_sin_match > 0) && (
+                        <div className="rb-warns">
+                            {data.resumen.sin_clasificar > 0 && (
+                                <span className="rb-warn">⚠ {data.resumen.sin_clasificar} con motivo sin clasificar</span>
+                            )}
+                            {data.resumen.clientes_sin_match > 0 && (
+                                <span className="rb-warn rb-warn--soft">{data.resumen.clientes_sin_match} cliente(s) sin match con IM</span>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ── 2. Recargo 3% al cliente (pedidos completos) ── */}
                     {recargos?.rige && recargos.eventos.length > 0 && (
-                        <div className="rb-recargos">
-                            <div className="rb-recargos-head">
-                                <span className="rb-recargos-title">Recargo 3% a clientes</span>
+                        <div className="rb-card rb-card--recargos">
+                            <div className="rb-card-head">
+                                <h3>Recargo 3% al cliente</h3>
+                                <p>
+                                    Cuando el cliente rebota el <b>pedido completo</b> (devolución, sin dinero o cerrado), se le
+                                    cobra un 3% de recargo.{' '}
+                                    {isAdmin
+                                        ? 'El recargo se factura a mano en InfoManager.'
+                                        : 'Avisale al cliente y recordáselo antes del próximo reparto.'}
+                                </p>
                                 {recargos.resumen.completos > 0 && (
-                                    <span className="rb-recargos-total">{recargos.resumen.completos} pedido(s) completo(s) · {fmtMoney(recargos.resumen.recargo_total)}</span>
+                                    <span className="rb-recargos-total">
+                                        {recargos.resumen.completos} pedido(s) completo(s) · {fmtMoney(recargos.resumen.recargo_total)} a recargar
+                                    </span>
                                 )}
                             </div>
-                            <p className="rb-recargos-hint">
-                                Rebotes por culpa del cliente (devolución / sin dinero / cerrado). Si rebotó el <b>pedido completo</b> corresponde
-                                recargo del 3%: avisale y recordáselo antes del próximo reparto.{isAdmin ? ' El recargo se factura a mano en IM.' : ''}
-                            </p>
                             <div className="rb-recargos-list">
                                 {recargos.eventos.map((e, i) => {
                                     const meta = ESTADO_META[e.match.estado];
@@ -272,91 +338,71 @@ export const RebotesView = ({ isAdmin, viewPeriod }: Props) => {
                         </div>
                     )}
 
-                    {isAdmin && (data.resumen.sin_clasificar > 0 || data.resumen.clientes_sin_match > 0) && (
-                        <div className="rb-warns">
-                            {data.resumen.sin_clasificar > 0 && (
-                                <span className="rb-warn">⚠ {data.resumen.sin_clasificar} con motivo sin clasificar</span>
-                            )}
-                            {data.resumen.clientes_sin_match > 0 && (
-                                <span className="rb-warn rb-warn--soft">{data.resumen.clientes_sin_match} cliente(s) sin match con IM</span>
-                            )}
+                    {/* ── 3. Detalle renglón por renglón ── */}
+                    <div className="rb-card">
+                        <div className="rb-card-head">
+                            <h3>Detalle</h3>
+                            <p>
+                                {filtroGrupo == null
+                                    ? `Todos los rebotes de ${monthLabel}, renglón por renglón.`
+                                    : <>Mostrando solo <b>{GRUPO_META[filtroGrupo].label.toLowerCase()}</b> ({visibles.length} renglones · {fmtMoney(totalVisible)}) — tocá el recuadro de arriba para ver todo.</>}
+                            </p>
                         </div>
-                    )}
 
-                    {motivosDelMes.length > 0 && (
-                        <div className="rb-chips">
-                            {motivosDelMes.map(m => {
-                                const meta = MOTIVO_META[m] ?? { label: m, grupo: 'otro' as const };
-                                const stat = data.resumen.por_motivo[m];
-                                return (
+                        {isAdmin && vendedores.size > 1 && (
+                            <div className="rb-chips">
+                                <span className="rb-chips-label">Vendedor:</span>
+                                {[...vendedores.entries()].map(([cod, nombre]) => (
                                     <button
-                                        key={m}
-                                        className={`rb-chip rb-chip--${meta.grupo} ${filtroMotivo === m ? 'is-active' : ''}`}
-                                        onClick={() => setFiltroMotivo(filtroMotivo === m ? null : m)}
+                                        key={cod}
+                                        className={`rb-chip ${filtroVendedor === cod ? 'is-active' : ''}`}
+                                        onClick={() => setFiltroVendedor(filtroVendedor === cod ? null : cod)}
                                     >
-                                        {meta.label} <b>{stat.filas}</b>
+                                        {nombre}
                                     </button>
-                                );
-                            })}
-                        </div>
-                    )}
+                                ))}
+                            </div>
+                        )}
 
-                    {isAdmin && vendedores.size > 1 && (
-                        <div className="rb-chips rb-chips--vend">
-                            {[...vendedores.entries()].map(([cod, nombre]) => (
-                                <button
-                                    key={cod}
-                                    className={`rb-chip ${filtroVendedor === cod ? 'is-active' : ''}`}
-                                    onClick={() => setFiltroVendedor(filtroVendedor === cod ? null : cod)}
-                                >
-                                    {nombre}
-                                </button>
-                            ))}
-                        </div>
-                    )}
-
-                    {visibles.length === 0 ? (
-                        <div className="rb-empty">
-                            {rows.length === 0
-                                ? `Sin rebotes cargados en ${monthLabel}.`
-                                : 'Nada que mostrar con estos filtros.'}
-                        </div>
-                    ) : (
-                        <div className="rb-list">
-                            {visibles.map(r => {
-                                const meta = MOTIVO_META[r.motivo] ?? { label: r.motivo_raw ?? r.motivo, grupo: 'otro' as const };
-                                return (
-                                    <div key={`${r.fila}`} className="rb-row">
-                                        <div className="rb-row-top">
-                                            <span className="rb-row-fecha">{fmtFecha(r.fecha)}</span>
-                                            <span className="rb-row-cliente">
-                                                {r.cliente_raw}
-                                                {isAdmin && r.cod_cliente == null && <span className="rb-dot" title="Sin match con maestro IM">●</span>}
-                                            </span>
-                                            <span className={`rb-badge rb-badge--${meta.grupo}`}>{meta.label}</span>
+                        {visibles.length === 0 ? (
+                            <div className="rb-empty rb-empty--inline">Nada que mostrar con estos filtros.</div>
+                        ) : (
+                            <div className="rb-list">
+                                {visibles.map(r => {
+                                    const meta = MOTIVO_META[r.motivo] ?? { label: r.motivo_raw ?? r.motivo, grupo: 'otro' as const };
+                                    return (
+                                        <div key={`${r.fila}`} className="rb-row">
+                                            <div className="rb-row-top">
+                                                <span className="rb-row-fecha">{fmtFecha(r.fecha)}</span>
+                                                <span className="rb-row-cliente">
+                                                    {r.cliente_raw}
+                                                    {isAdmin && r.cod_cliente == null && <span className="rb-dot" title="Sin match con maestro IM">●</span>}
+                                                </span>
+                                                <span className={`rb-badge rb-badge--${meta.grupo}`}>{meta.label}</span>
+                                            </div>
+                                            <div className="rb-row-bottom">
+                                                <span className="rb-row-art">
+                                                    {r.articulo}
+                                                    {r.cantidad != null && <em> ×{r.cantidad}</em>}
+                                                </span>
+                                                <span className="rb-row-total">{r.total != null ? fmtMoney(r.total) : '—'}</span>
+                                            </div>
+                                            {isAdmin && r.vendedor_raw && vendedores.size > 1 && filtroVendedor == null && (
+                                                <div className="rb-row-vend">{r.vendedor_raw}</div>
+                                            )}
                                         </div>
-                                        <div className="rb-row-bottom">
-                                            <span className="rb-row-art">
-                                                {r.articulo}
-                                                {r.cantidad != null && <em> ×{r.cantidad}</em>}
-                                            </span>
-                                            <span className="rb-row-total">{r.total != null ? fmtMoney(r.total) : '—'}</span>
-                                        </div>
-                                        {isAdmin && r.vendedor_raw && vendedores.size > 1 && filtroVendedor == null && (
-                                            <div className="rb-row-vend">{r.vendedor_raw}</div>
-                                        )}
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    )}
-
-                    {data.resumen.ultima_sync && (
-                        <div className="rb-foot">
-                            Última sincronización con el sheet: {new Date(data.resumen.ultima_sync).toLocaleString('es-AR', { timeZone: 'America/Argentina/Tucuman' })}
-                        </div>
-                    )}
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
                 </>
+            )}
+
+            {data?.resumen.ultima_sync && (
+                <div className="rb-foot">
+                    Última sincronización con el sheet: {new Date(data.resumen.ultima_sync).toLocaleString('es-AR', { timeZone: 'America/Argentina/Tucuman' })}
+                </div>
             )}
         </div>
     );

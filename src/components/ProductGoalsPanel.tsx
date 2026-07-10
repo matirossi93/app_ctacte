@@ -88,8 +88,8 @@ export function ProductGoalsPanel({ isAdmin, viewPeriod, selectedVendor }: Props
     return (
         <div className="pg">
             <div className="pg-head">
-                <h2><Package size={16} /> Objetivos por producto</h2>
-                {loading && <Loader2 size={14} className="pg-spin" />}
+                <h2><Package size={17} /> Objetivos por producto {loading && <Loader2 size={14} className="pg-spin" />}</h2>
+                <p>Productos puntuales con objetivo del mes en unidades{isAdmin ? ' (y comisión especial opcional)' : ''}.</p>
             </div>
 
             {err && <div className="pg-error"><AlertCircle size={14} /> {err}</div>}
@@ -106,7 +106,7 @@ export function ProductGoalsPanel({ isAdmin, viewPeriod, selectedVendor }: Props
                         const pct = Math.min(1, Math.max(0, it.pct_cumplimiento ?? 0));
                         const cumplido = (it.pct_cumplimiento ?? 0) >= 1;
                         return (
-                            <div key={`${it.cod_vendedor}:${it.cod_articulo}`} className="pg-item">
+                            <div key={`${it.cod_vendedor}:${it.cod_articulo}`} className={`pg-item ${cumplido ? 'is-done' : ''}`}>
                                 <div className="pg-item-top">
                                     <span className="pg-item-desc">{it.descripcion}</span>
                                     {it.comision_pct != null && (
@@ -114,6 +114,9 @@ export function ProductGoalsPanel({ isAdmin, viewPeriod, selectedVendor }: Props
                                             comisión {fmtPct(it.comision_pct)}
                                         </span>
                                     )}
+                                    <span className={`pg-item-avance ${cumplido ? 'pg-done' : ''}`}>
+                                        {cumplido ? '✓ Cumplido' : `${Math.round(pct * 100)}%`}
+                                    </span>
                                     {isAdmin && (
                                         <DeleteGoalButton item={it} viewPeriod={viewPeriod} onDeleted={load} />
                                     )}
@@ -122,11 +125,8 @@ export function ProductGoalsPanel({ isAdmin, viewPeriod, selectedVendor }: Props
                                     <div className={`pg-bar-fill ${cumplido ? 'is-done' : ''}`} style={{ width: `${pct * 100}%` }} />
                                 </div>
                                 <div className="pg-item-sub">
-                                    <span>
-                                        <b>{fmtUnidades(it.unidades_vendidas)}</b> de {fmtUnidades(it.target_unidades)} unidades
-                                        {!cumplido && <> · faltan {fmtUnidades(it.restante)}</>}
-                                    </span>
-                                    {cumplido && <span className="pg-done">✓ Cumplido</span>}
+                                    <b>{fmtUnidades(it.unidades_vendidas)}</b> de {fmtUnidades(it.target_unidades)} unidades
+                                    {!cumplido && <> · faltan {fmtUnidades(it.restante)}</>}
                                 </div>
                             </div>
                         );
@@ -227,12 +227,6 @@ function AddGoalForm({ viewPeriod, onSaved }: { viewPeriod: ViewPeriod; onSaved:
             {open && (
                 <div className="pg-add-body">
                     <label className="pg-field">
-                        <span>Vendedor</span>
-                        <select value={codVend} onChange={e => setCodVend(Number(e.target.value))}>
-                            {VENDEDORES.map(v => <option key={v.cod} value={v.cod}>{v.nombre}</option>)}
-                        </select>
-                    </label>
-                    <label className="pg-field pg-field-wide">
                         <span>Artículo</span>
                         <div className="pg-search">
                             <Search size={13} />
@@ -253,17 +247,25 @@ function AddGoalForm({ viewPeriod, onSaved }: { viewPeriod: ViewPeriod; onSaved:
                             </div>
                         )}
                     </label>
-                    <label className="pg-field">
-                        <span>Unidades objetivo</span>
-                        <input type="number" inputMode="numeric" placeholder="20" value={target} onChange={e => setTarget(e.target.value)} />
-                    </label>
-                    <label className="pg-field">
-                        <span>Comisión % (opcional)</span>
-                        <input type="text" inputMode="decimal" placeholder="ej: 5" value={pctStr} onChange={e => setPctStr(e.target.value)} />
-                    </label>
-                    <button className="pg-save" onClick={save} disabled={saving}>
-                        {saving ? <Loader2 size={14} className="pg-spin" /> : <Plus size={14} />} Guardar
-                    </button>
+                    <div className="pg-add-row">
+                        <label className="pg-field">
+                            <span>Vendedor</span>
+                            <select value={codVend} onChange={e => setCodVend(Number(e.target.value))}>
+                                {VENDEDORES.map(v => <option key={v.cod} value={v.cod}>{v.nombre}</option>)}
+                            </select>
+                        </label>
+                        <label className="pg-field">
+                            <span>Unidades objetivo</span>
+                            <input type="number" inputMode="numeric" placeholder="20" value={target} onChange={e => setTarget(e.target.value)} />
+                        </label>
+                        <label className="pg-field">
+                            <span>Comisión % (opcional)</span>
+                            <input type="text" inputMode="decimal" placeholder="ej: 5" value={pctStr} onChange={e => setPctStr(e.target.value)} />
+                        </label>
+                        <button className="pg-save" onClick={save} disabled={saving}>
+                            {saving ? <Loader2 size={14} className="pg-spin" /> : <Plus size={14} />} Guardar
+                        </button>
+                    </div>
                     {formErr && <div className="pg-error"><AlertCircle size={14} /> {formErr}</div>}
                     <p className="pg-hint">
                         La comisión especial pisa el % normal de ese artículo para ese vendedor durante este mes

@@ -1,12 +1,19 @@
-/* Objetivos por producto — card dentro del tab Objetivos. */
+/* Objetivos por producto — card dentro del tab Objetivos.
+   Mismo lenguaje visual que RankingEquipo / vs-clientes-obj: card radius 22,
+   filas tintadas (gold en curso, verde cumplido), headers 18px/800. */
 
 .pg {
-    background: #fff; border: 1px solid rgba(20,24,20,.08); border-radius: 14px;
-    padding: 14px 16px; margin-bottom: 16px;
-    display: flex; flex-direction: column; gap: 10px;
+    margin-top: 20px; padding: 16px;
+    background: #fff; border-radius: 22px;
+    border: 1px solid rgba(20,24,20,.06);
+    box-shadow: 0 2px 0 rgba(20,24,20,.04), 0 8px 20px -8px rgba(20,24,20,.12);
+    display: flex; flex-direction: column; gap: 12px;
 }
-.pg-head { display: flex; align-items: center; gap: 8px }
-.pg-head h2 { display: flex; align-items: center; gap: 7px; font-size: 17px; font-weight: 800; margin: 0 }
+.pg-head h2 {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 18px; font-weight: 800; letter-spacing: -.3px; margin: 0;
+}
+.pg-head p { margin: 4px 0 0; font-size: 11px; color: #6e7670; font-weight: 500 }
 
 .pg-spin { animation: pg-rot 1s linear infinite }
 @keyframes pg-rot { to { transform: rotate(360deg) } }
@@ -23,36 +30,47 @@
 .pg-empty { font-size: 12.5px; color: rgba(20,24,20,.5); margin: 0 }
 
 .pg-grupo { display: flex; flex-direction: column; gap: 8px }
-.pg-grupo-nombre { font-size: 12px; font-weight: 800; color: rgba(20,24,20,.55); text-transform: uppercase; letter-spacing: .04em }
+.pg-grupo-nombre { font-size: 11px; font-weight: 800; color: #6e7670; text-transform: uppercase; letter-spacing: .05em }
 
-.pg-item { display: flex; flex-direction: column; gap: 5px }
+/* Fila tintada como las del ranking: gold en curso, verde cumplido */
+.pg-item {
+    padding: 10px 12px; border-radius: 14px;
+    background: #FCF8EE; border: 1px solid rgba(238,192,69,.22);
+    display: flex; flex-direction: column; gap: 6px;
+}
+.pg-item.is-done { background: #E6F0E8; border-color: rgba(6,101,47,.22) }
+
 .pg-item-top { display: flex; align-items: center; gap: 8px; min-width: 0 }
 .pg-item-desc {
-    font-size: 13px; font-weight: 700; flex: 1; min-width: 0;
+    font-size: 14px; font-weight: 700; flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .pg-item-pct {
     flex: 0 0 auto; font-size: 10.5px; font-weight: 800;
-    background: rgba(238,192,69,.2); color: #8a6d1a;
-    padding: 2px 8px; border-radius: 999px;
+    background: rgba(238,192,69,.28); color: #8a6d1a;
+    padding: 2px 8px; border-radius: 999px; white-space: nowrap;
 }
+.pg-item-avance {
+    flex: 0 0 auto; font-size: 15px; font-weight: 800; letter-spacing: -.3px;
+    font-variant-numeric: tabular-nums; color: #141814; white-space: nowrap;
+}
+.pg-done { color: #06652F; font-size: 12.5px }
 .pg-del {
     flex: 0 0 auto; border: 0; background: transparent; cursor: pointer;
     color: rgba(20,24,20,.4); padding: 4px; border-radius: 8px;
 }
 .pg-del:hover { color: #b3372f; background: rgba(220,68,68,.08) }
 
-.pg-bar { height: 8px; border-radius: 999px; background: rgba(20,24,20,.08); overflow: hidden }
+.pg-bar { height: 5px; border-radius: 999px; background: rgba(20,24,20,.08); overflow: hidden }
 .pg-bar-fill {
     height: 100%; border-radius: 999px;
     background: linear-gradient(90deg, #EEC045, #FFD971);
     transition: width .4s ease;
 }
-.pg-bar-fill.is-done { background: linear-gradient(90deg, #2e9e5b, #4cc47e) }
+.pg-bar-fill.is-done { background: linear-gradient(90deg, #06652F, #2e9e5b) }
 
-.pg-item-sub { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 11.5px; color: rgba(20,24,20,.6) }
+.pg-item-sub { font-size: 11.5px; color: rgba(20,24,20,.6) }
 .pg-item-sub b { font-weight: 800; color: rgba(20,24,20,.85) }
-.pg-done { color: #2e9e5b; font-weight: 800 }
 
 /* ── Alta (admin) ── */
 .pg-add { border-top: 1px dashed rgba(20,24,20,.12); padding-top: 8px }
@@ -62,10 +80,13 @@
     font-size: 12.5px; font-weight: 700; color: rgba(20,24,20,.65); font-family: inherit;
 }
 .pg-add-toggle span { display: flex; align-items: center; gap: 6px }
-.pg-add-body { display: flex; flex-direction: column; gap: 8px; padding-top: 8px }
+.pg-add-body { display: flex; flex-direction: column; gap: 10px; padding-top: 10px }
+
+/* Fila secundaria: wrapea sola en contenedores angostos, nunca desborda */
+.pg-add-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end }
+.pg-add-row .pg-field { flex: 1 1 140px; min-width: 140px }
 
 .pg-field { display: flex; flex-direction: column; gap: 4px; position: relative }
-/* nowrap: un label que hace wrap desalinea toda la fila del grid en desktop */
 .pg-field span { font-size: 11px; font-weight: 700; color: rgba(20,24,20,.55); white-space: nowrap }
 /* Altura FIJA e idéntica para input y select: los <select> nativos renderizan
    más bajos que los <input> con el mismo padding y la fila queda serruchada. */
@@ -97,14 +118,9 @@
 
 .pg-save {
     display: flex; align-items: center; justify-content: center; gap: 6px;
-    height: 40px; box-sizing: border-box;
-    padding: 0 16px; border-radius: 10px; border: 0; cursor: pointer;
+    height: 40px; box-sizing: border-box; flex: 0 0 auto;
+    padding: 0 18px; border-radius: 10px; border: 0; cursor: pointer;
     background: #141814; color: #fff; font-size: 13px; font-weight: 700; font-family: inherit;
 }
 .pg-save:disabled { opacity: .55 }
 .pg-hint { font-size: 11px; color: rgba(20,24,20,.5); margin: 0; line-height: 1.45 }
-
-@media (min-width: 720px) {
-    .pg-add-body { display: grid; grid-template-columns: 150px minmax(240px, 1fr) 130px 150px auto; align-items: end; gap: 10px }
-    .pg-add-body .pg-error, .pg-add-body .pg-hint { grid-column: 1 / -1 }
-}
