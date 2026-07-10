@@ -258,7 +258,7 @@ function AddGoalForm({ viewPeriod, onSaved }: { viewPeriod: ViewPeriod; onSaved:
                         <input type="number" inputMode="numeric" placeholder="20" value={target} onChange={e => setTarget(e.target.value)} />
                     </label>
                     <label className="pg-field">
-                        <span>Comisión especial % (opcional)</span>
+                        <span>Comisión % (opcional)</span>
                         <input type="text" inputMode="decimal" placeholder="ej: 5" value={pctStr} onChange={e => setPctStr(e.target.value)} />
                     </label>
                     <button className="pg-save" onClick={save} disabled={saving}>
