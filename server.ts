@@ -44,7 +44,7 @@ import { importMaestroClientes } from './server-lib/sheetImport.js';
 import { descargarReporte } from './server-lib/reportes.js';
 import { getConciliacion, exportConciliacion, listSnapshotsConciliacion, guardarSnapshotConciliacion } from './server-lib/conciliacion.js';
 import { cruceCarpetaHandler, exportCruceHandler } from './server-lib/cruceCarpeta.js';
-import { listRebotes, syncRebotesNow, syncRebotes } from './server-lib/rebotes.js';
+import { listRebotes, listRecargos, syncRebotesNow, syncRebotes } from './server-lib/rebotes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -812,6 +812,7 @@ app.delete('/api/comisiones/overrides/:id', requireJwt, requireAdmin, (req: any,
 // Vendedor ve solo los suyos; admin todos. El sync corre por cron; sync-now
 // fuerza una corrida (admin, ej. después de cargar la hoja de ruta del día).
 app.get('/api/rebotes', requireJwt, (req: any, res) => listRebotes(req, res));
+app.get('/api/rebotes/recargos', requireJwt, (req: any, res) => listRecargos(req, res));
 app.post('/api/rebotes/sync-now', requireJwt, requireAdmin, (req: any, res) => syncRebotesNow(req, res));
 
 // ─── Clientes lookup (maestro completo, con y sin deuda) ─────────────────────

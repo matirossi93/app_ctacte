@@ -17,9 +17,13 @@ import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import { fetchClientesIMCached } from './infomanager.js';
 import {
   parseRebotesWorkbook, matchClientesRebotes, calcDescuentosVendedor, rigenCargosRebotes,
+  detectarEventosRecargo,
   MOTIVOS_DESCUENTO_VENDEDOR,
-  type ClienteMaestro, type DescuentoRebotes,
+  type ClienteMaestro, type DescuentoRebotes, type FacturaCandidata, type EventoRecargo,
 } from './rebotesParser.js';
+import { getMonthlyVentasRaw } from './snapshotCache.js';
+import { tipoComprobante, isAnulada } from '../src/utils/ventas.js';
+import { COD_EMPRESA_CASA_CENTRAL, COD_CLIENTES_INTERNOS } from './comisionesShared.js';
 import { invalidateAll as invalidateGoalsCache } from './goalsResponseCache.js';
 import type { JwtPayload } from './auth.js';
 
@@ -153,6 +157,96 @@ export async function getDescuentosRebotes(
     return null;
   }
   return calcDescuentosVendedor(data ?? [], asOfDate ?? null);
+}
+
+// ─── Recargo 3% al cliente (fase 3) ──────────────────────────────────────────
+
+/** Cabeceras crudas de IM → facturas candidatas para el match de recargos:
+ *  solo FA válidas de Casa Central, sin clientes internos. */
+function cabecerasACandidatas(ventas: any[]): FacturaCandidata[] {
+  const out: FacturaCandidata[] = [];
+  for (const v of ventas) {
+    const id = Number(v.id);
+    if (!Number.isFinite(id) || isAnulada(v)) continue;
+    if (!tipoComprobante(v).startsWith('F')) continue;
+    const codEmp = Number(v.cod_empresa);
+    if (Number.isFinite(codEmp) && codEmp !== COD_EMPRESA_CASA_CENTRAL) continue;
+    const codCli = Number(v.cod_cliente);
+    if (!Number.isFinite(codCli) || COD_CLIENTES_INTERNOS.has(codCli)) continue;
+    const fecha = String(v.fecha ?? v.fa_fecha ?? '').slice(0, 10);
+    if (!fecha) continue;
+    // No sabemos si el sheet valoriza como neto o total final → probamos todas.
+    const totales = [...new Set([v.neto, v.total, v.fa_total]
+      .map((t: any) => Number(t))
+      .filter((t: number) => Number.isFinite(t) && t > 0))];
+    if (!totales.length) continue;
+    out.push({ id, cod_cliente: codCli, fecha, totales });
+  }
+  return out;
+}
+
+export interface RecargosResult {
+  rige: boolean;
+  eventos: EventoRecargo[];
+  error?: string;
+}
+
+/**
+ * Eventos de recargo del mes: renglones rebotados por culpa del cliente
+ * (devolucion/sin_dinero/cerrado) agrupados por cliente+fecha y cruzados
+ * contra las facturas IM del mes y el anterior (un rebote del 2 puede ser
+ * de una factura del 30). Recargo 3% SOLO si rebotó el pedido completo.
+ */
+export async function getRecargosClientes(year: number, month: number): Promise<RecargosResult> {
+  if (!rigenCargosRebotes(year, month)) return { rige: false, eventos: [] };
+  if (!hasSupabase()) return { rige: true, eventos: [], error: 'Supabase no configurado' };
+
+  const { data, error } = await sb().from('rebotes')
+    .select('cod_cliente, cliente_raw, cod_vendedor, vendedor_raw, fecha, motivo, total')
+    .eq('tenant_id', TENANT_ID).eq('year', year).eq('month', month);
+  if (error) return { rige: true, eventos: [], error: error.message };
+  if (!data?.length) return { rige: true, eventos: [] };
+
+  const prev = month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
+  const [mesActual, mesPrevio] = await Promise.all([
+    getMonthlyVentasRaw(year, month),
+    getMonthlyVentasRaw(prev.year, prev.month).catch(() => ({ ventas: [] as any[] })),
+  ]);
+  const facturas = cabecerasACandidatas([...mesPrevio.ventas, ...mesActual.ventas]);
+  return { rige: true, eventos: detectarEventosRecargo(data, facturas) };
+}
+
+/**
+ * GET /api/rebotes/recargos?year&month[&cod_vendedor]
+ * Vendedor: solo los eventos de sus clientes (para avisar/recordar el
+ * recargo). Admin: todos (lista mensual para facturar el 3% a mano en IM).
+ */
+export async function listRecargos(req: Request & { user?: JwtPayload }, res: Response): Promise<void> {
+  const user = req.user!;
+  const nowART = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  const year = Number(req.query.year) || nowART.getUTCFullYear();
+  const month = Number(req.query.month) || nowART.getUTCMonth() + 1;
+  const isAdmin = user.rol === 'admin' || user.rol === 'gerente';
+
+  const r = await getRecargosClientes(year, month);
+  if (r.error) { res.status(500).json({ error: r.error }); return; }
+
+  let eventos = r.eventos;
+  if (!isAdmin) eventos = eventos.filter(e => e.cod_vendedor === (user.cod_vendedor ?? -1));
+  else if (req.query.cod_vendedor) eventos = eventos.filter(e => e.cod_vendedor === Number(req.query.cod_vendedor));
+
+  const completos = eventos.filter(e => e.match.estado === 'completo');
+  res.json({
+    ok: true, year, month, rige: r.rige, eventos,
+    resumen: {
+      eventos: eventos.length,
+      completos: completos.length,
+      recargo_total: Math.round(completos.reduce((a, e) => a + (e.recargo ?? 0), 0) * 100) / 100,
+      parciales: eventos.filter(e => e.match.estado === 'parcial').length,
+      sin_factura: eventos.filter(e => e.match.estado === 'sin_factura').length,
+      revisar: eventos.filter(e => e.match.estado === 'revisar').length,
+    },
+  });
 }
 
 // ─── Endpoints ───────────────────────────────────────────────────────────────

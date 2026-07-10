@@ -55,6 +55,46 @@ interface RebotesResponse {
     };
 }
 
+interface EventoRecargo {
+    cod_cliente: number | null;
+    cliente_raw: string;
+    cod_vendedor: number | null;
+    vendedor_raw: string | null;
+    fecha: string;
+    motivos: string[];
+    total_rebotado: number;
+    renglones: number;
+    match: {
+        estado: 'completo' | 'parcial' | 'sin_factura' | 'revisar';
+        id_comprobante: number | null;
+        total_factura: number | null;
+        ratio: number | null;
+    };
+    recargo: number | null;
+    reincidencia: number;
+}
+
+interface RecargosResponse {
+    ok: boolean;
+    rige: boolean;
+    eventos: EventoRecargo[];
+    resumen: {
+        eventos: number;
+        completos: number;
+        recargo_total: number;
+        parciales: number;
+        sin_factura: number;
+        revisar: number;
+    };
+}
+
+const ESTADO_META: Record<EventoRecargo['match']['estado'], { label: string; hint: string }> = {
+    completo: { label: 'Pedido completo', hint: 'Lo rebotado coincide con una factura: corresponde recargo 3%' },
+    parcial: { label: 'Parcial', hint: 'Devolvió una parte del pedido: sin recargo' },
+    sin_factura: { label: 'Sin factura', hint: 'No encontré factura para cruzar: revisar a mano' },
+    revisar: { label: 'Revisar', hint: 'Lo rebotado supera la factura más cercana: revisar a mano' },
+};
+
 interface Props {
     isAdmin: boolean;
     viewPeriod: ViewPeriod;
@@ -72,6 +112,7 @@ const fmtFecha = (iso: string | null) => {
 
 export const RebotesView = ({ isAdmin, viewPeriod }: Props) => {
     const [data, setData] = useState<RebotesResponse | null>(null);
+    const [recargos, setRecargos] = useState<RecargosResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [syncing, setSyncing] = useState(false);
     const [err, setErr] = useState<string | null>(null);
@@ -94,6 +135,15 @@ export const RebotesView = ({ isAdmin, viewPeriod }: Props) => {
             const j = await res.json();
             if (!res.ok || !j.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
             setData(j);
+            // Recargos al cliente (rige desde julio 2026): best-effort, no
+            // bloquea la vista principal si falla el cruce con IM.
+            try {
+                const res2 = await fetch(`/api/rebotes/recargos?${params.toString()}`, {
+                    headers: authHeaders(), signal: ctrl.signal,
+                });
+                const j2 = await res2.json();
+                setRecargos(res2.ok && j2.ok ? j2 : null);
+            } catch { setRecargos(null); }
         } catch (e: any) {
             if (e.name === 'AbortError') return;
             setErr(e.message);
@@ -182,6 +232,45 @@ export const RebotesView = ({ isAdmin, viewPeriod }: Props) => {
                             <span className="rb-hero-label">renglones</span>
                         </div>
                     </div>
+
+                    {recargos?.rige && recargos.eventos.length > 0 && (
+                        <div className="rb-recargos">
+                            <div className="rb-recargos-head">
+                                <span className="rb-recargos-title">Recargo 3% a clientes</span>
+                                {recargos.resumen.completos > 0 && (
+                                    <span className="rb-recargos-total">{recargos.resumen.completos} pedido(s) completo(s) · {fmtMoney(recargos.resumen.recargo_total)}</span>
+                                )}
+                            </div>
+                            <p className="rb-recargos-hint">
+                                Rebotes por culpa del cliente (devolución / sin dinero / cerrado). Si rebotó el <b>pedido completo</b> corresponde
+                                recargo del 3%: avisale y recordáselo antes del próximo reparto.{isAdmin ? ' El recargo se factura a mano en IM.' : ''}
+                            </p>
+                            <div className="rb-recargos-list">
+                                {recargos.eventos.map((e, i) => {
+                                    const meta = ESTADO_META[e.match.estado];
+                                    return (
+                                        <div key={i} className={`rb-ev rb-ev--${e.match.estado}`}>
+                                            <div className="rb-ev-top">
+                                                <span className="rb-row-fecha">{fmtFecha(e.fecha || null)}</span>
+                                                <span className="rb-ev-cliente">
+                                                    {e.cliente_raw}
+                                                    {e.reincidencia > 1 && <span className="rb-ev-reinc" title="Rebotes de este cliente en el mes">{e.reincidencia}ª vez</span>}
+                                                </span>
+                                                <span className="rb-ev-estado" title={meta.hint}>{meta.label}</span>
+                                            </div>
+                                            <div className="rb-ev-bottom">
+                                                <span className="rb-ev-det">
+                                                    {fmtMoney(e.total_rebotado)} rebotado ({e.renglones} renglones)
+                                                    {isAdmin && e.match.total_factura != null && <> · factura {fmtMoney(e.match.total_factura)}{e.match.ratio != null ? ` (${Math.round(e.match.ratio * 100)}%)` : ''}</>}
+                                                </span>
+                                                {e.recargo != null && <span className="rb-ev-recargo">+{fmtMoney(e.recargo)}</span>}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
 
                     {isAdmin && (data.resumen.sin_clasificar > 0 || data.resumen.clientes_sin_match > 0) && (
                         <div className="rb-warns">
