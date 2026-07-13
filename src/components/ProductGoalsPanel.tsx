@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Package, Loader2, AlertCircle, Plus, Trash2, ChevronDown, ChevronUp, Search } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Package, Loader2, AlertCircle, Plus, Trash2, ChevronDown, ChevronUp, Search, X } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import type { ViewPeriod } from './PeriodSelector';
 import './ProductGoalsPanel.css';
@@ -13,10 +13,16 @@ const VENDEDORES = [
 ];
 const vendorName = (cod: number) => VENDEDORES.find(v => v.cod === cod)?.nombre ?? `Vend ${cod}`;
 
-interface PGItem {
-    cod_vendedor: number;
+interface PGArticulo {
     cod_articulo: number;
     descripcion: string;
+}
+
+interface PGGrupo {
+    id: string;
+    cod_vendedor: number;
+    nombre: string;
+    articulos: PGArticulo[];
     target_unidades: number;
     comision_pct: number | null;
     unidades_vendidas: number;
@@ -41,10 +47,13 @@ const fmtUnidades = (n: number) => Number.isInteger(n) ? String(n) : n.toFixed(2
 const fmtPct = (frac: number) => `${Math.round(frac * 1000) / 10}%`;
 
 export function ProductGoalsPanel({ isAdmin, viewPeriod, selectedVendor }: Props) {
-    const [items, setItems] = useState<PGItem[] | null>(null);
+    const [items, setItems] = useState<PGGrupo[] | null>(null);
     const [avanceError, setAvanceError] = useState<string | null>(null);
     const [err, setErr] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
+    // Filtros locales del panel admin (achican la vista cuando se mira "Todos").
+    const [filtroVendedor, setFiltroVendedor] = useState<number | 'todos'>('todos');
+    const [filtroProducto, setFiltroProducto] = useState<string>('todos');
     const abortRef = useRef<AbortController | null>(null);
 
     const load = async () => {
@@ -71,14 +80,34 @@ export function ProductGoalsPanel({ isAdmin, viewPeriod, selectedVendor }: Props
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [viewPeriod.year, viewPeriod.month]);
 
-    const visibles = (items ?? []).filter(it => selectedVendor == null || it.cod_vendedor === selectedVendor);
+    // Base: respeta la selección global de vendedor del header (si el admin ya
+    // eligió uno). Los filtros locales achican DENTRO de eso.
+    const base = useMemo(
+        () => (items ?? []).filter(it => selectedVendor == null || it.cod_vendedor === selectedVendor),
+        [items, selectedVendor],
+    );
 
-    // Vendedor sin objetivos por producto: no ensuciar la vista de Objetivos.
-    // El admin siempre ve el panel (necesita el alta).
-    if (!isAdmin && visibles.length === 0 && !err) return null;
+    // El dropdown de vendedor solo tiene sentido si en la base hay ≥2 vendedores.
+    // "Efectivo" = si el filtro guardado ya no aplica a la data actual (cambió el
+    // vendedor del header), cae a 'todos' EN EL MISMO render — así no se pinta un
+    // frame vacío ("Sin objetivos") antes de que un effect corrija.
+    const vendedoresEnBase = useMemo(() => [...new Set(base.map(it => it.cod_vendedor))], [base]);
+    const filtroVendedorEfectivo = filtroVendedor !== 'todos' && vendedoresEnBase.includes(filtroVendedor) ? filtroVendedor : 'todos';
+    const trasVendedor = base.filter(it => filtroVendedorEfectivo === 'todos' || it.cod_vendedor === filtroVendedorEfectivo);
 
-    // Agrupar por vendedor para el admin (el vendedor solo ve los suyos).
-    const grupos = new Map<number, PGItem[]>();
+    // El dropdown de producto/familia depende del vendedor ya filtrado.
+    const productosEnBase = useMemo(() => [...new Set(trasVendedor.map(it => it.nombre))].sort(), [trasVendedor]);
+    const filtroProductoEfectivo = productosEnBase.includes(filtroProducto) ? filtroProducto : 'todos';
+    const visibles = trasVendedor.filter(it => filtroProductoEfectivo === 'todos' || it.nombre === filtroProductoEfectivo);
+
+    // Vendedor sin familias: no ensuciar la vista de Objetivos. El admin siempre
+    // ve el panel (necesita el alta).
+    if (!isAdmin && base.length === 0 && !err) return null;
+
+    const mostrarFiltros = isAdmin && (vendedoresEnBase.length >= 2 || productosEnBase.length >= 2);
+
+    // Agrupar por vendedor para el render (el vendedor solo ve las suyas).
+    const grupos = new Map<number, PGGrupo[]>();
     for (const it of visibles) {
         let g = grupos.get(it.cod_vendedor);
         if (!g) { g = []; grupos.set(it.cod_vendedor, g); }
@@ -89,11 +118,34 @@ export function ProductGoalsPanel({ isAdmin, viewPeriod, selectedVendor }: Props
         <div className="pg">
             <div className="pg-head">
                 <h2><Package size={17} /> Objetivos por producto {loading && <Loader2 size={14} className="pg-spin" />}</h2>
-                <p>Productos puntuales con objetivo del mes en unidades{isAdmin ? ' (y comisión especial opcional)' : ''}.</p>
+                <p>Familias de productos con objetivo del mes en unidades{isAdmin ? ' (y comisión especial opcional)' : ''}.</p>
             </div>
 
             {err && <div className="pg-error"><AlertCircle size={14} /> {err}</div>}
             {avanceError && <div className="pg-warn">Avance no disponible (InfoManager no respondió) — se muestran solo los targets.</div>}
+
+            {mostrarFiltros && (
+                <div className="pg-filtros">
+                    {vendedoresEnBase.length >= 2 && (
+                        <label className="pg-filtro">
+                            <span>Vendedor</span>
+                            <select value={String(filtroVendedorEfectivo)} onChange={e => setFiltroVendedor(e.target.value === 'todos' ? 'todos' : Number(e.target.value))}>
+                                <option value="todos">Todos</option>
+                                {vendedoresEnBase.map(cod => <option key={cod} value={cod}>{vendorName(cod)}</option>)}
+                            </select>
+                        </label>
+                    )}
+                    {productosEnBase.length >= 2 && (
+                        <label className="pg-filtro">
+                            <span>Producto</span>
+                            <select value={filtroProductoEfectivo} onChange={e => setFiltroProducto(e.target.value)}>
+                                <option value="todos">Todos</option>
+                                {productosEnBase.map(n => <option key={n} value={n}>{n}</option>)}
+                            </select>
+                        </label>
+                    )}
+                </div>
+            )}
 
             {visibles.length === 0 && !err && (
                 <p className="pg-empty">Sin objetivos por producto este mes.</p>
@@ -101,16 +153,16 @@ export function ProductGoalsPanel({ isAdmin, viewPeriod, selectedVendor }: Props
 
             {[...grupos.entries()].map(([cod, its]) => (
                 <div key={cod} className="pg-grupo">
-                    {isAdmin && grupos.size >= 1 && <div className="pg-grupo-nombre">{vendorName(cod)}</div>}
+                    {isAdmin && <div className="pg-grupo-nombre">{vendorName(cod)}</div>}
                     {its.map(it => {
                         const pct = Math.min(1, Math.max(0, it.pct_cumplimiento ?? 0));
                         const cumplido = (it.pct_cumplimiento ?? 0) >= 1;
                         return (
-                            <div key={`${it.cod_vendedor}:${it.cod_articulo}`} className={`pg-item ${cumplido ? 'is-done' : ''}`}>
+                            <div key={it.id} className={`pg-item ${cumplido ? 'is-done' : ''}`}>
                                 <div className="pg-item-top">
-                                    <span className="pg-item-desc">{it.descripcion}</span>
+                                    <span className="pg-item-desc">{it.nombre}</span>
                                     {it.comision_pct != null && (
-                                        <span className="pg-item-pct" title="Comisión especial de este producto este mes">
+                                        <span className="pg-item-pct" title="Comisión especial de esta familia este mes">
                                             comisión {fmtPct(it.comision_pct)}
                                         </span>
                                     )}
@@ -118,9 +170,16 @@ export function ProductGoalsPanel({ isAdmin, viewPeriod, selectedVendor }: Props
                                         {cumplido ? '✓ Cumplido' : `${Math.round(pct * 100)}%`}
                                     </span>
                                     {isAdmin && (
-                                        <DeleteGoalButton item={it} viewPeriod={viewPeriod} onDeleted={load} />
+                                        <DeleteGoalButton id={it.id} onDeleted={load} />
                                     )}
                                 </div>
+                                {it.articulos.length > 1 && (
+                                    <div className="pg-item-arts">
+                                        {it.articulos.map(a => (
+                                            <span key={a.cod_articulo} className="pg-art-chip" title={`${a.cod_articulo} · ${a.descripcion}`}>{a.descripcion}</span>
+                                        ))}
+                                    </div>
+                                )}
                                 <div className="pg-bar">
                                     <div className={`pg-bar-fill ${cumplido ? 'is-done' : ''}`} style={{ width: `${pct * 100}%` }} />
                                 </div>
@@ -139,16 +198,12 @@ export function ProductGoalsPanel({ isAdmin, viewPeriod, selectedVendor }: Props
     );
 }
 
-function DeleteGoalButton({ item, viewPeriod, onDeleted }: { item: PGItem; viewPeriod: ViewPeriod; onDeleted: () => void }) {
+function DeleteGoalButton({ id, onDeleted }: { id: string; onDeleted: () => void }) {
     const [busy, setBusy] = useState(false);
     const del = async () => {
         setBusy(true);
         try {
-            const params = new URLSearchParams({
-                year: String(viewPeriod.year), month: String(viewPeriod.month),
-                cod_vendedor: String(item.cod_vendedor), cod_articulo: String(item.cod_articulo),
-            });
-            const res = await fetch(`/api/product-goals?${params}`, { method: 'DELETE', headers: authHeaders() });
+            const res = await fetch(`/api/product-goals?id=${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() });
             const j = await res.json();
             if (!res.ok || !j.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
             onDeleted();
@@ -163,10 +218,11 @@ function DeleteGoalButton({ item, viewPeriod, onDeleted }: { item: PGItem; viewP
 
 function AddGoalForm({ viewPeriod, onSaved }: { viewPeriod: ViewPeriod; onSaved: () => void }) {
     const [open, setOpen] = useState(false);
+    const [nombre, setNombre] = useState('');
     const [codVend, setCodVend] = useState<number>(VENDEDORES[0].cod);
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<ArticuloResult[]>([]);
-    const [articulo, setArticulo] = useState<ArticuloResult | null>(null);
+    const [articulos, setArticulos] = useState<ArticuloResult[]>([]);
     const [target, setTarget] = useState('');
     const [pctStr, setPctStr] = useState('');
     const [saving, setSaving] = useState(false);
@@ -175,7 +231,7 @@ function AddGoalForm({ viewPeriod, onSaved }: { viewPeriod: ViewPeriod; onSaved:
 
     // Buscador de artículos con debounce contra /api/product-goals/articulos.
     useEffect(() => {
-        if (articulo || query.trim().length < 2) { setResults([]); return; }
+        if (query.trim().length < 2) { setResults([]); return; }
         if (debounceRef.current) window.clearTimeout(debounceRef.current);
         debounceRef.current = window.setTimeout(async () => {
             try {
@@ -185,10 +241,17 @@ function AddGoalForm({ viewPeriod, onSaved }: { viewPeriod: ViewPeriod; onSaved:
             } catch { setResults([]); }
         }, 350);
         return () => { if (debounceRef.current) window.clearTimeout(debounceRef.current); };
-    }, [query, articulo]);
+    }, [query]);
+
+    const addArticulo = (r: ArticuloResult) => {
+        setArticulos(prev => prev.some(a => a.cod_articulo === r.cod_articulo) ? prev : [...prev, r]);
+        setQuery(''); setResults([]);
+    };
+    const removeArticulo = (cod: number) => setArticulos(prev => prev.filter(a => a.cod_articulo !== cod));
 
     const save = async () => {
-        if (!articulo) { setFormErr('Elegí un artículo del buscador.'); return; }
+        if (articulos.length === 0) { setFormErr('Agregá al menos un artículo desde el buscador.'); return; }
+        if (articulos.length > 1 && nombre.trim() === '') { setFormErr('Ponele un nombre a la familia (ej: "Barras Monkey").'); return; }
         const t = Number(target);
         if (!Number.isFinite(t) || t <= 0) { setFormErr('Ingresá las unidades objetivo (> 0).'); return; }
         // pct se tipea en % humano ("5" = 5%) y viaja como fracción (0.05).
@@ -205,18 +268,21 @@ function AddGoalForm({ viewPeriod, onSaved }: { viewPeriod: ViewPeriod; onSaved:
                 headers: { ...authHeaders(), 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     year: viewPeriod.year, month: viewPeriod.month,
-                    cod_vendedor: codVend, cod_articulo: articulo.cod_articulo,
+                    cod_vendedor: codVend, nombre: nombre.trim() || undefined,
                     target_unidades: t, comision_pct: pct,
+                    cod_articulos: articulos.map(a => a.cod_articulo),
                 }),
             });
             const j = await res.json();
             if (!res.ok || !j.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
-            setQuery(''); setArticulo(null); setTarget(''); setPctStr('');
+            setNombre(''); setQuery(''); setArticulos([]); setTarget(''); setPctStr('');
             onSaved();
         } catch (e: any) {
             setFormErr(e.message);
         } finally { setSaving(false); }
     };
+
+    const esFamilia = articulos.length > 1;
 
     return (
         <div className="pg-add">
@@ -227,26 +293,50 @@ function AddGoalForm({ viewPeriod, onSaved }: { viewPeriod: ViewPeriod; onSaved:
             {open && (
                 <div className="pg-add-body">
                     <label className="pg-field">
-                        <span>Artículo</span>
+                        <span>Artículos {esFamilia && <em className="pg-field-hint">(varias variedades suman a la misma meta)</em>}</span>
                         <div className="pg-search">
                             <Search size={13} />
                             <input
-                                type="text" placeholder="Código o nombre (ej: ZIMPI)"
-                                value={articulo ? `${articulo.cod_articulo} · ${articulo.descripcion}` : query}
-                                onChange={e => { setArticulo(null); setQuery(e.target.value); }}
+                                type="text" placeholder="Buscar código o nombre (ej: MONKEY) y agregar"
+                                value={query}
+                                onChange={e => setQuery(e.target.value)}
                             />
                         </div>
-                        {!articulo && results.length > 0 && (
+                        {results.length > 0 && (
                             <div className="pg-results">
-                                {results.map(r => (
-                                    <button key={r.cod_articulo} className="pg-result" onClick={() => { setArticulo(r); setResults([]); }}>
-                                        <b>{r.cod_articulo}</b> {r.descripcion}
-                                        <span className="pg-result-pct">{fmtPct(r.pct_normal)} normal</span>
-                                    </button>
-                                ))}
+                                {results.map(r => {
+                                    const yaEsta = articulos.some(a => a.cod_articulo === r.cod_articulo);
+                                    return (
+                                        <button key={r.cod_articulo} className="pg-result" onClick={() => addArticulo(r)} disabled={yaEsta}>
+                                            <b>{r.cod_articulo}</b> {r.descripcion}
+                                            <span className="pg-result-pct">{yaEsta ? 'ya agregado' : `${fmtPct(r.pct_normal)} normal`}</span>
+                                        </button>
+                                    );
+                                })}
                             </div>
                         )}
                     </label>
+
+                    {articulos.length > 0 && (
+                        <div className="pg-chips">
+                            {articulos.map(a => (
+                                <span key={a.cod_articulo} className="pg-chip">
+                                    <b>{a.cod_articulo}</b> {a.descripcion}
+                                    <button className="pg-chip-x" onClick={() => removeArticulo(a.cod_articulo)} title="Quitar"><X size={12} /></button>
+                                </span>
+                            ))}
+                        </div>
+                    )}
+
+                    <label className="pg-field">
+                        <span>Nombre de la familia {esFamilia ? '' : '(opcional)'}</span>
+                        <input
+                            type="text"
+                            placeholder={esFamilia ? 'ej: Barras Monkey' : 'se toma del artículo si lo dejás vacío'}
+                            value={nombre} onChange={e => setNombre(e.target.value)}
+                        />
+                    </label>
+
                     <div className="pg-add-row">
                         <label className="pg-field">
                             <span>Vendedor</span>
@@ -268,8 +358,9 @@ function AddGoalForm({ viewPeriod, onSaved }: { viewPeriod: ViewPeriod; onSaved:
                     </div>
                     {formErr && <div className="pg-error"><AlertCircle size={14} /> {formErr}</div>}
                     <p className="pg-hint">
-                        La comisión especial pisa el % normal de ese artículo para ese vendedor durante este mes
-                        (aparece como "Comisión especial" en el panel de Comisiones). Dejala vacía para mantener el % normal.
+                        Agregá una o varias variedades: las unidades de todas suman al mismo objetivo (ej: 20 cajas de Barras Monkey
+                        vendiendo cualquiera de sus sabores). La comisión especial, si la ponés, pisa el % normal de TODOS los
+                        artículos de la familia para ese vendedor este mes (aparece como "Comisión especial" en Comisiones).
                     </p>
                 </div>
             )}
