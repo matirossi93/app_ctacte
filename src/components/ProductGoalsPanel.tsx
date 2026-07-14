@@ -174,7 +174,7 @@ function GoalItem({ it, isAdmin, onDeleted }: { it: PGGrupo; isAdmin: boolean; o
                     </span>
                 )}
                 <span className={`pg-item-avance ${cumplido ? 'pg-done' : ''}`}>
-                    {cumplido ? '✓ Cumplido' : `${Math.round(pct * 100)}%`}
+                    {cumplido ? '✓ Cumplido' : `${Math.min(99, Math.round(pct * 100))}%`}
                 </span>
                 {isAdmin && <DeleteGoalButton id={it.id} onDeleted={onDeleted} />}
             </div>

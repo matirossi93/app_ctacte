@@ -39,9 +39,11 @@ create table if not exists product_goal_articulos (
   primary key (grupo_id, cod_articulo)
 );
 
--- Un artículo no puede estar en 2 objetivos del mismo (vendedor, mes): contaría
--- su avance dos veces. Se valida en el endpoint (la restricción cruza las dos
--- tablas); este índice acelera esa verificación.
+-- Un artículo no debería estar en 2 objetivos del mismo (vendedor, mes): contaría
+-- su avance dos veces. Hoy eso se chequea en el endpoint (upsertProductGoal) —
+-- best-effort, sin candado a nivel DB (la restricción cruza las dos tablas). Con
+-- 1-2 admins alcanza; si hiciera falta blindarlo, denormalizar vendedor/año/mes
+-- acá + unique. Este índice acelera el chequeo del endpoint.
 create index if not exists product_goal_articulos_cod_idx
   on product_goal_articulos (cod_articulo);
 
@@ -67,12 +69,17 @@ create trigger product_goal_grupos_updated_at before update on product_goal_grup
   for each row execute function set_updated_at();
 
 -- ── Migración de datos: objetivos de la 015 (1 artículo) → familias de 1 ──────
--- Id determinístico por (tenant,year,month,vendedor,artículo): re-correr la
--- migración es un no-op (ON CONFLICT no duplica). Solo corre si la 015 existe.
+-- Id determinístico por (tenant,year,month,vendedor,artículo). SOLO corre en una
+-- instalación FRESCA (product_goal_grupos vacía): así re-correr la 016 sobre una
+-- base ya poblada es un no-op real. Sin el guard "vacía", si el admin borró/editó
+-- (borrar+recrear con id nuevo) una familia migrada, un re-run RESUCITaría el
+-- objetivo 015 desde el respaldo read-only → dato borrado reaparece y su artículo
+-- podría quedar en dos familias (avance inflado).
 do $$
 begin
   if exists (select 1 from information_schema.tables
-             where table_schema = 'public' and table_name = 'product_goals') then
+             where table_schema = 'public' and table_name = 'product_goals')
+     and not exists (select 1 from product_goal_grupos) then
 
     insert into product_goal_grupos (id, tenant_id, year, month, cod_vendedor, nombre, target_unidades, comision_pct, set_by)
     select

@@ -567,7 +567,7 @@ const denyRepartidor = (req: express.Request & { user?: JwtPayload }, res: expre
     next();
 };
 for (const prefix of [
-    '/api/data', '/api/goals', '/api/comisiones', '/api/activity',
+    '/api/data', '/api/goals', '/api/product-goals', '/api/comisiones', '/api/activity',
     '/api/month-config', '/api/reportes', '/api/cuentas', '/api/sheet-import',
     '/api/overrides', '/api/client-thresholds', '/api/debug', '/api/conciliacion',
 ]) {

@@ -20,6 +20,8 @@ vi.mock('./comisionOverrides.js', () => ({
   resolveCodVendedor: vi.fn(),
 }));
 vi.mock('./goalsResponseCache.js', () => ({
+  getCached: vi.fn(() => null),
+  setCached: vi.fn(),
   invalidateAll: vi.fn(),
 }));
 

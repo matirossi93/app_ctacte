@@ -21,7 +21,7 @@ import {
   clasificarCabeceraComision, COD_EMPRESA_CASA_CENTRAL, COD_CLIENTES_INTERNOS, COD_VENDEDORES_VISIBLES,
 } from './comisionesShared.js';
 import { pctParaArticulo } from './comisionesRules.js';
-import { invalidateAll as invalidateGoalsCache } from './goalsResponseCache.js';
+import { getCached, setCached, invalidateAll as invalidateGoalsCache } from './goalsResponseCache.js';
 import type { JwtPayload } from './auth.js';
 
 // ─── Agregado de unidades vendidas (puro, testeable) ─────────────────────────
@@ -90,7 +90,7 @@ export function calcAvancePorGrupo(
   return out;
 }
 
-// ─── Validación del alta/edición (pura, testeable) ───────────────────────────
+// ─── Validación del alta (pura, testeable) ───────────────────────────────────
 
 export interface UpsertGrupoInput {
   year: number; month: number;
@@ -110,8 +110,8 @@ export interface UpsertGrupoNormalizado {
 }
 
 /**
- * Valida y normaliza el body de un alta/edición de familia SIN tocar IO (ni IM
- * ni Supabase). Devuelve `{ ok, error }` para responder 400 con mensaje claro,
+ * Valida y normaliza el body de un alta de familia SIN tocar IO (ni IM ni
+ * Supabase). Devuelve `{ ok, error }` para responder 400 con mensaje claro,
  * o `{ ok, value }` con los datos ya saneados. El nombre queda null cuando hay
  * un solo artículo y no se dio nombre: el caller lo completa con el catálogo.
  */
@@ -269,17 +269,31 @@ export async function listProductGoals(req: Request & { user?: JwtPayload }, res
   const year = Number(req.query.year) || nowART.getUTCFullYear();
   const month = Number(req.query.month) || nowART.getUTCMonth() + 1;
   const isAdmin = user.rol === 'admin' || user.rol === 'gerente';
+  // El vendedor solo ve lo suyo; el admin ve todo o filtra por ?cod_vendedor.
+  const codVendFilter = !isAdmin
+    ? (user.cod_vendedor ?? -1)
+    : (req.query.cod_vendedor ? Number(req.query.cod_vendedor) : undefined);
+
+  // Cache de la respuesta ya armada (mismo patrón que comisiones.ts, mismo TTL 3
+  // min). La key incluye el filtro de vendedor: el contenido es idéntico para
+  // quien pida ese mismo recorte, así que compartirla no filtra data entre
+  // vendedores (un no-admin solo puede pedir su propio cod). upsert/delete ya
+  // llaman invalidateGoalsCache() → estas entradas se limpian solas al cambiar algo.
+  const cacheKey = `product-goals:${year}-${month}:${codVendFilter ?? 'all'}`;
+  const hit = getCached(cacheKey);
+  if (hit) { res.set('X-Cache', 'HIT').json(hit); return; }
 
   let grupos: GrupoDb[];
   try {
-    const codVendFilter = !isAdmin
-      ? (user.cod_vendedor ?? -1)
-      : (req.query.cod_vendedor ? Number(req.query.cod_vendedor) : undefined);
     grupos = await fetchGruposDelMes(year, month, codVendFilter);
   } catch (e: any) {
     res.status(500).json({ error: e?.message ?? String(e) }); return;
   }
-  if (!grupos.length) { res.json({ ok: true, year, month, items: [] }); return; }
+  if (!grupos.length) {
+    const body = { ok: true, year, month, items: [] };
+    setCached(cacheKey, body);
+    res.set('X-Cache', 'MISS').json(body); return;
+  }
 
   // Avance en vivo, solo para los pares (vendedor, artículo) con objetivo.
   const soloKeys = new Set<string>();
@@ -325,7 +339,11 @@ export async function listProductGoals(req: Request & { user?: JwtPayload }, res
     };
   });
 
-  res.json({ ok: true, year, month, items, avance_error: avanceError });
+  const body = { ok: true, year, month, items, avance_error: avanceError };
+  // No cachear si IM se cayó (avanceError): congelaría "avance no disponible" +
+  // 0% durante todo el TTL aunque IM ya se haya recuperado.
+  if (!avanceError) setCached(cacheKey, body);
+  res.set('X-Cache', avanceError ? 'BYPASS' : 'MISS').json(body);
 }
 
 /**
