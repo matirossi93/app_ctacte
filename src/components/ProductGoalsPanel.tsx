@@ -12,6 +12,11 @@ const VENDEDORES = [
     { cod: 12, nombre: 'Brian' },
 ];
 const vendorName = (cod: number) => VENDEDORES.find(v => v.cod === cod)?.nombre ?? `Vend ${cod}`;
+// Orden canónico de vendedores para el acordeón (mismo orden que VENDEDORES).
+const ordenVendedor = (cod: number) => {
+    const i = VENDEDORES.findIndex(v => v.cod === cod);
+    return i === -1 ? 99 : i;
+};
 
 interface PGArticulo {
     cod_articulo: number;
@@ -51,9 +56,9 @@ export function ProductGoalsPanel({ isAdmin, viewPeriod, selectedVendor }: Props
     const [avanceError, setAvanceError] = useState<string | null>(null);
     const [err, setErr] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
-    // Filtros locales del panel admin (achican la vista cuando se mira "Todos").
-    const [filtroVendedor, setFiltroVendedor] = useState<number | 'todos'>('todos');
-    const [filtroProducto, setFiltroProducto] = useState<string>('todos');
+    // Qué vendedores están desplegados (admin). Arranca vacío = todo colapsado:
+    // la vista es una lista corta de vendedores y se abre solo el que se toca.
+    const [expandido, setExpandido] = useState<Set<number>>(new Set());
     const abortRef = useRef<AbortController | null>(null);
 
     const load = async () => {
@@ -87,32 +92,30 @@ export function ProductGoalsPanel({ isAdmin, viewPeriod, selectedVendor }: Props
         [items, selectedVendor],
     );
 
-    // El dropdown de vendedor solo tiene sentido si en la base hay ≥2 vendedores.
-    // "Efectivo" = si el filtro guardado ya no aplica a la data actual (cambió el
-    // vendedor del header), cae a 'todos' EN EL MISMO render — así no se pinta un
-    // frame vacío ("Sin objetivos") antes de que un effect corrija.
-    const vendedoresEnBase = useMemo(() => [...new Set(base.map(it => it.cod_vendedor))], [base]);
-    const filtroVendedorEfectivo = filtroVendedor !== 'todos' && vendedoresEnBase.includes(filtroVendedor) ? filtroVendedor : 'todos';
-    const trasVendedor = base.filter(it => filtroVendedorEfectivo === 'todos' || it.cod_vendedor === filtroVendedorEfectivo);
-
-    // El dropdown de producto/familia depende del vendedor ya filtrado.
-    const productosEnBase = useMemo(() => [...new Set(trasVendedor.map(it => it.nombre))].sort(), [trasVendedor]);
-    const filtroProductoEfectivo = productosEnBase.includes(filtroProducto) ? filtroProducto : 'todos';
-    const visibles = trasVendedor.filter(it => filtroProductoEfectivo === 'todos' || it.nombre === filtroProductoEfectivo);
+    // Agrupar por vendedor en el orden canónico (Sebastián, Marcelo, Julio, Brian).
+    const porVendedor = useMemo(() => {
+        const m = new Map<number, PGGrupo[]>();
+        for (const it of base) {
+            let g = m.get(it.cod_vendedor);
+            if (!g) { g = []; m.set(it.cod_vendedor, g); }
+            g.push(it);
+        }
+        return [...m.entries()].sort((a, b) => ordenVendedor(a[0]) - ordenVendedor(b[0]));
+    }, [base]);
 
     // Vendedor sin familias: no ensuciar la vista de Objetivos. El admin siempre
     // ve el panel (necesita el alta).
     if (!isAdmin && base.length === 0 && !err) return null;
 
-    const mostrarFiltros = isAdmin && (vendedoresEnBase.length >= 2 || productosEnBase.length >= 2);
+    const toggle = (cod: number) => setExpandido(prev => {
+        const n = new Set(prev);
+        if (n.has(cod)) n.delete(cod); else n.add(cod);
+        return n;
+    });
 
-    // Agrupar por vendedor para el render (el vendedor solo ve las suyas).
-    const grupos = new Map<number, PGGrupo[]>();
-    for (const it of visibles) {
-        let g = grupos.get(it.cod_vendedor);
-        if (!g) { g = []; grupos.set(it.cod_vendedor, g); }
-        g.push(it);
-    }
+    // Acordeón por vendedor solo para admin con ≥2 vendedores; si no, lista plana
+    // (un vendedor solo, o el vendedor logueado viendo lo suyo).
+    const usarAcordeon = isAdmin && porVendedor.length >= 2;
 
     return (
         <div className="pg">
@@ -124,76 +127,71 @@ export function ProductGoalsPanel({ isAdmin, viewPeriod, selectedVendor }: Props
             {err && <div className="pg-error"><AlertCircle size={14} /> {err}</div>}
             {avanceError && <div className="pg-warn">Avance no disponible (InfoManager no respondió) — se muestran solo los targets.</div>}
 
-            {mostrarFiltros && (
-                <div className="pg-filtros">
-                    {vendedoresEnBase.length >= 2 && (
-                        <label className="pg-filtro">
-                            <span>Vendedor</span>
-                            <select value={String(filtroVendedorEfectivo)} onChange={e => setFiltroVendedor(e.target.value === 'todos' ? 'todos' : Number(e.target.value))}>
-                                <option value="todos">Todos</option>
-                                {vendedoresEnBase.map(cod => <option key={cod} value={cod}>{vendorName(cod)}</option>)}
-                            </select>
-                        </label>
-                    )}
-                    {productosEnBase.length >= 2 && (
-                        <label className="pg-filtro">
-                            <span>Producto</span>
-                            <select value={filtroProductoEfectivo} onChange={e => setFiltroProducto(e.target.value)}>
-                                <option value="todos">Todos</option>
-                                {productosEnBase.map(n => <option key={n} value={n}>{n}</option>)}
-                            </select>
-                        </label>
-                    )}
-                </div>
-            )}
-
-            {visibles.length === 0 && !err && (
+            {base.length === 0 && !err && (
                 <p className="pg-empty">Sin objetivos por producto este mes.</p>
             )}
 
-            {[...grupos.entries()].map(([cod, its]) => (
-                <div key={cod} className="pg-grupo">
-                    {isAdmin && <div className="pg-grupo-nombre">{vendorName(cod)}</div>}
-                    {its.map(it => {
-                        const pct = Math.min(1, Math.max(0, it.pct_cumplimiento ?? 0));
-                        const cumplido = (it.pct_cumplimiento ?? 0) >= 1;
-                        return (
-                            <div key={it.id} className={`pg-item ${cumplido ? 'is-done' : ''}`}>
-                                <div className="pg-item-top">
-                                    <span className="pg-item-desc">{it.nombre}</span>
-                                    {it.comision_pct != null && (
-                                        <span className="pg-item-pct" title="Comisión especial de esta familia este mes">
-                                            comisión {fmtPct(it.comision_pct)}
-                                        </span>
-                                    )}
-                                    <span className={`pg-item-avance ${cumplido ? 'pg-done' : ''}`}>
-                                        {cumplido ? '✓ Cumplido' : `${Math.round(pct * 100)}%`}
-                                    </span>
-                                    {isAdmin && (
-                                        <DeleteGoalButton id={it.id} onDeleted={load} />
-                                    )}
+            {usarAcordeon
+                ? porVendedor.map(([cod, its]) => {
+                    const abierto = expandido.has(cod);
+                    const cumplidos = its.filter(it => (it.pct_cumplimiento ?? 0) >= 1).length;
+                    return (
+                        <div key={cod} className={`pg-acc ${abierto ? 'is-open' : ''}`}>
+                            <button className="pg-acc-head" onClick={() => toggle(cod)} aria-expanded={abierto}>
+                                <span className="pg-acc-nombre">{vendorName(cod)}</span>
+                                <span className="pg-acc-count">
+                                    {its.length} objetivo{its.length !== 1 ? 's' : ''}
+                                    {cumplidos > 0 && <span className="pg-acc-done"> · {cumplidos} ✓</span>}
+                                </span>
+                                {abierto ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                            </button>
+                            {abierto && (
+                                <div className="pg-acc-body">
+                                    {its.map(it => <GoalItem key={it.id} it={it} isAdmin={isAdmin} onDeleted={load} />)}
                                 </div>
-                                {it.articulos.length > 1 && (
-                                    <div className="pg-item-arts">
-                                        {it.articulos.map(a => (
-                                            <span key={a.cod_articulo} className="pg-art-chip" title={`${a.cod_articulo} · ${a.descripcion}`}>{a.descripcion}</span>
-                                        ))}
-                                    </div>
-                                )}
-                                <div className="pg-bar">
-                                    <div className={`pg-bar-fill ${cumplido ? 'is-done' : ''}`} style={{ width: `${pct * 100}%` }} />
-                                </div>
-                                <div className="pg-item-sub">
-                                    <b>{fmtUnidades(it.unidades_vendidas)}</b> de {fmtUnidades(it.target_unidades)} unidades
-                                    {!cumplido && <> · faltan {fmtUnidades(it.restante)}</>}
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
-            ))}
+                            )}
+                        </div>
+                    );
+                })
+                : base.map(it => <GoalItem key={it.id} it={it} isAdmin={isAdmin} onDeleted={load} />)
+            }
 
             {isAdmin && <AddGoalForm viewPeriod={viewPeriod} onSaved={load} />}
+        </div>
+    );
+}
+
+function GoalItem({ it, isAdmin, onDeleted }: { it: PGGrupo; isAdmin: boolean; onDeleted: () => void }) {
+    const pct = Math.min(1, Math.max(0, it.pct_cumplimiento ?? 0));
+    const cumplido = (it.pct_cumplimiento ?? 0) >= 1;
+    return (
+        <div className={`pg-item ${cumplido ? 'is-done' : ''}`}>
+            <div className="pg-item-top">
+                <span className="pg-item-desc">{it.nombre}</span>
+                {it.comision_pct != null && (
+                    <span className="pg-item-pct" title="Comisión especial de esta familia este mes">
+                        comisión {fmtPct(it.comision_pct)}
+                    </span>
+                )}
+                <span className={`pg-item-avance ${cumplido ? 'pg-done' : ''}`}>
+                    {cumplido ? '✓ Cumplido' : `${Math.round(pct * 100)}%`}
+                </span>
+                {isAdmin && <DeleteGoalButton id={it.id} onDeleted={onDeleted} />}
+            </div>
+            {it.articulos.length > 1 && (
+                <div className="pg-item-arts">
+                    {it.articulos.map(a => (
+                        <span key={a.cod_articulo} className="pg-art-chip" title={`${a.cod_articulo} · ${a.descripcion}`}>{a.descripcion}</span>
+                    ))}
+                </div>
+            )}
+            <div className="pg-bar">
+                <div className={`pg-bar-fill ${cumplido ? 'is-done' : ''}`} style={{ width: `${pct * 100}%` }} />
+            </div>
+            <div className="pg-item-sub">
+                <b>{fmtUnidades(it.unidades_vendidas)}</b> de {fmtUnidades(it.target_unidades)} unidades
+                {!cumplido && <> · faltan {fmtUnidades(it.restante)}</>}
+            </div>
         </div>
     );
 }
