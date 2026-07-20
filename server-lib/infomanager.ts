@@ -256,7 +256,7 @@ export interface CrearReciboInput {
   comprobantes: ReciboComprobante[];
 }
 
-export async function crearRecibo(input: CrearReciboInput): Promise<{ ok: true; raw: any; id?: string } | { ok: false; error: string; raw?: any }> {
+export async function crearRecibo(input: CrearReciboInput): Promise<{ ok: true; raw: any; id?: string } | { ok: false; error: string; raw?: any; sinRespuesta?: boolean }> {
   try {
     const cli = await imClient();
     const { data } = await cli.post('/recibo', input);
@@ -271,7 +271,11 @@ export async function crearRecibo(input: CrearReciboInput): Promise<{ ok: true; 
   } catch (err: any) {
     const raw = err?.response?.data;
     const status = err?.response?.status;
-    return { ok: false, error: `HTTP ${status ?? '?'}: ${err?.message ?? 'unknown'}`, raw };
+    // Sin `response` = IM nunca contestó (timeout 25s, corte de red): el
+    // resultado es DESCONOCIDO — el recibo pudo haberse creado igual del lado
+    // de IM (incidente HASAN 18/07/2026). Distinto de un rechazo real (4xx con
+    // body de validaciones). El caller decide el mensaje según este flag.
+    return { ok: false, error: `HTTP ${status ?? '?'}: ${err?.message ?? 'unknown'}`, raw, sinRespuesta: !err?.response };
   }
 }
 

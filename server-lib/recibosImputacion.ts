@@ -38,6 +38,57 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
  *   rechaza "el valor debe ser mayor a 0").
  * - `ajusteTotal` = los pesos/centavos que el cliente pagó pero IM no imputa.
  */
+/**
+ * Valida los comprobantes a imputar contra los pendientes VIGENTES del cliente
+ * en IM (re-consultados al momento de aprobar, no los del modal que pueden
+ * tener minutos de antigüedad).
+ *
+ * Contexto (incidente HASAN 18/07/2026): un POST /recibo que "falló" por
+ * timeout puede haberse procesado igual del lado de IM, y también puede haber
+ * una carga manual paralela en el escritorio. En ambos casos la factura deja
+ * de estar pendiente (o le queda menos saldo), pero IM ACEPTA sobre-imputarla
+ * sin chuchear — el duplicado queda silencioso. Este chequeo lo corta antes
+ * del POST.
+ *
+ * - Comprobante ausente de los pendientes → ya se imputó entero: rechazar.
+ * - Saldo restante < importe a imputar (fuera de tolerancia) → alguien ya lo
+ *   pagó en parte: rechazar.
+ * - El saldo se toma como |saldo| con fallback a |importe_factura|, igual que
+ *   el frontend (RecibosApp): las NC vienen con signo negativo.
+ */
+export type ValidacionPendientesResult = { ok: true } | { ok: false; error: string };
+
+export interface PendienteIM {
+  id: string | number;
+  saldo?: number | null;
+  importe_factura?: number | null;
+}
+
+export function validarContraPendientes(
+  comprobantes: Array<{ id: string; importe_a_pagar: string | number }>,
+  pendientes: PendienteIM[],
+): ValidacionPendientesResult {
+  const porId = new Map(pendientes.map(p => [String(p.id), p]));
+  for (const c of comprobantes) {
+    const p = porId.get(String(c.id));
+    if (!p) {
+      return {
+        ok: false,
+        error: `El comprobante #${c.id} ya NO está pendiente en IM — puede que ya se haya imputado (un reintento tras timeout que sí entró, o una carga manual en el escritorio). Verificá la cta cte del cliente en IM antes de volver a intentar.`,
+      };
+    }
+    const saldo = Math.abs(Number(p.saldo ?? p.importe_factura ?? 0));
+    const importe = Number(c.importe_a_pagar);
+    if (importe > saldo + TOLERANCIA_AJUSTE_IM) {
+      return {
+        ok: false,
+        error: `El comprobante #${c.id} tiene saldo pendiente $${saldo.toFixed(2)} en IM pero se intenta imputar $${importe.toFixed(2)} — otro recibo ya lo pagó en parte (¿reintento tras timeout o carga manual?). Verificá la cta cte del cliente en IM.`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
 export function ajustarImputacionIM(sumPagos: number, comprobantes: number[]): AjusteImputacionResult {
   const sumComp = comprobantes.reduce((a, c) => a + c, 0);
   const diff = round2(sumPagos - sumComp);

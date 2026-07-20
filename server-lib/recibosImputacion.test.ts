@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ajustarImputacionIM, TOLERANCIA_AJUSTE_IM } from './recibosImputacion.js';
+import { ajustarImputacionIM, validarContraPendientes, TOLERANCIA_AJUSTE_IM } from './recibosImputacion.js';
 
 describe('ajustarImputacionIM', () => {
   it('la tolerancia documentada es $5', () => {
@@ -92,5 +92,98 @@ describe('ajustarImputacionIM', () => {
     const copia = [...input];
     ajustarImputacionIM(500.7, input);
     expect(input).toEqual(copia);
+  });
+});
+
+describe('validarContraPendientes', () => {
+  // Shape mínimo de una fila de /reportes/comprob_pendientes_clientes
+  const pend = (id: number | string, saldo: number | null, importe_factura?: number) =>
+    ({ id, saldo, importe_factura: importe_factura ?? null });
+
+  // ── Caso feliz ────────────────────────────────────────────────────────────
+  it('factura pendiente con saldo suficiente → ok', () => {
+    const r = validarContraPendientes(
+      [{ id: '58149677', importe_a_pagar: '160600.00' }],
+      [pend(58149677, 290575.78353)],
+    );
+    expect(r).toEqual({ ok: true });
+  });
+
+  it('matchea id numérico de IM contra id string del body', () => {
+    const r = validarContraPendientes(
+      [{ id: '123', importe_a_pagar: 100 }],
+      [pend(123, 100)],
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('sin comprobantes a imputar → ok (la validación de "al menos uno" es aparte)', () => {
+    expect(validarContraPendientes([], [pend(1, 100)]).ok).toBe(true);
+  });
+
+  // ── Incidente HASAN 18/07/2026: el recibo "fallido" (timeout) sí había
+  //    entrado en IM y la factura ya no tenía saldo completo ─────────────────
+  it('caso real HASAN: imputar $160.600 cuando el saldo restante es $129.975,78 → rechaza', () => {
+    const r = validarContraPendientes(
+      [{ id: '58149677', importe_a_pagar: '160600.00' }],
+      [pend(58149677, 129975.78353)],
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('saldo pendiente');
+  });
+
+  it('la factura ya no está entre los pendientes (imputada entera) → rechaza con aviso', () => {
+    const r = validarContraPendientes(
+      [{ id: '58149677', importe_a_pagar: '160600.00' }],
+      [pend(99999999, 500000)],
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('ya NO está pendiente');
+  });
+
+  // ── Bordes de saldo ───────────────────────────────────────────────────────
+  it('importe dentro de la tolerancia de $5 sobre el saldo → ok (redondeos de IM)', () => {
+    const r = validarContraPendientes(
+      [{ id: '1', importe_a_pagar: 129976 }],
+      [pend(1, 129975.78)],
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('importe que excede saldo + tolerancia → rechaza', () => {
+    const r = validarContraPendientes(
+      [{ id: '1', importe_a_pagar: 129981 }],
+      [pend(1, 129975.78)],
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('saldo negativo (NC) se compara en valor absoluto, como hace el frontend', () => {
+    const r = validarContraPendientes(
+      [{ id: '7', importe_a_pagar: 5000 }],
+      [pend(7, -5000)],
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('saldo null cae a importe_factura (fallback del frontend)', () => {
+    const r = validarContraPendientes(
+      [{ id: '7', importe_a_pagar: 5000 }],
+      [pend(7, null, 5000)],
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // ── Varios comprobantes: uno solo inválido tumba todo el recibo ───────────
+  it('con varias facturas, si UNA ya no está pendiente se rechaza el recibo entero', () => {
+    const r = validarContraPendientes(
+      [
+        { id: '1', importe_a_pagar: 100 },
+        { id: '2', importe_a_pagar: 200 },
+      ],
+      [pend(1, 100)],
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('#2');
   });
 });

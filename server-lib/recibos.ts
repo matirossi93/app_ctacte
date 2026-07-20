@@ -7,7 +7,7 @@ import { crearRecibo, fetchComprobPendientes, fetchClientesIMCached, type Recibo
 import { getFormaPagoIM, isValidMedio } from './mediosPago.js';
 import { resolveCuentaCod, debugCuentasResolver, invalidateCuentasCache, listCuentasEfectivo } from './cuentasResolver.js';
 import { buscarPagoEnMP, todayISO_AR, mpConfigStatus, type MPMatch, type MPCuenta } from './mercadopago.js';
-import { ajustarImputacionIM } from './recibosImputacion.js';
+import { ajustarImputacionIM, validarContraPendientes } from './recibosImputacion.js';
 import { CADUCADO_PREFIX } from './recibosShared.js';
 import type { JwtPayload } from './auth.js';
 
@@ -475,6 +475,29 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
       return;
     }
 
+    // ── PRE-CHEQUEO ANTI-DUPLICADO (incidente HASAN 18/07/2026) ─────────────
+    // Re-consultamos los pendientes del cliente AHORA (los del modal pueden
+    // tener minutos): si la factura ya no está pendiente o le queda menos
+    // saldo, otro recibo ya la pagó — un POST con timeout que sí entró, o una
+    // carga manual en el escritorio. IM acepta sobre-imputar sin avisar, así
+    // que este es el único lugar donde se corta. Fail-closed: si IM no
+    // responde el GET, tampoco imputamos a ciegas.
+    if (!esAnticipo) {
+      let pendientes: any[];
+      try {
+        pendientes = await fetchComprobPendientes(codEmpresa, comp.cod_cliente);
+      } catch (e: any) {
+        res.status(502).json({ ok: false, error: `No se pudo verificar en IM el estado de las facturas antes de imputar (${e?.message ?? 'sin respuesta'}). NO se imputó nada — reintentá en unos minutos.` });
+        return;
+      }
+      const validacion = validarContraPendientes(comprobantes, pendientes);
+      if (!validacion.ok) {
+        console.warn(`[aprobar] pre-chequeo anti-duplicado bloqueó ${comp.id} cliente=${comp.cod_cliente}: ${validacion.error}`);
+        res.status(409).json({ ok: false, error: validacion.error });
+        return;
+      }
+    }
+
     const detalleBase = body.observaciones ?? comp.observaciones ?? comp.referencia ?? '';
     let detalleFinal = esAnticipo
       ? `[ANTICIPO] ${detalleBase}`.trim()
@@ -549,14 +572,20 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
     }
 
     if (!imRes.ok) {
-      console.error('[aprobar] IM rechazo:', imRes.error, '| raw:', JSON.stringify(imRes.raw));
+      console.error('[aprobar] IM fallo:', imRes.error, 'sinRespuesta:', imRes.sinRespuesta === true, '| raw:', JSON.stringify(imRes.raw));
       // Enriquecer error_msg con detalles del raw IM. IM puede devolver `detalles`
       // o `errores` (array {campo, mensajes}) según el endpoint — mostramos ambos.
       const errorIM = imRes.raw?.errores
         ? ` | ${imRes.raw.errores.map((e: any) => `${e.campo}: ${(e.mensajes || []).join(', ')}`).join(' · ')}`
         : (imRes.raw?.detalles ? ` | detalles: ${JSON.stringify(imRes.raw.detalles).slice(0, 300)}` : '');
       const mensajeIM = imRes.raw?.mensaje ? ` (${imRes.raw.mensaje})` : '';
-      const errorMsg = `IM rechazó el recibo${mensajeIM}${errorIM}`;
+      // Timeout/red ≠ rechazo: sin respuesta de IM no se sabe si el recibo se
+      // creó (incidente HASAN 18/07/2026: decía "IM rechazó" y eso llevó a
+      // cargarlo a mano → duplicado). El reintento desde la app es seguro
+      // porque el pre-chequeo de arriba re-valida los pendientes.
+      const errorMsg = imRes.sinRespuesta
+        ? `IM no respondió (${imRes.error}) — NO se sabe si el recibo se creó. NO lo cargues a mano: reintentá desde acá (la app verifica sola si ya entró) o revisá la cta cte del cliente en IM.`
+        : `IM rechazó el recibo${mensajeIM}${errorIM}`;
       await sb().from('comprobantes_pago').update({
         status: 'error',
         error_msg: errorMsg,
