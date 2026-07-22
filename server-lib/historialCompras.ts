@@ -243,13 +243,24 @@ export interface ProductoAbandono {
 }
 
 /**
+ * Más allá de este umbral (en días sin comprar) la caída se considera perdida:
+ * ya no es una alerta accionable para el vendedor de calle, sino info vieja que
+ * tapa lo recuperable. Se oculta. 90 días = 1 trimestre, alineado con el
+ * "trimestre actual" que la app trata como `facturas`.
+ */
+const TOPE_DIAS_ABANDONO = 90;
+
+/**
  * Detecta productos "habituales" del cliente que dejó de comprar.
  *
- * Habitual = aparece en ≥3 facturas FA distintas.
- * Abandono = `dias_sin_comprar` > 2× `intervalo_medio_dias` del producto.
+ * Habitual = aparece en ≥3 facturas FA distintas Y esas compras cruzan ≥2 meses
+ *   calendario (una ráfaga de compras apretadas en un solo mes —promo, entrega
+ *   partida— no es un hábito, así que no se marca como abandono).
+ * Abandono = `dias_sin_comprar` > 2× `intervalo_medio_dias` del producto...
+ *   ...y ≤ TOPE_DIAS_ABANDONO (más viejo que eso = perdido, se descarta).
  *
- * Salida ordenada por severidad descendente (`dias_sin / intervalo_medio`).
- * Ideal para destacar al vendedor los productos más caídos primero.
+ * Salida ordenada por recencia ascendente: lo recién caído primero, que es lo
+ * más recuperable. Empate → el más habitual (más compras) primero.
  */
 export function detectarProductosAbandono(facturas: FacturaHistorial[], ahora: Date): ProductoAbandono[] {
   const ahoraMs = ahora.getTime();
@@ -268,12 +279,18 @@ export function detectarProductosAbandono(facturas: FacturaHistorial[], ahora: D
   const result: ProductoAbandono[] = [];
   for (const [cod, { detalle, fechas }] of fechasPorArt) {
     if (fechas.size < 3) continue;
+    // Anti-ráfaga: las compras deben repartirse en ≥2 meses calendario distintos
+    // para contar como "hábito". Una promo/entrega partida en pocos días cae acá.
+    const mesesDistintos = new Set([...fechas].map(f => f.slice(0, 7))); // 'YYYY-MM'
+    if (mesesDistintos.size < 2) continue;
     const sorted = [...fechas].sort();
     const intervaloMedio = mediaIntervalos(sorted);
     if (intervaloMedio <= 0) continue;
     const ultima = sorted[sorted.length - 1];
     const diasSin = diasEntre(ultima, ahoraMs);
     if (diasSin <= 2 * intervaloMedio) continue;
+    // Tope superior: más viejo que el umbral ya se considera perdido, no alerta.
+    if (diasSin > TOPE_DIAS_ABANDONO) continue;
     result.push({
       cod_articulo: cod,
       detalle,
@@ -282,8 +299,8 @@ export function detectarProductosAbandono(facturas: FacturaHistorial[], ahora: D
       num_compras: fechas.size,
     });
   }
-  // Severidad = qué tan tarde está respecto a su propia frecuencia.
-  result.sort((a, b) => (b.dias_sin_comprar / b.intervalo_medio_dias) - (a.dias_sin_comprar / a.intervalo_medio_dias));
+  // Recién caído primero (más recuperable arriba); empate → el más habitual.
+  result.sort((a, b) => (a.dias_sin_comprar - b.dias_sin_comprar) || (b.num_compras - a.num_compras));
   return result;
 }
 

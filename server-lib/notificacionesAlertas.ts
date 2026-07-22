@@ -164,12 +164,14 @@ async function computar(codVendedor: number): Promise<AlertaCampana[]> {
     }
   }
 
-  // Severidad descendente: clientes rojo > amarillo > productos por ratio.
+  // Prioridad: clientes rojo > amarillo > productos. Dentro de cada grupo, lo
+  // recién caído primero (menos días sin comprar = más recuperable), mismo
+  // criterio que la ficha (detectarProductosAbandono) para que ambas coincidan.
   result.sort((a, b) => {
     const ra = a.tipo === 'cliente_abandono' ? (a.nivel === 'rojo' ? 0 : 1) : 2;
     const rb = b.tipo === 'cliente_abandono' ? (b.nivel === 'rojo' ? 0 : 1) : 2;
     if (ra !== rb) return ra - rb;
-    return b.dias_sin_comprar - a.dias_sin_comprar;
+    return a.dias_sin_comprar - b.dias_sin_comprar;
   });
 
   return result;

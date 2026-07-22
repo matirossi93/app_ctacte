@@ -317,22 +317,57 @@ describe('detectarProductosAbandono', () => {
     expect(x!.dias_sin_comprar).toBeGreaterThan(70);
   });
 
-  it('ordena por severidad descendente (más abandono primero)', () => {
+  it('ordena por recencia: lo recién caído primero (más recuperable arriba)', () => {
     const facturas = [
-      // Producto A: cada 7d, última hace 21 días (2026-05-09) → ratio 3.0
+      // Producto A: última hace 21 días (2026-05-09), cruza abr/may → recuperable
       makeFA(1, '2026-04-25', [{ cod_articulo: 1, detalle: 'A' }]),
       makeFA(2, '2026-05-02', [{ cod_articulo: 1, detalle: 'A' }]),
       makeFA(3, '2026-05-09', [{ cod_articulo: 1, detalle: 'A' }]),
 
-      // Producto B: cada ~14d, última hace 56 días (2026-04-04) → ratio ~3.9 (más severo)
+      // Producto B: última hace 56 días (2026-04-04), cruza feb/mar/abr → más viejo
       makeFA(4, '2026-02-20', [{ cod_articulo: 2, detalle: 'B' }]),
       makeFA(5, '2026-03-06', [{ cod_articulo: 2, detalle: 'B' }]),
       makeFA(6, '2026-03-20', [{ cod_articulo: 2, detalle: 'B' }]),
       makeFA(7, '2026-04-04', [{ cod_articulo: 2, detalle: 'B' }]),
     ];
     const r = detectarProductosAbandono(facturas, ahora);
-    expect(r[0].cod_articulo).toBe(2); // B más severo
-    expect(r[1].cod_articulo).toBe(1);
+    // A cayó hace 21 días (más recuperable) → primero; B hace 56 → después.
+    expect(r[0].cod_articulo).toBe(1);
+    expect(r[1].cod_articulo).toBe(2);
+  });
+
+  it('oculta productos abandonados hace más del tope (90 días): ya se consideran perdidos', () => {
+    // Habitual que cruza ene/feb pero cuya última compra fue hace 100 días (2026-02-19).
+    const facturas = [
+      makeFA(1, '2026-01-05', [{ cod_articulo: 100, detalle: 'Perdido' }]),
+      makeFA(2, '2026-02-01', [{ cod_articulo: 100, detalle: 'Perdido' }]),
+      makeFA(3, '2026-02-19', [{ cod_articulo: 100, detalle: 'Perdido' }]),
+    ];
+    // 2026-02-19 → 2026-05-30 = 100 días sin comprar (> 90)
+    const r = detectarProductosAbandono(facturas, ahora);
+    expect(r.find(p => p.cod_articulo === 100)).toBeUndefined();
+  });
+
+  it('mantiene abandono reciente dentro del tope (≤90 días sí se muestra)', () => {
+    // Misma forma pero última compra hace 72 días (2026-03-19), bajo el tope.
+    const facturas = [
+      makeFA(1, '2026-02-01', [{ cod_articulo: 100, detalle: 'Recuperable' }]),
+      makeFA(2, '2026-02-20', [{ cod_articulo: 100, detalle: 'Recuperable' }]),
+      makeFA(3, '2026-03-19', [{ cod_articulo: 100, detalle: 'Recuperable' }]),
+    ];
+    const r = detectarProductosAbandono(facturas, ahora);
+    expect(r.find(p => p.cod_articulo === 100)).toBeDefined();
+  });
+
+  it('no marca ráfagas: 3 compras en un mismo mes no son "hábito" aunque haya días sin comprar', () => {
+    // Todas en marzo → no cruzan 2 meses calendario distintos (promo / entrega partida).
+    const facturas = [
+      makeFA(1, '2026-03-02', [{ cod_articulo: 100, detalle: 'Promo puntual' }]),
+      makeFA(2, '2026-03-10', [{ cod_articulo: 100, detalle: 'Promo puntual' }]),
+      makeFA(3, '2026-03-18', [{ cod_articulo: 100, detalle: 'Promo puntual' }]),
+    ];
+    const r = detectarProductosAbandono(facturas, ahora);
+    expect(r.find(p => p.cod_articulo === 100)).toBeUndefined();
   });
 });
 
