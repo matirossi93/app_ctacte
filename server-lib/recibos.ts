@@ -8,7 +8,7 @@ import { getFormaPagoIM, isValidMedio } from './mediosPago.js';
 import { resolveCuentaCod, debugCuentasResolver, invalidateCuentasCache, listCuentasEfectivo } from './cuentasResolver.js';
 import { buscarPagoEnMP, todayISO_AR, mpConfigStatus, type MPMatch, type MPCuenta } from './mercadopago.js';
 import { ajustarImputacionIM, validarContraPendientes } from './recibosImputacion.js';
-import { CADUCADO_PREFIX } from './recibosShared.js';
+import { CADUCADO_PREFIX, parseMontoUpload } from './recibosShared.js';
 import type { JwtPayload } from './auth.js';
 
 // Fuente única de los estados de comprobantes_pago (coincide con el CHECK de la
@@ -170,7 +170,9 @@ export async function uploadRecibo(req: Request & { user?: JwtPayload; file?: an
     }
 
     // 3. Insertar en comprobantes_pago
-    const montoBody = req.body?.monto ? Number(String(req.body.monto).replace(/\./g, '').replace(',', '.')) : null;
+    // parseMontoUpload distingue decimal canónico del front vs formato AR —
+    // el parseo viejo (borrar puntos siempre) multiplicaba ×100 los centavos.
+    const montoBody = parseMontoUpload(req.body?.monto);
     const monto = montoBody ?? ocr?.monto ?? null;
     if (!monto || monto <= 0) {
       // Se permite crear con monto null si OCR falló — el backoffice completa
@@ -356,10 +358,28 @@ export async function facturasCandidatas(req: Request & { user?: JwtPayload }, r
  * Dispara POST InfoManager /recibo. Si OK, marca imputado y guarda recibo_id.
  * Auth admin/gerente.
  */
+/**
+ * Mutex en memoria por comprobante: dos aprobaciones concurrentes del mismo
+ * recibo (dos admins, dos pestañas) pasaban ambas el chequeo de status y
+ * emitían DOS recibos en IM (auditoría 22-jul). El server es un único proceso
+ * Node (un container en EasyPanel), así que un Set en RAM alcanza; si algún
+ * día se escala a réplicas, esto pasa a necesitar un claim en la base.
+ */
+const aprobacionesEnCurso = new Set<string>();
+
 export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: Response) {
+  const compId = String(req.params.id);
+  let claimed = false;
   try {
     const user = req.user!;
     if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+
+    if (aprobacionesEnCurso.has(compId)) {
+      res.status(409).json({ error: 'Este recibo ya se está aprobando en otra pestaña o sesión — esperá unos segundos y refrescá la lista.' });
+      return;
+    }
+    aprobacionesEnCurso.add(compId);
+    claimed = true;
 
     const { data: comp, error: fetchErr } = await sb().from('comprobantes_pago').select('*')
       .eq('id', req.params.id).eq('tenant_id', TENANT_ID).maybeSingle();
@@ -619,12 +639,25 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
       reviewed_at: now,
       imputado_at: now
     }).eq('id', comp.id);
-    if (updErr) { res.status(500).json({ error: `update final: ${updErr.message}` }); return; }
+    if (updErr) {
+      // El recibo SÍ entró en IM pero el registro local no se pudo actualizar:
+      // sin esto, el ID de IM se perdía (quedaba solo en logs) y la conciliación
+      // contaba la plata dos veces. Best-effort: persistir el ID en error_msg
+      // y avisarle claro al humano que NO lo recargue.
+      const rescueMsg = `IMPUTADO EN IM (recibo ${imRes.id ?? '?'}) pero falló el update local: ${updErr.message}. NO volver a aprobar ni cargar a mano — corregir el status a 'imputado' con este ID.`;
+      console.error(`[aprobar] ${rescueMsg} comp=${comp.id}`);
+      await sb().from('comprobantes_pago').update({ status: 'error', error_msg: rescueMsg, infomanager_recibo_id: imRes.id ?? null })
+        .eq('id', comp.id);
+      res.status(500).json({ error: rescueMsg, recibo_id: imRes.id ?? null });
+      return;
+    }
 
     res.json({ ok: true, recibo_id: imRes.id, raw: imRes.raw });
   } catch (err: any) {
     console.error('aprobarRecibo error:', err);
     res.status(500).json({ error: err?.message ?? 'error' });
+  } finally {
+    if (claimed) aprobacionesEnCurso.delete(compId);
   }
 }
 
@@ -638,13 +671,20 @@ export async function rechazarRecibo(req: Request & { user?: JwtPayload }, res: 
     if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
     const motivo = String(req.body?.motivo ?? '').trim();
     if (!motivo) { res.status(400).json({ error: 'motivo obligatorio' }); return; }
-    const { error } = await sb().from('comprobantes_pago').update({
+    // Guard: un recibo imputado ya tiene la plata registrada en IM — marcarlo
+    // 'rechazado' acá dejaría el registro local mintiendo (auditoría 22-jul).
+    // El .neq hace el corte atómico; el .select() nos dice si tocó una fila.
+    const { data: updated, error } = await sb().from('comprobantes_pago').update({
       status: 'rechazado',
       motivo_rechazo: motivo,
       reviewed_by: user.sub,
       reviewed_at: new Date().toISOString()
-    }).eq('id', req.params.id).eq('tenant_id', TENANT_ID);
+    }).eq('id', req.params.id).eq('tenant_id', TENANT_ID).neq('status', 'imputado').select('id');
     if (error) { res.status(500).json({ error: error.message }); return; }
+    if (!updated || updated.length === 0) {
+      res.status(409).json({ error: 'No se pudo rechazar: el recibo no existe o ya está imputado en IM (la plata ya entró — si fue un error, corregilo en IM, no acá).' });
+      return;
+    }
     res.json({ ok: true });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'error' });

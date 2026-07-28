@@ -25,3 +25,29 @@ export type ReciboStatus = typeof RECIBO_STATUSES[number];
  * de IM — la conciliación los separa por esto.
  */
 export const CADUCADO_PREFIX = '[CADUCADO]';
+
+/**
+ * Parsea el monto que llega en el upload de un recibo.
+ *
+ * Bug auditoría 22-jul (monto ×100): el front (cleanMonto en RecibosApp) ya
+ * normaliza a punto decimal ('1.500,50' → '1500.50'), pero el server volvía a
+ * parsear asumiendo formato AR: borraba el punto y grababa 150050. Este parser
+ * distingue ambos formatos:
+ *   - hay coma            → formato AR: puntos son miles, coma es decimal.
+ *   - solo punto, con 1-2 decimales → decimal canónico del front ('1500.50').
+ *   - solo punto, otro patrón       → miles ('15.000', '1.500.000') o el caso
+ *     front-mangled '1.500000' (cleanMonto colapsa multi-punto): en ARS no
+ *     existen >2 decimales, así que se tratan como miles.
+ */
+export function parseMontoUpload(raw: string | null | undefined): number | null {
+  if (raw == null) return null;
+  let v = String(raw).replace(/[^\d.,]/g, '');
+  if (!v) return null;
+  if (v.includes(',')) {
+    v = v.replace(/\./g, '').replace(',', '.');
+  } else if (v.includes('.') && !/^\d+\.\d{1,2}$/.test(v)) {
+    v = v.replace(/\./g, '');
+  }
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}

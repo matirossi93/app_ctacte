@@ -570,6 +570,8 @@ for (const prefix of [
     '/api/data', '/api/goals', '/api/product-goals', '/api/comisiones', '/api/activity',
     '/api/month-config', '/api/reportes', '/api/cuentas', '/api/sheet-import',
     '/api/overrides', '/api/client-thresholds', '/api/debug', '/api/conciliacion',
+    // Auditoría 22-jul: el repartidor no debe leer promesas de pago/alertas del equipo.
+    '/api/notificaciones',
 ]) {
     app.use(prefix, maybeJwt, denyRepartidor);
 }
@@ -656,10 +658,10 @@ app.get('/api/conciliacion/cruce/export', requireJwt, (req: any, res) => exportC
 app.get('/api/cuentas/debug', requireJwt, (req: any, res) => cuentasDebug(req, res));
 app.get('/api/cuentas/efectivo', requireJwt, (req: any, res) => cuentasEfectivo(req, res));
 
-// Diagnóstico público del estado de cache (sin secretos). Sirve para
-// verificar si el prewarm completó tras un deploy. Si esto responde lento,
-// el problema no es de auth/handlers.
-app.get('/api/debug/cache-state', (_req, res) => {
+// Diagnóstico del estado de cache (sin secretos). Sirve para verificar si el
+// prewarm completó tras un deploy. Era el único endpoint 100% público de la
+// app (auditoría 22-jul) — ahora requiere admin/gerente como el resto de /debug.
+app.get('/api/debug/cache-state', requireJwt, requireAdmin, (_req, res) => {
     res.json({
         ok: true,
         now: new Date().toISOString(),
@@ -967,7 +969,12 @@ app.get('/api/data', maybeJwt, requireAuth, async (req: express.Request & { user
 });
 
 // ─── Overrides API ─────────────────────────────────────────────────────────────
-app.get('/api/overrides', requireAuth, (_req: express.Request, res: express.Response) => {
+// Auditoría 22-jul: estos 4 endpoints escriben tablas de plata (apagar intereses,
+// estirar plazos) y estaban tras requireAuth (legacy: acepta token anónimo o
+// cualquier JWT sin mirar rol) — cualquier vendedor podía escribirlos sin rastro.
+// Pasan a requireJwt+requireAdmin; si el Dashboard legacy los necesita, se
+// resuelve con la decisión sobre APP_PASSWORD (ver AUDITORIA-APP-2026-07-22.md).
+app.get('/api/overrides', requireJwt, requireAdmin, (_req: express.Request, res: express.Response) => {
     try {
         const rows = db.prepare('SELECT invoice_id, apply_interest FROM invoice_overrides').all() as Array<{ invoice_id: string; apply_interest: number }>;
         const map: Record<string, boolean> = {};
@@ -978,7 +985,7 @@ app.get('/api/overrides', requireAuth, (_req: express.Request, res: express.Resp
     }
 });
 
-app.post('/api/overrides', requireAuth, (req: express.Request, res: express.Response) => {
+app.post('/api/overrides', requireJwt, requireAdmin, (req: express.Request, res: express.Response) => {
     try {
         const { invoiceId, apply } = req.body as { invoiceId?: string; apply?: boolean };
         if (!invoiceId || typeof apply !== 'boolean') {
@@ -996,7 +1003,7 @@ app.post('/api/overrides', requireAuth, (req: express.Request, res: express.Resp
 });
 
 // ─── Client Thresholds API ────────────────────────────────────────────────────
-app.get('/api/client-thresholds', requireAuth, (_req: express.Request, res: express.Response) => {
+app.get('/api/client-thresholds', requireJwt, requireAdmin, (_req: express.Request, res: express.Response) => {
     try {
         const rows = db.prepare('SELECT client_id, days FROM client_thresholds').all() as Array<{ client_id: string; days: number }>;
         const map: Record<string, number> = {};
@@ -1007,7 +1014,7 @@ app.get('/api/client-thresholds', requireAuth, (_req: express.Request, res: expr
     }
 });
 
-app.post('/api/client-thresholds', requireAuth, (req: express.Request, res: express.Response) => {
+app.post('/api/client-thresholds', requireJwt, requireAdmin, (req: express.Request, res: express.Response) => {
     try {
         const { clientId, days } = req.body as { clientId?: string; days?: number };
         if (!clientId || typeof days !== 'number') {
@@ -1346,7 +1353,25 @@ console.log('Cron pre-warm /api/data: */8 * * * *');
 // TTL del snapshotCache es 5min para mes actual y 1h para histórico. Boot
 // warm + cron horario mantienen siempre fresco lo histórico; el mes actual
 // se reganará por demanda igualmente (tiene TTL corto a propósito).
+// Lock anti-solapamiento (auditoría 22-jul): sin esto, dos ciclos del cron
+// */20 solapados podían fetchear meses distintos en paralelo, rompiendo el
+// diseño secuencial que se puso justamente después del crash-loop del 06/07.
+let prewarmSnapshotEnCurso = false;
+
 async function prewarmSnapshotCache() {
+    if (prewarmSnapshotEnCurso) {
+        console.log('[snapshot prewarm] ciclo anterior aún corriendo — skip');
+        return;
+    }
+    prewarmSnapshotEnCurso = true;
+    try {
+        await prewarmSnapshotCacheInner();
+    } finally {
+        prewarmSnapshotEnCurso = false;
+    }
+}
+
+async function prewarmSnapshotCacheInner() {
     const now = new Date();
     // 6 meses: trimestre actual + trimestre anterior. Necesitamos los 6
     // calientes para que el endpoint /api/clientes/:cod/historial-compras
@@ -1367,23 +1392,29 @@ async function prewarmSnapshotCache() {
     // (OOM sospechado). Secuencial tarda más el warm frío (~2-3 min) pero el
     // pico de memoria es 1 mes en vez de 3, y los endpoints igual se ganan el
     // cache on-demand con stale-while-revalidate mientras tanto.
+    // force SOLO para el mes actual (auditoría 22-jul): los meses históricos
+    // tienen TTL 24h — forzarlos cada 20 min eran ~540 requests/hora pesadas
+    // contra IM que el TTL volvía innecesarias. Con force:false el warm igual
+    // fetchea lo vencido o faltante (ej. tras un boot) y saltea lo fresco.
     async function warmMes({ year, month }: { year: number; month: number }) {
+        const esMesActual = year === now.getUTCFullYear() && month === now.getUTCMonth() + 1;
         try {
             const t0 = Date.now();
             const [r, ri] = await Promise.all([
-                getMonthlyVentasRaw(year, month, { force: true }),
-                getMonthlyItemsRaw(year, month, { force: true }),
+                getMonthlyVentasRaw(year, month, { force: esMesActual }),
+                getMonthlyItemsRaw(year, month, { force: esMesActual }),
             ]);
-            console.log(`[snapshot prewarm] ${year}-${String(month).padStart(2, '0')}: ${r.ventas.length} ventas + ${ri.items.length} items en ${Date.now() - t0}ms`);
+            console.log(`[snapshot prewarm] ${year}-${String(month).padStart(2, '0')}: ${r.ventas.length} ventas + ${ri.items.length} items en ${Date.now() - t0}ms${esMesActual ? '' : r.cached ? ' (cache vigente)' : ''}`);
         } catch (e: any) {
             console.warn(`[snapshot prewarm] ${year}-${String(month).padStart(2, '0')} fail: ${e?.message ?? e}`);
         }
     }
     for (const mes of meses) await warmMes(mes);
     // Catálogo de artículos (precio_venta + cod_rubro) para comisiones.
+    // Sin force: respeta su TTL — cambia poco y no hace falta re-bajarlo cada 20 min.
     try {
         const t0 = Date.now();
-        const m = await fetchArticulosCatalogo(true);
+        const m = await fetchArticulosCatalogo(false);
         console.log(`[snapshot prewarm] articulos catalogo: ${m.size} en ${Date.now() - t0}ms`);
     } catch (e: any) {
         console.warn(`[snapshot prewarm] articulos catalogo fail: ${e?.message ?? e}`);
@@ -1393,10 +1424,10 @@ async function prewarmSnapshotCache() {
 // para que los dos picos de memoria/red no se sumen durante el arranque.
 // También respeta PREWARM_BOOT=off como escape sin rebuild.
 if (PREWARM_BOOT) setTimeout(() => { prewarmSnapshotCache().catch(() => { }); }, 60_000);
-// Cron cada 20 min: refresca los 6 meses agresivamente para que el cache
-// histórico (TTL 24h) y el actual (TTL 5min) nunca lleguen vencidos a un
-// request real. Combinado con stale-while-revalidate en snapshotCache, esto
-// elimina cold fetches sincrónicos en el path del usuario.
+// Cron cada 20 min: re-fuerza el mes actual (TTL 5min) y repone lo histórico
+// solo si venció su TTL de 24h. Combinado con stale-while-revalidate en
+// snapshotCache, esto elimina cold fetches sincrónicos en el path del usuario
+// sin castigar a IM con re-descargas innecesarias.
 cron.schedule('*/20 * * * *', () => { prewarmSnapshotCache().catch(() => { }); });
 console.log('Cron snapshot prewarm: */20 * * * *');
 
