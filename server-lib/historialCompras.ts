@@ -351,6 +351,17 @@ const RESPONSE_CACHE_TTL_MS = 5 * 60 * 1000;
 const responseCache = new Map<number, HistorialCacheEntry>();
 
 /**
+ * Invalida el cache de historial/atención. Sin argumento borra todo; con
+ * cod_cliente borra solo ese. Lo llama el sync de ventas (invalidateMonthCaches)
+ * para que una venta nueva no deje colgada una alerta de abandono de un producto
+ * que el cliente acaba de recomprar, en vez de esperar al TTL de 5min.
+ */
+export function invalidateHistorialCache(codCliente?: number): void {
+  if (codCliente != null) responseCache.delete(codCliente);
+  else responseCache.clear();
+}
+
+/**
  * GET /api/clientes/:cod/historial-compras?meses=3
  *
  * Auth:

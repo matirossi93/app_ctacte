@@ -3,6 +3,8 @@ import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import { computeVentaNeta, monthKey } from '../src/utils/ventas.js';
 import { invalidateByPrefix as invalidateGoalsPrefix } from './goalsResponseCache.js';
 import { invalidateMonth as invalidateSnapshotMonth, invalidateItemsMonth } from './snapshotCache.js';
+import { invalidateAlertasVendedor } from './notificacionesAlertas.js';
+import { invalidateHistorialCache } from './historialCompras.js';
 import {
   COD_EMPRESA_CASA_CENTRAL as COD_EMPRESA_DEFAULT,
   COD_CLIENTES_INTERNOS,
@@ -16,13 +18,22 @@ import { loadVendedorOverrides, resolveCodVendedor } from './comisionOverrides.j
  * solo el prefijo del mes afectado (goals + clientes) y el dataset crudo del
  * mismo mes en snapshotCache para que /api/goals/snapshot vea las ventas
  * frescas inmediatamente, sin esperar al TTL de 5 min.
+ *
+ * Además tira los caches de alertas de abandono (campana por vendedor + historial
+ * por cliente): son resultados derivados de estas mismas ventas, así que si no se
+ * invalidan, un producto que el cliente acaba de recomprar seguiría marcado como
+ * "caído" hasta que expire su propio TTL. Se limpian enteros (clear total) porque
+ * el sync no sabe qué vendedores/clientes cambiaron; el costo es 1 recómputo por
+ * vendedor/cliente en la próxima request, no en el hot path.
  */
-function invalidateMonthCaches(year: number, month: number, codEmpresa?: number): void {
+export function invalidateMonthCaches(year: number, month: number, codEmpresa?: number): void {
   const mm = String(month).padStart(2, '0');
   invalidateGoalsPrefix(`goals:${year}-${mm}:`);
   invalidateGoalsPrefix(`clientes:${year}-${mm}:`);
   invalidateSnapshotMonth(year, month, codEmpresa);
   invalidateItemsMonth(year, month, codEmpresa);
+  invalidateAlertasVendedor();
+  invalidateHistorialCache();
 }
 
 export interface SyncResult {
