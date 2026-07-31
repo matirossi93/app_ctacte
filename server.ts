@@ -173,6 +173,12 @@ interface NormalizedData {
     invoices: any[];
     clientDbMap: Record<string, any>;
     source: 'infomanager' | 'sheets';
+    /** Datos de InfoManager servidos de un cache vencido porque IM no respondió. */
+    stale?: boolean;
+    /** Antigüedad del dato servido, en minutos (solo cuando stale). */
+    staleMin?: number;
+    /** No pudimos traer datos de InfoManager: lo que se muestra NO es confiable. */
+    degraded?: string;
 }
 let dataCache: { data: NormalizedData; timestamp: number; key: number } | null = null;
 
@@ -414,16 +420,31 @@ async function fetchData(force = false, codEmpresa?: number): Promise<Normalized
             dataCache = { data, timestamp: Date.now(), key: cacheKey };
             return data;
         } catch (err: any) {
-            console.error('InfoManager failed, falling back to Sheets:', err.message);
+            console.error('InfoManager failed:', err.message);
+            // IM rechaza pedidos por rate limit varias veces por hora (incidente
+            // 31/07/2026). Antes caíamos derecho al Sheets: ese fallback devuelve
+            // CSV crudo del diseño viejo, que el front actual no sabe leer, y la
+            // pantalla mostraba TODO EN CERO sin un solo error a la vista —
+            // alguien puede decidir sobre saldos falsos. Preferimos el último
+            // dato REAL de IM aunque esté vencido, avisando la antigüedad.
+            if (dataCache?.key === cacheKey && dataCache.data.source === 'infomanager') {
+                const staleMin = Math.round((Date.now() - dataCache.timestamp) / 60000);
+                console.warn(`Sirviendo cache de InfoManager de hace ${staleMin} min`);
+                return { ...dataCache.data, stale: true, staleMin };
+            }
         }
     }
 
-    // Sheets fallback — return CSV strings for backward compat
+    // Sheets fallback — CSV strings del diseño viejo. Va marcado como degradado:
+    // el front tiene que avisar en vez de dibujar ceros.
     const sheets = await fetchSheetsData(force);
     const result: NormalizedData = {
         invoices: sheets.invoices as any,
         clientDbMap: sheets.clients as any,
-        source: 'sheets'
+        source: 'sheets',
+        degraded: DATA_SOURCE === 'infomanager'
+            ? 'No se pudo consultar InfoManager. Los datos que ves son de respaldo y pueden estar desactualizados.'
+            : undefined,
     };
     dataCache = { data: result, timestamp: Date.now(), key: 0 };
     return result;
