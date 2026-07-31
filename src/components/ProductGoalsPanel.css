@@ -163,3 +163,12 @@
 }
 .pg-save:disabled { opacity: .55 }
 .pg-hint { font-size: 11px; color: rgba(20,24,20,.5); margin: 0; line-height: 1.45 }
+
+/* Sugerencia de artículos hermanos que quedaron afuera de la familia */
+.pg-hermanos { display: flex; flex-direction: column; gap: 6px; margin-top: -2px }
+.pg-hermanos-tit { font-size: 12px; color: rgba(20,24,20,.62) }
+.pg-chip-add {
+    cursor: pointer; border-style: dashed;
+    background: rgba(20,24,20,.03); color: rgba(20,24,20,.72);
+}
+.pg-chip-add:hover { background: rgba(43,122,74,.10); border-color: rgba(43,122,74,.45); color: #1f6b41 }

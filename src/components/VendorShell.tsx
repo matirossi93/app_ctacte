@@ -327,6 +327,8 @@ export const VendorShell = ({ onLogout }: Props) => {
     const [err, setErr] = useState<string | null>(null);
     const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
     const [refrescandoContactos, setRefrescandoContactos] = useState(false);
+    // Aviso cuando los datos NO vienen frescos de InfoManager (incidente 31/07/2026).
+    const [avisoDatos, setAvisoDatos] = useState<string | null>(null);
     const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
 
     // Derivados del multiselect (selectedCods es la única fuente).
@@ -357,6 +359,15 @@ export const VendorShell = ({ onLogout }: Props) => {
             setInvoices(d.invoices || []);
             setClientDbMap(d.clientDbMap || {});
             setLastRefresh(new Date());
+            // El server avisa cuando no pudo consultar InfoManager. Sin esto la
+            // pantalla dibuja ceros y parece que el cliente no debe nada.
+            setAvisoDatos(
+                d.degraded
+                    ? d.degraded
+                    : d.stale
+                        ? `InfoManager no responde: estás viendo datos de hace ${d.staleMin} min.`
+                        : null,
+            );
         } catch (e: any) { setErr(e.message); }
         finally { setLoading(false); }
     };
@@ -571,6 +582,13 @@ export const VendorShell = ({ onLogout }: Props) => {
 
             {/* Banner amarillo cuando se está viendo un período histórico (≠ mes actual). */}
             {isHistoricView && <HistoricBanner period={viewPeriod} onReset={resetPeriod} />}
+            {avisoDatos && (
+                <div className="vs-aviso-datos" role="alert">
+                    <AlertTriangle size={16} />
+                    <span>{avisoDatos}</span>
+                    <button type="button" onClick={() => loadData(true)}>Reintentar</button>
+                </div>
+            )}
 
             {/* ═══════════ TAB CONTENT ═══════════ */}
             <main className="vs-main">

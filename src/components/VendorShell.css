@@ -2010,3 +2010,19 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
 .vs-notif-item.vs-notif-alerta.is-rojo.is-unread {
     background: rgba(168, 62, 43, 0.06);
 }
+
+/* Aviso cuando los datos no vienen frescos de InfoManager: sin esto la pantalla
+   dibuja ceros y parece que el cliente no debe nada (incidente 31/07/2026). */
+.vs-aviso-datos {
+    display: flex; align-items: center; gap: 8px;
+    margin: 8px 12px; padding: 10px 12px; border-radius: 6px;
+    background: #fdf3e3; border: 1px solid #e6c98a; color: #7a5312;
+    font-size: 13px; line-height: 1.35;
+}
+.vs-aviso-datos svg { flex: 0 0 auto }
+.vs-aviso-datos span { flex: 1 1 auto }
+.vs-aviso-datos button {
+    flex: 0 0 auto; border: 1px solid #d8b05f; background: #fff8ec;
+    color: #7a5312; border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+}
+.vs-aviso-datos button:hover { background: #f6e6c8 }

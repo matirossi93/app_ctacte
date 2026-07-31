@@ -45,7 +45,7 @@ import { descargarReporte } from './server-lib/reportes.js';
 import { getConciliacion, exportConciliacion, listSnapshotsConciliacion, guardarSnapshotConciliacion } from './server-lib/conciliacion.js';
 import { cruceCarpetaHandler, exportCruceHandler } from './server-lib/cruceCarpeta.js';
 import { listRebotes, listRecargos, syncRebotesNow, syncRebotes } from './server-lib/rebotes.js';
-import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos } from './server-lib/productGoals.js';
+import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos, hermanosDeFamilia } from './server-lib/productGoals.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -173,6 +173,12 @@ interface NormalizedData {
     invoices: any[];
     clientDbMap: Record<string, any>;
     source: 'infomanager' | 'sheets';
+    /** Datos de InfoManager servidos de un cache vencido porque IM no respondió. */
+    stale?: boolean;
+    /** Antigüedad del dato servido, en minutos (solo cuando stale). */
+    staleMin?: number;
+    /** No pudimos traer datos de InfoManager: lo que se muestra NO es confiable. */
+    degraded?: string;
 }
 let dataCache: { data: NormalizedData; timestamp: number; key: number } | null = null;
 
@@ -414,16 +420,31 @@ async function fetchData(force = false, codEmpresa?: number): Promise<Normalized
             dataCache = { data, timestamp: Date.now(), key: cacheKey };
             return data;
         } catch (err: any) {
-            console.error('InfoManager failed, falling back to Sheets:', err.message);
+            console.error('InfoManager failed:', err.message);
+            // IM rechaza pedidos por rate limit varias veces por hora (incidente
+            // 31/07/2026). Antes caíamos derecho al Sheets: ese fallback devuelve
+            // CSV crudo del diseño viejo, que el front actual no sabe leer, y la
+            // pantalla mostraba TODO EN CERO sin un solo error a la vista —
+            // alguien puede decidir sobre saldos falsos. Preferimos el último
+            // dato REAL de IM aunque esté vencido, avisando la antigüedad.
+            if (dataCache?.key === cacheKey && dataCache.data.source === 'infomanager') {
+                const staleMin = Math.round((Date.now() - dataCache.timestamp) / 60000);
+                console.warn(`Sirviendo cache de InfoManager de hace ${staleMin} min`);
+                return { ...dataCache.data, stale: true, staleMin };
+            }
         }
     }
 
-    // Sheets fallback — return CSV strings for backward compat
+    // Sheets fallback — CSV strings del diseño viejo. Va marcado como degradado:
+    // el front tiene que avisar en vez de dibujar ceros.
     const sheets = await fetchSheetsData(force);
     const result: NormalizedData = {
         invoices: sheets.invoices as any,
         clientDbMap: sheets.clients as any,
-        source: 'sheets'
+        source: 'sheets',
+        degraded: DATA_SOURCE === 'infomanager'
+            ? 'No se pudo consultar InfoManager. Los datos que ves son de respaldo y pueden estar desactualizados.'
+            : undefined,
     };
     dataCache = { data: result, timestamp: Date.now(), key: 0 };
     return result;
@@ -835,6 +856,7 @@ app.get('/api/product-goals', requireJwt, (req: any, res) => listProductGoals(re
 app.post('/api/product-goals', requireJwt, requireAdmin, (req: any, res) => upsertProductGoal(req, res));
 app.delete('/api/product-goals', requireJwt, requireAdmin, (req: any, res) => deleteProductGoal(req, res));
 app.get('/api/product-goals/articulos', requireJwt, requireAdmin, (req: any, res) => searchArticulos(req, res));
+app.get('/api/product-goals/hermanos', requireJwt, requireAdmin, (req: any, res) => hermanosDeFamilia(req, res));
 
 // ─── Clientes lookup (maestro completo, con y sin deuda) ─────────────────────
 app.get('/api/clientes/lookup', requireJwt, (req: any, res) => listClientesLookup(req, res));
@@ -1242,12 +1264,19 @@ app.listen(PORT, () => {
 });
 
 // ─── Crons ────────────────────────────────────────────────────────────────────
-// Lock contra overlap: si IM responde lento y el cron */30 todavía está
-// corriendo cuando dispara la próxima invocación, saltamos sin tirar nada.
+// Lock contra overlap: si IM responde lento y el cron todavía está corriendo
+// cuando dispara la próxima invocación, saltamos sin tirar nada.
 // Antes el sync podía solaparse y generar race en vendor_sales_monthly.
+//
+// Frecuencia :05 de cada hora (era */30). Este sync baja el mes actual entero
+// de /ventas + /ventas/items SIN pasar por snapshotCache, o sea que duplica lo
+// que ya baja el prewarm del snapshot. Entre los dos re-descargaban julio 5
+// veces por hora y fundían la cuota horaria de IM (429 recurrente del 31/07,
+// que dejaba a toda la app en el fallback de Sheets = saldos en cero).
+// Escalonado con el prewarm (:35) para no pegarle a IM los dos juntos.
 let syncVentasInFlight = false;
 if (hasSupabase()) {
-    cron.schedule('*/30 * * * *', async () => {
+    cron.schedule('5 * * * *', async () => {
         if (syncVentasInFlight) {
             console.warn('[cron syncVentas] skip · todavía está corriendo el anterior');
             return;
@@ -1269,7 +1298,7 @@ if (hasSupabase()) {
             .then(r => console.log('[sync on start]', r))
             .catch(err => console.error('[sync on start] fallo:', err?.message ?? err));
     }
-    console.log('Cron syncVentasMesActual: */30 * * * *');
+    console.log('Cron syncVentasMesActual: 5 * * * *');
 
     // Cron diario 4am: re-sync últimos 6 meses (mes actual + 5 anteriores).
     // Captura NCs tardías que afectan meses cerrados — sin esto, una NC del 30/04
@@ -1424,12 +1453,15 @@ async function prewarmSnapshotCacheInner() {
 // para que los dos picos de memoria/red no se sumen durante el arranque.
 // También respeta PREWARM_BOOT=off como escape sin rebuild.
 if (PREWARM_BOOT) setTimeout(() => { prewarmSnapshotCache().catch(() => { }); }, 60_000);
-// Cron cada 20 min: re-fuerza el mes actual (TTL 5min) y repone lo histórico
-// solo si venció su TTL de 24h. Combinado con stale-while-revalidate en
-// snapshotCache, esto elimina cold fetches sincrónicos en el path del usuario
-// sin castigar a IM con re-descargas innecesarias.
-cron.schedule('*/20 * * * *', () => { prewarmSnapshotCache().catch(() => { }); });
-console.log('Cron snapshot prewarm: */20 * * * *');
+// Cron a :35 de cada hora (era */20): re-fuerza el mes actual (TTL 5min) y
+// repone lo histórico solo si venció su TTL de 24h. Combinado con
+// stale-while-revalidate en snapshotCache, esto elimina cold fetches
+// sincrónicos en el path del usuario sin castigar a IM con re-descargas.
+// Bajado de 3 a 1 pasada por hora tras el 429 recurrente del 31/07: el mes
+// actual son ~165k renglones entre ventas e items, y esto los re-bajaba
+// enteros cada 20 min además de lo que ya baja syncVentasMesActual (:05).
+cron.schedule('35 * * * *', () => { prewarmSnapshotCache().catch(() => { }); });
+console.log('Cron snapshot prewarm: 35 * * * *');
 
 // MP verification — reintenta comprobantes MP pendientes/no encontrados en ventana 24h
 cron.schedule('*/5 * * * *', async () => {

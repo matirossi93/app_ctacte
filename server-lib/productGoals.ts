@@ -424,6 +424,81 @@ export async function deleteProductGoal(req: Request & { user?: JwtPayload }, re
   res.json({ ok: true });
 }
 
+
+// ─── Sugerencia de "hermanos" (pura, testeable) ──────────────────────────────
+
+/** Palabras significativas de una descripción: sin números, unidades ni ruido. */
+function tokens(desc: string): string[] {
+  return desc.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
+    .split(/[^A-Z]+/)
+    .filter(t => t.length > 3 && !['UNID', 'UDS', 'KILO', 'KILOS', 'GRAM', 'GRAMOS', 'PACK', 'CAJA', 'BOLSA', 'BULTO'].includes(t));
+}
+
+/**
+ * Artículos del catálogo que probablemente son de la misma familia que los ya
+ * elegidos y quedaron afuera. Se apoya en el token MENOS frecuente del catálogo
+ * (la marca suele serlo: "MONKY" aparece 11 veces, "FINO" cientos) — así evita
+ * proponer medio catálogo por una palabra genérica.
+ *
+ * Nace del incidente del 30/07/2026: cuatro familias de barritas Monky se
+ * cargaron a mano con subconjuntos distintos de las variedades, y los objetivos
+ * de los vendedores quedaron subestimados durante todo julio.
+ */
+export function sugerirHermanos(
+  elegidos: number[],
+  catalogo: Map<number, { descripcion?: string | null }>,
+  max = 8,
+): Array<{ cod_articulo: number; descripcion: string }> {
+  if (!elegidos.length) return [];
+  // frecuencia de cada token en TODO el catálogo
+  const freq = new Map<string, number>();
+  for (const a of catalogo.values()) {
+    for (const t of new Set(tokens(String(a?.descripcion ?? '')))) {
+      freq.set(t, (freq.get(t) ?? 0) + 1);
+    }
+  }
+  // De los tokens que comparten TODOS los elegidos, gana el menos frecuente del
+  // catálogo: en "Monky Kids Rocklet Blanca/Negra/Mix" el común es MONKY, y en
+  // "Burgol Fino" gana BURGOL sobre FINO. Si ese token no lo tiene nadie más,
+  // no hay hermanos y no se sugiere nada (mejor callar que proponer ruido).
+  const yaEsta = new Set(elegidos);
+  const porArticulo = elegidos.map(c => new Set(tokens(String(catalogo.get(c)?.descripcion ?? ''))));
+  const comunes = [...(porArticulo[0] ?? [])].filter(t => porArticulo.every(s => s.has(t)));
+  let mejor: string | null = null;
+  for (const t of comunes) {
+    if (mejor === null || (freq.get(t) ?? 0) < (freq.get(mejor) ?? Infinity)) mejor = t;
+  }
+  if (!mejor || (freq.get(mejor) ?? 0) <= elegidos.length) return [];
+  const out: Array<{ cod_articulo: number; descripcion: string }> = [];
+  for (const [cod, a] of catalogo.entries()) {
+    if (yaEsta.has(cod)) continue;
+    const desc = String(a?.descripcion ?? '');
+    if (tokens(desc).includes(mejor)) {
+      out.push({ cod_articulo: cod, descripcion: desc });
+      if (out.length >= max) break;
+    }
+  }
+  return out;
+}
+
+/**
+ * GET /api/product-goals/hermanos?cods=695,698 (admin) — mientras se arma la
+ * familia, avisa qué artículos parecidos quedaron afuera.
+ */
+export async function hermanosDeFamilia(req: Request & { user?: JwtPayload }, res: Response): Promise<void> {
+  const cods = String(req.query.cods ?? '').split(',')
+    .map(c => Math.trunc(Number(c.trim())))
+    .filter(c => Number.isFinite(c) && c > 0);
+  if (!cods.length) { res.json({ ok: true, items: [] }); return; }
+  let cat: Awaited<ReturnType<typeof fetchArticulosCatalogo>>;
+  try {
+    cat = await fetchArticulosCatalogo();
+  } catch (e: any) {
+    res.status(502).json({ error: `Catálogo IM no disponible: ${e?.message ?? e}` }); return;
+  }
+  res.json({ ok: true, items: sugerirHermanos(cods, cat as any) });
+}
+
 /**
  * GET /api/product-goals/articulos?q= (admin) — buscador para el alta:
  * matchea por código exacto o descripción (case/acentos-insensitive), top 20.
