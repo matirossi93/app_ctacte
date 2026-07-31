@@ -1264,12 +1264,19 @@ app.listen(PORT, () => {
 });
 
 // ─── Crons ────────────────────────────────────────────────────────────────────
-// Lock contra overlap: si IM responde lento y el cron */30 todavía está
-// corriendo cuando dispara la próxima invocación, saltamos sin tirar nada.
+// Lock contra overlap: si IM responde lento y el cron todavía está corriendo
+// cuando dispara la próxima invocación, saltamos sin tirar nada.
 // Antes el sync podía solaparse y generar race en vendor_sales_monthly.
+//
+// Frecuencia :05 de cada hora (era */30). Este sync baja el mes actual entero
+// de /ventas + /ventas/items SIN pasar por snapshotCache, o sea que duplica lo
+// que ya baja el prewarm del snapshot. Entre los dos re-descargaban julio 5
+// veces por hora y fundían la cuota horaria de IM (429 recurrente del 31/07,
+// que dejaba a toda la app en el fallback de Sheets = saldos en cero).
+// Escalonado con el prewarm (:35) para no pegarle a IM los dos juntos.
 let syncVentasInFlight = false;
 if (hasSupabase()) {
-    cron.schedule('*/30 * * * *', async () => {
+    cron.schedule('5 * * * *', async () => {
         if (syncVentasInFlight) {
             console.warn('[cron syncVentas] skip · todavía está corriendo el anterior');
             return;
@@ -1291,7 +1298,7 @@ if (hasSupabase()) {
             .then(r => console.log('[sync on start]', r))
             .catch(err => console.error('[sync on start] fallo:', err?.message ?? err));
     }
-    console.log('Cron syncVentasMesActual: */30 * * * *');
+    console.log('Cron syncVentasMesActual: 5 * * * *');
 
     // Cron diario 4am: re-sync últimos 6 meses (mes actual + 5 anteriores).
     // Captura NCs tardías que afectan meses cerrados — sin esto, una NC del 30/04
@@ -1446,12 +1453,15 @@ async function prewarmSnapshotCacheInner() {
 // para que los dos picos de memoria/red no se sumen durante el arranque.
 // También respeta PREWARM_BOOT=off como escape sin rebuild.
 if (PREWARM_BOOT) setTimeout(() => { prewarmSnapshotCache().catch(() => { }); }, 60_000);
-// Cron cada 20 min: re-fuerza el mes actual (TTL 5min) y repone lo histórico
-// solo si venció su TTL de 24h. Combinado con stale-while-revalidate en
-// snapshotCache, esto elimina cold fetches sincrónicos en el path del usuario
-// sin castigar a IM con re-descargas innecesarias.
-cron.schedule('*/20 * * * *', () => { prewarmSnapshotCache().catch(() => { }); });
-console.log('Cron snapshot prewarm: */20 * * * *');
+// Cron a :35 de cada hora (era */20): re-fuerza el mes actual (TTL 5min) y
+// repone lo histórico solo si venció su TTL de 24h. Combinado con
+// stale-while-revalidate en snapshotCache, esto elimina cold fetches
+// sincrónicos en el path del usuario sin castigar a IM con re-descargas.
+// Bajado de 3 a 1 pasada por hora tras el 429 recurrente del 31/07: el mes
+// actual son ~165k renglones entre ventas e items, y esto los re-bajaba
+// enteros cada 20 min además de lo que ya baja syncVentasMesActual (:05).
+cron.schedule('35 * * * *', () => { prewarmSnapshotCache().catch(() => { }); });
+console.log('Cron snapshot prewarm: 35 * * * *');
 
 // MP verification — reintenta comprobantes MP pendientes/no encontrados en ventana 24h
 cron.schedule('*/5 * * * *', async () => {
