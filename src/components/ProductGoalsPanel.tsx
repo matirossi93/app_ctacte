@@ -225,6 +225,7 @@ function AddGoalForm({ viewPeriod, onSaved }: { viewPeriod: ViewPeriod; onSaved:
     const [pctStr, setPctStr] = useState('');
     const [saving, setSaving] = useState(false);
     const [formErr, setFormErr] = useState<string | null>(null);
+    const [hermanos, setHermanos] = useState<ArticuloResult[]>([]);
     const debounceRef = useRef<number | null>(null);
 
     // Buscador de artículos con debounce contra /api/product-goals/articulos.
@@ -240,6 +241,23 @@ function AddGoalForm({ viewPeriod, onSaved }: { viewPeriod: ViewPeriod; onSaved:
         }, 350);
         return () => { if (debounceRef.current) window.clearTimeout(debounceRef.current); };
     }, [query]);
+
+    // Artículos parecidos que quedaron afuera. Nace del incidente 30/07/2026:
+    // las familias de Monky se cargaron con subconjuntos distintos y los
+    // objetivos quedaron subestimados todo el mes.
+    useEffect(() => {
+        if (articulos.length === 0) { setHermanos([]); return; }
+        const cods = articulos.map(a => a.cod_articulo).join(',');
+        let vivo = true;
+        (async () => {
+            try {
+                const res = await fetch(`/api/product-goals/hermanos?cods=${cods}`, { headers: authHeaders() });
+                const j = await res.json();
+                if (vivo) setHermanos(res.ok && j.ok ? j.items : []);
+            } catch { if (vivo) setHermanos([]); }
+        })();
+        return () => { vivo = false; };
+    }, [articulos]);
 
     const addArticulo = (r: ArticuloResult) => {
         setArticulos(prev => prev.some(a => a.cod_articulo === r.cod_articulo) ? prev : [...prev, r]);
@@ -323,6 +341,22 @@ function AddGoalForm({ viewPeriod, onSaved }: { viewPeriod: ViewPeriod; onSaved:
                                     <button className="pg-chip-x" onClick={() => removeArticulo(a.cod_articulo)} title="Quitar"><X size={12} /></button>
                                 </span>
                             ))}
+                        </div>
+                    )}
+
+                    {hermanos.length > 0 && (
+                        <div className="pg-hermanos">
+                            <span className="pg-hermanos-tit">
+                                Se llaman parecido y no los agregaste — ¿también van?
+                            </span>
+                            <div className="pg-chips">
+                                {hermanos.map(h => (
+                                    <button key={h.cod_articulo} className="pg-chip pg-chip-add"
+                                        onClick={() => addArticulo(h)} title="Agregar a la familia">
+                                        <Plus size={11} /> <b>{h.cod_articulo}</b> {h.descripcion}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
                     )}
 

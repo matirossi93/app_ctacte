@@ -45,7 +45,7 @@ import { descargarReporte } from './server-lib/reportes.js';
 import { getConciliacion, exportConciliacion, listSnapshotsConciliacion, guardarSnapshotConciliacion } from './server-lib/conciliacion.js';
 import { cruceCarpetaHandler, exportCruceHandler } from './server-lib/cruceCarpeta.js';
 import { listRebotes, listRecargos, syncRebotesNow, syncRebotes } from './server-lib/rebotes.js';
-import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos } from './server-lib/productGoals.js';
+import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos, hermanosDeFamilia } from './server-lib/productGoals.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -835,6 +835,7 @@ app.get('/api/product-goals', requireJwt, (req: any, res) => listProductGoals(re
 app.post('/api/product-goals', requireJwt, requireAdmin, (req: any, res) => upsertProductGoal(req, res));
 app.delete('/api/product-goals', requireJwt, requireAdmin, (req: any, res) => deleteProductGoal(req, res));
 app.get('/api/product-goals/articulos', requireJwt, requireAdmin, (req: any, res) => searchArticulos(req, res));
+app.get('/api/product-goals/hermanos', requireJwt, requireAdmin, (req: any, res) => hermanosDeFamilia(req, res));
 
 // ─── Clientes lookup (maestro completo, con y sin deuda) ─────────────────────
 app.get('/api/clientes/lookup', requireJwt, (req: any, res) => listClientesLookup(req, res));

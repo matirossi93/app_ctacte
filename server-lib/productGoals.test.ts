@@ -28,6 +28,7 @@ vi.mock('./goalsResponseCache.js', () => ({
 import {
   calcUnidadesPorVendedorArticulo, calcAvancePorGrupo,
   expandirComisionOverrides, validarUpsertGrupo,
+  sugerirHermanos,
 } from './productGoals.js';
 import { clasificarCabeceraComision } from './comisionesShared.js';
 
@@ -200,5 +201,44 @@ describe('validarUpsertGrupo — saneo del alta/edición', () => {
   it('comision_pct vacío o null = sin comisión especial (pct null)', () => {
     expect((validarUpsertGrupo({ ...base, comision_pct: '' }) as any).value.pct).toBe(null);
     expect((validarUpsertGrupo({ ...base, comision_pct: null }) as any).value.pct).toBe(null);
+  });
+});
+
+// ─── sugerirHermanos: el caso Monky del 30/07/2026 ───────────────────────────
+
+describe('sugerirHermanos', () => {
+  // Catálogo mínimo con el problema real: 6 cajas Monky x18, las sueltas x UD,
+  // y ruido que comparte una palabra genérica ("FINO") para verificar que no
+  // se cuele por un token frecuente.
+  const cat = new Map<number, { descripcion: string }>([
+    [695, { descripcion: 'MONKY NEGRA X18 UDS' }],
+    [696, { descripcion: 'MONKY BLANCA X18UDS' }],
+    [697, { descripcion: 'MONKY CAFE EPIC X18UDS' }],
+    [698, { descripcion: 'MONKY KIDS ROCKELT BLANCA X18UDS' }],
+    [699, { descripcion: 'MONKY KIDS ROCKELT NEGRA X18UDS' }],
+    [727, { descripcion: 'MONKY MIX X18UDS' }],
+    [476, { descripcion: 'MAIZ QUEBRADO FINO X 30 KG' }],
+    [705, { descripcion: 'BURGOL FINO' }],
+    [908, { descripcion: 'BLISTER FINO P/ GATO x 12' }],
+  ]);
+
+  it('propone las variedades Monky que quedaron afuera', () => {
+    const out = sugerirHermanos([698, 699, 727], cat);
+    const cods = out.map(o => o.cod_articulo).sort((a, b) => a - b);
+    expect(cods).toEqual([695, 696, 697]);
+  });
+
+  it('no propone nada cuando la familia ya está completa', () => {
+    expect(sugerirHermanos([695, 696, 697, 698, 699, 727], cat)).toEqual([]);
+  });
+
+  it('ignora los tokens genéricos: BURGOL FINO no arrastra el maíz quebrado', () => {
+    const out = sugerirHermanos([705], cat).map(o => o.cod_articulo);
+    expect(out).not.toContain(476);
+    expect(out).not.toContain(908);
+  });
+
+  it('sin artículos elegidos no sugiere nada', () => {
+    expect(sugerirHermanos([], cat)).toEqual([]);
   });
 });
