@@ -459,3 +459,223 @@ export async function fetchClientesIMCached(force = false): Promise<ClienteIM[]>
 }
 
 export function invalidateClientesIMCache(): void { clientesIMCache = null; }
+
+// ============================================================================
+// PRESUPUESTOS (pedidos de vendedor) — POST /presupuestos
+// ============================================================================
+// Un "pedido" en InfoManager es un PRESUPUESTO NO CONFIRMADO (tipo_comprobante
+// PR, tipo_presupuesto NC): un borrador que la oficina ve y luego factura. NO
+// mueve stock, NO emite AFIP, NO toca cuenta corriente. Probado en prod 22/07/2026
+// (presupuesto Nº 56737). Trampas descubiertas (ver memoria
+// project_app_pedidos_replica_im):
+//   1. mueve_stock NO acepta null en el POST (aunque el swagger lo liste): mandar "N".
+//   2. cada item requiere cod_cuenta (cuenta contable de venta, ej "4100002").
+//   3. `usuario` debe existir en IM y tener el punto de venta vinculado para
+//      (empresa, tipo_comprobante, destino). Si no: "El punto de venta no está
+//      vinculado al usuario".
+//   4. IM devuelve HTTP 200 IGUAL con error de negocio en el body (sin isCreated):
+//      NO confiar en el status, chequear isCreated===true.
+//   5. total/neto/IVA se autocalculan si se envían en 0.
+
+export interface PresupuestoItemInput {
+  cod_articulo: number;
+  cantidad: number;
+  precio?: string | number;   // de la lista del cliente; si falta, IM usa la lista
+  cod_cuenta?: string;        // cuenta contable de venta (default IM_CUENTA_VENTA)
+  iva_por?: number;           // default 21
+  descuento_porc?: number;
+}
+
+export interface CrearPresupuestoInput {
+  cod_empresa: number;
+  cod_cliente: number;
+  cod_vendedor: number | string;
+  cod_lista_precios: number;
+  usuario: string;            // usuario REAL de IM con punto de venta vinculado
+  punto_de_venta?: number;    // default 1
+  id_destino?: number;        // default 1 (Manual)
+  cod_cuenta_default?: string; // cuenta de venta para items sin cod_cuenta propio
+  observaciones?: string;
+  cod_compatibilidad?: string; // id de NUESTRO sistema (<=8 chars) para trazabilidad
+  fecha?: string;             // YYYY-MM-DD (default hoy)
+  fecha_entrega?: string;
+  items: PresupuestoItemInput[];
+}
+
+export interface PresupuestoOK { ok: true; id: string; numero: number | null; raw: any }
+export interface PresupuestoErr { ok: false; error: string; raw?: any; sinRespuesta?: boolean }
+
+const IM_CUENTA_VENTA_DEFAULT = process.env.IM_CUENTA_VENTA_PEDIDOS || '4100002';
+
+/**
+ * POST /api/v1/presupuestos — crea un presupuesto NO confirmado (pedido).
+ * Espeja el manejo de errores de crearRecibo: distingue timeout/sin-respuesta
+ * (resultado DESCONOCIDO) de rechazo real. Además chequea isCreated porque IM
+ * puede responder 200 con un error de negocio en el body.
+ */
+export async function crearPresupuesto(input: CrearPresupuestoInput): Promise<PresupuestoOK | PresupuestoErr> {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const fecha = input.fecha || hoy;
+  const cuentaDefault = input.cod_cuenta_default || IM_CUENTA_VENTA_DEFAULT;
+  const payload: Record<string, any> = {
+    fecha,
+    fecha_entrega: input.fecha_entrega || fecha,
+    tipo_comprobante: 'PR',
+    tipo_presupuesto: 'NC',
+    numero: 0,                       // IM asigna el correlativo
+    id_destino: input.id_destino ?? 1,
+    cod_cliente: input.cod_cliente,
+    cod_vendedor: String(input.cod_vendedor),
+    usuario: input.usuario,
+    usuario_fecha: fecha,
+    usuario_hora: new Date().toISOString().slice(11, 19),
+    fac_electronica: 0,              // NO AFIP
+    total: 0, neto: 0, iva_importe: 0, importe_iva_10_5: 0, importe_iva_27: 0, // IM calcula
+    observaciones: input.observaciones || '',
+    tag: 'S',
+    talonario_manual: 'N',
+    mueve_stock: 'N',                // NO mueve stock (validador rechaza null)
+    punto_de_venta: input.punto_de_venta ?? 1,
+    tipo_recibo: 'L',
+    tipo_factura: 'X',
+    moneda: 'P', cotizacion: 1, moneda_2: 'P', cotizacion_2: 1,
+    cod_empresa: input.cod_empresa,
+    cod_unidad_negocio_cab: 0, numero_cai: 0,
+    cod_jurisdiccion: 0, cod_jurisdiccion_comerc: 0,
+    genero_re_auto: 'N',
+    cod_compatibilidad: (input.cod_compatibilidad || '').slice(0, 8),
+    cod_deposito: 0, cod_deposito_destino: 0,
+    cod_lista_precios: input.cod_lista_precios,
+    items: input.items.map((it) => ({
+      cod_articulo: it.cod_articulo,
+      cantidad: it.cantidad,
+      iva_por: it.iva_por ?? 21,
+      ...(it.precio != null ? { precio: String(it.precio) } : {}),
+      cod_cuenta: it.cod_cuenta || cuentaDefault,
+      ...(it.descuento_porc != null ? { descuento_porc: it.descuento_porc } : {}),
+    })),
+  };
+
+  try {
+    const cli = await imClient();
+    const { data } = await cli.post('/presupuestos', payload);
+    // Éxito real = isCreated. IM puede responder 200 con {mensaje:"Ocurrió un
+    // error..."} y sin isCreated cuando rechaza por reglas de negocio.
+    const venta = data?.venta ?? data;
+    if (data?.isCreated === true || venta?.id) {
+      const id = String(venta?.id ?? data?.id ?? '');
+      const numero = venta?.numero ?? data?.numero ?? null;
+      console.log(`[crearPresupuesto] OK · id=${id} numero=${numero}`);
+      return { ok: true, id, numero, raw: data };
+    }
+    // 200 pero sin isCreated → error de negocio en el body
+    const msg = data?.mensaje || data?.detalles || 'IM no confirmó la creación (sin isCreated)';
+    console.error('[crearPresupuesto] 200 sin isCreated:', JSON.stringify(data).slice(0, 400));
+    return { ok: false, error: typeof msg === 'string' ? msg : JSON.stringify(msg), raw: data };
+  } catch (err: any) {
+    const raw = err?.response?.data;
+    const status = err?.response?.status;
+    // Sin response = IM nunca contestó (timeout/red): resultado DESCONOCIDO, el
+    // presupuesto pudo haberse creado igual (mismo patrón que crearRecibo/HASAN).
+    const detalle = raw?.errores
+      ? raw.errores.map((e: any) => `${e.campo}: ${(e.mensajes || []).join(', ')}`).join(' · ')
+      : (raw?.detalles ? JSON.stringify(raw.detalles).slice(0, 300) : (raw?.mensaje || err?.message || 'unknown'));
+    return { ok: false, error: `HTTP ${status ?? '?'}: ${detalle}`, raw, sinRespuesta: !err?.response };
+  }
+}
+
+/**
+ * Anular un presupuesto/venta. En IM NO va por /presupuestos/{id} (ignora el
+ * campo) sino por PUT /ventas/{id} con el schema VentasActualizar + anulada:'S'.
+ * Probado 22/07/2026.
+ */
+export async function anularComprobante(input: {
+  id: number | string;
+  numero: number;
+  punto_de_venta: number;
+  fecha: string;
+  observaciones?: string;
+  tipo_comprobante?: string;
+}): Promise<{ ok: true; raw: any } | { ok: false; error: string; raw?: any; sinRespuesta?: boolean }> {
+  const body = {
+    fecha: input.fecha,
+    tipo_comprobante: input.tipo_comprobante || 'PR',
+    tipo_factura: 'X',
+    numero: input.numero,
+    punto_de_venta: input.punto_de_venta,
+    tag: 'S',
+    condicion_venta_tipo: 0,
+    observaciones: input.observaciones || 'Anulado desde app de pedidos',
+    fac_electronica: 0,
+    anulada: 'S',
+  };
+  try {
+    const cli = await imClient();
+    const { data } = await cli.put(`/ventas/${input.id}`, body);
+    return { ok: true, raw: data };
+  } catch (err: any) {
+    const raw = err?.response?.data;
+    const status = err?.response?.status;
+    return { ok: false, error: `HTTP ${status ?? '?'}: ${raw?.mensaje ?? err?.message ?? 'unknown'}`, raw, sinRespuesta: !err?.response };
+  }
+}
+
+export interface PrecioLista {
+  cod_articulo: number;
+  descripcion: string;
+  precio_vta: number;
+  iva: number;
+  precio_con_iva: number;
+  cod_rubro?: number;
+  rubro?: string;
+  ult_actualizacion_precio?: string;
+}
+
+/** GET /articulos/precio-ldp — precio de UN artículo en UNA lista de precios. */
+export async function getPrecioLista(codArticulo: number, codLista: number): Promise<PrecioLista | null> {
+  const cli = await imClient();
+  const { data } = await imGetRetry(
+    () => cli.get('/articulos/precio-ldp', { params: { cod_articulo: codArticulo, cod_lista: codLista } }),
+    `precio-ldp art=${codArticulo} lista=${codLista}`
+  );
+  const row = Array.isArray(data) ? data[0] : (data?.results?.[0] ?? data);
+  if (!row) return null;
+  return {
+    cod_articulo: Number(row.cod_articulo ?? codArticulo),
+    descripcion: String(row.descripcion ?? ''),
+    precio_vta: Number(row.precio_vta ?? row.precio ?? 0),
+    iva: Number(row.iva ?? 0),
+    precio_con_iva: Number(row.precio_con_iva ?? row.precio_vta ?? 0),
+    cod_rubro: row.cod_rubro != null ? Number(row.cod_rubro) : undefined,
+    rubro: row.rubro ?? undefined,
+    ult_actualizacion_precio: row.ult_actualizacion_precio ?? undefined,
+  };
+}
+
+export interface DisponibleCliente {
+  cod_cliente: number;
+  nombre: string;
+  saldo: number;
+  disponible: number;
+  control_margen_venta: string;
+  margen_acuerdos: number;
+}
+
+/** GET /reportes/disponible_por_cliente — saldo + cupo de crédito del cliente. */
+export async function getDisponibleCliente(codCliente: number): Promise<DisponibleCliente | null> {
+  const cli = await imClient();
+  const { data } = await imGetRetry(
+    () => cli.get('/reportes/disponible_por_cliente', { params: { codCliente } }),
+    `disponible_por_cliente ${codCliente}`
+  );
+  const row = Array.isArray(data) ? data[0] : (data?.results?.[0] ?? data);
+  if (!row) return null;
+  return {
+    cod_cliente: Number(row.cod_cliente ?? codCliente),
+    nombre: String(row.nombre ?? ''),
+    saldo: Number(row.saldo ?? 0),
+    disponible: Number(row.disponible ?? 0),
+    control_margen_venta: String(row.control_margen_venta ?? 'N'),
+    margen_acuerdos: Number(row.margen_acuerdos ?? 0),
+  };
+}

@@ -3,10 +3,11 @@ import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
     DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, MapPin,
-    Sun, ChevronRight, ChevronDown, AlertTriangle, Download, Trash2, Pencil, Bell, Wallet, Send, Store, Scale, PackageX
+    Sun, ChevronRight, ChevronDown, AlertTriangle, Download, Trash2, Pencil, Bell, Wallet, Send, Store, Scale, PackageX, ShoppingCart
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser } from '../utils/auth';
 import { RecibosApp } from './RecibosApp';
+import { PedidosApp } from './PedidosApp';
 import { ConciliacionApp } from './ConciliacionApp';
 import { CambiarPassword } from './CambiarPassword';
 import { UsuariosAdmin } from './UsuariosAdmin';
@@ -238,6 +239,7 @@ export const VendorShell = ({ onLogout }: Props) => {
     const isAdmin = user?.rol === 'admin' || user?.rol === 'gerente';
     const [tab, setTab] = useState<Tab>('hoy');
     const [showRecibos, setShowRecibos] = useState(false);
+    const [showPedidos, setShowPedidos] = useState(false);
     const [bucket, setBucket] = useState<'todos' | 'reciente' | 'medio' | 'vencido'>('todos');
     const [search, setSearch] = useState('');
     // Pendiente de crear actividad (disparado desde CobranzasView)
@@ -671,6 +673,10 @@ export const VendorShell = ({ onLogout }: Props) => {
                 </button>
             </nav>
 
+            {/* FAB: nuevo pedido (apilado arriba del de pago) */}
+            <button className="vs-fab vs-fab-ped" onClick={() => setShowPedidos(true)} title="Nuevo pedido">
+                <ShoppingCart size={22} />
+            </button>
             {/* FAB global: cargar pago */}
             <button className="vs-fab" onClick={() => setShowRecibos(true)} title="Cargar pago">
                 <Receipt size={22} />
@@ -678,6 +684,9 @@ export const VendorShell = ({ onLogout }: Props) => {
 
             {showRecibos && (
                 <RecibosApp onClose={() => setShowRecibos(false)} clients={clientsAgg.map(c => ({ cod: c.cod, name: c.name, localidad: c.localidad }))} />
+            )}
+            {showPedidos && (
+                <PedidosApp onClose={() => setShowPedidos(false)} clients={clientsAgg.map(c => ({ cod: c.cod, name: c.name, localidad: c.localidad }))} />
             )}
             {showCambiarPass && <CambiarPassword onClose={() => setShowCambiarPass(false)} />}
             {showUsuariosAdmin && <UsuariosAdmin onClose={() => setShowUsuariosAdmin(false)} />}
