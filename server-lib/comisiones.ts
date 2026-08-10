@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import type { JwtPayload } from './auth.js';
-import { sb, hasSupabase } from './supabase.js';
+import { sb, hasSupabase, TENANT_ID } from './supabase.js';
+import { usuariosPorCod } from './usuariosPorCod.js';
 import { fetchVendedores, fetchArticulosCatalogo, fetchClientesIMCached } from './infomanager.js';
 import { getMonthlyVentasRaw, getMonthlyItemsRaw } from './snapshotCache.js';
 import { tipoComprobante, isAnulada } from '../src/utils/ventas.js';
@@ -288,10 +289,13 @@ export async function getComisionesData(opts: GetComisionesOpts) {
     if (cods.length) {
       const { data: usuarios } = await sb()
         .from('usuarios')
-        .select('cod_vendedor, email, activo, nombre')
+        .select('id, cod_vendedor, email, activo, nombre, created_at')
+        .eq('tenant_id', TENANT_ID)
         .in('cod_vendedor', cods);
-      for (const u of usuarios ?? []) {
-        const v = acc.get(Number(u.cod_vendedor));
+      // Con un cod duplicado, el loop viejo dejaba pisado el nombre/email/activo con
+      // la última fila que llegara. Elegimos la canónica primero (ver usuariosPorCod.ts).
+      for (const [cod, u] of usuariosPorCod(usuarios ?? []).byCod) {
+        const v = acc.get(cod);
         if (!v) continue;
         v.email = u.email ?? null;
         v.activo = u.activo !== false;

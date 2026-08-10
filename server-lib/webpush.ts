@@ -17,6 +17,7 @@ import webpush from 'web-push';
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import type { JwtPayload } from './auth.js';
+import { usuariosPorCod } from './usuariosPorCod.js';
 
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
@@ -252,10 +253,15 @@ export async function dispararRecordatoriosPromesa(): Promise<{ candidatos: numb
   const cods = Array.from(new Set(due.map(r => r.cod_vendedor)));
   const { data: usersByCodVend } = await sb()
     .from('usuarios')
-    .select('id, cod_vendedor, nombre, email')
+    .select('id, cod_vendedor, nombre, email, activo, created_at')
+    .eq('tenant_id', TENANT_ID)
     .in('cod_vendedor', cods);
+  // Con un cod_vendedor duplicado en usuarios, el forEach viejo se quedaba con el
+  // user_id de la última fila y el push se iba al usuario equivocado (ver usuariosPorCod.ts).
   const userByCod = new Map<number, { id: string; nombre: string | null; email: string }>();
-  (usersByCodVend ?? []).forEach((u: any) => userByCod.set(u.cod_vendedor, { id: u.id, nombre: u.nombre, email: u.email }));
+  usuariosPorCod(usersByCodVend ?? []).byCod.forEach((u: any, cod) => {
+    userByCod.set(cod, { id: u.id, nombre: u.nombre, email: u.email });
+  });
 
   let enviados = 0, fallidos = 0, sinSub = 0;
   for (const r of due) {
