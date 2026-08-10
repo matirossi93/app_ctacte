@@ -11,6 +11,7 @@ import {
   COD_VENDEDORES_VISIBLES as COD_VENDEDORES_VISIBLES_SHARED,
 } from './comisionesShared.js';
 import { loadVendedorOverrides, resolveCodVendedor } from './comisionOverrides.js';
+import { usuariosPorCod } from './usuariosPorCod.js';
 
 function normLoc(s: string | null | undefined): string {
   if (!s) return '';
@@ -186,15 +187,17 @@ async function computeGoalItems(year: number, month: number, incluirInactivos: b
 
     // Traer usuarios con cod_vendedor + email para tags visuales + flag activo.
     const { data: usuariosRows } = await sb().from('usuarios')
-      .select('id, email, cod_vendedor, vendedor_key, nombre, activo')
+      .select('id, email, cod_vendedor, vendedor_key, nombre, activo, created_at')
       .eq('tenant_id', TENANT_ID)
       .not('cod_vendedor', 'is', null);
     const usuariosById = new Map<string, any>();
-    const usuariosByCod = new Map<number, any>();
-    (usuariosRows ?? []).forEach((u: any) => {
-      usuariosById.set(u.id, u);
-      if (u.cod_vendedor != null) usuariosByCod.set(u.cod_vendedor, u);
-    });
+    (usuariosRows ?? []).forEach((u: any) => usuariosById.set(u.id, u));
+    // usuarios no tiene UNIQUE sobre cod_vendedor: elegimos la fila canónica en vez
+    // de quedarnos con la última que devuelva PostgREST (incidente "DIAG vendedor", 10/08).
+    const { byCod: usuariosByCod, dupCods } = usuariosPorCod(usuariosRows ?? []);
+    if (dupCods.length) {
+      console.warn(`[goals] cod_vendedor duplicado en usuarios: ${dupCods.join(', ')} — se usa el activo más antiguo`);
+    }
 
     const goalsByCod = new Map<number, any>();
     (goalsRes.data ?? []).forEach((g: any) => goalsByCod.set(g.cod_vendedor, g));
@@ -1002,11 +1005,10 @@ export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res
     if (goalsRes.error) { res.status(500).json({ error: `goals: ${goalsRes.error.message}` }); return; }
 
     const { data: usuariosRows } = await sb().from('usuarios')
-      .select('id, email, cod_vendedor, vendedor_key, nombre, activo')
+      .select('id, email, cod_vendedor, vendedor_key, nombre, activo, created_at')
       .eq('tenant_id', TENANT_ID)
       .not('cod_vendedor', 'is', null);
-    const usuariosByCod = new Map<number, any>();
-    (usuariosRows ?? []).forEach((u: any) => { if (u.cod_vendedor != null) usuariosByCod.set(u.cod_vendedor, u); });
+    const { byCod: usuariosByCod } = usuariosPorCod(usuariosRows ?? []);
 
     const goalsByCod = new Map<number, any>();
     (goalsRes.data ?? []).forEach((g: any) => goalsByCod.set(g.cod_vendedor, g));

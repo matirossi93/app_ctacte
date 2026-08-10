@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
 import type { JwtPayload } from './auth.js';
 import { fetchComprobPendientes } from './infomanager.js';
+import { usuariosPorCod } from './usuariosPorCod.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Reportes — export xlsx admin-only para analisis ad-hoc
@@ -22,12 +23,13 @@ function isHistoric(year: number, month: number): boolean {
 
 async function vendorNameMap(): Promise<Map<number, string>> {
   const { data } = await sb().from('usuarios')
-    .select('cod_vendedor, nombre')
+    .select('id, cod_vendedor, nombre, activo, created_at')
     .eq('tenant_id', TENANT_ID)
     .not('cod_vendedor', 'is', null);
   const m = new Map<number, string>();
-  (data ?? []).forEach((r: any) => {
-    if (r.cod_vendedor != null) m.set(Number(r.cod_vendedor), r.nombre || `cod ${r.cod_vendedor}`);
+  // Un cod duplicado en usuarios ensuciaba el nombre en los 4 exports (ver usuariosPorCod.ts).
+  usuariosPorCod(data ?? []).byCod.forEach((u: any, cod) => {
+    m.set(cod, u.nombre || `cod ${cod}`);
   });
   return m;
 }
