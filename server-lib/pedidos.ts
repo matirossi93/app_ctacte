@@ -23,7 +23,14 @@ const PEDIDO_LISTA_FALLBACK = Number(env.PEDIDO_LISTA_FALLBACK || 12); // LISTA 
 // Útil para probar el flujo sin ensuciar InfoManager. Apagar (borrar/0) para producción.
 const PEDIDOS_DRY_RUN = String(env.PEDIDOS_DRY_RUN || '').toLowerCase() === 'true' || env.PEDIDOS_DRY_RUN === '1';
 
-interface ItemInput { cod_articulo: number; cantidad: number }
+interface ItemInput { cod_articulo: number; cantidad: number; cod_lista?: number }
+
+/**
+ * Listas mayoristas validas (IM): 12=L1 13=L2 14=L3 15=L4, 9=MINORISTA, 11=SUCURSALES.
+ * El vendedor elige la lista RENGLON POR RENGLON segun la cantidad — asi trabajan
+ * hoy en IM. Si no manda ninguna, se usa la del cliente.
+ */
+const LISTAS_VALIDAS = new Set([9, 11, 12, 13, 14, 15]);
 
 /** Resuelve cod_vendedor del pedido según rol (vendedor = el suyo; admin/gerente = del body o del cliente). */
 async function resolverCodVendedor(user: JwtPayload, codCliente: number, bodyCodVend?: any): Promise<number> {
@@ -54,7 +61,11 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
     if (!codCliente || isNaN(codCliente)) { res.status(400).json({ error: 'cod_cliente inválido' }); return; }
     const itemsInput: ItemInput[] = Array.isArray(body.items) ? body.items : [];
     const itemsValidos = itemsInput
-      .map((it) => ({ cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad) }))
+      .map((it) => ({
+        cod_articulo: Number(it.cod_articulo),
+        cantidad: Number(it.cantidad),
+        cod_lista: LISTAS_VALIDAS.has(Number(it.cod_lista)) ? Number(it.cod_lista) : undefined,
+      }))
       .filter((it) => it.cod_articulo > 0 && it.cantidad > 0);
     if (!itemsValidos.length) { res.status(400).json({ error: 'El pedido no tiene items válidos' }); return; }
 
@@ -85,19 +96,21 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
     const codVendedor = await resolverCodVendedor(user, codCliente, body.cod_vendedor);
 
     // Resolver precio de cada item en la lista del cliente (secuencial: IM se satura en paralelo).
-    const itemsConPrecio: Array<{ cod_articulo: number; cantidad: number; descripcion: string; precio: number; iva: number; subtotal: number }> = [];
+    const itemsConPrecio: Array<{ cod_articulo: number; cantidad: number; descripcion: string; precio: number; iva: number; subtotal: number; cod_lista: number }> = [];
     let totalEstimado = 0;
     for (const it of itemsValidos) {
+      // La lista del RENGLON manda; si el vendedor no eligió una, va la del cliente.
+      const listaItem = it.cod_lista ?? codLista;
       let precio = 0, iva = 21, descripcion = '';
       try {
-        const p = await getPrecioLista(it.cod_articulo, codLista);
+        const p = await getPrecioLista(it.cod_articulo, listaItem);
         if (p) { precio = p.precio_vta; iva = p.iva; descripcion = p.descripcion; }
       } catch (e: any) {
-        console.warn(`[crearPedido] precio-ldp falló art=${it.cod_articulo}:`, e?.message);
+        console.warn(`[crearPedido] precio-ldp falló art=${it.cod_articulo} lista=${listaItem}:`, e?.message);
       }
       const subtotal = Math.round(precio * it.cantidad * 100) / 100;
       totalEstimado += subtotal;
-      itemsConPrecio.push({ ...it, descripcion, precio, iva, subtotal });
+      itemsConPrecio.push({ ...it, descripcion, precio, iva, subtotal, cod_lista: listaItem });
     }
     totalEstimado = Math.round(totalEstimado * 100) / 100;
 
@@ -133,6 +146,7 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
       descripcion: it.descripcion || null,
       cantidad: it.cantidad,
       precio_unit: it.precio,
+      cod_lista_precios: it.cod_lista,
       iva_por: it.iva,
       subtotal: it.subtotal,
       orden: i,
@@ -278,8 +292,13 @@ export async function precioArticulo(req: Request & { user?: JwtPayload }, res: 
     const codArticulo = Number(req.query.cod_articulo);
     const codCliente = Number(req.query.cod_cliente);
     if (!codArticulo) { res.status(400).json({ error: 'cod_articulo inválido' }); return; }
+    // cod_lista explicito manda (el vendedor cambio la lista de ese renglon);
+    // si no viene, se usa la del cliente.
+    const listaPedida = Number(req.query.cod_lista);
     let codLista = PEDIDO_LISTA_FALLBACK;
-    if (codCliente) {
+    if (Number.isFinite(listaPedida) && listaPedida > 0) {
+      codLista = listaPedida;
+    } else if (codCliente) {
       try {
         const clientes = await fetchClientesIMCached();
         const cli = clientes.find((c) => Number(c.cod_cliente) === codCliente);

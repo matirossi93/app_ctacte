@@ -14,7 +14,20 @@ interface Props {
 interface ClienteOpt { cod: string; name: string; localidad?: string }
 interface Credito { saldo: number; disponible: number; control_margen_venta: string }
 interface CatItem { cod_articulo: number; descripcion: string; precio_venta: number }
-interface CartItem { cod_articulo: number; descripcion: string; cantidad: number; precio: number }
+interface CartItem { cod_articulo: number; descripcion: string; cantidad: number; precio: number; cod_lista: number }
+
+/**
+ * Listas mayoristas de IM. El vendedor la elige RENGLON POR RENGLON segun la
+ * cantidad, que es como se trabaja hoy en InfoManager: el mismo pedido puede
+ * tener un producto en Lista 2 y otro en Lista 3.
+ */
+const LISTAS = [
+    { cod: 12, label: 'L1' },
+    { cod: 13, label: 'L2' },
+    { cod: 14, label: 'L3' },
+    { cod: 15, label: 'L4' },
+] as const;
+const LISTA_DEFECTO = 12;
 interface Pedido {
     id: string; cod_cliente: number; cliente_nombre: string | null; estado: string;
     im_numero: number | null; total_estimado: number; created_at: string;
@@ -59,6 +72,9 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     // ── Estado del pedido ───────────────────────────────────────────────────
     const [step, setStep] = useState<Step>('cliente');
     const [cliente, setCliente] = useState<ClienteOpt | null>(null);
+    // Lista con la que arranca cada renglon nuevo: la que el cliente tiene en IM.
+    // El vendedor la cambia por renglon si la cantidad lo amerita.
+    const [listaCliente, setListaCliente] = useState<number>(LISTA_DEFECTO);
     const [credito, setCredito] = useState<Credito | null>(null);
     const [credLoading, setCredLoading] = useState(false);
     const [cart, setCart] = useState<CartItem[]>([]);
@@ -109,15 +125,31 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         if (cart.some(i => i.cod_articulo === a.cod_articulo)) return;
         // Precio de la lista del cliente (no el genérico del catálogo).
         let precio = a.precio_venta;
+        let listaDelItem = listaCliente;
         try {
             const r = await fetch(`/api/pedidos/precio?cod_articulo=${a.cod_articulo}&cod_cliente=${cliente?.cod ?? ''}`, { headers: authHeaders() });
             const d = await r.json();
             if (d?.ok && d.precio?.precio_vta != null) precio = Number(d.precio.precio_vta);
+            // el backend nos dice con que lista cotizo: esa es la del cliente
+            if (d?.ok && Number(d.cod_lista) > 0) { listaDelItem = Number(d.cod_lista); setListaCliente(listaDelItem); }
         } catch { /* usa el genérico */ }
-        setCart(c => [...c, { cod_articulo: a.cod_articulo, descripcion: a.descripcion, cantidad: 1, precio }]);
+        setCart(c => [...c, { cod_articulo: a.cod_articulo, descripcion: a.descripcion, cantidad: 1, precio, cod_lista: listaDelItem }]);
         setCatQuery(''); setCatResults([]);
     }
     const setQty = (cod: number, q: number) => setCart(c => c.map(i => i.cod_articulo === cod ? { ...i, cantidad: Math.max(0.001, q) } : i));
+
+    /** Cambiar la lista de un renglon: se re-pide el precio de ESA lista. */
+    async function setLista(cod: number, codLista: number) {
+        setCart(c => c.map(i => i.cod_articulo === cod ? { ...i, cod_lista: codLista } : i));
+        try {
+            const r = await fetch(`/api/pedidos/precio?cod_articulo=${cod}&cod_lista=${codLista}`, { headers: authHeaders() });
+            const d = await r.json();
+            if (d?.ok && d.precio?.precio_vta != null) {
+                const nuevo = Number(d.precio.precio_vta);
+                setCart(c => c.map(i => i.cod_articulo === cod ? { ...i, precio: nuevo } : i));
+            }
+        } catch { /* si falla, queda el precio anterior y el backend recalcula al enviar */ }
+    }
     const quitar = (cod: number) => setCart(c => c.filter(i => i.cod_articulo !== cod));
     const total = useMemo(() => cart.reduce((a, i) => a + i.cantidad * i.precio, 0), [cart]);
 
@@ -136,7 +168,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                     cod_cliente: Number(cliente.cod),
                     observaciones: obs || undefined,
                     idempotency_key: idempotencyKey.current,
-                    items: cart.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad })),
+                    items: cart.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista: i.cod_lista })),
                 }),
             });
             const d = await r.json();
@@ -158,7 +190,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     }
 
     function nuevoPedido() {
-        setStep('cliente'); setCliente(null); setCredito(null); setCart([]); setObs('');
+        setStep('cliente'); setCliente(null); setCredito(null); setCart([]); setObs(''); setListaCliente(LISTA_DEFECTO);
         setClienteSearch(''); setCatQuery(''); setCatResults([]); setResultado(null);
         idempotencyKey.current = crypto.randomUUID();
     }
@@ -266,6 +298,14 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                                         <input type="number" value={i.cantidad} onChange={e => setQty(i.cod_articulo, Number(e.target.value))} />
                                         <button onClick={() => setQty(i.cod_articulo, i.cantidad + 1)}><Plus size={14} /></button>
                                     </div>
+                                    <select
+                                        className="ped-cart-lista"
+                                        value={i.cod_lista}
+                                        onChange={e => setLista(i.cod_articulo, Number(e.target.value))}
+                                        title="Lista de precios de este renglón"
+                                    >
+                                        {LISTAS.map(l => <option key={l.cod} value={l.cod}>{l.label}</option>)}
+                                    </select>
                                     <div className="ped-cart-sub">{money(i.cantidad * i.precio)}</div>
                                     <button className="ped-cart-del" onClick={() => quitar(i.cod_articulo)}><Trash2 size={14} /></button>
                                 </div>
