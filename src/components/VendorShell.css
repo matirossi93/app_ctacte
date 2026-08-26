@@ -698,6 +698,9 @@
 .vs-fab:active { transform: scale(.94) }
 /* Ocultar FAB Recibos en tab Actividad (ahí hay FAB de crear actividad) */
 .vs-root[data-tab="actividad"] .vs-fab { display: none }
+/* FAB Pedidos: apilado arriba del de pago, en dorado para distinguirlo. */
+.vs-fab-ped { bottom: 156px; background: linear-gradient(145deg, #E59B33 0%, #C9781F 100%); color: #fff }
+.vs-root[data-tab="actividad"] .vs-fab-ped { display: none }
 
 /* Bottom nav */
 .vs-nav {
@@ -1372,6 +1375,7 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
         width: 60px; height: 60px;
     }
     .vs-fab-act { bottom: 36px; right: 36px }
+    .vs-fab-ped { bottom: 106px; right: 36px }
 
     /* Feriados / localidades dan más aire */
     .vs-holidays-bar { max-width: 820px }

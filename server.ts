@@ -46,6 +46,7 @@ import { getConciliacion, exportConciliacion, listSnapshotsConciliacion, guardar
 import { cruceCarpetaHandler, exportCruceHandler } from './server-lib/cruceCarpeta.js';
 import { listRebotes, listRecargos, syncRebotesNow, syncRebotes } from './server-lib/rebotes.js';
 import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos, hermanosDeFamilia } from './server-lib/productGoals.js';
+import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, precioArticulo, catalogoPedido, validarListasPedido } from './server-lib/pedidos.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -593,6 +594,7 @@ for (const prefix of [
     '/api/overrides', '/api/client-thresholds', '/api/debug', '/api/conciliacion',
     // Auditoría 22-jul: el repartidor no debe leer promesas de pago/alertas del equipo.
     '/api/notificaciones',
+    '/api/pedidos',
 ]) {
     app.use(prefix, maybeJwt, denyRepartidor);
 }
@@ -640,6 +642,17 @@ app.post('/api/recibos/:id/rechazar', requireJwt, (req: any, res) => rechazarRec
 app.post('/api/recibos/:id/editar', requireJwt, (req: any, res) => editarRecibo(req, res));
 app.post('/api/recibos/:id/reverificar-mp', requireJwt, (req: any, res) => reverificarMP(req, res));
 app.post('/api/recibos/:id/elegir-match', requireJwt, (req: any, res) => elegirMatchMP(req, res));
+
+// ── Pedidos de vendedor (presupuesto NC en IM) ──────────────────────────────
+// Helpers ANTES de /:id para que ":id" no capture "catalogo"/"precio"/"credito".
+app.get('/api/pedidos/catalogo', requireJwt, (req: any, res) => catalogoPedido(req, res));
+app.get('/api/pedidos/precio', requireJwt, (req: any, res) => precioArticulo(req, res));
+app.get('/api/pedidos/credito/:cod', requireJwt, (req: any, res) => creditoCliente(req, res));
+app.post('/api/pedidos/validar', requireJwt, (req: any, res) => validarListasPedido(req, res));
+app.get('/api/pedidos', requireJwt, (req: any, res) => listPedidos(req, res));
+app.post('/api/pedidos', requireJwt, (req: any, res) => crearPedido(req, res));
+app.get('/api/pedidos/:id', requireJwt, (req: any, res) => getPedidoById(req, res));
+app.post('/api/pedidos/:id/anular', requireJwt, (req: any, res) => anularPedido(req, res));
 
 // Reportes admin-only (xlsx)
 app.get('/api/reportes/:tipo', requireJwt, (req: any, res) => descargarReporte(req, res));

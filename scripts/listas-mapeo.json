@@ -1,0 +1,593 @@
+{
+ "LINEA GANAVE": {
+  "tipo": "subrubro",
+  "valores": [
+   "Ganave"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "CONEJO GEPSA": {
+  "tipo": "subrubro",
+  "valores": [
+   "Gepsa"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "CONEJO COENCAR": {
+  "tipo": "subrubro",
+  "valores": [
+   "Conecar"
+  ],
+  "estado": "revisar",
+  "nota": "La planilla dice COENCAR; en IM el subrubro es Conecar. Ademas el art 10005 (CONEJO x KG - CONECAR) figura en el subrubro Ganave: error de carga en IM."
+ },
+ "LINEA PRODUCCION PROPIA SEMILLERO": {
+  "tipo": "subrubro",
+  "valores": [
+   "Semillero"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "LINEA ROSCO": {
+  "tipo": "subrubro",
+  "valores": [
+   "Rosco"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "LINEA TIERNITO": {
+  "tipo": "subrubro",
+  "valores": [
+   "Tiernito"
+  ],
+  "estado": "revisar",
+  "nota": "Hay DOS subrubros: Tiernito (3 arts) y Tiernitos (17). Y la planilla tiene 3 filas (LINEA TIERNITO / SNACKS TIERNITOS / SALSA TIERNITOS). Cual va con cual?"
+ },
+ "LINEA DS CRIADORES": {
+  "tipo": "subrubro",
+  "valores": [
+   "Dog Seleccion"
+  ],
+  "estado": "revisar",
+  "nota": "En IM el subrubro se llama Dog Seleccion, no DS Criadores. Confirmar que es la misma linea (los articulos SI se llaman DS CRIADORES)."
+ },
+ "LINEA GRAN CAMPEON": {
+  "tipo": "subrubro",
+  "valores": [
+   "Gran Campeon"
+  ],
+  "estado": "ok",
+  "nota": "Mati 26/08: llega hasta LISTA 3. El audio decia L4 pero estaba mal (quiso decir el mejor precio)."
+ },
+ "LINEA PACHA": {
+  "tipo": "subrubro",
+  "valores": [
+   "Pacha"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "LINEA BELCAN": {
+  "tipo": "subrubro",
+  "valores": [
+   "Belcan",
+   "Belcat"
+  ],
+  "estado": "revisar",
+  "nota": "Existe tambien el subrubro Belcat (3 arts, gato). Es la misma linea y va con la misma regla?"
+ },
+ "LINEA ZIMPI": {
+  "tipo": "subrubro",
+  "valores": [
+   "Zimpi",
+   "Zimpy"
+  ],
+  "estado": "revisar",
+  "nota": "La linea esta PARTIDA en dos subrubros por un typo en IM: Zimpy (3 arts) y Zimpi (1). Conviene unificarlos en IM."
+ },
+ "ARROZ P PARRO": {
+  "tipo": "subrubro",
+  "valores": [
+   "Arroz p/perro"
+  ],
+  "estado": "revisar",
+  "nota": "Entiendo ARROZ P/ PERRO (arts 160 y 10149). Confirmar."
+ },
+ "COMPINCHE": {
+  "tipo": "subrubro",
+  "valores": [
+   "Compinche"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "LINEA FLECKY + FULLCAT": {
+  "tipo": "subrubro",
+  "valores": [
+   "Flecky"
+  ],
+  "estado": "revisar",
+  "nota": "En IM NO existe subrubro Fullcat. Donde estan los Fullcat?"
+ },
+ "LINEA COMPLETE": {
+  "tipo": "subrubro",
+  "valores": [
+   "Complete"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "LINEA BALANCED": {
+  "tipo": "subrubro",
+  "valores": [
+   "Balanced"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "LINEA PREMIUM": {
+  "tipo": "subrubro",
+  "valores": [
+   "Premium"
+  ],
+  "estado": "revisar",
+  "nota": "OJO: Premium (9 arts) y Exact Premium (6) son subrubros DISTINTOS en IM. Esta fila va a Premium y la fila EXCAT PREMIUM a Exact Premium. Confirmar."
+ },
+ "LINEA 9 LIVE": {
+  "tipo": "subrubro",
+  "valores": [
+   "9 lives"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "LINEA CHEF CAT": {
+  "tipo": "subrubro",
+  "valores": [
+   "Chef Cat"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "CEREALES DESYUNO": {
+  "tipo": "subrubro",
+  "valores": [
+   "Cereales para desayuno"
+  ],
+  "estado": "revisar",
+  "nota": "CUIDADO: en IM existe tambien el subrubro Cereales (12 arts) que son las SEMILLAS A GRANEL (alpiste, lino, mijo). Esta fila va a Cereales para desayuno."
+ },
+ "LINEA QUEBRADOS": {
+  "tipo": "subrubro",
+  "valores": [
+   "Quebrados"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "CONDIMENTOS": {
+  "tipo": "subrubro",
+  "valores": [
+   "Condimentos"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "FRUTOS SECOS": {
+  "tipo": "subrubro",
+  "valores": [
+   "Frutos secos",
+   "Frutos Secos"
+  ],
+  "estado": "revisar",
+  "nota": "Partido en dos subrubros por mayuscula/minuscula en IM (22 + 2 arts)."
+ },
+ "GALLETAS PITUSAS": {
+  "tipo": "subrubro",
+  "valores": [
+   "Galletas"
+  ],
+  "estado": "revisar",
+  "nota": "El subrubro Galletas tiene 28 arts, no solo Pitusas. La regla LIBRE aplica a TODAS las galletas o solo a las Pitusas?"
+ },
+ "MEZCLAS": {
+  "tipo": "subrubro",
+  "valores": [
+   "Mezclas"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "LEGUMBRES (salvo polenta y harina de trigo)": {
+  "tipo": "subrubro",
+  "valores": [
+   "Legumbres"
+  ],
+  "estado": "revisar",
+  "nota": "La excepcion (salvo polenta y harina de trigo) hay que resolverla por codigo. Cuales son esos articulos?"
+ },
+ "POLENTA Y HARINA DE MAIZ": {
+  "tipo": "subrubro",
+  "valores": [
+   "Maiz"
+  ],
+  "estado": "revisar",
+  "nota": "El subrubro Maiz tiene 7 arts. Incluye maiz forrajero? Confirmar que son solo los comestibles."
+ },
+ "FRACCIONADOS KING Y NUTRIFOOD": {
+  "tipo": "subrubro",
+  "valores": [
+   "Fraccionado"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "EXACT CRIADORES": {
+  "tipo": "subrubro",
+  "valores": [
+   "Exact Criadores"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "EXCAT PREMIUM": {
+  "tipo": "subrubro",
+  "valores": [
+   "Exact Premium"
+  ],
+  "estado": "revisar",
+  "nota": "Typo en la planilla (EXCAT). Va al subrubro Exact Premium (6 arts), NO a Premium."
+ },
+ "SNACKS TIERNITOS": {
+  "tipo": "subrubro",
+  "valores": [
+   "Tiernitos"
+  ],
+  "estado": "revisar",
+  "nota": "Ver nota de LINEA TIERNITO."
+ },
+ "SALSA TIERNITOS": {
+  "tipo": "subrubro",
+  "valores": [
+   "Tiernitos"
+  ],
+  "estado": "revisar",
+  "nota": "Cae en el MISMO subrubro que SNACKS TIERNITOS: no puedo separarlos sin codigos."
+ },
+ "LINEA KEN-L": {
+  "tipo": "subrubro",
+  "valores": [
+   "Ken-L"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "ACCESORIOS Y VENENOS": {
+  "tipo": "subrubro",
+  "valores": [
+   "Accesorios Perros y Gatos",
+   "Accesorios Plantas",
+   "Accesorios Aves",
+   "Accesorios Peces",
+   "Accesorios Hamsters",
+   "Accesorios Animales Granja",
+   "Venenos Insectos",
+   "Venenos Ratas",
+   "Venenos Hormigas",
+   "Venenos Moscas y Cucarachas"
+  ],
+  "estado": "revisar",
+  "nota": "Junte los 6 subrubros de Accesorios y los 4 de Venenos. Confirmar que van TODOS con la misma regla (LIBRE en L1-L3)."
+ },
+ "ALPISTE": {
+  "tipo": "articulo",
+  "valores": [
+   "400"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "LINO": {
+  "tipo": "articulo",
+  "valores": [
+   "401"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "MIJO": {
+  "tipo": "articulo",
+  "valores": [
+   "402"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "SORGO": {
+  "tipo": "articulo",
+  "valores": [
+   "403"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "SOJA": {
+  "tipo": "articulo",
+  "valores": [
+   "404"
+  ],
+  "estado": "revisar",
+  "nota": "Hay 5 arts con SOJA (404 SOJA, 411 texturizada, 552 expeller, 560 desactivada, +1). La regla aplica solo al 404?"
+ },
+ "SESAMO": {
+  "tipo": "articulo",
+  "valores": [
+   "405"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "QUINOA": {
+  "tipo": "articulo",
+  "valores": [
+   "407"
+  ],
+  "estado": "revisar",
+  "nota": "Art 407 QUINOA (granel). Existe tambien 300 QUINOA POP X 3 KG en Cereales para desayuno, que iria con OTRA regla."
+ },
+ "SALVADO DE AVENA": {
+  "tipo": "articulo",
+  "valores": [
+   "409"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "SALVADO DE TRIGO": {
+  "tipo": "articulo",
+  "valores": [
+   "410"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "AFRECHO": {
+  "tipo": "articulo",
+  "valores": [
+   "451"
+  ],
+  "estado": "revisar",
+  "nota": "Art 451, cargado en IM como Bolsas de 30 kg (es bulto). Coherente con que la planilla diga 1 bolsa en L1."
+ },
+ "ARVEJA PARTIDA": {
+  "tipo": "articulo",
+  "valores": [
+   "452"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "CARTAMO": {
+  "tipo": "articulo",
+  "valores": [
+   "455"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "COLZA": {
+  "tipo": "articulo",
+  "valores": [
+   "456"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "GIRASOL CHICO": {
+  "tipo": "articulo",
+  "valores": [
+   "457"
+  ],
+  "estado": "ok",
+  "nota": "Mati 26/08: la fila esta duplicada en la planilla, se ignora la repetida."
+ },
+ "GIRASOL GRANDE": {
+  "tipo": "articulo",
+  "valores": [
+   "458"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "GIRASOL PELADO": {
+  "tipo": "articulo",
+  "valores": [
+   "459"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "PELLET DE TRIGO": {
+  "tipo": "articulo",
+  "valores": [
+   "471"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "PELLET ALFA": {
+  "tipo": "articulo",
+  "valores": [
+   "485",
+   "10456"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "ARROZ": {
+  "tipo": "articulo",
+  "valores": [
+   "700"
+  ],
+  "estado": "revisar",
+  "nota": "Entiendo el arroz COMESTIBLE (art 700, subrubro Legumbres). Distinto de ARROZ P PARRO."
+ },
+ "PELLET SANITARIO": {
+  "tipo": "articulo",
+  "valores": [
+   "1010"
+  ],
+  "estado": "revisar",
+  "nota": "Art 1010 PELLET SANITARIO P/ GATO X 10K. OJO: la L3 (5 unidades) es MAS FACIL de alcanzar que la L2 (10 bultos). Es intencional?"
+ },
+ "ROCKLETS": {
+  "tipo": "articulo",
+  "valores": [
+   "13128"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "PALITO SALADO": {
+  "tipo": "articulo",
+  "valores": [
+   "655"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "PISTACHO SALADO MK": {
+  "tipo": "articulo",
+  "valores": [
+   "2010"
+  ],
+  "estado": "revisar",
+  "nota": "Existe tambien 2013 PISTACHO NATURAL 2X6KG MK. Va con la misma regla?"
+ },
+ "PIEDRAS SANITARIAS x20 KG": {
+  "tipo": "articulo",
+  "valores": [
+   "1009"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "PIEDRAS SANITARIAS MI NINO X 12,5 KG": {
+  "tipo": "articulo",
+  "valores": [
+   "995"
+  ],
+  "estado": "ok",
+  "nota": ""
+ },
+ "PIEDRAS SANITARIAS MI NINO X 25 KG": {
+  "tipo": "articulo",
+  "valores": [
+   "961"
+  ],
+  "estado": "revisar",
+  "nota": "En IM el art 961 se llama PIEDRAS SANITARIAS X 25KG (sin MI NINO). Es el mismo producto?"
+ },
+ "PASTAS MANI KING": {
+  "tipo": "subrubro",
+  "valores": [
+   "Pastas de Mani"
+  ],
+  "estado": "revisar",
+  "nota": "11 arts. Pero la planilla tiene ademas 2 filas de PASTA DE MANI BORIS: estan adentro de este mismo subrubro?"
+ },
+ "MONKY": {
+  "tipo": "sin_mapear",
+  "valores": [],
+  "estado": "FALTA",
+  "nota": "10 arts con MONKY, repartidos entre Barritas (5) y Snack (5). Cuales entran en esta regla?"
+ },
+ "MANI C/ CHOCOLATE": {
+  "tipo": "sin_mapear",
+  "valores": [],
+  "estado": "FALTA",
+  "nota": "Hay 48 arts con MANI repartidos en 7 subrubros. Necesito los codigos exactos."
+ },
+ "MANI SABORIZADO": {
+  "tipo": "sin_mapear",
+  "valores": [],
+  "estado": "FALTA",
+  "nota": "idem (vi 10690 MANI SABORIZADO BRS)."
+ },
+ "MANI SALADO CON PIEL": {
+  "tipo": "sin_mapear",
+  "valores": [],
+  "estado": "FALTA",
+  "nota": "idem."
+ },
+ "MANI SALADO X KG - Mani King": {
+  "tipo": "sin_mapear",
+  "valores": [],
+  "estado": "FALTA",
+  "nota": "idem (vi 10668 MANI FRITO SALADO KING X KG)."
+ },
+ "MANI TOSTADO X KG - Mani King": {
+  "tipo": "sin_mapear",
+  "valores": [],
+  "estado": "FALTA",
+  "nota": "idem (vi 10670 MANI TOSTADO KING X KG)."
+ },
+ "MANI TOSTADO C/ CASCARA X KG - Mani King": {
+  "tipo": "sin_mapear",
+  "valores": [],
+  "estado": "FALTA",
+  "nota": "Ademas: L1 dice menos de 5 kilos y L2 a partir de 10 kilos. Que lista aplica si compra 7 kilos?"
+ },
+ "PRALINE X KG - Mani King": {
+  "tipo": "sin_mapear",
+  "valores": [],
+  "estado": "FALTA",
+  "nota": "Necesito el codigo."
+ },
+ "PASTA DE MANI DULCE BORIS X 400G X 12U": {
+  "tipo": "sin_mapear",
+  "valores": [],
+  "estado": "FALTA",
+  "nota": "No encontre BORIS X 400G. Si existe 691 PASTA DE MANI NATURAL BORIS X 4k."
+ },
+ "PASTA DE MANI CHOCO BORIS X 400G X 12U": {
+  "tipo": "sin_mapear",
+  "valores": [],
+  "estado": "FALTA",
+  "nota": "idem."
+ },
+ "MIX SEMILLAS": {
+  "tipo": "sin_mapear",
+  "valores": [],
+  "estado": "FALTA",
+  "nota": "No hay articulo MIX SEMILLAS. Es el subrubro Mezclas (11 arts)?"
+ },
+ "AVENA FORRAJERA X KG": {
+  "tipo": "sin_mapear",
+  "valores": [],
+  "estado": "FALTA",
+  "nota": "No encontre AVENA FORRAJERA. Hay 703 AVENA ARROLLADA y 704 AVENA INSTANTANEA. Y OJO: esta fila tiene L1=a partir de 20 kilos y L2 VACIA, al reves que todos los demas granel. Se corrio una celda?"
+ },
+ "AVENA PELADA": {
+  "tipo": "sin_mapear",
+  "valores": [],
+  "estado": "FALTA",
+  "nota": "No encontre AVENA PELADA en el catalogo de IM."
+ },
+ "TRIGO FORRAJERO": {
+  "tipo": "sin_mapear",
+  "valores": [],
+  "estado": "FALTA",
+  "nota": "No encontre TRIGO FORRAJERO. Hay 725 TRIGO PARA LOCRO."
+ },
+ "VITALFUN": {
+  "tipo": "sin_mapear",
+  "valores": [],
+  "estado": "FALTA",
+  "nota": "NO EXISTE ningun articulo con ese nombre en IM. Se llama distinto?"
+ }
+}
