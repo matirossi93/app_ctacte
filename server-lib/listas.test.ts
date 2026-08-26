@@ -262,3 +262,43 @@ describe('evaluarPedido — condiciones de línea surtida', () => {
     expect(evaluarPedido([dos[0]], c, reglas).avisos[0].lista_sugerida).toBe(12);
   });
 });
+
+describe('LIBRE habilita pero no obliga (control cruzado 26/08 contra 1.052 facturas reales)', () => {
+  // Rosco tiene L2 y L3 en LIBRE. El motor marcaba como error cada renglon que no usara
+  // la mejor lista disponible: 88% de los renglones de Rosco facturados daban "aviso".
+  const reglasLibre: ReglaLista[] = [
+    { nombre: 'LINEA ROSCO', match_tipo: 'subrubro', match_valor: 'Rosco', cod_lista: 12, condicion: 'libre', umbral: null, unidad: null, ambito: null },
+    { nombre: 'LINEA ROSCO', match_tipo: 'subrubro', match_valor: 'Rosco', cod_lista: 13, condicion: 'libre', umbral: null, unidad: null, ambito: null },
+    { nombre: 'LINEA ROSCO', match_tipo: 'subrubro', match_valor: 'Rosco', cod_lista: 14, condicion: 'libre', umbral: null, unidad: null, ambito: null },
+  ];
+  const rosco = clasificarArticulo({ cod_articulo: 170, descripcion: 'ROSCO GATO PESCADO x 10 KG', subrubro: 'Rosco', unidad_de_medida: 'Bolsas', equivalencia_um: 10 });
+  const c = new Map([[170, rosco]]);
+
+  it('vender en L1 una línea LIBRE hasta L3 NO es un error: es decisión del vendedor', () => {
+    const r = evaluarPedido([{ cod_articulo: 170, cantidad: 1, cod_lista: 12 }], c, reglasLibre);
+    expect(r.avisos[0].severidad).toBe('ok');
+    expect(r.avisos[0].mensaje).toBeNull();
+  });
+
+  it('pero pasarse del techo SÍ es error de margen', () => {
+    const r = evaluarPedido([{ cod_articulo: 170, cantidad: 1, cod_lista: 15 }], c, reglasLibre);
+    expect(r.avisos[0].severidad).toBe('margen');
+    expect(r.avisos[0].lista_sugerida).toBe(14);
+  });
+
+  it('una condición POR CANTIDAD sí genera derecho: no dárselo es cobrarle de más', () => {
+    // 20 kg de alpiste habilitan L2 por cantidad (no por LIBRE), y quedarse en L1 es error.
+    const ca = cat('alpiste');
+    const r = evaluarPedido([{ cod_articulo: 400, cantidad: 20, cod_lista: 12 }], ca, REGLAS);
+    expect(r.avisos[0].severidad).toBe('cliente');
+    expect(r.avisos[0].lista_sugerida).toBe(13);
+  });
+
+  it('el techo de LIBRE convive con el derecho por cantidad en el mismo renglón', () => {
+    // Ganave: L1 libre + L2 por promo general. Con 10 bultos hay derecho a L2.
+    const cg = cat('ganave');
+    expect(evaluarPedido([{ cod_articulo: 1, cantidad: 10, cod_lista: 12 }], cg, REGLAS).avisos[0].severidad).toBe('cliente');
+    // Con 1 bulto no hay promo: L1 es el techo, poner L2 es perder margen.
+    expect(evaluarPedido([{ cod_articulo: 1, cantidad: 1, cod_lista: 13 }], cg, REGLAS).avisos[0].severidad).toBe('margen');
+  });
+});

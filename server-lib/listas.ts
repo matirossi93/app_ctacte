@@ -201,32 +201,40 @@ export function evaluarPedido(
     const propio = medirRenglon(r, art);
     const linea = (art?.subrubro && porLinea.get(art.subrubro.toLowerCase())) || propio;
 
-    const habilitadas = misReglas
-      .filter((g) => {
-        if (g.condicion === 'libre') return true;
-        if (g.condicion === 'promo_general') return promoGeneral;
-        const umbral = Number(g.umbral ?? 0);
-        const base = g.ambito === 'linea' ? linea : propio;
-        const valor = g.unidad === 'kg' ? base.kilos : base.bultos;
-        return g.condicion === 'min' ? valor >= umbral : valor < umbral;
-      })
-      .map((g) => g.cod_lista);
+    const cumple = misReglas.filter((g) => {
+      if (g.condicion === 'libre') return true;
+      if (g.condicion === 'promo_general') return promoGeneral;
+      const umbral = Number(g.umbral ?? 0);
+      const base = g.ambito === 'linea' ? linea : propio;
+      const valor = g.unidad === 'kg' ? base.kilos : base.bultos;
+      return g.condicion === 'min' ? valor >= umbral : valor < umbral;
+    });
 
-    // Siempre se puede vender en la lista más cara, aunque ninguna condición se cumpla.
-    const sugerida = habilitadas.length ? Math.max(...habilitadas) : LISTA_BASE;
-    if (r.cod_lista === sugerida) {
-      return { cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: sugerida,
-        severidad: 'ok', mensaje: null };
-    }
+    // 🔑 "LIBRE" y una condición por cantidad NO son lo mismo, aunque las dos habiliten
+    // la lista. LIBRE dice que el vendedor PUEDE usarla — es su decisión comercial, y
+    // vender más caro que el techo nunca es un error del sistema. Una condición por
+    // cantidad sí genera derecho: si el cliente llevó los 20 kg, le corresponde.
+    //   techo   = hasta dónde puede llegar        -> pasarse es perder margen
+    //   derecho = a dónde tiene derecho el cliente -> no dárselo es cobrarle de más
+    // Sin esta distinción el validador marcaba como error cada vez que un vendedor no
+    // usaba el mejor precio disponible de una línea LIBRE, que es la mitad del catálogo.
+    const techo = cumple.length ? Math.max(...cumple.map((g) => g.cod_lista)) : LISTA_BASE;
+    const porCantidad = cumple.filter((g) => g.condicion !== 'libre').map((g) => g.cod_lista);
+    const derecho = porCantidad.length ? Math.max(...porCantidad) : LISTA_BASE;
+
     const nombre = art?.descripcion || `artículo ${r.cod_articulo}`;
-    if (r.cod_lista > sugerida) {
-      return { cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: sugerida,
+    if (r.cod_lista > techo) {
+      return { cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: techo,
         severidad: 'margen',
-        mensaje: `${nombre}: está en ${nombreLista(r.cod_lista)} pero por esta cantidad le corresponde ${nombreLista(sugerida)}. Le estás vendiendo más barato de lo que corresponde.` };
+        mensaje: `${nombre}: está en ${nombreLista(r.cod_lista)} pero por esta cantidad le corresponde ${nombreLista(techo)}. Le estás vendiendo más barato de lo que corresponde.` };
     }
-    return { cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: sugerida,
-      severidad: 'cliente',
-      mensaje: `${nombre}: tiene derecho a ${nombreLista(sugerida)} y está en ${nombreLista(r.cod_lista)}. Le estás cobrando de más.` };
+    if (r.cod_lista < derecho) {
+      return { cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: derecho,
+        severidad: 'cliente',
+        mensaje: `${nombre}: tiene derecho a ${nombreLista(derecho)} y está en ${nombreLista(r.cod_lista)}. Le estás cobrando de más.` };
+    }
+    return { cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: techo,
+      severidad: 'ok', mensaje: null };
   });
 
   return { bultos, promo_general: promoGeneral, avisos };
