@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     X, Search, User, ShoppingCart, Plus, Minus, Trash2, Send, Loader2,
     CheckCircle2, AlertCircle, ArrowLeft, PackageSearch, Wallet, Ban,
+    Package, AlertTriangle,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import './PedidosApp.css';
@@ -28,6 +29,19 @@ const LISTAS = [
     { cod: 15, label: 'L4' },
 ] as const;
 const LISTA_DEFECTO = 12;
+const NOMBRE_LISTA: Record<number, string> = { 12: 'L1', 13: 'L2', 14: 'L3', 15: 'L4' };
+
+/** Lo que devuelve POST /api/pedidos/validar. */
+interface AvisoLista {
+    cod_articulo: number;
+    lista_elegida: number;
+    lista_sugerida: number | null;
+    /** 'margen' = le vende más barato de lo que corresponde · 'cliente' = le cobra de más. */
+    severidad: 'ok' | 'margen' | 'cliente' | 'sin_regla';
+    mensaje: string | null;
+}
+interface ControlListas { bultos: number; promo_general: boolean; avisos: AvisoLista[] }
+
 interface Pedido {
     id: string; cod_cliente: number; cliente_nombre: string | null; estado: string;
     im_numero: number | null; total_estimado: number; created_at: string;
@@ -152,6 +166,29 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     }
     const quitar = (cod: number) => setCart(c => c.filter(i => i.cod_articulo !== cod));
     const total = useMemo(() => cart.reduce((a, i) => a + i.cantidad * i.precio, 0), [cart]);
+
+    // ── Control de listas ───────────────────────────────────────────────────
+    // Se corre EN VIVO mientras arma el carrito: avisar recién al confirmar llega tarde,
+    // ahí ya cargó todo el pedido y tendría que volver renglón por renglón.
+    const [control, setControl] = useState<ControlListas | null>(null);
+    useEffect(() => {
+        if (!cart.length) { setControl(null); return; }
+        const ctrl = new AbortController();
+        const timer = setTimeout(async () => {
+            try {
+                const r = await fetch('/api/pedidos/validar', {
+                    method: 'POST', signal: ctrl.signal,
+                    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ items: cart.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista: i.cod_lista })) }),
+                });
+                const d = await r.json();
+                if (d?.ok) setControl(d);
+            } catch { /* si falla el control el pedido sigue igual: avisa, no frena */ }
+        }, 400);
+        return () => { clearTimeout(timer); ctrl.abort(); };
+    }, [cart]);
+    const avisoDe = (cod: number) => control?.avisos?.find(a => a.cod_articulo === cod && a.mensaje);
+    const faltanBultos = control ? Math.max(0, 10 - control.bultos) : 0;
 
     // ── Confirmar ───────────────────────────────────────────────────────────
     const [enviando, setEnviando] = useState(false);
@@ -290,7 +327,21 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
 
                             {/* Carrito */}
                             {cart.length > 0 && <div className="ped-cart-title">Pedido ({cart.length})</div>}
-                            {cart.map(i => (
+
+                            {/* Cuántos bultos lleva y cuánto le falta para la promo general.
+                                Le sirve al vendedor para cerrar la venta, no solo para no equivocarse. */}
+                            {control && (
+                                <div className={`ped-promo ${control.promo_general ? 'on' : ''}`}>
+                                    <Package size={15} />
+                                    {control.promo_general
+                                        ? <span><b>{control.bultos} bultos</b> · promoción general activa: Lista 2 habilitada</span>
+                                        : <span><b>{control.bultos} {control.bultos === 1 ? 'bulto' : 'bultos'}</b> · {faltanBultos} más para la Lista 2</span>}
+                                </div>
+                            )}
+
+                            {cart.map(i => {
+                                const av = avisoDe(i.cod_articulo);
+                                return (
                                 <div key={i.cod_articulo} className="ped-cart-item">
                                     <div className="ped-cart-desc">{i.descripcion}<span className="ped-cart-precio">{money(i.precio)} c/u</span></div>
                                     <div className="ped-qty">
@@ -299,7 +350,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                                         <button onClick={() => setQty(i.cod_articulo, i.cantidad + 1)}><Plus size={14} /></button>
                                     </div>
                                     <select
-                                        className="ped-cart-lista"
+                                        className={`ped-cart-lista${av ? ' alerta' : ''}`}
                                         value={i.cod_lista}
                                         onChange={e => setLista(i.cod_articulo, Number(e.target.value))}
                                         title="Lista de precios de este renglón"
@@ -308,8 +359,19 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                                     </select>
                                     <div className="ped-cart-sub">{money(i.cantidad * i.precio)}</div>
                                     <button className="ped-cart-del" onClick={() => quitar(i.cod_articulo)}><Trash2 size={14} /></button>
+                                    {av && av.lista_sugerida != null && (
+                                        <div className={`ped-aviso ${av.severidad}`}>
+                                            <AlertTriangle size={14} />
+                                            <span>{av.mensaje}</span>
+                                            {/* Botón y no :hover: las sucursales cargan desde el celular. */}
+                                            <button onClick={() => setLista(i.cod_articulo, av.lista_sugerida!)}>
+                                                Poner {NOMBRE_LISTA[av.lista_sugerida] ?? av.lista_sugerida}
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
-                            ))}
+                                );
+                            })}
 
                             {cart.length > 0 && (
                                 <textarea className="ped-obs" placeholder="Observaciones (opcional)" value={obs} onChange={e => setObs(e.target.value)} />

@@ -108,3 +108,44 @@
   cursor: pointer;
 }
 .ped-cart-lista:focus-visible { outline: 2px solid var(--dorado, #EEC045); outline-offset: 1px; }
+
+/* Control de listas (26/08/2026): avisa cuando la lista elegida no es la que
+   corresponde por la cantidad. Informativo — no frena el pedido. */
+.ped-promo {
+  display: flex; align-items: center; gap: 0.4rem;
+  margin: 0.2rem 0 0.5rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-surface-hover, #f2f2f2);
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+.ped-promo b { color: var(--color-text); font-variant-numeric: tabular-nums; }
+.ped-promo.on { background: var(--color-success-bg); color: var(--color-success); }
+.ped-promo.on b { color: inherit; }
+
+/* Ocupa toda la fila del grid del renglón, debajo del producto. */
+.ped-aviso {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 0.4rem;
+  margin: 0.1rem 0 0.3rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: var(--radius-sm, 6px);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+/* Le vende más barato de lo que corresponde: se pierde margen. */
+.ped-aviso.margen { background: var(--color-danger-bg); color: var(--color-danger); }
+/* Le cobra de más al cliente teniendo derecho a mejor precio. */
+.ped-aviso.cliente { background: var(--color-warning-bg); color: var(--color-warning); }
+.ped-aviso svg { flex-shrink: 0; }
+.ped-aviso span { flex: 1; }
+.ped-aviso button {
+  flex-shrink: 0;
+  border: 1px solid currentColor; background: transparent; color: inherit;
+  font-weight: 700; font-size: 0.72rem;
+  padding: 0.25rem 0.5rem; border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+  min-height: 28px;
+}
+.ped-cart-lista.alerta { border-color: var(--color-warning); border-width: 2px; }

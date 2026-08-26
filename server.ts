@@ -46,7 +46,7 @@ import { getConciliacion, exportConciliacion, listSnapshotsConciliacion, guardar
 import { cruceCarpetaHandler, exportCruceHandler } from './server-lib/cruceCarpeta.js';
 import { listRebotes, listRecargos, syncRebotesNow, syncRebotes } from './server-lib/rebotes.js';
 import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos, hermanosDeFamilia } from './server-lib/productGoals.js';
-import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, precioArticulo, catalogoPedido } from './server-lib/pedidos.js';
+import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, precioArticulo, catalogoPedido, validarListasPedido } from './server-lib/pedidos.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -648,6 +648,7 @@ app.post('/api/recibos/:id/elegir-match', requireJwt, (req: any, res) => elegirM
 app.get('/api/pedidos/catalogo', requireJwt, (req: any, res) => catalogoPedido(req, res));
 app.get('/api/pedidos/precio', requireJwt, (req: any, res) => precioArticulo(req, res));
 app.get('/api/pedidos/credito/:cod', requireJwt, (req: any, res) => creditoCliente(req, res));
+app.post('/api/pedidos/validar', requireJwt, (req: any, res) => validarListasPedido(req, res));
 app.get('/api/pedidos', requireJwt, (req: any, res) => listPedidos(req, res));
 app.post('/api/pedidos', requireJwt, (req: any, res) => crearPedido(req, res));
 app.get('/api/pedidos/:id', requireJwt, (req: any, res) => getPedidoById(req, res));

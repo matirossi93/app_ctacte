@@ -181,7 +181,13 @@ export async function fetchVentasItems(desde: string, hasta: string, opts?: { co
  * riesgo de timeout, según experiencia documentada en proyecto-alerta-stock).
  * Los hits siguientes son <1ms desde el cache.
  */
-interface ArticuloMini { cod_rubro: number | null; descripcion: string; precio_venta: number }
+interface ArticuloMini {
+  cod_rubro: number | null; descripcion: string; precio_venta: number;
+  // Los usa el control de listas: el subrubro es la "línea" comercial (Ganave, Rosco…) contra
+  // la que Mati escribió las condiciones, y los otros dos deciden si el artículo va por bulto
+  // o por kilo — lo que define cuántos bultos tiene el pedido para la promo general.
+  subrubro: string; unidad_de_medida: string | null; equivalencia_um: number | null;
+}
 let _articulosCache: { map: Map<number, ArticuloMini>; fetchedAt: number } | null = null;
 const ARTICULOS_TTL_MS = 60 * 60 * 1000;
 
@@ -203,10 +209,14 @@ export async function fetchArticulosCatalogo(force = false): Promise<Map<number,
     const codRubro = codRubroRaw != null ? Number(codRubroRaw) : null;
     const precioRaw = r.precio_venta ?? r.precioVenta ?? r.precio ?? 0;
     const precio = Number(precioRaw);
+    const eq = Number(r.equivalencia_um);
     map.set(cod, {
       cod_rubro: Number.isFinite(codRubro as number) ? codRubro : null,
       descripcion: String(r.descripcion ?? r.nombre ?? '').trim(),
       precio_venta: Number.isFinite(precio) ? precio : 0,
+      subrubro: String(r.subrubro ?? '').trim(),
+      unidad_de_medida: r.unidad_de_medida != null ? String(r.unidad_de_medida) : null,
+      equivalencia_um: Number.isFinite(eq) ? eq : null,
     });
   }
   _articulosCache = { map, fetchedAt: Date.now() };

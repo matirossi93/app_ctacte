@@ -6,6 +6,10 @@ import {
   fetchClientesIMCached, fetchArticulosCatalogo,
 } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
+import {
+  clasificarArticulo, evaluarPedido,
+  type ArticuloInfo, type ReglaLista, type ResultadoPedido,
+} from './listas.js';
 
 const { env } = process;
 // usuario REAL de IM con punto de venta vinculado para presupuestos (PR/destino1).
@@ -31,6 +35,65 @@ interface ItemInput { cod_articulo: number; cantidad: number; cod_lista?: number
  * hoy en IM. Si no manda ninguna, se usa la del cliente.
  */
 const LISTAS_VALIDAS = new Set([9, 11, 12, 13, 14, 15]);
+
+// ── Control de listas ─────────────────────────────────────────────────────────
+// Las reglas son datos de negocio que Mati cambia sin que cambie el código, así que
+// viven en Supabase (tabla listas_reglas) y se recargan solas cada 5 minutos.
+const REGLAS_TTL_MS = 5 * 60 * 1000;
+let _reglasCache: { reglas: ReglaLista[]; fetchedAt: number } | null = null;
+
+async function reglasActivas(): Promise<ReglaLista[]> {
+  if (_reglasCache && Date.now() - _reglasCache.fetchedAt < REGLAS_TTL_MS) return _reglasCache.reglas;
+  const { data, error } = await sb().from('listas_reglas')
+    .select('nombre, match_tipo, match_valor, cod_lista, condicion, umbral, unidad, ambito')
+    .eq('tenant_id', TENANT_ID).eq('activo', true);
+  if (error) throw new Error(`listas_reglas: ${error.message}`);
+  const reglas = (data ?? []) as ReglaLista[];
+  _reglasCache = { reglas, fetchedAt: Date.now() };
+  return reglas;
+}
+
+/** Catálogo de IM ya clasificado en bulto/granel, que es lo que necesita el evaluador. */
+async function catalogoParaListas(): Promise<Map<number, ArticuloInfo>> {
+  const crudo = await fetchArticulosCatalogo();
+  const out = new Map<number, ArticuloInfo>();
+  for (const [cod, a] of crudo) out.set(cod, clasificarArticulo({ cod_articulo: cod, ...a }));
+  return out;
+}
+
+/**
+ * Corre el control de listas sobre un pedido. NUNCA tira: si las reglas o el catálogo no
+ * están disponibles, devuelve null y el pedido sigue su curso. El control avisa, no frena
+ * — mismo criterio que las guardas de cupo y stock que eligió Mati en julio.
+ */
+async function controlarListas(items: Array<{ cod_articulo: number; cantidad: number; cod_lista: number }>): Promise<ResultadoPedido | null> {
+  try {
+    const [reglas, catalogo] = [await reglasActivas(), await catalogoParaListas()];
+    return evaluarPedido(items, catalogo, reglas);
+  } catch (e: any) {
+    console.warn('[controlarListas] no se pudo evaluar, sigo sin control:', e?.message);
+    return null;
+  }
+}
+
+/**
+ * POST /api/pedidos/validar — control de listas EN VIVO, mientras el vendedor arma el carrito.
+ * Es el que le ahorra el trabajo a facturación: avisar al confirmar llega tarde, ahí ya cargó todo.
+ * Body: { items: [{cod_articulo, cantidad, cod_lista}] }
+ */
+export async function validarListasPedido(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const items = (Array.isArray(req.body?.items) ? req.body.items : [])
+      .map((it: any) => ({ cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad), cod_lista: Number(it.cod_lista) }))
+      .filter((it: any) => it.cod_articulo > 0 && it.cantidad > 0);
+    if (!items.length) { res.json({ ok: true, bultos: 0, promo_general: false, avisos: [] }); return; }
+    const r = await controlarListas(items);
+    if (!r) { res.json({ ok: true, sin_control: true, bultos: 0, promo_general: false, avisos: [] }); return; }
+    res.json({ ok: true, ...r });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
 
 /** Resuelve cod_vendedor del pedido según rol (vendedor = el suyo; admin/gerente = del body o del cliente). */
 async function resolverCodVendedor(user: JwtPayload, codCliente: number, bodyCodVend?: any): Promise<number> {
@@ -140,17 +203,29 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
       }
       res.status(500).json({ error: `insert pedido: ${insErr.message}` }); return;
     }
-    await sb().from('pedidos_vendedor_items').insert(itemsConPrecio.map((it, i) => ({
-      pedido_id: pedidoId,
-      cod_articulo: it.cod_articulo,
-      descripcion: it.descripcion || null,
-      cantidad: it.cantidad,
-      precio_unit: it.precio,
-      cod_lista_precios: it.cod_lista,
-      iva_por: it.iva,
-      subtotal: it.subtotal,
-      orden: i,
+    // Control de listas: queda registrado qué se le avisó al vendedor y qué mandó igual.
+    // Sin esto no hay forma de saber después si el aviso sirve o si lo ignoran siempre.
+    const control = await controlarListas(itemsConPrecio.map((it) => ({
+      cod_articulo: it.cod_articulo, cantidad: it.cantidad, cod_lista: it.cod_lista,
     })));
+    const avisoPorArt = new Map(control?.avisos.map((a) => [a.cod_articulo, a]) ?? []);
+
+    await sb().from('pedidos_vendedor_items').insert(itemsConPrecio.map((it, i) => {
+      const av = avisoPorArt.get(it.cod_articulo);
+      return {
+        pedido_id: pedidoId,
+        cod_articulo: it.cod_articulo,
+        descripcion: it.descripcion || null,
+        cantidad: it.cantidad,
+        precio_unit: it.precio,
+        cod_lista_precios: it.cod_lista,
+        lista_sugerida: av?.lista_sugerida ?? null,
+        aviso_lista: av?.mensaje ?? null,
+        iva_por: it.iva,
+        subtotal: it.subtotal,
+        orden: i,
+      };
+    }));
 
     // 2. Empujar a InfoManager como presupuesto NC (salvo dry-run).
     if (PEDIDOS_DRY_RUN) {
