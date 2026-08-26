@@ -207,16 +207,20 @@
   "valores": [
    "Legumbres"
   ],
-  "estado": "revisar",
-  "nota": "La excepcion (salvo polenta y harina de trigo) hay que resolverla por codigo. Cuales son esos articulos?"
+  "estado": "ok",
+  "nota": "Polenta (722) y harina de maiz (716) quedan afuera solas porque tienen regla propia por codigo, y la regla por articulo le gana a la del subrubro. FALTA definir que pasa con la harina de trigo (715 HARINA DE TRIGO INTEGRAL): la planilla la excluye de Legumbres pero no le da fila propia."
  },
  "POLENTA Y HARINA DE MAIZ": {
-  "tipo": "subrubro",
+  "tipo": "articulo",
   "valores": [
-   "Maiz"
+   "722",
+   "716"
   ],
-  "estado": "revisar",
-  "nota": "El subrubro Maiz tiene 7 arts. Incluye maiz forrajero? Confirmar que son solo los comestibles."
+  "estado": "ok",
+  "ignorar_listas": [
+   14
+  ],
+  "nota": "Mati 26/08: a partir de 10 kg recien le pueden hacer lista 2 (el techo es L2). La planilla repetia la misma condicion en L3, se ignora esa columna. Por codigo y no por subrubro: en IM POLENTA (722) y HARINA DE MAIZ (716) viven en el subrubro Legumbres, no en Maiz."
  },
  "FRACCIONADOS KING Y NUTRIFOOD": {
   "tipo": "subrubro",
@@ -589,5 +593,12 @@
   "valores": [],
   "estado": "FALTA",
   "nota": "NO EXISTE ningun articulo con ese nombre en IM. Se llama distinto?"
- }
+ },
+ "__excluidos__": [
+  {
+   "cod": "13818",
+   "nombre": "FORRAJES VARIOS",
+   "motivo": "Mati 26/08: se usa para facturar a consumidor final, se excluye de todos los circuitos. Es el articulo mas facturado de Casa Central (308 renglones en 3 semanas, todos en L1)."
+  }
+ ]
 }

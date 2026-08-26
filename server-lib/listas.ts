@@ -35,7 +35,7 @@ export interface ReglaLista {
   match_tipo: 'subrubro' | 'articulo';
   match_valor: string;
   cod_lista: number;
-  condicion: 'libre' | 'promo_general' | 'min' | 'max';
+  condicion: 'libre' | 'promo_general' | 'min' | 'max' | 'excluido';
   umbral: number | null;
   unidad: 'bulto' | 'kg' | null;
   ambito: 'articulo' | 'linea' | 'pedido' | null;
@@ -155,6 +155,9 @@ export function bultosDelPedido(renglones: RenglonPedido[], catalogo: Map<number
 function reglasDe(art: ArticuloInfo | undefined, reglas: ReglaLista[]): ReglaLista[] {
   if (!art) return [];
   const porArticulo = reglas.filter(g => g.match_tipo === 'articulo' && Number(g.match_valor) === art.cod_articulo);
+  // 'excluido' = este artículo no participa del circuito mayorista (ej: FORRAJES VARIOS,
+  // que se usa para facturar a consumidor final). No se controla aunque su línea tenga regla.
+  if (porArticulo.some(g => g.condicion === 'excluido')) return [];
   if (porArticulo.length) return porArticulo;
   // 🪤 El gemelo "X KG" vive en el mismo subrubro que la bolsa, así que heredaría las
   // condiciones de la línea — pero se vende fraccionado al público, con otra lógica.

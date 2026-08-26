@@ -23,7 +23,8 @@ const MAPEO = join(AQUI, 'listas-mapeo.json');
 const SALIDA = join(AQUI, '..', 'supabase', 'migrations', '021_listas_reglas_seed.sql');
 if (!PLANILLA) { console.error('Falta la ruta de la planilla .xlsx'); process.exit(1); }
 
-const COL_LISTA = [12, 13, 14, 15];  // columnas B..E = LISTA 1..4 -> códigos de IM
+const COL_LISTA = [12, 13, 14, 15];
+const LISTA_BASE_SEED = 12;  // la fila de 'excluido' se ancla en L1; el motor solo mira la condicion  // columnas B..E = LISTA 1..4 -> códigos de IM
 
 /**
  * Traduce una celda de la planilla a una condición.
@@ -78,6 +79,7 @@ const porClave = new Map();
 for (const fila of filas.slice(1)) {
   const nombre = String(fila[0] ?? '').trim();
   if (!nombre) continue;
+  if (nombre.startsWith('__')) continue;
   const m = mapeo[nombre];
   if (!m) { problemas.push(`${nombre}: no está en listas-mapeo.json`); continue; }
   if (m.tipo === 'sin_mapear') { problemas.push(`${nombre}: sin mapear a IM (${m.nota})`); continue; }
@@ -92,6 +94,8 @@ for (const fila of filas.slice(1)) {
       const cond = parsearCelda(fila[i + 1]);
       if (!cond) continue;
       if (cond.error) { problemas.push(`${nombre} · LISTA ${i + 1}: no entiendo "${fila[i + 1]}"`); continue; }
+      // Listas que Mati aclaro que no corresponden aunque la planilla tenga algo cargado.
+      if (Array.isArray(m.ignorar_listas) && m.ignorar_listas.includes(COL_LISTA[i])) continue;
       const clave = `${m.tipo}|${valor}|${COL_LISTA[i]}`;
       const firma = `${cond.condicion}|${cond.umbral}|${cond.unidad}|${cond.ambito}`;
       const previo = porClave.get(clave);
@@ -114,6 +118,16 @@ for (const fila of filas.slice(1)) {
 }
 
 const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
+
+// Articulos que no participan del circuito mayorista: una fila con condicion 'excluido'
+// alcanza, porque las reglas por articulo le ganan a las del subrubro.
+for (const e of mapeo.__excluidos__ ?? []) {
+  porClave.set(`articulo|${e.cod}|${LISTA_BASE_SEED}`, {
+    nombre: e.nombre, tipo: 'articulo', valor: e.cod, cod_lista: LISTA_BASE_SEED,
+    cond: { condicion: 'excluido', umbral: null, unidad: null, ambito: null },
+    activo: true, nota: e.motivo, firma: 'excluido',
+  });
+}
 for (const r of porClave.values()) {
   inserts.push(`  (${q(r.nombre)}, '${r.tipo}', ${q(r.valor)}, ${r.cod_lista}, ` +
     `'${r.cond.condicion}', ${r.cond.umbral ?? 'null'}, ${r.cond.unidad ? `'${r.cond.unidad}'` : 'null'}, ` +

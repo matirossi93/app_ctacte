@@ -310,3 +310,50 @@ describe('LIBRE habilita pero no obliga (control cruzado 26/08 contra 1.052 fact
     expect(evaluarPedido([{ cod_articulo: 1, cantidad: 1, cod_lista: 13 }], cg, REGLAS).avisos[0].severidad).toBe('margen');
   });
 });
+
+describe('artículos excluidos del circuito', () => {
+  // Mati 26/08: FORRAJES VARIOS se usa para facturar a consumidor final. Es el articulo
+  // MAS facturado de Casa Central, y su subrubro ("Varios") algun dia puede tener regla.
+  const forrajes = clasificarArticulo({ cod_articulo: 13818, descripcion: 'FORRAJES VARIOS', subrubro: 'Varios', unidad_de_medida: null, equivalencia_um: 0 });
+  const reglas: ReglaLista[] = [
+    { nombre: 'FORRAJES VARIOS', match_tipo: 'articulo', match_valor: '13818', cod_lista: 12, condicion: 'excluido', umbral: null, unidad: null, ambito: null },
+    { nombre: 'VARIOS', match_tipo: 'subrubro', match_valor: 'Varios', cod_lista: 14, condicion: 'libre', umbral: null, unidad: null, ambito: null },
+  ];
+
+  it('no se controla aunque su subrubro tenga regla', () => {
+    const r = evaluarPedido([{ cod_articulo: 13818, cantidad: 5, cod_lista: 12 }], new Map([[13818, forrajes]]), reglas);
+    expect(r.avisos[0].severidad).toBe('sin_regla');
+    expect(r.avisos[0].mensaje).toBeNull();
+  });
+});
+
+describe('polenta y harina de maíz salen por código, no por subrubro', () => {
+  // En IM viven en el subrubro "Legumbres", pero la planilla los saca de ahi
+  // ("LEGUMBRES salvo polenta y harina de trigo") y les da su propia condicion.
+  // Mati 26/08: "a partir de 10 kg recien le pueden hacer lista 2".
+  const polenta = clasificarArticulo({ cod_articulo: 722, descripcion: 'POLENTA', subrubro: 'Legumbres', unidad_de_medida: 'Kilos', equivalencia_um: 1 });
+  const c = new Map([[722, polenta]]);
+  const reglas: ReglaLista[] = [
+    { nombre: 'LEGUMBRES', match_tipo: 'subrubro', match_valor: 'Legumbres', cod_lista: 12, condicion: 'max', umbral: 20, unidad: 'kg', ambito: 'articulo' },
+    { nombre: 'LEGUMBRES', match_tipo: 'subrubro', match_valor: 'Legumbres', cod_lista: 13, condicion: 'min', umbral: 20, unidad: 'kg', ambito: 'articulo' },
+    { nombre: 'POLENTA Y HARINA DE MAIZ', match_tipo: 'articulo', match_valor: '722', cod_lista: 12, condicion: 'max', umbral: 10, unidad: 'kg', ambito: 'articulo' },
+    { nombre: 'POLENTA Y HARINA DE MAIZ', match_tipo: 'articulo', match_valor: '722', cod_lista: 13, condicion: 'min', umbral: 10, unidad: 'kg', ambito: 'articulo' },
+  ];
+
+  it('con 12 kg llega a L2 por su regla propia (con la de Legumbres harían falta 20)', () => {
+    const r = evaluarPedido([{ cod_articulo: 722, cantidad: 12, cod_lista: 12 }], c, reglas);
+    expect(r.avisos[0].severidad).toBe('cliente');
+    expect(r.avisos[0].lista_sugerida).toBe(13);
+  });
+
+  it('con 8 kg se queda en L1, y ponerlo en L2 es perder margen', () => {
+    expect(evaluarPedido([{ cod_articulo: 722, cantidad: 8, cod_lista: 12 }], c, reglas).avisos[0].severidad).toBe('ok');
+    expect(evaluarPedido([{ cod_articulo: 722, cantidad: 8, cod_lista: 13 }], c, reglas).avisos[0].severidad).toBe('margen');
+  });
+
+  it('el techo es L2: no existe L3 para polenta', () => {
+    const r = evaluarPedido([{ cod_articulo: 722, cantidad: 50, cod_lista: 14 }], c, reglas);
+    expect(r.avisos[0].severidad).toBe('margen');
+    expect(r.avisos[0].lista_sugerida).toBe(13);
+  });
+});
