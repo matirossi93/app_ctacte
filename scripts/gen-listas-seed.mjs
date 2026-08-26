@@ -70,6 +70,10 @@ const mapeo = JSON.parse(readFileSync(MAPEO, 'utf8'));
 const inserts = [];
 const problemas = [];
 const vistos = new Set();
+// Dos filas de la planilla pueden caer en el MISMO destino de IM (ej: SNACKS TIERNITOS y
+// SALSA TIERNITOS son las dos el subrubro "Tiernitos"). Postgres rechaza el INSERT entero
+// si el ON CONFLICT ve la misma clave dos veces, así que se colapsan acá.
+const porClave = new Map();
 
 for (const fila of filas.slice(1)) {
   const nombre = String(fila[0] ?? '').trim();
@@ -88,12 +92,32 @@ for (const fila of filas.slice(1)) {
       const cond = parsearCelda(fila[i + 1]);
       if (!cond) continue;
       if (cond.error) { problemas.push(`${nombre} · LISTA ${i + 1}: no entiendo "${fila[i + 1]}"`); continue; }
-      const nota = m.nota ? m.nota.replace(/'/g, "''") : null;
-      inserts.push(`  ('${nombre.replace(/'/g, "''")}', '${m.tipo}', '${String(valor).replace(/'/g, "''")}', ${COL_LISTA[i]}, ` +
-        `'${cond.condicion}', ${cond.umbral ?? 'null'}, ${cond.unidad ? `'${cond.unidad}'` : 'null'}, ` +
-        `${cond.ambito ? `'${cond.ambito}'` : 'null'}, ${activo}, ${nota ? `'${nota}'` : 'null'})`);
+      const clave = `${m.tipo}|${valor}|${COL_LISTA[i]}`;
+      const firma = `${cond.condicion}|${cond.umbral}|${cond.unidad}|${cond.ambito}`;
+      const previo = porClave.get(clave);
+      if (previo) {
+        // Misma condición: es la misma regla escrita dos veces, se colapsa y listo.
+        // Condición DISTINTA: es una ambigüedad real de la planilla — no se adivina cuál
+        // gana, se desactiva la regla y se avisa para que Mati la resuelva.
+        if (previo.firma !== firma) {
+          previo.activo = false;
+          previo.nota = `AMBIGUO: "${previo.nombre}" y "${nombre}" apuntan al mismo destino en IM con condiciones distintas para esta lista. Desactivada hasta resolverlo.`;
+          problemas.push(`${nombre} · LISTA ${i + 1}: choca con "${previo.nombre}" (mismo destino, condición distinta) -> regla DESACTIVADA`);
+        } else {
+          problemas.push(`${nombre} · LISTA ${i + 1}: mismo destino y misma condición que "${previo.nombre}" -> se unifican`);
+        }
+        continue;
+      }
+      porClave.set(clave, { nombre, tipo: m.tipo, valor, cod_lista: COL_LISTA[i], cond, activo, nota: m.nota, firma });
     }
   }
+}
+
+const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
+for (const r of porClave.values()) {
+  inserts.push(`  (${q(r.nombre)}, '${r.tipo}', ${q(r.valor)}, ${r.cod_lista}, ` +
+    `'${r.cond.condicion}', ${r.cond.umbral ?? 'null'}, ${r.cond.unidad ? `'${r.cond.unidad}'` : 'null'}, ` +
+    `${r.cond.ambito ? `'${r.cond.ambito}'` : 'null'}, ${r.activo}, ${r.nota ? q(r.nota) : 'null'})`);
 }
 
 const sql = `-- Migration 021 — Carga de las reglas de lista (26/08/2026). Idempotente.

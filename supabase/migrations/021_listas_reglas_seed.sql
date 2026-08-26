@@ -210,7 +210,6 @@ insert into listas_reglas (nombre, match_tipo, match_valor, cod_lista, condicion
   ('EXCAT PREMIUM', 'subrubro', 'Exact Premium', 13, 'libre', null, null, null, false, 'Typo en la planilla (EXCAT). Va al subrubro Exact Premium (6 arts), NO a Premium.'),
   ('EXCAT PREMIUM', 'subrubro', 'Exact Premium', 14, 'libre', null, null, null, false, 'Typo en la planilla (EXCAT). Va al subrubro Exact Premium (6 arts), NO a Premium.'),
   ('SNACKS TIERNITOS', 'subrubro', 'Tiernitos', 12, 'libre', null, null, null, false, 'Ver nota de LINEA TIERNITO.'),
-  ('SALSA TIERNITOS', 'subrubro', 'Tiernitos', 12, 'libre', null, null, null, false, 'Cae en el MISMO subrubro que SNACKS TIERNITOS: no puedo separarlos sin codigos.'),
   ('LINEA KEN-L', 'subrubro', 'Ken-L', 12, 'libre', null, null, null, true, null),
   ('LINEA KEN-L', 'subrubro', 'Ken-L', 13, 'libre', null, null, null, true, null),
   ('LINEA KEN-L', 'subrubro', 'Ken-L', 14, 'libre', null, null, null, true, null),
