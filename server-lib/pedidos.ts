@@ -17,8 +17,10 @@ const { env } = process;
 // tiene punto de venta de presupuestos. Fallback al de recibos.
 const IM_USUARIO_PEDIDOS = env.IM_USUARIO_PEDIDOS || env.INFOMANAGER_USUARIO || '';
 if (!IM_USUARIO_PEDIDOS) {
-  console.error('FATAL: IM_USUARIO_PEDIDOS / INFOMANAGER_USUARIO no está definida. Abortando.');
-  process.exit(1);
+  // Sin usuario NO se puede postear el presupuesto a IM, pero el resto de la app (cuenta
+  // corriente, recibos, objetivos) no tiene nada que ver. Antes esto hacía process.exit(1)
+  // y una variable faltante habría tumbado TODA la app al deployar el módulo por primera vez.
+  console.error('[pedidos] IM_USUARIO_PEDIDOS / INFOMANAGER_USUARIO sin definir: no se van a poder enviar pedidos a InfoManager. El resto de la app sigue funcionando.');
 }
 const PEDIDO_EMPRESA_DEFAULT = Number(env.PEDIDO_EMPRESA_DEFAULT || 1);
 const PEDIDO_PUNTO_DE_VENTA = Number(env.PEDIDO_PUNTO_DE_VENTA || 1);
@@ -117,6 +119,11 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
     if (!user) { res.status(401).json({ error: 'No autorizado' }); return; }
     if (user.rol === 'vendedor' && user.cod_vendedor == null) {
       res.status(400).json({ error: 'Tu usuario no tiene cod_vendedor asignado. Pedile a Matías que lo setee.' }); return;
+    }
+
+    if (!IM_USUARIO_PEDIDOS && !PEDIDOS_DRY_RUN) {
+      res.status(503).json({ error: 'Falta configurar IM_USUARIO_PEDIDOS: el pedido no se puede enviar a InfoManager. Avisale a Matías.' });
+      return;
     }
 
     const body = req.body ?? {};
