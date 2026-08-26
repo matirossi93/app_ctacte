@@ -126,24 +126,31 @@ describe('evaluarPedido — la promo general', () => {
     expect(r.avisos[0].severidad).toBe('ok');
   });
 
-  it('con 10 bultos entra y Ganave pasa a L2', () => {
+  it('con 10 bultos entra y Ganave puede ir en L2 sin que sea error', () => {
     const r = evaluarPedido([{ cod_articulo: 1, cantidad: 10, cod_lista: 13 }], c, REGLAS);
     expect(r.promo_general).toBe(true);
-    expect(r.avisos[0].lista_sugerida).toBe(13);
     expect(r.avisos[0].severidad).toBe('ok');
   });
 
-  it('el ejemplo del audio completo: 9 de Gran Campeón + 20 kg de alpiste habilitan la promo, y el alpiste igual sube a L3 por su condición propia', () => {
+  it('🔑 la promo general HABILITA pero no obliga: quedarse en L1 con 10 bultos no es error', () => {
+    // Mati 26/08: "es opcional, lo carga el vendedor". El contador del carrito le avisa
+    // que esta disponible; marcarlo como error seria un falso positivo (491 renglones
+    // de las facturas reales caian en este caso).
+    const r = evaluarPedido([{ cod_articulo: 1, cantidad: 10, cod_lista: 12 }], c, REGLAS);
+    expect(r.promo_general).toBe(true);
+    expect(r.avisos[0].severidad).toBe('ok');
+    expect(r.avisos[0].mensaje).toBeNull();
+  });
+
+  it('el ejemplo del audio completo: 9 de Gran Campeón + 20 kg de alpiste llegan a 10 bultos y todo el pedido puede ir hasta L3', () => {
     const r = evaluarPedido([
       { cod_articulo: 140, cantidad: 9, cod_lista: 14 },
       { cod_articulo: 400, cantidad: 20, cod_lista: 14 },
     ], c, REGLAS);
     expect(r.bultos).toBe(10);
     expect(r.promo_general).toBe(true);
-    // Gran Campeón: L3 libre, así que L3 está bien.
-    expect(r.avisos[0].lista_sugerida).toBe(14);
-    // Alpiste: 20 kg le dan L2, y la promo general le da L3. Gana la mejor.
-    expect(r.avisos[1].lista_sugerida).toBe(14);
+    // Gran Campeón L3 libre; alpiste L3 por la promo. Ninguno es error.
+    expect(r.avisos.every(a => a.severidad === 'ok')).toBe(true);
   });
 
   it('🔑 las promos se superponen: en el mismo pedido conviven L2 general y L3 puntual', () => {
@@ -294,10 +301,11 @@ describe('LIBRE habilita pero no obliga (control cruzado 26/08 contra 1.052 fact
     expect(r.avisos[0].lista_sugerida).toBe(13);
   });
 
-  it('el techo de LIBRE convive con el derecho por cantidad en el mismo renglón', () => {
-    // Ganave: L1 libre + L2 por promo general. Con 10 bultos hay derecho a L2.
+  it('el techo sube con la promo pero el derecho no', () => {
     const cg = cat('ganave');
-    expect(evaluarPedido([{ cod_articulo: 1, cantidad: 10, cod_lista: 12 }], cg, REGLAS).avisos[0].severidad).toBe('cliente');
+    // Con 10 bultos la promo habilita L2: usarla o no, las dos cosas estan bien.
+    expect(evaluarPedido([{ cod_articulo: 1, cantidad: 10, cod_lista: 12 }], cg, REGLAS).avisos[0].severidad).toBe('ok');
+    expect(evaluarPedido([{ cod_articulo: 1, cantidad: 10, cod_lista: 13 }], cg, REGLAS).avisos[0].severidad).toBe('ok');
     // Con 1 bulto no hay promo: L1 es el techo, poner L2 es perder margen.
     expect(evaluarPedido([{ cod_articulo: 1, cantidad: 1, cod_lista: 13 }], cg, REGLAS).avisos[0].severidad).toBe('margen');
   });

@@ -210,16 +210,21 @@ export function evaluarPedido(
       return g.condicion === 'min' ? valor >= umbral : valor < umbral;
     });
 
-    // 🔑 "LIBRE" y una condición por cantidad NO son lo mismo, aunque las dos habiliten
-    // la lista. LIBRE dice que el vendedor PUEDE usarla — es su decisión comercial, y
-    // vender más caro que el techo nunca es un error del sistema. Una condición por
-    // cantidad sí genera derecho: si el cliente llevó los 20 kg, le corresponde.
-    //   techo   = hasta dónde puede llegar        -> pasarse es perder margen
-    //   derecho = a dónde tiene derecho el cliente -> no dárselo es cobrarle de más
-    // Sin esta distinción el validador marcaba como error cada vez que un vendedor no
-    // usaba el mejor precio disponible de una línea LIBRE, que es la mitad del catálogo.
+    // 🔑 Habilitar una lista y obligar a usarla NO son lo mismo:
+    //   techo   = hasta dónde PUEDE llegar el vendedor -> pasarse es perder margen
+    //   derecho = a dónde tiene derecho el cliente     -> no dárselo es cobrarle de más
+    //
+    // Solo las condiciones por cantidad del propio producto o su línea generan derecho:
+    // si el cliente se llevó los 20 kg, le corresponde y punto. Las otras dos son
+    // opcionales y solo suben el techo:
+    //   · LIBRE          — decisión comercial del vendedor.
+    //   · PROMO GENERAL  — Mati 26/08: "es opcional, lo carga el vendedor, pero en teoría
+    //                      lo aplican casi siempre". El contador de bultos del carrito ya
+    //                      le avisa que está disponible; acusarlo de error sería falso.
+    // Sin esta distinción el validador marcaba mal 1 de cada 3 renglones facturados.
+    const OPCIONALES = new Set(['libre', 'promo_general']);
     const techo = cumple.length ? Math.max(...cumple.map((g) => g.cod_lista)) : LISTA_BASE;
-    const porCantidad = cumple.filter((g) => g.condicion !== 'libre').map((g) => g.cod_lista);
+    const porCantidad = cumple.filter((g) => !OPCIONALES.has(g.condicion)).map((g) => g.cod_lista);
     const derecho = porCantidad.length ? Math.max(...porCantidad) : LISTA_BASE;
 
     const nombre = art?.descripcion || `artículo ${r.cod_articulo}`;
