@@ -21,6 +21,14 @@ export async function listClientesLookup(req: Request & { user?: JwtPayload }, r
     try {
         const user = req.user!;
 
+        // Un vendedor sin cod_vendedor filtraba por -1 y devolvia [] con ok:true, o sea
+        // exactamente lo mismo que "este vendedor no tiene clientes". Es un problema de
+        // configuracion del usuario, no un listado vacio: que se distinga.
+        if (user.rol === 'vendedor' && user.cod_vendedor == null) {
+            res.json({ ok: true, items: [], source: 'none', sin_vendedor: true });
+            return;
+        }
+
         // ── Fuente primaria: InfoManager ────────────────────────────────────
         let clientesIM: Awaited<ReturnType<typeof fetchClientesIMCached>> = [];
         try {

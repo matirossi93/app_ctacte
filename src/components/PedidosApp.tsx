@@ -97,6 +97,10 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                     setCliError(d?.error ?? 'No se pudo cargar el listado de clientes.');
                     return;
                 }
+                if (d?.sin_vendedor) {
+                    setCliError('Tu usuario no tiene código de vendedor asignado, así que no se puede saber qué clientes son tuyos. Avisale a Matías.');
+                    return;
+                }
                 setCliError(null);
                 setFullClients(arr.map((c: any) => ({
                     cod: String(c.cod ?? c.cod_cliente), name: String(c.name ?? c.razon_social ?? c.nombre ?? ''), localidad: c.localidad ?? '',
