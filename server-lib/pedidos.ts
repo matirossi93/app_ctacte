@@ -32,8 +32,13 @@ const PEDIDO_DEPOSITO = Number(env.PEDIDO_DEPOSITO || 1);
 // Dry-run: NO postea a IM, solo guarda el borrador en Supabase y loguea el payload.
 // Útil para probar el flujo sin ensuciar InfoManager. Apagar (borrar/0) para producción.
 const PEDIDOS_DRY_RUN = String(env.PEDIDOS_DRY_RUN || '').toLowerCase() === 'true' || env.PEDIDOS_DRY_RUN === '1';
+// ¿Frenar el pedido cuando se vende por debajo de la lista que corresponde?
+// Mati lo pidió el 26/08 y lo dio de baja el 27/08: mientras la parametrización se sigue
+// afinando, un falso positivo le bloquea una venta legítima al vendedor. Queda como flag
+// para poder prenderlo sin tocar código cuando las reglas estén maduras. Default: apagado.
+const BLOQUEAR_POR_MARGEN = String(env.PEDIDOS_BLOQUEAR_MARGEN || '').toLowerCase() === 'true' || env.PEDIDOS_BLOQUEAR_MARGEN === '1';
 
-interface ItemInput { cod_articulo: number; cantidad: number; cod_lista?: number }
+interface ItemInput { cod_articulo: number; cantidad: number; cod_lista?: number; descuento_porc?: number }
 
 /**
  * Listas mayoristas validas (IM): 12=L1 13=L2 14=L3 15=L4, 9=MINORISTA, 11=SUCURSALES.
@@ -106,6 +111,8 @@ export async function validarListasPedido(req: Request & { user?: JwtPayload }, 
 export interface ItemResuelto {
   cod_articulo: number; cantidad: number; cod_lista: number;
   descripcion: string; precio: number; iva: number; subtotal: number;
+  /** Descuento del renglón, 0 a 100. El subtotal ya lo tiene aplicado. */
+  descuento_porc: number;
 }
 
 /**
@@ -115,7 +122,7 @@ export interface ItemResuelto {
  * Los precios se piden SECUENCIALMENTE: IM se satura con requests en paralelo.
  */
 async function resolverYControlar(
-  itemsValidos: Array<{ cod_articulo: number; cantidad: number; cod_lista?: number }>,
+  itemsValidos: Array<{ cod_articulo: number; cantidad: number; cod_lista?: number; descuento_porc?: number }>,
   codListaCliente: number,
   etiqueta: string,
 ): Promise<
@@ -134,9 +141,12 @@ async function resolverYControlar(
     } catch (e: any) {
       console.warn(`[${etiqueta}] precio-ldp falló art=${it.cod_articulo} lista=${listaItem}:`, e?.message);
     }
-    const subtotal = Math.round(precio * it.cantidad * 100) / 100;
+    // El descuento se aplica al subtotal que guardamos, pero a IM se le manda aparte
+    // (precio + descuento_porc) para que el comprobante lo muestre desglosado.
+    const desc = Math.min(Math.max(Number(it.descuento_porc) || 0, 0), 100);
+    const subtotal = Math.round(precio * it.cantidad * (1 - desc / 100) * 100) / 100;
     total += subtotal;
-    items.push({ cod_articulo: it.cod_articulo, cantidad: it.cantidad, cod_lista: listaItem, descripcion, precio, iva, subtotal });
+    items.push({ cod_articulo: it.cod_articulo, cantidad: it.cantidad, cod_lista: listaItem, descripcion, precio, iva, subtotal, descuento_porc: desc });
   }
   total = Math.round(total * 100) / 100;
 
@@ -163,7 +173,12 @@ async function resolverYControlar(
   const control = await controlarListas(items.map((it) => ({
     cod_articulo: it.cod_articulo, cantidad: it.cantidad, cod_lista: it.cod_lista,
   })));
-  const bloqueos = (control?.avisos ?? []).filter((a) => a.severidad === 'margen');
+  // Sin precio SÍ se frena siempre (arriba): no es una regla comercial opinable, es que el
+  // artículo no tiene precio en esa lista y no se puede vender. Lo de abajo es distinto:
+  // es nuestra parametrización diciendo que el precio es más bajo del que corresponde.
+  const bloqueos = BLOQUEAR_POR_MARGEN
+    ? (control?.avisos ?? []).filter((a) => a.severidad === 'margen')
+    : [];
   if (bloqueos.length) {
     return { ok: false, status: 422, body: {
       ok: false, bloqueado: true,
@@ -214,6 +229,7 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
         cod_articulo: Number(it.cod_articulo),
         cantidad: Number(it.cantidad),
         cod_lista: LISTAS_VALIDAS.has(Number(it.cod_lista)) ? Number(it.cod_lista) : undefined,
+        descuento_porc: Math.min(Math.max(Number(it.descuento_porc) || 0, 0), 100),
       }))
       .filter((it) => it.cod_articulo > 0 && it.cantidad > 0);
     if (!itemsValidos.length) { res.status(400).json({ error: 'El pedido no tiene items válidos' }); return; }
@@ -288,6 +304,7 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
         cantidad: it.cantidad,
         precio_unit: it.precio,
         cod_lista_precios: it.cod_lista,
+        descuento_porc: it.descuento_porc,
         lista_sugerida: av?.lista_sugerida ?? null,
         aviso_lista: av?.mensaje ?? null,
         iva_por: it.iva,
@@ -325,6 +342,7 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
         cantidad: it.cantidad,
         precio: it.precio > 0 ? String(it.precio) : undefined,
         iva_por: it.iva,
+        descuento_porc: it.descuento_porc > 0 ? it.descuento_porc : undefined,
       })),
     });
 
@@ -402,6 +420,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         cod_articulo: Number(it.cod_articulo),
         cantidad: Number(it.cantidad),
         cod_lista: LISTAS_VALIDAS.has(Number(it.cod_lista)) ? Number(it.cod_lista) : undefined,
+        descuento_porc: Math.min(Math.max(Number(it.descuento_porc) || 0, 0), 100),
       }))
       .filter((it) => it.cod_articulo > 0 && it.cantidad > 0);
     if (!itemsValidos.length) { res.status(400).json({ error: 'El pedido no tiene items válidos' }); return; }
@@ -465,6 +484,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         items: nuevos.map((it) => ({
           cod_articulo: it.cod_articulo, cantidad: it.cantidad,
           precio: it.precio > 0 ? String(it.precio) : undefined, iva_por: it.iva,
+          descuento_porc: it.descuento_porc > 0 ? it.descuento_porc : undefined,
         })),
       });
       if (!imRes.ok) {
@@ -499,6 +519,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         cantidad: it.cantidad,
         precio_unit: it.precio,
         cod_lista_precios: it.cod_lista,
+        descuento_porc: it.descuento_porc,
         lista_sugerida: av?.lista_sugerida ?? null,
         aviso_lista: av?.mensaje ?? null,
         iva_por: it.iva,

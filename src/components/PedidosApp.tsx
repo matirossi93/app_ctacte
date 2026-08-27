@@ -15,7 +15,7 @@ interface Props {
 interface ClienteOpt { cod: string; name: string; localidad?: string }
 interface Credito { saldo: number; disponible: number; control_margen_venta: string }
 interface CatItem { cod_articulo: number; descripcion: string; precio_venta: number }
-interface CartItem { cod_articulo: number; descripcion: string; cantidad: number; precio: number; cod_lista: number }
+interface CartItem { cod_articulo: number; descripcion: string; cantidad: number; precio: number; cod_lista: number; descuento: number }
 
 /**
  * Listas mayoristas de IM. El vendedor la elige RENGLON POR RENGLON segun la
@@ -174,7 +174,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         } catch { /* usa el genérico */ }
         setCart(c => c.some(i => i.cod_articulo === a.cod_articulo)
             ? c
-            : [...c, { cod_articulo: a.cod_articulo, descripcion: a.descripcion, cantidad: 1, precio, cod_lista: listaDelItem }]);
+            : [...c, { cod_articulo: a.cod_articulo, descripcion: a.descripcion, cantidad: 1, precio, cod_lista: listaDelItem, descuento: 0 }]);
         setAgregando(null);
         setCatQuery(''); setCatResults([]);
     }
@@ -213,8 +213,20 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
             }
         } catch { /* si falla, queda el precio anterior y el backend recalcula al enviar */ }
     }
+    /** Descuento del renglón, 0 a 100. Se edita como texto (mismo motivo que la cantidad). */
+    const [descTexto, setDescTexto] = useState<Record<number, string>>({});
+    function escribirDesc(cod: number, txt: string) {
+        if (!/^\d{0,3}([.,]\d{0,2})?$/.test(txt)) return;
+        setDescTexto(q => ({ ...q, [cod]: txt }));
+        const n = Math.min(Math.max(Number(txt.replace(',', '.')) || 0, 0), 100);
+        setCart(c => c.map(i => i.cod_articulo === cod ? { ...i, descuento: n } : i));
+    }
+    function cerrarDesc(cod: number) {
+        setDescTexto(q => { const c = { ...q }; delete c[cod]; return c; });
+    }
     const quitar = (cod: number) => setCart(c => c.filter(i => i.cod_articulo !== cod));
-    const total = useMemo(() => cart.reduce((a, i) => a + i.cantidad * i.precio, 0), [cart]);
+    const subtotalDe = (i: CartItem) => i.cantidad * i.precio * (1 - (i.descuento || 0) / 100);
+    const total = useMemo(() => cart.reduce((a, i) => a + subtotalDe(i), 0), [cart]);
 
     // ── Control de listas ───────────────────────────────────────────────────
     // Se corre EN VIVO mientras arma el carrito: avisar recién al confirmar llega tarde,
@@ -239,9 +251,11 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     }, [cart]);
     const avisoDe = (cod: number) => control?.avisos?.find(a => a.cod_articulo === cod && a.mensaje);
     const faltanBultos = control ? Math.max(0, 10 - control.bultos) : 0;
-    // Vender más barato de lo que corresponde FRENA el pedido (el backend también lo
-    // rechaza). Cobrarle de más al cliente sólo avisa: ahí el vendedor puede tener un motivo.
-    const bloqueos = control?.avisos?.filter(a => a.severidad === 'margen') ?? [];
+    // El control AVISA, no frena (Mati lo dio de baja el 27/08 mientras la parametrización
+    // se sigue afinando: un falso positivo le bloquea una venta legítima al vendedor).
+    // El backend tiene el flag PEDIDOS_BLOQUEAR_MARGEN para volver a prenderlo; si eso pasa,
+    // el 422 llega igual y se muestra en el cartel de abajo.
+    const bloqueos: AvisoLista[] = [];
 
     // ── Editar un pedido ya cargado ─────────────────────────────────────────
     const [abriendo, setAbriendo] = useState<string | null>(null);
@@ -257,6 +271,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                 cantidad: Number(i.cantidad),
                 precio: Number(i.precio_unit),
                 cod_lista: Number(i.cod_lista_precios) || LISTA_DEFECTO,
+                descuento: Number(i.descuento_porc) || 0,
             })));
             setCliente({ cod: String(p.cod_cliente), name: p.cliente_nombre ?? `Cliente ${p.cod_cliente}` });
             setObs(d.pedido?.observaciones ?? '');
@@ -310,7 +325,7 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
         if (!cliente || !cart.length) return;
         setEnviando(true); setResultado(null); setMsgBloqueo(null);
         try {
-            const items = cart.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista: i.cod_lista }));
+            const items = cart.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista: i.cod_lista, descuento_porc: i.descuento || 0 }));
             const r = editando
                 ? await fetch(`/api/pedidos/${editando}`, {
                     method: 'PUT',
@@ -543,7 +558,21 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                     >
                                         {LISTAS.map(l => <option key={l.cod} value={l.cod}>{l.label}</option>)}
                                     </select>
-                                    <div className="ped-cart-sub">{money(i.cantidad * i.precio)}</div>
+                                    <label className="ped-desc" title="Descuento de este renglón">
+                                        <input
+                                            type="text" inputMode="decimal" placeholder="0"
+                                            aria-label={`Descuento en porcentaje de ${i.descripcion}`}
+                                            value={descTexto[i.cod_articulo] ?? (i.descuento ? String(i.descuento) : '')}
+                                            onChange={e => escribirDesc(i.cod_articulo, e.target.value)}
+                                            onFocus={e => e.currentTarget.select()}
+                                            onBlur={() => cerrarDesc(i.cod_articulo)}
+                                        />
+                                        <span>%</span>
+                                    </label>
+                                    <div className="ped-cart-sub">
+                                        {money(subtotalDe(i))}
+                                        {i.descuento > 0 && <span className="ped-cart-tachado">{money(i.cantidad * i.precio)}</span>}
+                                    </div>
                                     <button className="ped-cart-del" onClick={() => quitar(i.cod_articulo)}><Trash2 size={14} /></button>
                                     {av && av.lista_sugerida != null && (
                                         <div className={`ped-aviso ${av.severidad}`}>
