@@ -29,17 +29,18 @@
 --   · 469 MEZCLA GALLO PREM C/CUARENTIN, 480 MEZCLA CON CUARENTIN — son mezclas, ya cubiertas
 --     por la regla de subrubro "Mezclas".
 --
--- ⚠️ PENDIENTE DE RESPUESTA — MAIZ CUARENTIN (461) Y LA LISTA 3:
--- Se sembró tal cual lo dijo Mati, pero el dato no lo acompaña y conviene mirarlo. En las
--- 3 semanas medidas el 461 se facturó 14 veces al mayorista y las 14 salieron en LISTA 2,
--- todas al mismo precio, con 5 vendedores distintos. Doce de esas 14 caen en facturas que
--- pasaban los 10 bultos, o sea que la promo general estaba disponible y facturación igual
--- no le dio L3 ni una vez. Comparado con sus hermanos en la misma situación: colza 2 de 2,
--- vitamina 4 de 5, vicia 3 de 4, mijo 22 de 25, alpiste 15 de 21. El cuarentín, 0 de 12.
--- La sospecha es que el 461 no tenga precio cargado en la Lista 3 de IM.
--- Si es así, la fila de L3 de abajo hay que desactivarla (un update de una línea). Mientras
--- tanto queda activa, porque el costo de equivocarse en ese sentido es que el validador se
--- quede callado, y en el otro sentido sería marcarle error a una venta legítima.
+-- EXCEPCIÓN — EL MAIZ CUARENTIN (461) NO LLEGA A LA LISTA 3:
+-- Es el único de los cuatro que NO copia entera a la colza. Mati confirmó el 27/08 que el
+-- 461 no tiene precio cargado en la Lista 3 de InfoManager, así que la promo general de 10
+-- bultos no le sirve para nada: su techo es la Lista 2. Por eso la tercera fila va con
+-- activo=false (cargada, para no perder el trabajo si algún día le cargan el precio).
+--
+-- El dato lo anticipaba, y por eso se preguntó: en las 3 semanas medidas el 461 se facturó
+-- 14 veces al mayorista y las 14 salieron en Lista 2, todas al mismo precio, con 5
+-- vendedores distintos. Doce de esas 14 caen en facturas que pasaban los 10 bultos — o sea
+-- que la promo estaba disponible y facturación igual no le dio L3 ni una vez. Sus hermanos
+-- en la misma situación sí: colza 2 de 2, vitamina 4 de 5, vicia 3 de 4, mijo 22 de 25,
+-- alpiste 15 de 21. El cuarentín, 0 de 12.
 
 -- SOJA: las 3 filas ya existían con activo=false, esperando que Mati confirmara a cuál de
 -- los 5 artículos con "SOJA" aplicaba. Ya está confirmado: solo al 404.
@@ -60,7 +61,7 @@ insert into listas_reglas (nombre, match_tipo, match_valor, cod_lista, condicion
 
   ('MAIZ CUARENTIN', 'articulo', '461', 12, 'max', 20, 'kg', 'articulo', true, 'Mati 27/08: mismo patron que la colza. Ojo: en 3 semanas no se facturo ni un renglon por debajo de 20 kg, asi que esta rama no la confirma el dato (tampoco la contradice).'),
   ('MAIZ CUARENTIN', 'articulo', '461', 13, 'min', 20, 'kg', 'articulo', true, 'Mati 27/08: mismo patron que la colza. Los 14 renglones mayoristas de 3 semanas salieron todos por aca (Lista 2), al mismo precio.'),
-  ('MAIZ CUARENTIN', 'articulo', '461', 14, 'promo_general', 10, 'bulto', 'pedido', true, 'PENDIENTE DE CONFIRMAR (ver cabecera de la migracion 025): 0 de 12 facturas que pasaban los 10 bultos usaron L3, contra 2/2 de la colza y 4/5 de la vitamina. Puede que el 461 no tenga precio cargado en la Lista 3 de IM. Si es asi, poner activo=false.')
+  ('MAIZ CUARENTIN', 'articulo', '461', 14, 'promo_general', 10, 'bulto', 'pedido', false, 'INACTIVA A PROPOSITO. Mati confirmo el 27/08 que el 461 NO tiene precio en la Lista 3, asi que la promo general no le aplica: su techo es la Lista 2. El dato lo anticipaba: sus 14 renglones mayoristas salieron todos en L2, y 12 de esos caian en facturas que pasaban los 10 bultos (contra colza 2/2, vitamina 4/5, vicia 3/4). Si algun dia le cargan precio de L3 en IM, poner activo=true.')
 on conflict (tenant_id, match_tipo, match_valor, cod_lista) do update set
   nombre = excluded.nombre, condicion = excluded.condicion, umbral = excluded.umbral,
   unidad = excluded.unidad, ambito = excluded.ambito, activo = excluded.activo,
