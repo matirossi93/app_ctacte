@@ -55,8 +55,29 @@
 .ped-credito.gray { color: var(--color-text-muted); background: var(--color-surface-hover); }
 
 .ped-cart-title { font-weight: 700; color: var(--color-primary); margin-top: 0.4rem; font-size: 0.9rem; }
-.ped-cart-item { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 0.5rem; padding: 0.5rem 0; border-bottom: 1px solid var(--color-border); }
-.ped-cart-desc { font-size: 0.85rem; display: flex; flex-direction: column; }
+/* Dos filas explícitas, las dos aprovechadas. Antes eran 4 columnas para 6 hijos: el
+   subtotal y el tacho se iban solos a una fila nueva, con el subtotal estirado sobre una
+   columna 1fr. Un renglón medía 105 px en pantalla ancha y 147 px en un celular de 375. */
+.ped-cart-item {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr;
+  align-items: center;
+  gap: 0.3rem 0.4rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.ped-cart-desc  { grid-column: 1 / 4; grid-row: 1; }
+.ped-cart-sub   { grid-column: 4;     grid-row: 1; justify-self: end; }
+.ped-qty        { grid-column: 1;     grid-row: 2; }
+.ped-cart-lista { grid-column: 2;     grid-row: 2; }
+.ped-desc       { grid-column: 3;     grid-row: 2; }
+.ped-cart-del   { grid-column: 4;     grid-row: 2; justify-self: end; }
+/* El precio unitario va PEGADO al nombre, no en un renglón propio: eran 14 px más por fila
+   para un dato de apoyo. Envuelve solo si el nombre del producto no entra. */
+.ped-cart-desc {
+  font-size: 0.85rem; line-height: 1.25;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.4rem;
+}
 .ped-cart-precio { font-size: 0.72rem; color: var(--color-text-muted); }
 .ped-qty { display: flex; align-items: center; gap: 0.2rem; }
 .ped-qty button { border: 1px solid var(--color-border); background: var(--color-surface); border-radius: var(--radius-sm); padding: 0.25rem; cursor: pointer; color: var(--color-text); display: flex; }
@@ -183,11 +204,13 @@
 .ped-qty button { min-width: 40px; min-height: 40px; justify-content: center; }
 .ped-qty button:disabled { opacity: 0.35; }
 .ped-qty input { width: 4rem; min-height: 40px; font-size: 16px; font-variant-numeric: tabular-nums; }
+/* El select de lista quedaba en 30px contra los 40 del resto de los controles: en el celular
+   es el mas dificil de acertar de los tres y es el que define el precio. */
+.ped-cart-lista { min-height: 40px; }
 
 @media (max-width: 560px) {
-  /* En pantalla chica el renglón se parte: producto arriba, controles abajo con aire. */
-  .ped-cart-item { grid-template-columns: 1fr auto auto; row-gap: 0.4rem; }
-  .ped-cart-desc { grid-column: 1 / -1; }
+  /* La grilla del renglón ya es la misma en todos los anchos: acá sólo se le da aire al
+     aviso, que es lo único que no entra en una línea en el celular. */
   .ped-cart-sub { min-width: auto; }
   .ped-aviso { flex-wrap: wrap; }
   .ped-aviso button { width: 100%; }
@@ -220,7 +243,7 @@
 /* 🪤 El grid del renglón declara 3 columnas en móvil y el renglón tiene 5 hijos, así que
    el tacho caía solo en una fila nueva y se estiraba a todo el ancho: un botón invisible
    de ~212px justo debajo del input de cantidad. Errarle para abajo borraba el renglón. */
-.ped-cart-del { justify-self: end; min-width: 40px; min-height: 40px; align-items: center; justify-content: center; }
+.ped-cart-del { min-width: 40px; min-height: 40px; align-items: center; justify-content: center; }
 
 /* El aviso ámbar es el único que NO frena, así que es el único que el vendedor tiene que
    leer sí o sí. En el dorado de marca daba 1,68:1 de contraste sobre el crema (WCAG pide
@@ -248,7 +271,6 @@
   display: block; font-size: 0.68rem; font-weight: 500;
   color: var(--color-text-muted); text-decoration: line-through;
 }
-@media (max-width: 560px) { .ped-cart-item { grid-template-columns: 1fr auto auto auto; } }
 
 .ped-desc.alerta { border-color: var(--color-danger); border-width: 2px; }
 /* Recordatorio (no es un error): la condición que el sistema no puede verificar solo. */
@@ -266,3 +288,51 @@
 /* El artículo no tiene precio en la lista del cliente. Se dice en texto, no con $0:
    mostrar cero era el bug que reportó Mati el 27/08. */
 .ped-cat-sinprecio { font-size: 0.7rem; font-weight: 500; color: var(--color-text-muted); }
+
+/* Detalle de solo lectura de un pedido ya cargado (27/08/2026). Mati: "que puedan ver el
+   detalle sin necesidad de apretar en editar". Abre en la misma fila para no perder de
+   vista de qué pedido se trata. */
+.ped-row { flex-wrap: wrap; }
+.ped-row-info {
+  display: flex; align-items: center; gap: 0.4rem;
+  flex: 1; min-width: 55%; text-align: left;
+  background: none; border: 0; padding: 0.15rem 0; cursor: pointer; color: inherit;
+  min-height: 44px;                       /* touch target: se usa desde el celular */
+}
+.ped-row-flecha { flex-shrink: 0; color: var(--color-text-muted); transition: transform .15s; }
+.ped-row-flecha.abierta { transform: rotate(90deg); }
+.ped-detalle {
+  flex-basis: 100%;
+  margin: 0.2rem 0 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-surface-hover, #f2f2f2);
+}
+.ped-det-item {
+  display: grid; grid-template-columns: 1fr auto;
+  gap: 0.1rem 0.6rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.ped-det-item:last-of-type { border-bottom: 0; }
+.ped-det-desc { font-size: 0.8rem; font-weight: 600; grid-column: 1; }
+.ped-det-aviso { display: block; font-size: 0.7rem; font-weight: 500; color: #8A5A12; margin-top: 0.15rem; }
+.ped-det-nums { grid-column: 1; display: flex; gap: 0.5rem; flex-wrap: wrap; font-size: 0.75rem; color: var(--color-text-muted); }
+.ped-det-tags { font-variant-numeric: tabular-nums; }
+.ped-det-sub { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-size: 0.85rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ped-det-obs { margin-top: 0.5rem; font-size: 0.75rem; font-style: italic; color: var(--color-text-muted); }
+.ped-det-total {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-top: 0.5rem; padding-top: 0.45rem; border-top: 1px solid var(--color-border);
+  font-size: 0.8rem;
+}
+.ped-det-total b { font-size: 0.95rem; font-variant-numeric: tabular-nums; }
+.ped-detalle-error {
+  display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+  font-size: 0.78rem; color: #8A5A12;
+}
+.ped-detalle-error button {
+  border: 1px solid currentColor; background: transparent; color: inherit;
+  font-weight: 700; font-size: 0.72rem; padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm, 6px); cursor: pointer; min-height: 28px;
+}

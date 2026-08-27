@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     X, Search, User, ShoppingCart, Plus, Minus, Trash2, Send, Loader2,
     CheckCircle2, AlertCircle, ArrowLeft, PackageSearch, Wallet, Ban,
-    Package, AlertTriangle, Pencil,
+    Package, AlertTriangle, Pencil, ChevronRight,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import { buscarClientes } from '../utils/buscarClientes';
@@ -72,6 +72,13 @@ interface ControlListas {
     /** El backend no pudo evaluar las listas (IM caído, reglas sin cargar). Los números son 0
      *  de relleno: mostrarlos hace creer que faltan 10 bultos cuando en el carrito hay 40. */
     sin_control?: boolean;
+}
+
+/** Un renglón tal como quedó guardado. Es lo que devuelve GET /api/pedidos/:id. */
+interface ItemGuardado {
+    cod_articulo: number; descripcion: string | null; cantidad: number;
+    precio_unit: number; cod_lista_precios: number | null; descuento_porc: number | null;
+    subtotal: number; aviso_lista: string | null;
 }
 
 interface Pedido {
@@ -471,6 +478,25 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
 
     // ── Lista de pedidos ────────────────────────────────────────────────────
     const [pedidos, setPedidos] = useState<Pedido[]>([]);
+    // Detalle de solo lectura. Se pide una vez por pedido y queda cacheado mientras el
+    // modal esté abierto: el vendedor abre y cierra el mismo pedido varias veces.
+    const [abierto, setAbierto] = useState<string | null>(null);
+    const [detalle, setDetalle] = useState<Record<string, { items: ItemGuardado[]; obs: string | null } | 'cargando' | 'error'>>({});
+
+    async function verDetalle(p: Pedido) {
+        if (abierto === p.id) { setAbierto(null); return; }
+        setAbierto(p.id);
+        if (detalle[p.id] && detalle[p.id] !== 'error') return;
+        setDetalle(d => ({ ...d, [p.id]: 'cargando' }));
+        try {
+            const r = await fetch(`/api/pedidos/${p.id}`, { headers: authHeaders() });
+            const j = await r.json().catch(() => null);
+            if (!r.ok || !j?.ok) { setDetalle(d => ({ ...d, [p.id]: 'error' })); return; }
+            setDetalle(d => ({ ...d, [p.id]: { items: j.items ?? [], obs: j.pedido?.observaciones ?? null } }));
+        } catch {
+            setDetalle(d => ({ ...d, [p.id]: 'error' }));
+        }
+    }
     const [pedLoading, setPedLoading] = useState(false);
     useEffect(() => {
         if (mode !== 'lista') return;
@@ -511,10 +537,18 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                             const e = ESTADO_LABEL[p.estado] ?? { txt: p.estado, cls: 'gray' };
                             return (
                                 <div key={p.id} className="ped-row">
-                                    <div className="ped-row-info">
-                                        <div className="ped-row-cli">{p.cliente_nombre ?? `Cliente ${p.cod_cliente}`}</div>
-                                        <div className="ped-row-sub">{new Date(p.created_at).toLocaleDateString('es-AR')} · {money(p.total_estimado)}{p.im_numero ? ` · Nº ${p.im_numero}` : ''}</div>
-                                    </div>
+                                    {/* Toda la fila abre el detalle: en el celular un chevron de 16px
+                                        no se acierta, y mirar lo que cargaste no debería costar
+                                        entrar al wizard de edición. */}
+                                    <button className="ped-row-info" onClick={() => verDetalle(p)}
+                                        aria-expanded={abierto === p.id}
+                                        aria-label={`Ver el detalle del pedido de ${p.cliente_nombre ?? `Cliente ${p.cod_cliente}`}`}>
+                                        <ChevronRight size={16} className={`ped-row-flecha${abierto === p.id ? ' abierta' : ''}`} />
+                                        <div>
+                                            <div className="ped-row-cli">{p.cliente_nombre ?? `Cliente ${p.cod_cliente}`}</div>
+                                            <div className="ped-row-sub">{new Date(p.created_at).toLocaleDateString('es-AR')} · {money(p.total_estimado)}{p.im_numero ? ` · Nº ${p.im_numero}` : ''}</div>
+                                        </div>
+                                    </button>
                                     <span className={`ped-chip ${e.cls}`}>{e.txt}</span>
                                     {editable(p) && (
                                         <div className="ped-row-acciones">
@@ -526,6 +560,47 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                                 {anulando === p.id ? <Loader2 className="spin" size={14} /> : <Ban size={14} />}
                                                 Anular
                                             </button>
+                                        </div>
+                                    )}
+
+                                    {abierto === p.id && (
+                                        <div className="ped-detalle">
+                                            {detalle[p.id] === 'cargando' && (
+                                                <div className="ped-empty"><Loader2 className="spin" size={16} /> Cargando el detalle…</div>
+                                            )}
+                                            {detalle[p.id] === 'error' && (
+                                                <div className="ped-detalle-error">
+                                                    <AlertTriangle size={14} />
+                                                    <span>No se pudo cargar el detalle.</span>
+                                                    <button onClick={() => verDetalle(p)}>Reintentar</button>
+                                                </div>
+                                            )}
+                                            {typeof detalle[p.id] === 'object' && (() => {
+                                                const d = detalle[p.id] as { items: ItemGuardado[]; obs: string | null };
+                                                if (!d.items.length) return <div className="ped-empty">Este pedido no tiene renglones.</div>;
+                                                return (<>
+                                                    {d.items.map((it, k) => (
+                                                        <div key={k} className="ped-det-item">
+                                                            <div className="ped-det-desc">
+                                                                {it.descripcion ?? `Artículo ${it.cod_articulo}`}
+                                                                {it.aviso_lista && <span className="ped-det-aviso">{it.aviso_lista}</span>}
+                                                            </div>
+                                                            <div className="ped-det-nums">
+                                                                <span className="ped-det-cant">{Number(it.cantidad)} × {money(Number(it.precio_unit))}</span>
+                                                                <span className="ped-det-tags">
+                                                                    {NOMBRE_LISTA[Number(it.cod_lista_precios)] ?? '—'}
+                                                                    {Number(it.descuento_porc) > 0 && <> · −{Number(it.descuento_porc)}%</>}
+                                                                </span>
+                                                            </div>
+                                                            <div className="ped-det-sub">{money(Number(it.subtotal))}</div>
+                                                        </div>
+                                                    ))}
+                                                    {d.obs && <div className="ped-det-obs">{d.obs}</div>}
+                                                    <div className="ped-det-total">
+                                                        <span>Total</span><b>{money(p.total_estimado)}</b>
+                                                    </div>
+                                                </>);
+                                            })()}
                                         </div>
                                     )}
                                 </div>
