@@ -24,6 +24,22 @@ if (!IM_USUARIO_PEDIDOS) {
   // y una variable faltante habría tumbado TODA la app al deployar el módulo por primera vez.
   console.error('[pedidos] IM_USUARIO_PEDIDOS / INFOMANAGER_USUARIO sin definir: no se van a poder enviar pedidos a InfoManager. El resto de la app sigue funcionando.');
 }
+/**
+ * Con qué usuario de InfoManager se crea el presupuesto.
+ *
+ * En IM el campo `usuario` no es el vendedor sino el OPERADOR que carga el comprobante (el
+ * vendedor viaja aparte, en cod_vendedor). Hasta el 27/08 iba siempre el usuario único de la
+ * app, así que en IM todos los pedidos figuraban cargados por la misma persona. Ahora, si el
+ * vendedor tiene su propio login de IM guardado en `usuarios.im_usuario`, se usa ese.
+ *
+ * El fallback NO es opcional: un usuario que IM no reconozca puede hacer que rechace el
+ * presupuesto entero. Si la columna está vacía se sigue usando el de siempre, que anda.
+ */
+export function usuarioIM(user?: { im_usuario?: string | null } | null): string {
+  const propio = String(user?.im_usuario ?? '').trim();
+  return propio || IM_USUARIO_PEDIDOS;
+}
+
 const PEDIDO_EMPRESA_DEFAULT = Number(env.PEDIDO_EMPRESA_DEFAULT || 1);
 const PEDIDO_PUNTO_DE_VENTA = Number(env.PEDIDO_PUNTO_DE_VENTA || 1);
 const PEDIDO_LISTA_FALLBACK = Number(env.PEDIDO_LISTA_FALLBACK || 12); // LISTA 1
@@ -405,7 +421,7 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
       cod_cliente: codCliente,
       cod_vendedor: codVendedor,
       cod_lista_precios: codLista,
-      usuario: IM_USUARIO_PEDIDOS,
+      usuario: usuarioIM(user),
       punto_de_venta: PEDIDO_PUNTO_DE_VENTA,
       // 🪤 Era un ternario: si el vendedor escribia CUALQUIER cosa, el marcador desaparecia.
       // El campo `usuario` de IM es el operador de la oficina (hoy siempre el mismo para todos
@@ -563,7 +579,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         cod_cliente: Number(pedido.cod_cliente),
         cod_vendedor: Number(pedido.cod_vendedor),
         cod_lista_precios: Number(pedido.cod_lista_precios) || PEDIDO_LISTA_FALLBACK,
-        usuario: IM_USUARIO_PEDIDOS,
+        usuario: usuarioIM(user),
         punto_de_venta: PEDIDO_PUNTO_DE_VENTA,
         observaciones: `Pedido app · ${user.nombre || `vend ${pedido.cod_vendedor}`}${observaciones ? ` · ${observaciones}` : ''}`.slice(0, 500),
         cod_compatibilidad: String(pedido.id).slice(0, 8),

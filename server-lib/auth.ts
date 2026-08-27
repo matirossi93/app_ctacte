@@ -24,6 +24,8 @@ export interface JwtPayload {
   vendedor_key?: string | null;
   cod_vendedor?: number | null;
   nombre?: string | null;
+  /** Login de este usuario en InfoManager. null = se usa el usuario unico de la app. */
+  im_usuario?: string | null;
 }
 
 export function sha256hex(s: string): string {
@@ -80,13 +82,14 @@ export interface UsuarioRow {
   vendedor_key: string | null;
   cod_vendedor: number | null;
   nombre: string | null;
+  im_usuario: string | null;
   activo: boolean;
 }
 
 export async function findUsuarioByEmail(email: string): Promise<UsuarioRow | null> {
   const { data, error } = await sb()
     .from('usuarios')
-    .select('id, email, password_hash, rol, vendedor_key, cod_vendedor, nombre, activo')
+    .select('id, email, password_hash, rol, vendedor_key, cod_vendedor, nombre, im_usuario, activo')
     .eq('tenant_id', TENANT_ID)
     .ilike('email', email)
     .eq('activo', true)
@@ -114,6 +117,7 @@ export function usuarioToJwtPayload(u: UsuarioRow): JwtPayload {
     rol: u.rol,
     vendedor_key: u.vendedor_key,
     cod_vendedor: u.cod_vendedor,
-    nombre: u.nombre
+    nombre: u.nombre,
+    im_usuario: u.im_usuario,
   };
 }

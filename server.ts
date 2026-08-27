@@ -22,7 +22,7 @@ import {
 import { hasSupabase, sb, TENANT_ID } from './server-lib/supabase.js';
 import { syncVentasMesActual, syncVentasMeses } from './server-lib/syncVentas.js';
 import { getMonthlyVentasRaw, getMonthlyItemsRaw, snapshotCacheStats } from './server-lib/snapshotCache.js';
-import { fetchArticulosCatalogo, imGetRetry } from './server-lib/infomanager.js';
+import { fetchArticulosCatalogo, imGetRetry, fetchVendedores } from './server-lib/infomanager.js';
 import {
   uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, editarRecibo, cuentasDebug, cuentasRefresh, cuentasEfectivo,
   reverificarMP, elegirMatchMP, procesarColaMP, caducarRecibosPendientes, mpConfig
@@ -702,6 +702,23 @@ app.get('/api/debug/cache-state', requireJwt, requireAdmin, (_req, res) => {
         now: new Date().toISOString(),
         snapshot: snapshotCacheStats(),
     });
+});
+// Qué devuelve /vendedores de InfoManager, crudo. Sirve para una sola cosa: encontrar cómo
+// se llama ahí el login de cada vendedor, para poder llenar usuarios.im_usuario (migración
+// 026) sin adivinar. Adivinar mal = mandar un usuario que IM no reconoce y que rechace el
+// presupuesto. Admin/gerente, sólo lectura, no toca nada.
+app.get('/api/debug/im-vendedores', requireJwt, requireAdmin, async (_req: any, res) => {
+    try {
+        const filas = await fetchVendedores();
+        res.json({
+            ok: true,
+            cuantos: filas.length,
+            campos: filas.length ? Object.keys(filas[0] as any) : [],
+            vendedores: filas,
+        });
+    } catch (err: any) {
+        res.status(502).json({ ok: false, error: `No se pudo consultar /vendedores en IM: ${err?.message ?? 'sin respuesta'}` });
+    }
 });
 app.post('/api/cuentas/refresh', requireJwt, (req: any, res) => cuentasRefresh(req, res));
 
