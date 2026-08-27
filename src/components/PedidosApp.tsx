@@ -13,7 +13,11 @@ interface Props {
     clients?: Array<{ cod: string; name: string; localidad?: string }>;
 }
 
-interface ClienteOpt { cod: string; name: string; localidad?: string }
+interface ClienteOpt {
+    cod: string; name: string; localidad?: string;
+    /** Lista de precios del cliente en IM. Con la que cotiza el buscador. */
+    cod_lista?: number;
+}
 interface Credito { saldo: number; disponible: number; control_margen_venta: string }
 /**
  * Un resultado del buscador. `precio_venta` es null cuando el artículo no tiene precio en la
@@ -69,6 +73,17 @@ interface AvisoLista {
 }
 interface ControlListas {
     bultos: number; promo_general: boolean; avisos: AvisoLista[];
+    /**
+     * Qué carrito produjo estos avisos (los uid de los renglones, en orden).
+     *
+     * 🪤 Los avisos se emparejan con los renglones POR POSICIÓN. Entre que el vendedor toca
+     * el carrito y vuelve la respuesta pasan 400 ms de debounce más la ida a IM, y en ese
+     * rato los avisos viejos quedan corridos: si borró un renglón del medio, cada fila de
+     * abajo muestra el cartel del producto ANTERIOR — y el botón «Poner L2» le cambia la
+     * lista al renglón equivocado de un toque. Mientras la firma no coincida, no se muestra
+     * ninguno: es preferible un instante sin carteles que un cartel mintiendo.
+     */
+    firma?: string;
     /** El backend no pudo evaluar las listas (IM caído, reglas sin cargar). Los números son 0
      *  de relleno: mostrarlos hace creer que faltan 10 bultos cuando en el carrito hay 40. */
     sin_control?: boolean;
@@ -130,7 +145,9 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                 }
                 setCliError(null);
                 setFullClients(arr.map((c: any) => ({
-                    cod: String(c.cod ?? c.cod_cliente), name: String(c.name ?? c.razon_social ?? c.nombre ?? ''), localidad: c.localidad ?? '',
+                    cod: String(c.cod ?? c.cod_cliente), name: String(c.name ?? c.razon_social ?? c.nombre ?? ''),
+                    localidad: c.localidad ?? '',
+                    cod_lista: Number(c.cod_lista) > 0 ? Number(c.cod_lista) : undefined,
                 })));
             })
             .catch(() => { if (vivo) setCliError('Sin conexión: no se pudo cargar el listado de clientes.'); })
@@ -168,6 +185,12 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         useMemo(() => buscarClientes(clientList, clienteSearch), [clienteSearch, clientList]);
 
     async function elegirCliente(c: ClienteOpt) {
+        // 🪤 `listaCliente` arrancaba SIEMPRE en L1 y recién se corregía adentro de
+        // agregarArticulo, con el primer producto. O sea que la primera búsqueda le mostraba
+        // al vendedor precios de Lista 1 aunque el cliente fuera L3 — y ese es el número que
+        // le canta por teléfono. Peor al volver atrás y elegir otro cliente: arrastraba la
+        // lista del ANTERIOR. El maestro ya trae la lista de cada cliente.
+        setListaCliente(c.cod_lista ?? LISTA_DEFECTO);
         setCliente(c); setStep('productos'); setCredito(null); setCredLoading(true);
         try {
             const r = await fetch(`/api/pedidos/credito/${c.cod}`, { headers: authHeaders() });
@@ -184,6 +207,8 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     // Sin esto, un IM caido se veia igual que "ese producto no existe": el vendedor cortaba
     // la venta y llamaba a la oficina. El backend ya redacta el 502, solo habia que mostrarlo.
     const [catError, setCatError] = useState<string | null>(null);
+    /** false = no se pudo consultar la lista de precios, no que los artículos no tengan. */
+    const [hayPrecios, setHayPrecios] = useState(true);
     // El buscador muestra sólo lo que hay en el depósito de casa central. Si una búsqueda
     // no encuentra nada, se ofrece ampliar a todo el catálogo: hay un puñado de artículos
     // que se facturan desde acá sin figurar en el depósito, y no poder cargarlos frenaría
@@ -200,7 +225,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
             try {
                 const r = await fetch(`/api/pedidos/catalogo?q=${encodeURIComponent(t)}&cod_lista=${listaCliente}${catTodos ? '&todos=1' : ''}`, { headers: authHeaders(), signal: ctrl.signal });
                 const d = await r.json().catch(() => null);
-                if (r.ok && d?.ok) { setCatResults(d.articulos ?? []); setCatError(null); }
+                if (r.ok && d?.ok) { setCatResults(d.articulos ?? []); setCatError(null); setHayPrecios(d.hay_precios !== false); }
                 else { setCatResults([]); setCatError(d?.error ?? 'No se pudo consultar el catálogo de InfoManager.'); }
             } catch (e: any) {
                 // El abort de la búsqueda anterior no es un error: sólo la red lo es.
@@ -302,6 +327,8 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     // Se corre EN VIVO mientras arma el carrito: avisar recién al confirmar llega tarde,
     // ahí ya cargó todo el pedido y tendría que volver renglón por renglón.
     const [control, setControl] = useState<ControlListas | null>(null);
+    /** Identidad del carrito actual. Cambia al agregar, borrar o reordenar renglones. */
+    const firmaCarrito = useMemo(() => cart.map(i => i.uid).join('|'), [cart]);
     useEffect(() => { setMsgBloqueo(null); }, [cart]);
     useEffect(() => {
         if (!cart.length) { setControl(null); return; }
@@ -317,7 +344,9 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                     body: JSON.stringify({ items: cart.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista: i.cod_lista, descuento_porc: i.descuento || 0 })) }),
                 });
                 const d = await r.json();
-                if (d?.ok) setControl(d);
+                // La firma del carrito que ORIGINO este pedido: si el vendedor ya toco algo,
+                // la respuesta llega vieja y los avisos no se muestran hasta la proxima vuelta.
+                if (d?.ok) setControl({ ...d, firma: firmaCarrito });
             } catch { /* si falla el control el pedido sigue igual: avisa, no frena */ }
         }, 400);
         return () => { clearTimeout(timer); ctrl.abort(); };
@@ -325,8 +354,10 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     // 🪤 Esto buscaba por cod_articulo con .find(), o sea que con el mismo artículo en dos
     // renglones los dos mostraban el aviso del PRIMERO. El backend manda un aviso por
     // renglón y en orden, con su `idx`: la posición es lo que los empareja.
-    const avisoDe = (idx: number) => { const a = control?.avisos?.[idx]; return a?.mensaje ? a : undefined; };
-    const descDe = (idx: number) => control?.avisos?.[idx];
+    // Sólo se muestran los avisos del carrito que los generó: ver ControlListas.firma.
+    const controlVigente = control?.firma === firmaCarrito ? control : null;
+    const avisoDe = (idx: number) => { const a = controlVigente?.avisos?.[idx]; return a?.mensaje ? a : undefined; };
+    const descDe = (idx: number) => controlVigente?.avisos?.[idx];
     const faltanBultos = control ? Math.max(0, 10 - control.bultos) : 0;
     // El control AVISA, no frena (Mati lo dio de baja el 27/08 mientras la parametrización
     // se sigue afinando: un falso positivo le bloquea una venta legítima al vendedor).
@@ -354,6 +385,9 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                 cod_lista: Number(i.cod_lista_precios) || LISTA_DEFECTO,
                 descuento: Number(i.descuento_porc) || 0,
             })));
+            // La lista del pedido, no la del último cliente que se miró: el buscador cotiza
+            // con esto y el vendedor puede agregarle un producto más al pedido abierto.
+            setListaCliente(Number(d.pedido?.cod_lista_precios) || LISTA_DEFECTO);
             setCliente({ cod: String(p.cod_cliente), name: p.cliente_nombre ?? `Cliente ${p.cod_cliente}` });
             setObs(d.pedido?.observaciones ?? '');
             setEditando(p.id);
@@ -451,7 +485,7 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                 // Confirmar sin que pasara nada. El backend ya redactó el mensaje: usarlo.
                 setMsgBloqueo(d?.error ?? 'No se pudo enviar el pedido. Revisá los renglones marcados.');
                 if (Array.isArray(d?.avisos) && d.avisos.length) {
-                    setControl(c => ({ bultos: c?.bultos ?? 0, promo_general: c?.promo_general ?? false, avisos: d.avisos }));
+                    setControl(c => ({ bultos: c?.bultos ?? 0, promo_general: c?.promo_general ?? false, avisos: d.avisos, firma: firmaCarrito }));
                 }
                 setEnviando(false);
                 return;
@@ -673,7 +707,9 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                     {agregando === a.cod_articulo ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
                                     <div className="ped-cat-desc">{a.descripcion}</div>
                                     <div className="ped-cat-precio">
-                                        {a.precio_venta != null ? money(a.precio_venta) : <span className="ped-cat-sinprecio">sin precio en esta lista</span>}
+                                        {a.precio_venta != null
+                                            ? money(a.precio_venta)
+                                            : <span className="ped-cat-sinprecio">{hayPrecios ? 'sin precio en esta lista' : 'precio no disponible'}</span>}
                                     </div>
                                 </button>
                             ))}

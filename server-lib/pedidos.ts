@@ -251,6 +251,51 @@ export async function validarListasPedido(req: Request & { user?: JwtPayload }, 
 }
 
 
+/**
+ * Firma de los renglones de un pedido: qué artículo, en qué lista y con qué descuento, EN
+ * ORDEN. Si dos pedidos tienen la misma firma, alcanza con mandarle a IM las cantidades
+ * nuevas; si no, hay que anular el presupuesto y crearlo de nuevo.
+ *
+ * 🪤 Esto ordenaba (`.sort()`) y era un agujero de plata. El emparejado con los renglones de
+ * IM es POR POSICIÓN, así que la firma también tiene que serlo: si el vendedor borra uno de
+ * los dos renglones del mismo artículo y lo vuelve a cargar, el renglón nuevo queda al final,
+ * el multiconjunto no cambia, la firma ordenada da igual y se toma el camino barato... con
+ * las cantidades cruzadas. Y como cada renglón de IM tiene su precio y su descuento
+ * CONGELADOS desde que se creó, la cantidad de uno se factura al precio del otro.
+ * Reproducido: $24.320 de diferencia en un pedido de dos renglones, contestando ok:true.
+ * Sin el sort, cualquier reordenamiento cae en anular-y-recrear, que siempre da bien.
+ */
+export function firmaRenglones(
+  xs: Array<{ cod_articulo: any; cod_lista: any; descuento_porc?: any }>,
+): string {
+  return xs.map((x) => `${Number(x.cod_articulo)}:${Number(x.cod_lista)}:${Number(x.descuento_porc) || 0}`).join('|');
+}
+
+/**
+ * Empareja cada renglón del pedido con el renglón de IM al que le corresponde, consumiendo
+ * una cola por artículo: la n-ésima aparición de un código acá es la n-ésima de allá, porque
+ * se crearon en este mismo orden. Devuelve null si algún renglón se queda sin pareja — ahí
+ * hay que frenar, no adivinar.
+ */
+export function emparejarRenglonesIM(
+  nuevos: Array<{ cod_articulo: number; cantidad: number }>,
+  imItems: Array<{ id: number; cod_articulo: number }>,
+): Array<{ id: number; cantidad: number }> | null {
+  const cola = new Map<number, number[]>();
+  for (const it of imItems) {
+    const q = cola.get(it.cod_articulo) ?? [];
+    q.push(it.id);
+    cola.set(it.cod_articulo, q);
+  }
+  const payload: Array<{ id: number; cantidad: number }> = [];
+  for (const it of nuevos) {
+    const id = cola.get(it.cod_articulo)?.shift();
+    if (!Number.isFinite(id)) return null;
+    payload.push({ id: id as number, cantidad: it.cantidad });
+  }
+  return payload;
+}
+
 /** Un renglón ya resuelto: con su precio, su lista y su subtotal. */
 export interface ItemResuelto {
   cod_articulo: number; cantidad: number; cod_lista: number;
@@ -329,7 +374,11 @@ async function resolverYControlar(
       error: bloqueos.length === 1
         ? bloqueos[0].mensaje
         : `Hay ${bloqueos.length} renglones con la lista mal elegida. Corregilos antes de enviar el pedido.`,
-      avisos: bloqueos,
+      // 🪤 Acá iba `bloqueos`, que es la lista FILTRADA. El front indexa los avisos por
+      // posición del renglón, así que un array filtrado le corre todos los carteles: le
+      // marcaba el renglón equivocado y el botón de un toque le cambiaba la lista al que no
+      // era. Va la lista completa; cuál frena se sabe por la severidad de cada uno.
+      avisos: control?.avisos ?? bloqueos,
     } };
   }
   return { ok: true, items, total, control };
@@ -600,19 +649,15 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
     const avisoDe = (i: number) => control?.avisos[i];
 
     // ¿Alcanza con actualizar cantidades? Sólo si el surtido y las listas son los mismos.
+    // `.order('orden')` no es opcional: la firma compara EN ORDEN (ver firmaRenglones) y sin
+    // esto Supabase devuelve las filas en cualquier orden.
     const { data: actuales } = await sb().from('pedidos_vendedor_items')
-      .select('cod_articulo, cod_lista_precios, descuento_porc').eq('pedido_id', pedido.id);
-    // 🪤 El DESCUENTO tiene que estar en la firma. IM sólo deja cambiar `cantidad` sobre un
-    // presupuesto existente (el schema VentasItemsPresupuestosActualizar no tiene otra cosa),
-    // así que si el descuento cambia y la firma no se entera, se toma el camino barato: la
-    // app guarda el 25%, contesta "modificado en InfoManager"... y a IM no llega nunca.
-    // Pasa igual si el vendedor cambia cantidad Y descuento a la vez, que es lo más común:
-    // la cantidad viaja, el descuento no, y el presupuesto queda con cara de actualizado.
-    // Con el descuento adentro, ese caso cae en "anular y recrear", que es el único camino
-    // que IM soporta, y el vendedor ve el aviso de que le cambió el número de presupuesto.
-    const firma = (xs: Array<{ cod_articulo: any; cod_lista: any; descuento_porc?: any }>) =>
-      xs.map((x) => `${Number(x.cod_articulo)}:${Number(x.cod_lista)}:${Number(x.descuento_porc) || 0}`).sort().join('|');
-    const soloCantidades = firma(nuevos) === firma((actuales ?? []).map((a: any) => ({
+      .select('cod_articulo, cod_lista_precios, descuento_porc, orden')
+      .eq('pedido_id', pedido.id).order('orden');
+    // El DESCUENTO está en la firma porque IM sólo deja cambiar `cantidad` sobre un
+    // presupuesto existente: si el descuento cambia y la firma no se entera, la app guarda el
+    // 25%, contesta "modificado en InfoManager" y a IM no llega nunca.
+    const soloCantidades = firmaRenglones(nuevos) === firmaRenglones((actuales ?? []).map((a: any) => ({
       cod_articulo: a.cod_articulo, cod_lista: a.cod_lista_precios, descuento_porc: a.descuento_porc,
     })));
 
@@ -626,22 +671,10 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
     } else if (soloCantidades) {
       // Camino barato: se conserva el número de presupuesto.
       const imItems = await getItemsComprobante(pedido.im_presupuesto_id);
-      // 🪤 Era un Map cod_articulo -> id, que con dos renglones del mismo articulo se
-      // quedaba con UNO: los dos updates iban al MISMO renglon de IM (el segundo pisaba al
-      // primero) y el otro se quedaba con la cantidad vieja. Se factura lo que quedo en IM,
-      // no lo que el vendedor guardo. Ahora se consume una cola por articulo, en orden: los
-      // renglones se crearon en este mismo orden, asi que la n-esima aparicion de acá es la
-      // n-esima de allá. Si las cantidades no coinciden, el chequeo de abajo lo ataja.
-      const colaPorArticulo = new Map<number, number[]>();
-      for (const it of imItems) {
-        const cola = colaPorArticulo.get(it.cod_articulo) ?? [];
-        cola.push(it.id);
-        colaPorArticulo.set(it.cod_articulo, cola);
-      }
-      const payload = nuevos
-        .map((it) => ({ id: colaPorArticulo.get(it.cod_articulo)?.shift() as number, cantidad: it.cantidad }))
-        .filter((x) => Number.isFinite(x.id));
-      if (payload.length !== nuevos.length) {
+      // Emparejado por posición dentro de cada artículo. Sólo es válido porque la firma de
+      // arriba también es sensible al orden: si el vendedor reordenó algo, no llegamos acá.
+      const payload = emparejarRenglonesIM(nuevos, imItems);
+      if (!payload) {
         res.status(409).json({ error: 'Los renglones del presupuesto en InfoManager no coinciden con los de la app. Anulá el pedido y cargalo de nuevo.' });
         return;
       }
@@ -928,6 +961,10 @@ export async function catalogoPedido(req: Request & { user?: JwtPayload }, res: 
     res.json({
       ok: true,
       cod_lista: codLista,
+      // Si la lista entera vino vacía es que no se pudo consultar, no que 80 artículos no
+      // tengan precio. El front lo dice distinto: "no tiene precio" y "no lo pude averiguar"
+      // son dos cosas y el vendedor decide distinto en cada caso.
+      hay_precios: precios.size > 0,
       // null y no 0: el front tiene que poder distinguir "no sé el precio" de "vale cero".
       articulos: pagina.map((a) => ({ ...a, precio_venta: precios.get(a.cod_articulo) ?? null })),
       solo_casa_central: !todos && !!deDeposito,

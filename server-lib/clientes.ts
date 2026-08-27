@@ -43,6 +43,10 @@ export async function listClientesLookup(req: Request & { user?: JwtPayload }, r
                 name: c.razon_social || `Cliente #${c.cod_cliente}`,
                 localidad: c.localidad ?? null,
                 cod_vendedor: c.cod_vendedor ?? null,
+                // La lista de precios del cliente. El buscador de productos del módulo de
+                // pedidos cotiza con esto: sin el dato acá arrancaba siempre en Lista 1 y le
+                // mostraba al vendedor un precio que no era el del cliente que tiene enfrente.
+                cod_lista: Number((c as any).lista_precio) > 0 ? Number((c as any).lista_precio) : null,
             }));
 
             if (user.rol === 'vendedor') {

@@ -208,6 +208,9 @@ function medirPorArticulo(
     kilosPorArt.set(r.cod_articulo, (kilosPorArt.get(r.cod_articulo) ?? 0) + m.kilos);
     if (art?.es_bulto) bultosPorArt.set(r.cod_articulo, (bultosPorArt.get(r.cod_articulo) ?? 0) + m.bultos);
   }
+  // Alcanza con recorrer kilosPorArt: se llena para TODO renglón (los bultos con kilos > 0 o
+  // con 0 si el artículo no declara kg), así que bultosPorArt nunca tiene un código que no
+  // esté también acá.
   const out = new Map<number, { bultos: number; kilos: number }>();
   for (const [cod, kilos] of kilosPorArt) {
     const art = catalogo.get(cod);
@@ -216,9 +219,6 @@ function medirPorArticulo(
       ? (bultosPorArt.get(cod) ?? 0)
       : (kilos >= KG_PARA_CONTAR_BULTO ? 1 : 0);
     out.set(cod, { bultos, kilos });
-  }
-  for (const [cod, bultos] of bultosPorArt) {
-    if (!out.has(cod)) out.set(cod, { bultos, kilos: 0 });
   }
   return out;
 }

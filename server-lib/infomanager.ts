@@ -889,6 +889,8 @@ export async function getPrecioLista(codArticulo: number, codLista: number): Pro
  * precio equivocado, que es de donde venimos.
  */
 const LISTA_PRECIOS_TTL_MS = 60 * 60 * 1000;
+/** Cuánto se recuerda un fallo antes de volver a molestar a IM. */
+const FALLO_REINTENTO_MS = 60 * 1000;
 const _listaPreciosCache = new Map<number, { precios: Map<number, number>; fetchedAt: number }>();
 const _listaPreciosPending = new Map<number, Promise<Map<number, number>>>();
 
@@ -926,7 +928,12 @@ export async function fetchPreciosDeLista(codLista: number): Promise<Map<number,
       return precios;
     } catch (e: any) {
       console.warn(`[fetchPreciosDeLista] lista ${codLista} fallo, el buscador va sin precio:`, e?.message);
-      // Vacío y SIN cachear: que el próximo intento vuelva a probar.
+      // 🪤 Antes esto devolvía vacío SIN cachear, "para que el próximo intento vuelva a
+      // probar". Con IM caído eso significa que CADA búsqueda del vendedor se cuelga los
+      // reintentos de imGetRetry antes de mostrar resultados, y encima le pega a IM justo
+      // cuando está en problemas. Se cachea el fallo un ratito corto: el buscador contesta
+      // al toque y en un minuto vuelve a intentar solo.
+      _listaPreciosCache.set(codLista, { precios: new Map(), fetchedAt: Date.now() - LISTA_PRECIOS_TTL_MS + FALLO_REINTENTO_MS });
       return new Map<number, number>();
     }
   })().finally(() => { _listaPreciosPending.delete(codLista); });
