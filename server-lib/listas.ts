@@ -182,12 +182,27 @@ export function evaluarPedido(
   const bultos = bultosDelPedido(renglones, catalogo);
   const promoGeneral = bultos >= BULTOS_PROMO_GENERAL;
 
-  // Bultos y kilos acumulados por línea (subrubro): los usan las condiciones de ámbito 'linea'.
+  // 🪤 Una línea comercial puede estar partida en VARIOS subrubros de IM: "Tiernito"
+  // (gato) + "Tiernitos" (perro), o "Zimpi" + "Zimpy" (typo en IM). Acumular por subrubro
+  // hacía que 3 bolsas de Tiernito perro + 2 de gato contaran 3 y 2 en vez de 5, y una
+  // condición "5 de la misma línea" no se cumplía nunca: el motor marcaba las dos filas
+  // como "estás vendiendo más barato" y BLOQUEABA una venta legítima.
+  // La línea es el `nombre` de la regla, que es el mismo para todos sus subrubros.
+  const lineaDeSubrubro = new Map<string, string>();
+  for (const g of reglas) {
+    if (g.match_tipo === 'subrubro') lineaDeSubrubro.set(g.match_valor.toLowerCase(), g.nombre);
+  }
+  const claveLinea = (art: ArticuloInfo | undefined) => {
+    if (!art?.subrubro) return null;
+    const sub = art.subrubro.toLowerCase();
+    return lineaDeSubrubro.get(sub) ?? sub;
+  };
+
   const porLinea = new Map<string, { bultos: number; kilos: number }>();
   for (const r of renglones) {
     const art = catalogo.get(r.cod_articulo);
-    if (!art?.subrubro) continue;
-    const k = art.subrubro.toLowerCase();
+    const k = claveLinea(art);
+    if (!k) continue;
     const m = medirRenglon(r, art);
     const acc = porLinea.get(k) ?? { bultos: 0, kilos: 0 };
     porLinea.set(k, { bultos: acc.bultos + m.bultos, kilos: acc.kilos + m.kilos });
@@ -202,7 +217,8 @@ export function evaluarPedido(
     }
 
     const propio = medirRenglon(r, art);
-    const linea = (art?.subrubro && porLinea.get(art.subrubro.toLowerCase())) || propio;
+    const kLinea = claveLinea(art);
+    const linea = (kLinea && porLinea.get(kLinea)) || propio;
 
     const cumple = misReglas.filter((g) => {
       if (g.condicion === 'libre') return true;

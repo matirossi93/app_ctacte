@@ -216,3 +216,15 @@
 
 .ped-row-acciones { display: flex; gap: 0.4rem; }
 .ped-anular { color: var(--color-danger); border-color: var(--color-danger); }
+
+/* 🪤 El grid del renglón declara 3 columnas en móvil y el renglón tiene 5 hijos, así que
+   el tacho caía solo en una fila nueva y se estiraba a todo el ancho: un botón invisible
+   de ~212px justo debajo del input de cantidad. Errarle para abajo borraba el renglón. */
+.ped-cart-del { justify-self: end; min-width: 40px; min-height: 40px; align-items: center; justify-content: center; }
+
+/* El aviso ámbar es el único que NO frena, así que es el único que el vendedor tiene que
+   leer sí o sí. En el dorado de marca daba 1,68:1 de contraste sobre el crema (WCAG pide
+   4,5:1). Se usa un ámbar sólo-para-texto y se deja el de marca para el borde y el ícono. */
+.ped-aviso.cliente { color: #8A5A12; }
+.ped-aviso.cliente svg { color: var(--color-warning, #E59B33); }
+.ped-cat-opt:disabled { opacity: 0.6; }

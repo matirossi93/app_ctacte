@@ -144,8 +144,24 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         return () => { clearTimeout(timer); ctrl.abort(); };
     }, [catQuery, step, catTodos]);
 
+    const [agregando, setAgregando] = useState<number | null>(null);
     async function agregarArticulo(a: CatItem) {
-        if (cart.some(i => i.cod_articulo === a.cod_articulo)) return;
+        // 🪤 El chequeo de duplicado estaba ACÁ, antes del await que va a buscar el precio a
+        // IM. Como nada se renderizaba mientras tanto, dos toques seguidos leían el mismo
+        // `cart` del closure, los dos pasaban, y el artículo entraba DOS VECES. Con dos
+        // renglones del mismo código, setQty y setLista mueven los dos juntos: el pedido
+        // salía con el doble de cantidad, y encima bultosDelPedido contaba doble, prendía la
+        // promo general de más y APAGABA el bloqueo por margen. Ahora el chequeo va adentro
+        // del updater funcional (ve el estado real) y el resultado muestra que trabaja.
+        if (agregando != null) return;
+        const yaEsta = cart.find(i => i.cod_articulo === a.cod_articulo);
+        if (yaEsta) {
+            // Ya está en el carrito: sumarle uno, en vez de no hacer absolutamente nada.
+            setQty(a.cod_articulo, Math.floor(yaEsta.cantidad) + 1);
+            setCatQuery(''); setCatResults([]);
+            return;
+        }
+        setAgregando(a.cod_articulo);
         // Precio de la lista del cliente (no el genérico del catálogo).
         let precio = a.precio_venta;
         let listaDelItem = listaCliente;
@@ -156,7 +172,10 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
             // el backend nos dice con que lista cotizo: esa es la del cliente
             if (d?.ok && Number(d.cod_lista) > 0) { listaDelItem = Number(d.cod_lista); setListaCliente(listaDelItem); }
         } catch { /* usa el genérico */ }
-        setCart(c => [...c, { cod_articulo: a.cod_articulo, descripcion: a.descripcion, cantidad: 1, precio, cod_lista: listaDelItem }]);
+        setCart(c => c.some(i => i.cod_articulo === a.cod_articulo)
+            ? c
+            : [...c, { cod_articulo: a.cod_articulo, descripcion: a.descripcion, cantidad: 1, precio, cod_lista: listaDelItem }]);
+        setAgregando(null);
         setCatQuery(''); setCatResults([]);
     }
     const setQty = (cod: number, q: number) =>
@@ -201,6 +220,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     // Se corre EN VIVO mientras arma el carrito: avisar recién al confirmar llega tarde,
     // ahí ya cargó todo el pedido y tendría que volver renglón por renglón.
     const [control, setControl] = useState<ControlListas | null>(null);
+    useEffect(() => { setMsgBloqueo(null); }, [cart]);
     useEffect(() => {
         if (!cart.length) { setControl(null); return; }
         const ctrl = new AbortController();
@@ -282,11 +302,13 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
 
     // ── Confirmar ───────────────────────────────────────────────────────────
     const [enviando, setEnviando] = useState(false);
+    // Motivo por el que el backend rechazó el último envío. Se limpia al tocar el carrito.
+    const [msgBloqueo, setMsgBloqueo] = useState<string | null>(null);
     const [resultado, setResultado] = useState<{ ok: boolean; numero?: number | null; msg: string; warn?: boolean } | null>(null);
 
     async function confirmar() {
         if (!cliente || !cart.length) return;
-        setEnviando(true); setResultado(null);
+        setEnviando(true); setResultado(null); setMsgBloqueo(null);
         try {
             const items = cart.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista: i.cod_lista }));
             const r = editando
@@ -321,8 +343,16 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                 setResultado({ ok: false, warn: true, msg: d?.error ?? 'IM no respondió — revisá antes de reintentar' });
                 setStep('listo');
             } else if (r.status === 422 && d?.bloqueado) {
-                // El backend rechazó por lista mal elegida. No se manda a la pantalla final:
-                // el vendedor tiene que corregir el renglón, que ya está marcado en rojo.
+                // 🪤 Antes esto hacía `return` sin mostrar nada, asumiendo que el renglón ya
+                // estaba marcado en rojo. Falso: si estuviera en rojo el botón estaría
+                // deshabilitado y este POST nunca habría salido. El caso determinista es el
+                // artículo sin precio en la lista elegida — el control en vivo no mira
+                // precios, así que nunca lo marca, y el vendedor quedaba trabado tocando
+                // Confirmar sin que pasara nada. El backend ya redactó el mensaje: usarlo.
+                setMsgBloqueo(d?.error ?? 'No se pudo enviar el pedido. Revisá los renglones marcados.');
+                if (Array.isArray(d?.avisos) && d.avisos.length) {
+                    setControl(c => ({ bultos: c?.bultos ?? 0, promo_general: c?.promo_general ?? false, avisos: d.avisos }));
+                }
                 setEnviando(false);
                 return;
             } else {
@@ -358,7 +388,11 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
         : 'gray';
 
     return (
-        <div className="ped-overlay" onClick={onClose}>
+        /* 🪤 El overlay cerraba con cualquier tap. El modal mide 92vh y va pegado abajo, así
+           que arriba quedan ~65px de overlay vivo: un toque ahí (acomodar el celular, cerrar
+           el teclado) desmontaba todo y se perdía el pedido entero, sin confirmación.
+           RecibosApp, el otro modal de carga, nunca tuvo este handler. */
+        <div className="ped-overlay" onClick={() => { if (!cart.length && !enviando) onClose(); }}>
             <div className="ped-modal" onClick={e => e.stopPropagation()}>
                 <header className="ped-header">
                     <div className="ped-title"><ShoppingCart size={20} /> Pedidos</div>
@@ -366,7 +400,7 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                         <button className={mode === 'nuevo' ? 'on' : ''} onClick={() => setMode('nuevo')}>Nuevo</button>
                         <button className={mode === 'lista' ? 'on' : ''} onClick={() => setMode('lista')}>Mis pedidos</button>
                     </div>
-                    <button className="ped-close" onClick={onClose} aria-label="Cerrar"><X size={20} /></button>
+                    <button className="ped-close" disabled={enviando} onClick={onClose} aria-label="Cerrar"><X size={20} /></button>
                 </header>
 
                 {mode === 'lista' && (
@@ -448,8 +482,9 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                 {catLoading && <Loader2 className="spin" size={16} />}
                             </div>
                             {catResults.map(a => (
-                                <button key={a.cod_articulo} className="ped-cat-opt" onClick={() => agregarArticulo(a)}>
-                                    <Plus size={16} />
+                                <button key={a.cod_articulo} className="ped-cat-opt" disabled={agregando != null}
+                                    onClick={() => agregarArticulo(a)}>
+                                    {agregando === a.cod_articulo ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
                                     <div className="ped-cat-desc">{a.descripcion}</div>
                                     <div className="ped-cat-precio">{money(a.precio_venta)}</div>
                                 </button>
@@ -530,6 +565,12 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                         </div>
 
                         <footer className="ped-footer">
+                            {msgBloqueo && (
+                                <div className="ped-bloqueo">
+                                    <AlertTriangle size={16} />
+                                    <span>{msgBloqueo}</span>
+                                </div>
+                            )}
                             {bloqueos.length > 0 && (
                                 <div className="ped-bloqueo">
                                     <AlertTriangle size={16} />

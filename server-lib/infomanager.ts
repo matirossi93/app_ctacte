@@ -653,11 +653,22 @@ export async function anularComprobante(input: {
   try {
     const cli = await imClient();
     const { data } = await cli.put(`/ventas/${input.id}`, body);
+    // 🪤 Era la única escritura del archivo que daba por buena la respuesta sin mirar el
+    // body, contra la trampa que está documentada tres funciones más arriba: IM contesta 200
+    // IGUAL con el error adentro. Importa porque editarPedido anula y DESPUÉS crea el
+    // reemplazo: si la anulación fallaba en silencio quedaban DOS presupuestos vivos del
+    // mismo pedido.
+    if (data?.error != null && Number(data.error) !== 0) {
+      return { ok: false, error: String(data.detalles ?? data.mensaje ?? 'IM rechazó la anulación'), raw: data };
+    }
+    if (data?.mensaje && !data?.isUpdated && !data?.venta && !data?.id) {
+      return { ok: false, error: String(data.detalles ?? data.mensaje), raw: data };
+    }
     return { ok: true, raw: data };
   } catch (err: any) {
     const raw = err?.response?.data;
     const status = err?.response?.status;
-    return { ok: false, error: `HTTP ${status ?? '?'}: ${raw?.mensaje ?? err?.message ?? 'unknown'}`, raw, sinRespuesta: !err?.response };
+    return { ok: false, error: `HTTP ${status ?? '?'}: ${raw?.detalles ?? raw?.mensaje ?? err?.message ?? 'unknown'}`, raw, sinRespuesta: !err?.response };
   }
 }
 

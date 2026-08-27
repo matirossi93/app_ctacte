@@ -357,3 +357,34 @@ describe('polenta y harina de maíz salen por código, no por subrubro', () => {
     expect(r.avisos[0].lista_sugerida).toBe(13);
   });
 });
+
+describe('🪤 una línea partida en varios subrubros de IM acumula junta (auditoría 27/08)', () => {
+  // En IM la línea Tiernito vive en DOS subrubros: "Tiernitos" (perro, 15/21 kg) y
+  // "Tiernito" (gato, 10 kg). Acumular por subrubro hacía que 3+2 contaran 3 y 2, la
+  // condición "5 de la misma línea" no se cumpliera nunca, y el motor BLOQUEARA una
+  // venta legítima diciendo "estás vendiendo más barato". Mismo caso con Zimpi/Zimpy.
+  const perro = clasificarArticulo({ cod_articulo: 111, descripcion: 'TIERNITO CARNE  x 21 KG', subrubro: 'Tiernitos', unidad_de_medida: 'Bolsas', equivalencia_um: 21 });
+  const gato = clasificarArticulo({ cod_articulo: 119, descripcion: 'TIERNITO GATITO X 10KG', subrubro: 'Tiernito', unidad_de_medida: 'Bolsas', equivalencia_um: 10 });
+  const c = new Map([[111, perro], [119, gato]]);
+  // Las dos filas del seed se llaman igual: ese nombre es la línea comercial.
+  const reglas: ReglaLista[] = ['Tiernitos', 'Tiernito'].flatMap((sub) => ([
+    { nombre: 'LINEA TIERNITO', match_tipo: 'subrubro' as const, match_valor: sub, cod_lista: 12, condicion: 'libre' as const, umbral: null, unidad: null, ambito: null },
+    { nombre: 'LINEA TIERNITO', match_tipo: 'subrubro' as const, match_valor: sub, cod_lista: 14, condicion: 'min' as const, umbral: 5, unidad: 'bulto' as const, ambito: 'linea' as const },
+  ]));
+
+  it('3 bolsas de perro + 2 de gato son 5 de la misma línea: L3 vale y no se bloquea', () => {
+    const r = evaluarPedido([
+      { cod_articulo: 111, cantidad: 3, cod_lista: 14 },
+      { cod_articulo: 119, cantidad: 2, cod_lista: 14 },
+    ], c, reglas);
+    expect(r.avisos.every(a => a.severidad === 'ok')).toBe(true);
+  });
+
+  it('con 4 en total todavía no llega y ahí sí avisa', () => {
+    const r = evaluarPedido([
+      { cod_articulo: 111, cantidad: 2, cod_lista: 14 },
+      { cod_articulo: 119, cantidad: 2, cod_lista: 14 },
+    ], c, reglas);
+    expect(r.avisos.every(a => a.severidad === 'margen')).toBe(true);
+  });
+});

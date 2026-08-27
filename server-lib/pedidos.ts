@@ -275,7 +275,11 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
       }
       res.status(500).json({ error: `insert pedido: ${insErr.message}` }); return;
     }
-    await sb().from('pedidos_vendedor_items').insert(itemsConPrecio.map((it, i) => {
+    // 🪤 Este insert no chequeaba `error`. supabase-js no tira excepción: resuelve con
+    // {data:null, error}, así que el flujo seguía derecho, posteaba a IM y respondía "ok"
+    // dejando una cabecera con total y CERO renglones. Si faltara una migración, pasaría
+    // en el 100% de los pedidos y en silencio.
+    const { error: itemsErr } = await sb().from('pedidos_vendedor_items').insert(itemsConPrecio.map((it, i) => {
       const av = avisoPorArt.get(it.cod_articulo);
       return {
         pedido_id: pedidoId,
@@ -291,6 +295,13 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
         orden: i,
       };
     }));
+    if (itemsErr) {
+      // Antes de tocar IM: sin renglones el pedido no sirve, y la cabecera sola es basura.
+      await sb().from('pedidos_vendedor').delete().eq('id', pedidoId);
+      console.error('[crearPedido] insert de items falló:', itemsErr.message);
+      res.status(500).json({ error: `No se pudieron guardar los renglones del pedido: ${itemsErr.message}` });
+      return;
+    }
 
     // 2. Empujar a InfoManager como presupuesto NC (salvo dry-run).
     if (PEDIDOS_DRY_RUN) {
@@ -471,9 +482,15 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
       imUpdate = { im_presupuesto_id: imRes.id, im_numero: imRes.numero, im_error: null };
     }
 
-    // Los renglones se reemplazan enteros: es más simple y no deja restos.
-    await sb().from('pedidos_vendedor_items').delete().eq('pedido_id', pedido.id);
-    await sb().from('pedidos_vendedor_items').insert(nuevos.map((it, i) => {
+    // Los renglones se reemplazan enteros: es más simple y no deja restos. Se chequean los
+    // dos: si sale el delete y falla el insert, el pedido queda sin renglones y el
+    // presupuesto en IM ya está actualizado — hay que decirlo, no responder ok.
+    const { error: delErr } = await sb().from('pedidos_vendedor_items').delete().eq('pedido_id', pedido.id);
+    if (delErr) {
+      res.status(500).json({ error: `No se pudieron reemplazar los renglones: ${delErr.message}` });
+      return;
+    }
+    const { error: insErr2 } = await sb().from('pedidos_vendedor_items').insert(nuevos.map((it, i) => {
       const av = avisoPorArt.get(it.cod_articulo);
       return {
         pedido_id: pedido.id,
@@ -489,6 +506,14 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         orden: i,
       };
     }));
+    if (insErr2) {
+      await sb().from('pedidos_vendedor').update({
+        estado: 'error',
+        im_error: `Los renglones no se pudieron guardar en la app: ${insErr2.message}. En InfoManager el presupuesto SÍ quedó actualizado.`,
+      }).eq('id', pedido.id);
+      res.status(500).json({ error: `El presupuesto se actualizó en InfoManager pero los renglones no se pudieron guardar acá: ${insErr2.message}. Revisalo.` });
+      return;
+    }
     const { data: final } = await sb().from('pedidos_vendedor')
       .update({ total_estimado: total, observaciones, ...imUpdate })
       .eq('id', pedido.id).select().maybeSingle();
