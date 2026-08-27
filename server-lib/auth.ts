@@ -24,8 +24,6 @@ export interface JwtPayload {
   vendedor_key?: string | null;
   cod_vendedor?: number | null;
   nombre?: string | null;
-  /** Login de este usuario en InfoManager. null = se usa el usuario unico de la app. */
-  im_usuario?: string | null;
 }
 
 export function sha256hex(s: string): string {
@@ -118,6 +116,5 @@ export function usuarioToJwtPayload(u: UsuarioRow): JwtPayload {
     vendedor_key: u.vendedor_key,
     cod_vendedor: u.cod_vendedor,
     nombre: u.nombre,
-    im_usuario: u.im_usuario,
   };
 }

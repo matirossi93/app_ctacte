@@ -41,15 +41,28 @@ if (!IM_USUARIO_PEDIDOS) {
  *      Al 27/08/2026 viene null en los 12 vendedores — el campo existe, está sin cargar.
  *   3. IM_USUARIO_PEDIDOS, el usuario único de la app. Lo de siempre.
  *
+ * 🪤 El paso 1 se lee de la base ACÁ y no del JWT. Es un dato de configuración, no una
+ * credencial: si viajara en el token, cambiarlo por SQL no haría efecto hasta que el vendedor
+ * cerrara sesión y volviera a entrar (el token dura 8 horas). Una query por pedido no se nota
+ * y el cambio toma efecto al instante.
+ *
  * El fallback NO es cosmético: un usuario que IM no reconozca puede hacer que rechace el
- * presupuesto entero, y ahí ningún vendedor puede cargar nada. Si IM no contesta o el campo
- * está vacío, se usa el que ya sabemos que funciona.
+ * presupuesto entero, y ahí ningún vendedor puede cargar nada. Si IM o Supabase no contestan,
+ * o el campo está vacío, se usa el que ya sabemos que funciona.
  */
 export async function usuarioIM(
-  user?: { im_usuario?: string | null; cod_vendedor?: number | null } | null,
+  user?: { sub?: string; cod_vendedor?: number | null } | null,
 ): Promise<string> {
-  const propio = String(user?.im_usuario ?? '').trim();
-  if (propio) return propio;
+  if (user?.sub) {
+    try {
+      const { data } = await sb().from('usuarios')
+        .select('im_usuario').eq('tenant_id', TENANT_ID).eq('id', user.sub).maybeSingle();
+      const propio = String(data?.im_usuario ?? '').trim();
+      if (propio) return propio;
+    } catch (e: any) {
+      console.warn('[usuarioIM] no pude leer usuarios.im_usuario:', e?.message);
+    }
+  }
 
   const cod = Number(user?.cod_vendedor);
   if (Number.isFinite(cod) && cod > 0) {
