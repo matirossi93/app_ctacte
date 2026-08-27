@@ -78,8 +78,8 @@
    "Belcan",
    "Belcat"
   ],
-  "estado": "revisar",
-  "nota": "Existe el subrubro \"Belcat\" (3 arts: BELCAT X 10KG y un pouch). Belcan es perro y Belcat gato: van con la misma regla?"
+  "estado": "ok",
+  "nota": "Mati 26/08: \"el Belcat es linea Belcan, sigue el mismo criterio\". En IM son subrubros separados (perro y gato), van juntos."
  },
  "LINEA ZIMPI": {
   "tipo": "subrubro",
@@ -192,8 +192,8 @@
   "valores": [
    "Galletas"
   ],
-  "estado": "revisar",
-  "nota": "El subrubro \"Galletas\" tiene 28 arts y NO son todas Pitusas (hay Chocolinas, Morochitas, Pepitas, Suavecitas, Saladix, Cofler, gelatina). LIBRE aplica a todas o solo a las Pitusas?"
+  "estado": "ok",
+  "nota": "Mati 26/08: \"las galletas es lista unica y lista\" -> aplica al subrubro \"Galletas\" ENTERO (28 arts), no solo a las Pitusas. Una sola lista, sin escalas."
  },
  "MEZCLAS": {
   "tipo": "subrubro",
@@ -286,8 +286,9 @@
    "Venenos Hormigas",
    "Venenos Moscas y Cucarachas"
   ],
-  "estado": "revisar",
-  "nota": "Junte los 6 subrubros de Accesorios + los 4 de Venenos = 397 articulos. Van TODOS con LIBRE en L1-L3?"
+  "estado": "ok",
+  "nota": "Mati 26/08: \"accesorios y venenos es libre, pueden venderlo en cualquier lista\". LIBRE en L1-L4 (la planilla dejaba L4 vacia). Son los 6 subrubros de Accesorios + los 4 de Venenos.",
+  "libre_todas": true
  },
  "ALPISTE": {
   "tipo": "articulo",
@@ -342,8 +343,8 @@
   "valores": [
    "407"
   ],
-  "estado": "revisar",
-  "nota": "Art 407 QUINOA (granel). Existe tambien 300 QUINOA POP X 3 KG, que esta en Cereales para desayuno y llevaria otra regla. Confirmar."
+  "estado": "ok",
+  "nota": "Mati 26/08: \"la quinoa es igual que la chia, sesamo, etc\" -> va con el criterio de las semillas a granel. Es el art 407 (granel), NO el 300 QUINOA POP, que es cereal de desayuno."
  },
  "SALVADO DE AVENA": {
   "tipo": "articulo",
@@ -447,8 +448,8 @@
   "valores": [
    "1010"
   ],
-  "estado": "revisar",
-  "nota": "Art 1010. La L3 (5 unidades del mismo producto) es MAS FACIL de alcanzar que la L2 (10 bultos). Es intencional?"
+  "estado": "ok",
+  "nota": "Mati 26/08 confirmo la fila tal cual: 1 unidad -> L1, 10 bultos promo general -> L2, desde 5 unidades del mismo producto -> L3. Que la L3 sea mas facil que la L2 es intencional."
  },
  "ROCKLETS": {
   "tipo": "articulo",
@@ -495,16 +496,16 @@
   "valores": [
    "961"
   ],
-  "estado": "revisar",
-  "nota": "En IM el art 961 se llama \"PIEDRAS SANITARIAS X 25KG\", sin MI NINO. Es el mismo producto?"
+  "estado": "ok",
+  "nota": "Mati 26/08 confirmo: es el art 961, que en IM figura como \"PIEDRAS SANITARIAS X 25KG\" sin la marca."
  },
  "PASTAS MANI KING": {
   "tipo": "subrubro",
   "valores": [
    "Pastas de Mani"
   ],
-  "estado": "revisar",
-  "nota": "Subrubro \"Pastas de Mani\" (11 arts). Las 2 filas de PASTA DE MANI BORIS estan adentro de ese subrubro o son aparte?"
+  "estado": "ok",
+  "nota": "Mati 26/08 confirmo la fila: 1 unidad -> L1, desde 10 unidades del mismo producto -> L2. Aplica al subrubro \"Pastas de Mani\" completo (11 arts)."
  },
  "MONKY": {
   "tipo": "sin_mapear",

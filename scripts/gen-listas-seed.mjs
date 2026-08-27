@@ -91,11 +91,14 @@ for (const fila of filas.slice(1)) {
   const activo = m.estado === 'ok';
   for (const valor of m.valores) {
     for (let i = 0; i < COL_LISTA.length; i++) {
-      const cond = parsearCelda(fila[i + 1]);
-      if (!cond) continue;
-      if (cond.error) { problemas.push(`${nombre} · LISTA ${i + 1}: no entiendo "${fila[i + 1]}"`); continue; }
+      let cond = parsearCelda(fila[i + 1]);
+      if (!cond && !m.libre_todas) continue;
+      if (cond?.error) { problemas.push(`${nombre} · LISTA ${i + 1}: no entiendo "${fila[i + 1]}"`); continue; }
       // Listas que Mati aclaro que no corresponden aunque la planilla tenga algo cargado.
       if (Array.isArray(m.ignorar_listas) && m.ignorar_listas.includes(COL_LISTA[i])) continue;
+      // libre_todas: se puede vender en CUALQUIER lista, aunque la planilla deje columnas
+      // vacias (accesorios y venenos). Vacio significa "no aplica", asi que hay que decirlo.
+      if (m.libre_todas) cond = { condicion: 'libre', umbral: null, unidad: null, ambito: null };
       const clave = `${m.tipo}|${valor}|${COL_LISTA[i]}`;
       const firma = `${cond.condicion}|${cond.umbral}|${cond.unidad}|${cond.ambito}`;
       const previo = porClave.get(clave);
