@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
@@ -16,7 +16,10 @@ import { ReportesModal } from './ReportesModal';
 import { ComisionesSucursalModal } from './ComisionesSucursalModal';
 import { PeriodSelector, type ViewPeriod } from './PeriodSelector';
 import { HistoricBanner } from './HistoricBanner';
-import { PrintAvanceView } from './PrintAvanceView';
+// 🪤 Import ESTÁTICO de PrintAvanceView arrastraba jsPDF + autotable + pako a la PRIMERA
+// pantalla: 141 kB gzip, el 49% de todo lo que bajaba el vendedor al abrir la app, para un
+// botón de exportar que casi nunca toca. Con lazy se baja recién cuando lo abre.
+const PrintAvanceView = lazy(() => import('./PrintAvanceView').then(m => ({ default: m.PrintAvanceView })));
 import { ComisionesView } from './ComisionesView';
 import { RebotesView } from './RebotesView';
 import { ProductGoalsPanel } from './ProductGoalsPanel';
@@ -500,7 +503,7 @@ export const VendorShell = ({ onLogout }: Props) => {
             <header className="vs-top">
                 <div className="vs-brand">
                     <div className="vs-mark">
-                        <img src="/logo.png" alt="Semillero El Manantial" />
+                        <img src="/logo-sm.webp" alt="Semillero El Manantial" />
                     </div>
                     <div className="vs-brand-text">
                         <span className="eyebrow">SEMILLERO</span>
@@ -1823,7 +1826,7 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
             </div>
 
             {showPrint && (
-                <PrintAvanceView
+                <Suspense fallback={null}><PrintAvanceView
                     period={viewPeriod}
                     isHistoric={isHistoricMode}
                     diasHabilesTotal={g.dias_habiles_total}
@@ -1868,7 +1871,7 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                             : (localidad ? `Localidad: ${localidad}` : null)
                     }
                     onClose={() => setShowPrint(false)}
-                />
+                /></Suspense>
             )}
         </div>
     );

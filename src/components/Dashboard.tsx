@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
 import { Search, RefreshCw, Moon, Sun, LayoutGrid, ListOrdered, LogOut, Download, FileText, Receipt, Target, Activity } from 'lucide-react';
 import { useData } from '../hooks/useData';
 import { processInvoices } from '../utils/calculations';
@@ -9,7 +9,10 @@ import { InterestControl } from './InterestControl';
 import { TopDebtorsAlert } from './TopDebtorsAlert';
 import { AgingBars } from './AgingBars';
 import { authHeaders, clearToken, getAuthMode, getUser } from '../utils/auth';
-import { ExportModal } from './ExportModal';
+// 🪤 El import estatico arrastraba jsPDF + autotable + pako al bundle de la PRIMERA pantalla
+// (141 kB gzip, el 49% de lo que baja el vendedor al abrir), para un boton de exportar que se
+// toca de vez en cuando. Con lazy, el generador de PDF se baja recien cuando se abre el modal.
+const ExportModal = lazy(() => import('./ExportModal').then(m => ({ default: m.ExportModal })));
 import { RecibosApp } from './RecibosApp';
 import { ObjetivosApp } from './ObjetivosApp';
 import { ActividadApp } from './ActividadApp';
@@ -318,7 +321,7 @@ export const Dashboard = ({ onUnauthorized }: Props) => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
                     <img
                         className="brand-logo mobile-brand-logo"
-                        src="/logo_full.png"
+                        src="/logo.webp"
                         alt="Semillero El Manantial"
                         style={{ height: '160px', objectFit: 'contain' }}
                         onError={e => { (e.target as HTMLImageElement).src = '/logo.png'; }}
@@ -548,12 +551,14 @@ export const Dashboard = ({ onUnauthorized }: Props) => {
             </div>
 
             {showExportModal && (
-                <ExportModal
-                    onClose={() => setShowExportModal(false)}
-                    vendors={rawData}
-                    activeVendorId={activeVendorId}
-                    disabledVendorIds={disabledVendorIds}
-                />
+                <Suspense fallback={null}>
+                    <ExportModal
+                        onClose={() => setShowExportModal(false)}
+                        vendors={rawData}
+                        activeVendorId={activeVendorId}
+                        disabledVendorIds={disabledVendorIds}
+                    />
+                </Suspense>
             )}
 
             {showRecibos && (

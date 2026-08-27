@@ -1271,6 +1271,14 @@ app.get('/api/bot', requireBotToken, async (req: express.Request, res: express.R
 });
 
 // ─── Serve Frontend ────────────────────────────────────────────────────────────
+// Vite le pone hash de contenido al nombre de cada asset, así que un archivo con ese nombre
+// NUNCA cambia: si cambia el contenido, cambia la URL. Sin esto se servían con max-age=0 y el
+// celular tenía que revalidar contra la red en cada apertura — un round-trip entero de la ruta
+// crítica, y con señal mala la app se queda esperando un 304 en vez de arrancar con lo que ya
+// tiene. El index.html sigue sin cachear (es el que apunta a los nombres nuevos).
+app.use('/assets', express.static(path.join(__dirname, '..', 'dist', 'assets'), {
+  immutable: true, maxAge: '1y',
+}));
 app.use(express.static(path.join(__dirname, '..', 'dist')));
 app.use((_req, res) => {
     res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));

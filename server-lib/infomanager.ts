@@ -842,19 +842,32 @@ export async function actualizarPresupuestoCantidades(
  */
 const PRECIO_TTL_MS = 5 * 60 * 1000;
 const _precioCache = new Map<string, { precio: PrecioLista | null; fetchedAt: number }>();
+// 🪤 Llamadas EN VUELO. El cache de arriba sólo sirve una vez que la respuesta VOLVIÓ: con
+// cuatro vendedores cargando pedidos a la vez, o con dos validares del mismo vendedor
+// solapados, el mismo (artículo, lista) salía a IM varias veces en paralelo — justo lo que la
+// regla de oro del proyecto quiere evitar. Mismo patrón que clientesIMPending.
+const _precioPending = new Map<string, Promise<PrecioLista | null>>();
 
 export async function getPrecioLista(codArticulo: number, codLista: number): Promise<PrecioLista | null> {
   const k = `${codArticulo}|${codLista}`;
   const hit = _precioCache.get(k);
   if (hit && Date.now() - hit.fetchedAt < PRECIO_TTL_MS) return hit.precio;
-  const cli = await imClient();
-  const { data } = await imGetRetry(
-    () => cli.get('/articulos/precio-ldp', { params: { cod_articulo: codArticulo, cod_lista: codLista } }),
-    `precio-ldp art=${codArticulo} lista=${codLista}`
-  );
-  const precio = parsePrecioLista(data, codArticulo);
-  _precioCache.set(k, { precio, fetchedAt: Date.now() });
-  return precio;
+  const enVuelo = _precioPending.get(k);
+  if (enVuelo) return enVuelo;
+
+  const p = (async () => {
+    const cli = await imClient();
+    const { data } = await imGetRetry(
+      () => cli.get('/articulos/precio-ldp', { params: { cod_articulo: codArticulo, cod_lista: codLista } }),
+      `precio-ldp art=${codArticulo} lista=${codLista}`
+    );
+    const precio = parsePrecioLista(data, codArticulo);
+    _precioCache.set(k, { precio, fetchedAt: Date.now() });
+    return precio;
+  })().finally(() => { _precioPending.delete(k); });
+
+  _precioPending.set(k, p);
+  return p;
 }
 
 

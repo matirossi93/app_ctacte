@@ -154,13 +154,19 @@ async function catalogoParaListas(): Promise<Map<number, ArticuloInfo>> {
  * están disponibles, devuelve null y el pedido sigue su curso. El control avisa, no frena
  * — mismo criterio que las guardas de cupo y stock que eligió Mati en julio.
  */
-async function controlarListas(items: Array<{ cod_articulo: number; cantidad: number; cod_lista: number; descuento?: number }>): Promise<ResultadoPedido | null> {
+async function controlarListas(
+  items: Array<{ cod_articulo: number; cantidad: number; cod_lista: number; descuento?: number }>,
+  opts: { silenciar?: boolean; abortado?: () => boolean } = {},
+): Promise<ResultadoPedido | null> {
   try {
-    const reglas = await reglasActivas();
-    const descuentos = await descuentosActivos();
+    // Las dos salen de Supabase (no de IM), así que en paralelo no rompe la regla de oro.
+    const [reglas, descuentos] = await Promise.all([reglasActivas(), descuentosActivos()]);
     const catalogo = await catalogoParaListas();
     const r = evaluarPedido(items, catalogo, reglas, descuentos);
-    await silenciarSiElPrecioYaEstaBien(r, items);
+    // Silenciar el falso positivo cuesta hasta 2 GETs a IM por renglón, EN SERIE. Vale la
+    // pena mientras el vendedor arma el carrito y va a leer los carteles; no vale nada al
+    // confirmar, donde el resultado se guarda pero ya nadie lo mira.
+    if (opts.silenciar !== false) await silenciarSiElPrecioYaEstaBien(r, items, opts.abortado);
     return r;
   } catch (e: any) {
     console.warn('[controlarListas] no se pudo evaluar, sigo sin control:', e?.message);
@@ -184,8 +190,14 @@ async function controlarListas(items: Array<{ cod_articulo: number; cantidad: nu
 async function silenciarSiElPrecioYaEstaBien(
   r: ResultadoPedido,
   items: Array<{ cod_articulo: number; cod_lista: number; descuento?: number }>,
+  abortado?: () => boolean,
 ): Promise<void> {
   for (const a of r.avisos) {
+    // 🪤 El vendedor tipea, se dispara un validar, y antes de que termine tipea otra vez: el
+    // navegador aborta el primero pero el server seguía barriendo renglón por renglón contra
+    // IM para armar una respuesta que ya nadie iba a leer. Con el carrito grande eso son
+    // decenas de round-trips tirados, y encima le comen el turno al request que sí importa.
+    if (abortado?.()) return;
     if (a.severidad !== 'cliente' || a.lista_sugerida == null) continue;
     const it = items.find((x) => x.cod_articulo === a.cod_articulo);
     const desc = Number(it?.descuento) || 0;
@@ -221,7 +233,12 @@ export async function validarListasPedido(req: Request & { user?: JwtPayload }, 
       .map((it: any) => ({ cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad), cod_lista: Number(it.cod_lista), descuento: Number(it.descuento_porc) || 0 }))
       .filter((it: any) => it.cod_articulo > 0 && it.cantidad > 0);
     if (!items.length) { res.json({ ok: true, bultos: 0, promo_general: false, avisos: [] }); return; }
-    const r = await controlarListas(items);
+    // El front debounce 400 ms y aborta el pedido anterior, pero eso solo corta el socket: sin
+    // esto el server seguia barriendo IM renglon por renglon para una respuesta ya descartada.
+    let cortado = false;
+    req.on('close', () => { cortado = true; });
+    const r = await controlarListas(items, { abortado: () => cortado });
+    if (cortado) return;
     if (!r) { res.json({ ok: true, sin_control: true, bultos: 0, promo_general: false, avisos: [] }); return; }
     res.json({ ok: true, ...r });
   } catch (err: any) {
@@ -295,7 +312,7 @@ async function resolverYControlar(
   // Supabase sin responder) tampoco se frena: no se pierde una venta por un problema nuestro.
   const control = await controlarListas(items.map((it) => ({
     cod_articulo: it.cod_articulo, cantidad: it.cantidad, cod_lista: it.cod_lista, descuento: it.descuento_porc,
-  })));
+  })), { silenciar: false });
   // Sin precio SÍ se frena siempre (arriba): no es una regla comercial opinable, es que el
   // artículo no tiene precio en esa lista y no se puede vender. Lo de abajo es distinto:
   // es nuestra parametrización diciendo que el precio es más bajo del que corresponde.
@@ -572,11 +589,19 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
 
     // ¿Alcanza con actualizar cantidades? Sólo si el surtido y las listas son los mismos.
     const { data: actuales } = await sb().from('pedidos_vendedor_items')
-      .select('cod_articulo, cod_lista_precios').eq('pedido_id', pedido.id);
-    const firma = (xs: Array<{ cod_articulo: any; cod_lista: any }>) =>
-      xs.map((x) => `${Number(x.cod_articulo)}:${Number(x.cod_lista)}`).sort().join('|');
+      .select('cod_articulo, cod_lista_precios, descuento_porc').eq('pedido_id', pedido.id);
+    // 🪤 El DESCUENTO tiene que estar en la firma. IM sólo deja cambiar `cantidad` sobre un
+    // presupuesto existente (el schema VentasItemsPresupuestosActualizar no tiene otra cosa),
+    // así que si el descuento cambia y la firma no se entera, se toma el camino barato: la
+    // app guarda el 25%, contesta "modificado en InfoManager"... y a IM no llega nunca.
+    // Pasa igual si el vendedor cambia cantidad Y descuento a la vez, que es lo más común:
+    // la cantidad viaja, el descuento no, y el presupuesto queda con cara de actualizado.
+    // Con el descuento adentro, ese caso cae en "anular y recrear", que es el único camino
+    // que IM soporta, y el vendedor ve el aviso de que le cambió el número de presupuesto.
+    const firma = (xs: Array<{ cod_articulo: any; cod_lista: any; descuento_porc?: any }>) =>
+      xs.map((x) => `${Number(x.cod_articulo)}:${Number(x.cod_lista)}:${Number(x.descuento_porc) || 0}`).sort().join('|');
     const soloCantidades = firma(nuevos) === firma((actuales ?? []).map((a: any) => ({
-      cod_articulo: a.cod_articulo, cod_lista: a.cod_lista_precios,
+      cod_articulo: a.cod_articulo, cod_lista: a.cod_lista_precios, descuento_porc: a.descuento_porc,
     })));
 
     const observaciones = body.observaciones != null ? String(body.observaciones) : pedido.observaciones;

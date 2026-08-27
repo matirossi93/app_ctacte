@@ -132,7 +132,7 @@ export const RecibosApp = ({ onClose, clients = [], fullPage = false, onLogout }
                 <header className="recibos-header">
                     {fullPage && view === 'list' ? (
                         <div className="recibos-page-brand">
-                            <img src="/logo.png" alt="Semillero El Manantial" />
+                            <img src="/logo-sm.webp" alt="Semillero El Manantial" />
                         </div>
                     ) : fullPage ? (
                         <button className="recibos-icon-btn" onClick={() => setView('list')} aria-label="Volver">

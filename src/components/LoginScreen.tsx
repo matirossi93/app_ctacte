@@ -65,7 +65,7 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
         <div className="login-screen">
             <div className="login-card glass">
                 <img
-                    src="/logo_full.png"
+                    src="/logo.webp"
                     alt="Semillero El Manantial"
                     className="login-logo"
                     onError={(e) => { (e.target as HTMLImageElement).src = '/logo.png'; }}
