@@ -253,3 +253,12 @@
 .ped-desc.alerta { border-color: var(--color-danger); border-width: 2px; }
 /* Recordatorio (no es un error): la condición que el sistema no puede verificar solo. */
 .ped-aviso.nota { background: var(--color-surface-hover, #f2f2f2); color: var(--color-text-muted); }
+
+/* Cuando algo falla, la app lo dice. Antes un IM caído se veía igual que "no existe
+   ese producto", y un control que no pudo correr mostraba "0 bultos" como si fuera real. */
+.ped-sin-resultados.error { background: var(--color-warning-bg); color: #8A5A12; }
+.ped-sin-resultados.error svg { flex-shrink: 0; color: var(--color-warning, #E59B33); }
+.ped-sin-resultados.error span { flex: 1; min-width: 10rem; }
+.ped-sin-resultados.error button { border-color: currentColor; color: inherit; }
+.ped-promo.aviso { background: var(--color-warning-bg); color: #8A5A12; }
+.ped-promo.aviso svg { flex-shrink: 0; color: var(--color-warning, #E59B33); }

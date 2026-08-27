@@ -28,6 +28,19 @@ export async function imToken(): Promise<string> {
 /** Descarta el token cacheado: el próximo imToken() re-loguea contra IM. */
 export function invalidateImToken(): void { _token = null; }
 
+/**
+ * IM guarda las fechas en hora local de Tucuman, no en UTC. Un pedido cargado 21:30 entraba
+ * con la fecha de MANANA y usuario_hora +3h. Argentina es UTC-3 fija (no hay horario de
+ * verano desde 2009), asi que restar 3 horas alcanza y evita traer una libreria de zonas.
+ */
+export function fechaArgentina(d?: Date | string | number): string {
+  const t = d == null ? Date.now() : new Date(d).getTime();
+  return new Date(t - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+export function horaArgentina(): string {
+  return new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(11, 19);
+}
+
 export async function imClient(): Promise<AxiosInstance> {
   const cli = axios.create({
     baseURL: BASE,
@@ -555,8 +568,7 @@ const IM_CUENTA_VENTA_DEFAULT = process.env.IM_CUENTA_VENTA_PEDIDOS || '4100002'
  * puede responder 200 con un error de negocio en el body.
  */
 export async function crearPresupuesto(input: CrearPresupuestoInput): Promise<PresupuestoOK | PresupuestoErr> {
-  const hoy = new Date().toISOString().slice(0, 10);
-  const fecha = input.fecha || hoy;
+  const fecha = input.fecha || fechaArgentina();
   const cuentaDefault = input.cod_cuenta_default || IM_CUENTA_VENTA_DEFAULT;
   const payload: Record<string, any> = {
     fecha,
@@ -569,7 +581,7 @@ export async function crearPresupuesto(input: CrearPresupuestoInput): Promise<Pr
     cod_vendedor: String(input.cod_vendedor),
     usuario: input.usuario,
     usuario_fecha: fecha,
-    usuario_hora: new Date().toISOString().slice(11, 19),
+    usuario_hora: horaArgentina(),
     fac_electronica: 0,              // NO AFIP
     total: 0, neto: 0, iva_importe: 0, importe_iva_10_5: 0, importe_iva_27: 0, // IM calcula
     observaciones: input.observaciones || '',
@@ -618,6 +630,7 @@ export async function crearPresupuesto(input: CrearPresupuestoInput): Promise<Pr
     const status = err?.response?.status;
     // Sin response = IM nunca contestó (timeout/red): resultado DESCONOCIDO, el
     // presupuesto pudo haberse creado igual (mismo patrón que crearRecibo/HASAN).
+    if (status === 401) invalidateImToken();   // los GET lo hacen solos, las escrituras no
     const detalle = raw?.errores
       ? raw.errores.map((e: any) => `${e.campo}: ${(e.mensajes || []).join(', ')}`).join(' · ')
       : (raw?.detalles ? JSON.stringify(raw.detalles).slice(0, 300) : (raw?.mensaje || err?.message || 'unknown'));
@@ -668,6 +681,9 @@ export async function anularComprobante(input: {
   } catch (err: any) {
     const raw = err?.response?.data;
     const status = err?.response?.status;
+    // Token vencido: los GET lo invalidan solos (imGetRetry), las escrituras no. Sin esto el
+    // proximo intento sale con la misma credencial muerta y vuelve a fallar igual.
+    if (status === 401) invalidateImToken();
     return { ok: false, error: `HTTP ${status ?? '?'}: ${raw?.detalles ?? raw?.mensaje ?? err?.message ?? 'unknown'}`, raw, sinRespuesta: !err?.response };
   }
 }
@@ -710,6 +726,24 @@ export function parsePrecioLista(data: any, codArticulo: number): PrecioLista | 
     rubro: row.rubro ?? undefined,
     ult_actualizacion_precio: row.ult_actualizacion_precio ?? undefined,
   };
+}
+
+/**
+ * Fecha con la que IM tiene guardado el comprobante.
+ *
+ * Anular manda la fecha en el body. Recalcularla del created_at nuestro puede dar un dia
+ * distinto al que IM registro (los pedidos viejos quedaron con fecha UTC), y entonces la
+ * anulacion le pisa la fecha al presupuesto. La unica fuente confiable es el propio IM.
+ */
+export async function fechaComprobante(idComprobante: string | number): Promise<string | null> {
+  try {
+    const cli = await imClient();
+    const { data } = await imGetRetry(() => cli.get(`/ventas/${idComprobante}`), `ventas/${idComprobante} fecha`);
+    const f = data?.fecha ?? data?.results?.fecha ?? data?.venta?.fecha;
+    return typeof f === 'string' && f.length >= 10 ? f.slice(0, 10) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Renglones de un comprobante en IM, con el id que necesita el PUT de presupuestos. */

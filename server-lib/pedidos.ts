@@ -5,6 +5,7 @@ import {
   crearPresupuesto, anularComprobante, getPrecioLista, getDisponibleCliente,
   fetchClientesIMCached, fetchArticulosCatalogo, fetchArticulosDeDeposito,
   getItemsComprobante, presupuestoFacturado, actualizarPresupuestoCantidades,
+  fechaComprobante, fechaArgentina,
 } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
 import {
@@ -46,6 +47,9 @@ interface ItemInput { cod_articulo: number; cantidad: number; cod_lista?: number
  * hoy en IM. Si no manda ninguna, se usa la del cliente.
  */
 const LISTAS_VALIDAS = new Set([9, 11, 12, 13, 14, 15]);
+// 1 = Casa Central, 2 = BRS, 3 = San Juan, 6 = Jujuy. Los pedidos de vendedor son de CC,
+// pero la lista queda abierta a las otras por si mañana se usa desde una sucursal.
+const EMPRESAS_VALIDAS = new Set([1, 2, 3, 6]);
 
 // ── Control de listas ─────────────────────────────────────────────────────────
 // Las reglas son datos de negocio que Mati cambia sin que cambie el código, así que
@@ -299,7 +303,10 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
       .filter((it) => it.cod_articulo > 0 && it.cantidad > 0);
     if (!itemsValidos.length) { res.status(400).json({ error: 'El pedido no tiene items válidos' }); return; }
 
-    const codEmpresa = Number(body.cod_empresa) || PEDIDO_EMPRESA_DEFAULT;
+    // El cod_empresa venía del body sin validar: un numero cualquiera creaba el presupuesto
+    // en una empresa que no existe (o en otra sucursal). Misma lista blanca que las listas.
+    const codEmpresaPedido = Number(body.cod_empresa);
+    const codEmpresa = EMPRESAS_VALIDAS.has(codEmpresaPedido) ? codEmpresaPedido : PEDIDO_EMPRESA_DEFAULT;
     const idempotencyKey = body.idempotency_key ? String(body.idempotency_key) : null;
 
     // Idempotencia: si ya existe un pedido con esta key, lo devolvemos (no recreamos).
@@ -421,10 +428,19 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
     } else {
       update = { estado: 'error', im_error: imRes.error };
     }
-    const { data: pedidoFinal } = await sb().from('pedidos_vendedor').update(update).eq('id', pedidoId).select().maybeSingle();
+    const { data: pedidoFinal, error: errUpd } = await sb().from('pedidos_vendedor')
+      .update(update).eq('id', pedidoId).select().maybeSingle();
+    if (errUpd) {
+      // Si esto falla justo despues de que IM creo el presupuesto, el pedido queda 'borrador'
+      // con im_presupuesto_id NULL para siempre y la UI decia "Pedido cargado" en verde. No se
+      // puede deshacer lo de IM, asi que al menos que quede el numero en el log y que el
+      // vendedor sepa que tiene que mirarlo.
+      console.error(`[crearPedido] pedido ${pedidoId}: IM contesto ${JSON.stringify(update)} pero Supabase no lo guardo: ${errUpd.message}`);
+    }
 
     if (imRes.ok) {
-      res.json({ ok: true, pedido: pedidoFinal });
+      res.json({ ok: true, pedido: pedidoFinal ?? { id: pedidoId, ...update },
+        ...(errUpd ? { aviso: `El pedido entró a InfoManager (presupuesto ${imRes.numero ?? imRes.id}) pero no se pudo guardar en la app. Anotalo: puede no aparecer en «Mis pedidos».` } : {}) });
     } else if (imRes.sinRespuesta) {
       res.status(202).json({ ok: false, sin_respuesta: true, pedido: pedidoFinal,
         error: `IM no respondió — NO se sabe si el pedido entró. Revisá en IM antes de reintentar. (${imRes.error})` });
@@ -530,7 +546,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         id: pedido.im_presupuesto_id,
         numero: pedido.im_numero,
         punto_de_venta: pedido.im_punto_de_venta ?? PEDIDO_PUNTO_DE_VENTA,
-        fecha: new Date(pedido.created_at).toISOString().slice(0, 10),
+        fecha: (await fechaComprobante(pedido.im_presupuesto_id)) ?? fechaArgentina(pedido.created_at),
         observaciones: `Reemplazado por edición · pedido ${String(pedido.id).slice(0, 8)}`,
       });
       if (!anul.ok) {
@@ -658,6 +674,12 @@ export async function anularPedido(req: Request & { user?: JwtPayload }, res: Re
     if (!pedido) { res.status(404).json({ error: 'Pedido no encontrado' }); return; }
     if (pedido.estado === 'anulado') { res.status(409).json({ error: 'El pedido ya está anulado' }); return; }
     if (pedido.estado === 'facturado') { res.status(409).json({ error: 'El pedido ya está facturado: no se puede anular desde acá.' }); return; }
+    if (pedido.estado === 'sin_respuesta') {
+      // IM nunca contesto: NO se sabe si el presupuesto existe. Marcarlo anulado sin tocar IM
+      // deja un PR vivo alla que nadie va a volver a mirar. Que lo verifique una persona.
+      res.status(409).json({ error: 'InfoManager no contestó cuando se creó este pedido: no se sabe si entró. Verificalo en IM antes de anularlo.' });
+      return;
+    }
     if (!pedido.im_presupuesto_id || !pedido.im_numero) {
       // Nunca llegó a IM: se anula solo local.
       await sb().from('pedidos_vendedor').update({ estado: 'anulado' }).eq('id', pedido.id);
@@ -673,7 +695,7 @@ export async function anularPedido(req: Request & { user?: JwtPayload }, res: Re
       id: pedido.im_presupuesto_id,
       numero: pedido.im_numero,
       punto_de_venta: pedido.im_punto_de_venta ?? PEDIDO_PUNTO_DE_VENTA,
-      fecha: new Date(pedido.created_at).toISOString().slice(0, 10),
+      fecha: (await fechaComprobante(pedido.im_presupuesto_id)) ?? fechaArgentina(pedido.created_at),
       observaciones: `Anulado desde app · pedido ${pedido.id.slice(0, 8)}`,
     });
     if (!imRes.ok) {
@@ -703,6 +725,17 @@ export async function creditoCliente(req: Request & { user?: JwtPayload }, res: 
   try {
     const codCliente = Number(req.params.cod);
     if (!codCliente) { res.status(400).json({ error: 'cod_cliente inválido' }); return; }
+    // Saldo, cupo y margen de acuerdos son datos sensibles: un vendedor solo puede ver los de
+    // SUS clientes. Mismo chequeo que historialCompras, contra el cache de clientes de IM.
+    const user = req.user!;
+    if (user.rol === 'vendedor') {
+      const clientesIM = await fetchClientesIMCached();
+      const cli = clientesIM.find((c: any) => Number(c.cod_cliente) === codCliente);
+      if (!cli || Number(cli.cod_vendedor) !== Number(user.cod_vendedor)) {
+        res.status(403).json({ error: 'Cliente no pertenece al vendedor' });
+        return;
+      }
+    }
     const info = await getDisponibleCliente(codCliente);
     res.json({ ok: true, credito: info });
   } catch (err: any) {

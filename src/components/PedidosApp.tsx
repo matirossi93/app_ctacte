@@ -46,7 +46,12 @@ interface AvisoLista {
     /** Condición que el sistema no puede verificar (ej: que el pago sea contado). */
     nota_descuento: string | null;
 }
-interface ControlListas { bultos: number; promo_general: boolean; avisos: AvisoLista[] }
+interface ControlListas {
+    bultos: number; promo_general: boolean; avisos: AvisoLista[];
+    /** El backend no pudo evaluar las listas (IM caído, reglas sin cargar). Los números son 0
+     *  de relleno: mostrarlos hace creer que faltan 10 bultos cuando en el carrito hay 40. */
+    sin_control?: boolean;
+}
 
 interface Pedido {
     id: string; cod_cliente: number; cliente_nombre: string | null; estado: string;
@@ -127,6 +132,9 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     const [catQuery, setCatQuery] = useState('');
     const [catResults, setCatResults] = useState<CatItem[]>([]);
     const [catLoading, setCatLoading] = useState(false);
+    // Sin esto, un IM caido se veia igual que "ese producto no existe": el vendedor cortaba
+    // la venta y llamaba a la oficina. El backend ya redacta el 502, solo habia que mostrarlo.
+    const [catError, setCatError] = useState<string | null>(null);
     // El buscador muestra sólo lo que hay en el depósito de casa central. Si una búsqueda
     // no encuentra nada, se ofrece ampliar a todo el catálogo: hay un puñado de artículos
     // que se facturan desde acá sin figurar en el depósito, y no poder cargarlos frenaría
@@ -142,9 +150,13 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         const timer = setTimeout(async () => {
             try {
                 const r = await fetch(`/api/pedidos/catalogo?q=${encodeURIComponent(t)}${catTodos ? '&todos=1' : ''}`, { headers: authHeaders(), signal: ctrl.signal });
-                const d = await r.json();
-                if (d?.ok) setCatResults(d.articulos ?? []);
-            } catch { /* abort/red */ }
+                const d = await r.json().catch(() => null);
+                if (r.ok && d?.ok) { setCatResults(d.articulos ?? []); setCatError(null); }
+                else { setCatResults([]); setCatError(d?.error ?? 'No se pudo consultar el catálogo de InfoManager.'); }
+            } catch (e: any) {
+                // El abort de la búsqueda anterior no es un error: sólo la red lo es.
+                if (e?.name !== 'AbortError') { setCatResults([]); setCatError('Sin conexión: no pude consultar el catálogo.'); }
+            }
             setCatLoading(false);
         }, 300);
         return () => { clearTimeout(timer); ctrl.abort(); };
@@ -213,7 +225,10 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         try {
             const r = await fetch(`/api/pedidos/precio?cod_articulo=${cod}&cod_lista=${codLista}`, { headers: authHeaders() });
             const d = await r.json();
-            if (d?.ok && d.precio?.precio_vta != null) {
+            // El backend devuelve la lista que cotizó. Si el vendedor tocó L2 y después L4, la
+            // respuesta de L2 puede llegar última y dejaba el precio de L2 con la etiqueta L4 —
+            // y ese es justo el número que le canta al cliente por teléfono.
+            if (d?.ok && d.precio?.precio_vta != null && Number(d.cod_lista) === codLista) {
                 const nuevo = Number(d.precio.precio_vta);
                 setCart(c => c.map(i => i.cod_articulo === cod ? { ...i, precio: nuevo } : i));
             }
@@ -356,8 +371,12 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
             if (r.ok && d?.ok) {
                 setResultado({
                     ok: true,
+                    warn: !!d.aviso,
                     numero: d.pedido?.im_numero ?? null,
-                    msg: !editando
+                    // El backend manda `aviso` cuando el pedido SI entro a IM pero no se pudo
+                    // guardar de este lado: es un exito a medias y el vendedor tiene que saberlo.
+                    msg: d.aviso ? String(d.aviso)
+                        : !editando
                         ? (d.dry_run ? 'Guardado (DRY-RUN, no se envió a IM)' : 'Pedido enviado a InfoManager')
                         : d.numero_cambio
                             ? 'Pedido modificado. Como cambiaron los productos, InfoManager le dio un número nuevo y anuló el anterior.'
@@ -384,8 +403,12 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                 setResultado({ ok: false, msg: d?.error ?? 'No se pudo crear el pedido' });
                 setStep('listo');
             }
-        } catch (e: any) {
-            setResultado({ ok: false, msg: e?.message ?? 'Error de red' });
+        } catch {
+            // Si la red se corta DESPUES de que salio el POST, el pedido pudo haber entrado a
+            // IM igual. "Error de red" a secas invita a cargarlo de nuevo => presupuesto
+            // duplicado. El backend distingue este caso con un 202; el catch no puede, asi que
+            // avisa en ambar en vez de dar por fallado.
+            setResultado({ ok: false, warn: true, msg: 'Se cortó la conexión y no se sabe si el pedido entró. Fijate en «Mis pedidos» antes de cargarlo de nuevo.' });
             setStep('listo');
         }
         setEnviando(false);
@@ -514,7 +537,14 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                     <div className="ped-cat-precio">{money(a.precio_venta)}</div>
                                 </button>
                             ))}
-                            {catQuery.trim().length >= 2 && !catLoading && !catResults.length && (
+                            {catError && !catLoading && (
+                                <div className="ped-sin-resultados error">
+                                    <AlertTriangle size={15} />
+                                    <span>{catError} No quiere decir que el producto no exista: probá de nuevo en un momento.</span>
+                                    <button onClick={() => setCatQuery(q => q + ' ')}>Reintentar</button>
+                                </div>
+                            )}
+                            {!catError && catQuery.trim().length >= 2 && !catLoading && !catResults.length && (
                                 <div className="ped-sin-resultados">
                                     {catTodos
                                         ? <span>No hay ningún producto que coincida con «{catQuery.trim()}».</span>
@@ -533,7 +563,13 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
 
                             {/* Cuántos bultos lleva y cuánto le falta para la promo general.
                                 Le sirve al vendedor para cerrar la venta, no solo para no equivocarse. */}
-                            {control && (
+                            {control?.sin_control && (
+                                <div className="ped-promo aviso">
+                                    <AlertTriangle size={15} />
+                                    <span>No pude chequear las listas en este momento. Revisá vos el pedido antes de enviarlo.</span>
+                                </div>
+                            )}
+                            {control && !control.sin_control && (
                                 <div className={`ped-promo ${control.promo_general ? 'on' : ''}`}>
                                     <Package size={15} />
                                     {control.promo_general
@@ -652,15 +688,17 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
 
                 {mode === 'nuevo' && step === 'listo' && resultado && (
                     <div className="ped-body ped-result">
-                        {resultado.ok
-                            ? <CheckCircle2 size={54} className="ok" />
-                            : resultado.warn ? <AlertCircle size={54} className="amber" /> : <Ban size={54} className="err" />}
+                        {/* `warn` gana sobre `ok`: un exito a medias (entro a IM pero no se guardo
+                            de este lado) no puede mostrarse con el tilde verde y "Pedido cargado". */}
+                        {resultado.warn
+                            ? <AlertCircle size={54} className="amber" />
+                            : resultado.ok ? <CheckCircle2 size={54} className="ok" /> : <Ban size={54} className="err" />}
                         <div className="ped-result-msg">
-                            {resultado.ok
+                            {resultado.ok && !resultado.warn
                                 ? <>Pedido cargado{resultado.numero ? <> · <b>Nº {resultado.numero}</b></> : ''}</>
                                 : resultado.msg}
                         </div>
-                        {resultado.ok && <div className="ped-result-sub">{resultado.msg}. La oficina lo verá en InfoManager.</div>}
+                        {resultado.ok && !resultado.warn && <div className="ped-result-sub">{resultado.msg}. La oficina lo verá en InfoManager.</div>}
                         <div className="ped-result-actions">
                             <button className="ped-confirm" onClick={nuevoPedido}><Plus size={18} /> Otro pedido</button>
                             <button className="ped-secondary" onClick={onClose}>Cerrar</button>
