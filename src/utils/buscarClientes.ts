@@ -31,6 +31,11 @@ export const TOPE_CLIENTES = 50;
  * vendedor) el tope cortaba por orden ALFABÉTICO, así que buscar "SA" podía dejar afuera al
  * cliente que sí matcheaba mientras mostraba 30 que matcheaban peor. El puntaje arregla eso:
  * código exacto primero, después arranca-con, después contiene.
+ *
+ * 🪤 El último tier existe porque en InfoManager las razones sociales están cargadas como
+ * `APELLIDO, Nombre (Localidad)` — "BUSTOS, Sebastián (Este)". Buscar la frase entera
+ * ("bustos sebastian") no matchea NUNCA: la coma está en el medio. Va último a propósito,
+ * para no desordenar los matches directos.
  */
 export function buscarClientes<T extends ClienteBuscable>(
   lista: T[],
@@ -42,6 +47,7 @@ export function buscarClientes<T extends ClienteBuscable>(
     return { resultados: lista.slice(0, tope), deMas: Math.max(0, lista.length - tope) };
   }
 
+  const tokens = t.split(/\s+/).filter(Boolean);
   const hits: Array<{ c: T; p: number }> = [];
   for (const c of lista) {
     const n = norm(c.name);
@@ -51,6 +57,7 @@ export function buscarClientes<T extends ClienteBuscable>(
     else if (n.startsWith(t)) p = 2;
     else if (n.includes(t)) p = 3;
     else if (c.cod.includes(t)) p = 4;
+    else if (tokens.length > 1 && tokens.every((tk) => n.includes(tk))) p = 5;
     if (p >= 0) hits.push({ c, p });
   }
   hits.sort((a, b) => a.p - b.p || a.c.name.localeCompare(b.c.name, 'es'));

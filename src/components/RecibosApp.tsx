@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { X, Camera, Upload, Check, AlertCircle, ChevronLeft, Loader2, Search, Clock, FileText, RefreshCw, ZoomIn, ZoomOut, Download, ExternalLink, LogOut } from 'lucide-react';
 import { authHeaders, getUser } from '../utils/auth';
+import { buscarClientes } from '../utils/buscarClientes';
 import { MEDIOS_PAGO_UI, DEFAULT_MEDIO_UI, normalizeMedioUI } from '../utils/mediosPago';
 import './RecibosApp.css';
 
@@ -408,14 +409,13 @@ function UploadRecibo({ clients, defaultCodVendedor, hideCodVendedor = false, on
     const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
     const [ocrResult, setOcrResult] = useState<any>(null);
 
+    // Mismo buscador que Pedidos (utils/buscarClientes, con tests): sin esto "pena" no
+    // encuentra a PEÑA y "bustos sebastian" no encuentra a "BUSTOS, Sebastián (Este)".
+    // La localidad se sigue contemplando: se concatena al nombre sólo para matchear.
     const filteredClients = useMemo(() => {
-        if (!clientSearch.trim()) return clients.slice(0, 30);
-        const q = clientSearch.toLowerCase();
-        return clients.filter(c =>
-            c.name.toLowerCase().includes(q) ||
-            c.cod.includes(q) ||
-            (c.localidad ?? '').toLowerCase().includes(q)
-        ).slice(0, 30);
+        const conLoc = clients.map(c => ({ ...c, name: `${c.name} ${c.localidad ?? ''}`.trim() }));
+        const codsOk = new Set(buscarClientes(conLoc, clientSearch).resultados.map(c => c.cod));
+        return clients.filter(c => codsOk.has(c.cod));
     }, [clients, clientSearch]);
 
     const onPickFile = (f: File | null) => {
@@ -1282,14 +1282,13 @@ function EditarReciboForm({ rec, clients, onSaved, onCancel }: {
     const [busy, setBusy] = useState(false);
     const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
+    // Mismo buscador que Pedidos (utils/buscarClientes, con tests): sin esto "pena" no
+    // encuentra a PEÑA y "bustos sebastian" no encuentra a "BUSTOS, Sebastián (Este)".
+    // La localidad se sigue contemplando: se concatena al nombre sólo para matchear.
     const filteredClients = useMemo(() => {
-        if (!clientSearch.trim()) return clients.slice(0, 30);
-        const q = clientSearch.toLowerCase();
-        return clients.filter(c =>
-            c.name.toLowerCase().includes(q) ||
-            c.cod.includes(q) ||
-            (c.localidad ?? '').toLowerCase().includes(q)
-        ).slice(0, 30);
+        const conLoc = clients.map(c => ({ ...c, name: `${c.name} ${c.localidad ?? ''}`.trim() }));
+        const codsOk = new Set(buscarClientes(conLoc, clientSearch).resultados.map(c => c.cod));
+        return clients.filter(c => codsOk.has(c.cod));
     }, [clients, clientSearch]);
 
     const selectedClientName = useMemo(

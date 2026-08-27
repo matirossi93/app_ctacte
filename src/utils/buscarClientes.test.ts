@@ -89,3 +89,42 @@ describe('buscarClientes — el tope no puede tapar al que buscás', () => {
     expect(resultados.map(x => x.name)).toEqual(['ALFA SRL', 'ZETA SRL']);
   });
 });
+
+describe('buscarClientes — los nombres reales son "APELLIDO, Nombre (Localidad)"', () => {
+  // 🪤 Así están cargadas las razones sociales en InfoManager. Buscar la frase entera
+  // ("bustos sebastian") no matchea nunca porque la coma está en el medio: el vendedor
+  // tiene que acertar apellido O nombre, nunca los dos.
+  const lista = [
+    c('501', 'BUSTOS, Sebastián (Este)'),
+    c('502', 'MORENO, José María (Sur)'),
+    c('503', 'VILLALBA, Iris (Ciudadela)'),
+    c('504', 'BUSTOS, Ana (Norte)'),
+  ];
+
+  it('apellido + nombre encuentra al cliente', () => {
+    expect(buscarClientes(lista, 'bustos sebastian').resultados.map(x => x.cod)).toEqual(['501']);
+  });
+
+  it('el orden de las palabras no importa', () => {
+    expect(buscarClientes(lista, 'sebastian bustos').resultados.map(x => x.cod)).toEqual(['501']);
+  });
+
+  it('funciona sin acentos, que es como se tipea', () => {
+    expect(buscarClientes(lista, 'moreno jose').resultados.map(x => x.cod)).toEqual(['502']);
+  });
+
+  it('buscar por localidad + apellido también', () => {
+    expect(buscarClientes(lista, 'bustos norte').resultados.map(x => x.cod)).toEqual(['504']);
+  });
+
+  it('exige TODAS las palabras: una sola que falle no matchea', () => {
+    expect(buscarClientes(lista, 'bustos rodriguez').resultados).toEqual([]);
+  });
+
+  it('el match multi-palabra va ÚLTIMO: no le gana a los directos', () => {
+    // "villalba iris" matchea el nombre completo de 503 por `includes` de la frase? No:
+    // la frase con coma no está. Pero un match directo de una palabra tiene que ganar igual.
+    const conDirecto = [...lista, c('505', 'BUSTOS SEBASTIAN SRL')];
+    expect(buscarClientes(conDirecto, 'bustos sebastian').resultados[0].cod).toBe('505');
+  });
+});

@@ -407,7 +407,12 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
       cod_lista_precios: codLista,
       usuario: IM_USUARIO_PEDIDOS,
       punto_de_venta: PEDIDO_PUNTO_DE_VENTA,
-      observaciones: (body.observaciones ? String(body.observaciones) : `Pedido app · vend ${codVendedor}`).slice(0, 500),
+      // 🪤 Era un ternario: si el vendedor escribia CUALQUIER cosa, el marcador desaparecia.
+      // El campo `usuario` de IM es el operador de la oficina (hoy siempre el mismo para todos
+      // los pedidos de la app), asi que esta es la unica linea de la cabecera donde se lee en
+      // criollo quien armo el pedido. Va de PREFIJO, y con el nombre en vez del codigo: el
+      // corte a 500 es por la cola, asi que lo que va primero nunca se pierde.
+      observaciones: `Pedido app · ${user.nombre || `vend ${codVendedor}`}${body.observaciones ? ` · ${String(body.observaciones)}` : ''}`.slice(0, 500),
       cod_compatibilidad: pedidoId.slice(0, 8),
       items: itemsConPrecio.map((it) => ({
         cod_articulo: it.cod_articulo,
@@ -560,7 +565,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         cod_lista_precios: Number(pedido.cod_lista_precios) || PEDIDO_LISTA_FALLBACK,
         usuario: IM_USUARIO_PEDIDOS,
         punto_de_venta: PEDIDO_PUNTO_DE_VENTA,
-        observaciones: (observaciones || `Pedido app · vend ${pedido.cod_vendedor}`).slice(0, 500),
+        observaciones: `Pedido app · ${user.nombre || `vend ${pedido.cod_vendedor}`}${observaciones ? ` · ${observaciones}` : ''}`.slice(0, 500),
         cod_compatibilidad: String(pedido.id).slice(0, 8),
         items: nuevos.map((it) => ({
           cod_articulo: it.cod_articulo, cantidad: it.cantidad,

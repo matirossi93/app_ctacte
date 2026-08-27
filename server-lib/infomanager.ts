@@ -464,13 +464,33 @@ export async function fetchClientesIM(): Promise<ClienteIM[]> {
   const PAGE_SIZE = 500;
   const MAX_PAGES = 20; // safety cap: soporta hasta 10k clientes
   const all: any[] = [];
+  // 🪤 La condicion de corte era `rows.length < PAGE_SIZE`, que da por hecho que IM respeta
+  // el limit pedido. Si IM lo capa (muchas APIs topean en 100), la primera pagina volvia
+  // corta, se leia como "ultima pagina" y el maestro quedaba recortado EN SILENCIO: al
+  // vendedor le aparecian algunos clientes y otros no, sin ningun patron visible.
+  // Ahora se corta cuando una pagina no aporta NINGUN codigo nuevo, que cubre tambien el
+  // caso contrario (que IM ignore `page` y devuelva siempre lo mismo) sin gastar las 20
+  // vueltas contra IM.
+  const vistos = new Set<number>();
   for (let page = 1; page <= MAX_PAGES; page++) {
     const { data } = await imGetRetry(() => cli.get('/clientes', { params: { page, limit: PAGE_SIZE } }), `clientes p${page}`);
     const rows = Array.isArray(data) ? data
       : (data?.results ?? data?.clientes ?? data?.data ?? data?.items ?? []);
     if (!rows.length) break;
-    all.push(...rows);
-    if (rows.length < PAGE_SIZE) break;
+    const nuevas = rows.filter((r: any) => {
+      const cod = Number(r.cod_cliente ?? r.codigo ?? r.id ?? r.cod ?? 0);
+      if (!(cod > 0) || vistos.has(cod)) return false;
+      vistos.add(cod);
+      return true;
+    });
+    if (!nuevas.length) {
+      console.warn(`[fetchClientesIM] la pagina ${page} no trajo ningun cliente nuevo: IM no esta paginando. Corto con ${all.length}.`);
+      break;
+    }
+    all.push(...nuevas);
+    if (page === MAX_PAGES) {
+      console.warn(`[fetchClientesIM] llegue al tope de ${MAX_PAGES} paginas con ${all.length} clientes: puede haber mas sin traer.`);
+    }
   }
   return all.map((r: any) => {
     const cod = Number(r.cod_cliente ?? r.codigo ?? r.id ?? r.cod ?? 0);
@@ -480,7 +500,11 @@ export async function fetchClientesIM(): Promise<ClienteIM[]> {
     return {
       ...r,
       cod_cliente: cod,
-      razon_social: r.razon_social ?? r.nombre ?? '',
+      // `||` y no `??`: IM devuelve razon_social = '' para las personas fisicas (el nombre
+      // real vive en `nombre`), y `??` no atrapa el string vacio. Aguas abajo clientes.ts
+      // usa `||`, asi que el cliente terminaba en la lista como "Cliente #1234" y buscarlo
+      // por su nombre no lo encontraba nunca.
+      razon_social: String(r.razon_social || r.nombre || '').trim(),
       localidad: r.localidad ?? r.ciudad ?? null,
       cod_vendedor: codVend != null && Number.isFinite(Number(codVend)) ? Number(codVend) : null,
       telefono: telFijo ? String(telFijo) : null,

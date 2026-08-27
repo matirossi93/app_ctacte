@@ -327,8 +327,8 @@
   "valores": [
    "404"
   ],
-  "estado": "revisar",
-  "nota": "Hay 5 arts con SOJA: 404 SOJA, 411 texturizada, 552 expeller, 560 desactivada. La regla aplica solo al 404?"
+  "estado": "ok",
+  "nota": "Mati 27/08: sigue el patron de la colza. De los 5 arts con SOJA solo el 404 se factura al mayorista (6 renglones en 3 semanas). El 411 es el espejo X KG, el 552 y el 560 son insumos de planta y el 573 es de la sucursal San Juan: 0 renglones los cuatro."
  },
  "SESAMO": {
   "tipo": "articulo",
