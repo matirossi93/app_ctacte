@@ -199,7 +199,11 @@ async function silenciarSiElPrecioYaEstaBien(
     // decenas de round-trips tirados, y encima le comen el turno al request que sí importa.
     if (abortado?.()) return;
     if (a.severidad !== 'cliente' || a.lista_sugerida == null) continue;
-    const it = items.find((x) => x.cod_articulo === a.cod_articulo);
+    // 🪤 Era items.find(x => x.cod_articulo === a.cod_articulo), que con el mismo articulo en
+    // dos renglones agarra SIEMPRE el primero: el descuento de uno decidia si se silenciaba el
+    // aviso del otro. El caso caro es el renglon SIN descuento, al que se le tapaba un
+    // "le estas cobrando de mas" real. El aviso ya sabe su posicion.
+    const it = items[a.idx];
     const desc = Number(it?.descuento) || 0;
     if (!it || desc <= 0) continue;
     try {
