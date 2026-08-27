@@ -213,3 +213,6 @@
   font-size: 0.78rem; line-height: 1.35;
 }
 .ped-editando svg { flex-shrink: 0; }
+
+.ped-row-acciones { display: flex; gap: 0.4rem; }
+.ped-anular { color: var(--color-danger); border-color: var(--color-danger); }

@@ -546,10 +546,17 @@ export async function anularPedido(req: Request & { user?: JwtPayload }, res: Re
     if (error) { res.status(500).json({ error: error.message }); return; }
     if (!pedido) { res.status(404).json({ error: 'Pedido no encontrado' }); return; }
     if (pedido.estado === 'anulado') { res.status(409).json({ error: 'El pedido ya está anulado' }); return; }
+    if (pedido.estado === 'facturado') { res.status(409).json({ error: 'El pedido ya está facturado: no se puede anular desde acá.' }); return; }
     if (!pedido.im_presupuesto_id || !pedido.im_numero) {
       // Nunca llegó a IM: se anula solo local.
       await sb().from('pedidos_vendedor').update({ estado: 'anulado' }).eq('id', pedido.id);
       res.json({ ok: true, solo_local: true }); return;
+    }
+    // ¿Ya lo facturaron? Anular un presupuesto facturado deja la factura sin respaldo.
+    const fact = await presupuestoFacturado(pedido.im_presupuesto_id);
+    if (fact.facturado) {
+      await sb().from('pedidos_vendedor').update({ estado: 'facturado' }).eq('id', pedido.id);
+      res.status(409).json({ error: 'El pedido ya fue facturado en InfoManager: no se puede anular.' }); return;
     }
     const imRes = await anularComprobante({
       id: pedido.im_presupuesto_id,
@@ -559,6 +566,18 @@ export async function anularPedido(req: Request & { user?: JwtPayload }, res: Re
       observaciones: `Anulado desde app · pedido ${pedido.id.slice(0, 8)}`,
     });
     if (!imRes.ok) {
+      // 🪤 Si alguien borró el presupuesto a mano desde InfoManager, el id ya no existe y
+      // el pedido quedaría trabado para siempre en "enviado". Pasó el 27/08: Mati borró el
+      // 57818 desde IM. En ese caso se marca anulado igual y se deja constancia.
+      const noExiste = /no se encontraron datos|no existe/i.test(String(imRes.error ?? ''));
+      if (noExiste) {
+        const { data } = await sb().from('pedidos_vendedor').update({
+          estado: 'anulado',
+          im_error: 'El presupuesto ya no existe en InfoManager (lo borraron desde ahí).',
+        }).eq('id', pedido.id).select().maybeSingle();
+        res.json({ ok: true, pedido: data, ya_no_estaba: true });
+        return;
+      }
       res.status(400).json({ ok: false, error: `IM no pudo anular: ${imRes.error}`, raw: imRes.raw }); return;
     }
     const { data } = await sb().from('pedidos_vendedor').update({ estado: 'anulado' }).eq('id', pedido.id).select().maybeSingle();

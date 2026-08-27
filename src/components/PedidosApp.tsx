@@ -260,6 +260,26 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     /** Facturado o anulado ya no se toca. */
     const editable = (p: Pedido) => p.estado !== 'facturado' && p.estado !== 'anulado' && p.estado !== 'sin_respuesta';
 
+    const [anulando, setAnulando] = useState<string | null>(null);
+    async function anularPedido(p: Pedido) {
+        const quien = p.im_numero ? `el presupuesto Nº ${p.im_numero}` : 'el pedido';
+        if (!confirm(`¿Anular ${quien} de ${p.cliente_nombre ?? `cliente ${p.cod_cliente}`}?
+
+Se anula también en InfoManager. No se puede deshacer.`)) return;
+        setAnulando(p.id);
+        try {
+            const r = await fetch(`/api/pedidos/${p.id}/anular`, { method: 'POST', headers: authHeaders() });
+            const d = await r.json();
+            if (!r.ok || !d?.ok) { alert(d?.error ?? 'No se pudo anular'); return; }
+            if (d.ya_no_estaba) alert('El presupuesto ya no estaba en InfoManager (lo borraron desde ahí). El pedido quedó marcado como anulado.');
+            setPedidos(ps => ps.map(x => x.id === p.id ? { ...x, estado: 'anulado' } : x));
+        } catch (e: any) {
+            alert(e?.message ?? 'Error de red');
+        } finally {
+            setAnulando(null);
+        }
+    }
+
     // ── Confirmar ───────────────────────────────────────────────────────────
     const [enviando, setEnviando] = useState(false);
     const [resultado, setResultado] = useState<{ ok: boolean; numero?: number | null; msg: string; warn?: boolean } | null>(null);
@@ -363,10 +383,16 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                                     </div>
                                     <span className={`ped-chip ${e.cls}`}>{e.txt}</span>
                                     {editable(p) && (
-                                        <button className="ped-editar" disabled={abriendo === p.id} onClick={() => editarPedido(p)}>
-                                            {abriendo === p.id ? <Loader2 className="spin" size={14} /> : <Pencil size={14} />}
-                                            Editar
-                                        </button>
+                                        <div className="ped-row-acciones">
+                                            <button className="ped-editar" disabled={abriendo === p.id || anulando === p.id} onClick={() => editarPedido(p)}>
+                                                {abriendo === p.id ? <Loader2 className="spin" size={14} /> : <Pencil size={14} />}
+                                                Editar
+                                            </button>
+                                            <button className="ped-editar ped-anular" disabled={anulando === p.id || abriendo === p.id} onClick={() => anularPedido(p)}>
+                                                {anulando === p.id ? <Loader2 className="spin" size={14} /> : <Ban size={14} />}
+                                                Anular
+                                            </button>
+                                        </div>
                                     )}
                                 </div>
                             );
