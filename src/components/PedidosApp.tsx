@@ -39,6 +39,12 @@ interface AvisoLista {
     /** 'margen' = le vende más barato de lo que corresponde · 'cliente' = le cobra de más. */
     severidad: 'ok' | 'margen' | 'cliente' | 'sin_regla';
     mensaje: string | null;
+    /** Tope de descuento del renglón. 0 = no tiene descuentos habilitados. */
+    descuento_max: number;
+    /** Se pasó del tope: qué está mal y cuánto puede. */
+    mensaje_descuento: string | null;
+    /** Condición que el sistema no puede verificar (ej: que el pago sea contado). */
+    nota_descuento: string | null;
 }
 interface ControlListas { bultos: number; promo_general: boolean; avisos: AvisoLista[] }
 
@@ -250,6 +256,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         return () => { clearTimeout(timer); ctrl.abort(); };
     }, [cart]);
     const avisoDe = (cod: number) => control?.avisos?.find(a => a.cod_articulo === cod && a.mensaje);
+    const descDe = (cod: number) => control?.avisos?.find(a => a.cod_articulo === cod);
     const faltanBultos = control ? Math.max(0, 10 - control.bultos) : 0;
     // El control AVISA, no frena (Mati lo dio de baja el 27/08 mientras la parametrización
     // se sigue afinando: un falso positivo le bloquea una venta legítima al vendedor).
@@ -534,6 +541,7 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
 
                             {cart.map(i => {
                                 const av = avisoDe(i.cod_articulo);
+                                const dsc = descDe(i.cod_articulo);
                                 return (
                                 <div key={i.cod_articulo} className="ped-cart-item">
                                     <div className="ped-cart-desc">{i.descripcion}<span className="ped-cart-precio">{money(i.precio)} c/u</span></div>
@@ -558,7 +566,8 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                     >
                                         {LISTAS.map(l => <option key={l.cod} value={l.cod}>{l.label}</option>)}
                                     </select>
-                                    <label className="ped-desc" title="Descuento de este renglón">
+                                    <label className={`ped-desc${dsc?.mensaje_descuento ? ' alerta' : ''}`}
+                                        title={dsc?.mensaje_descuento ?? (dsc && dsc.descuento_max > 0 ? `Hasta ${dsc.descuento_max}%` : 'Descuento de este renglón')}>
                                         <input
                                             type="text" inputMode="decimal" placeholder="0"
                                             aria-label={`Descuento en porcentaje de ${i.descripcion}`}
@@ -574,6 +583,26 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                         {i.descuento > 0 && <span className="ped-cart-tachado">{money(i.cantidad * i.precio)}</span>}
                                     </div>
                                     <button className="ped-cart-del" onClick={() => quitar(i.cod_articulo)}><Trash2 size={14} /></button>
+                                    {dsc?.mensaje_descuento && (
+                                        <div className="ped-aviso margen">
+                                            <AlertTriangle size={14} />
+                                            <span>{dsc.mensaje_descuento}</span>
+                                            {dsc.descuento_max > 0 && (
+                                                <button onClick={() => escribirDesc(i.cod_articulo, String(dsc.descuento_max))}>
+                                                    Poner {dsc.descuento_max}%
+                                                </button>
+                                            )}
+                                            {dsc.descuento_max === 0 && (
+                                                <button onClick={() => escribirDesc(i.cod_articulo, '')}>Sacar</button>
+                                            )}
+                                        </div>
+                                    )}
+                                    {dsc?.nota_descuento && !dsc.mensaje_descuento && (
+                                        <div className="ped-aviso nota">
+                                            <AlertCircle size={14} />
+                                            <span>{dsc.nota_descuento}</span>
+                                        </div>
+                                    )}
                                     {av && av.lista_sugerida != null && (
                                         <div className={`ped-aviso ${av.severidad}`}>
                                             <AlertTriangle size={14} />

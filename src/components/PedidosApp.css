@@ -249,3 +249,7 @@
   color: var(--color-text-muted); text-decoration: line-through;
 }
 @media (max-width: 560px) { .ped-cart-item { grid-template-columns: 1fr auto auto auto; } }
+
+.ped-desc.alerta { border-color: var(--color-danger); border-width: 2px; }
+/* Recordatorio (no es un error): la condición que el sistema no puede verificar solo. */
+.ped-aviso.nota { background: var(--color-surface-hover, #f2f2f2); color: var(--color-text-muted); }

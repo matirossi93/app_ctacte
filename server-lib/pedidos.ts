@@ -9,7 +9,7 @@ import {
 import type { JwtPayload } from './auth.js';
 import {
   clasificarArticulo, evaluarPedido,
-  type ArticuloInfo, type ReglaLista, type ResultadoPedido,
+  type ArticuloInfo, type ReglaLista, type ReglaDescuento, type ResultadoPedido,
 } from './listas.js';
 
 const { env } = process;
@@ -64,6 +64,25 @@ async function reglasActivas(): Promise<ReglaLista[]> {
   return reglas;
 }
 
+// Qué descuento admite cada renglón. Mismo TTL que las reglas de lista.
+let _descCache: { reglas: ReglaDescuento[]; fetchedAt: number } | null = null;
+
+async function descuentosActivos(): Promise<ReglaDescuento[]> {
+  if (_descCache && Date.now() - _descCache.fetchedAt < REGLAS_TTL_MS) return _descCache.reglas;
+  const { data, error } = await sb().from('descuentos_reglas')
+    .select('nombre, match_tipo, match_valor, desde_cantidad, ambito, porcentaje_max, requiere_lista, requiere_mejor_lista, aviso')
+    .eq('tenant_id', TENANT_ID).eq('activo', true);
+  if (error) throw new Error(`descuentos_reglas: ${error.message}`);
+  const reglas = (data ?? []).map((g: any) => ({
+    ...g,
+    desde_cantidad: Number(g.desde_cantidad),
+    porcentaje_max: Number(g.porcentaje_max),
+    requiere_lista: g.requiere_lista == null ? null : Number(g.requiere_lista),
+  })) as ReglaDescuento[];
+  _descCache = { reglas, fetchedAt: Date.now() };
+  return reglas;
+}
+
 /** Catálogo de IM ya clasificado en bulto/granel, que es lo que necesita el evaluador. */
 async function catalogoParaListas(): Promise<Map<number, ArticuloInfo>> {
   const crudo = await fetchArticulosCatalogo();
@@ -77,10 +96,12 @@ async function catalogoParaListas(): Promise<Map<number, ArticuloInfo>> {
  * están disponibles, devuelve null y el pedido sigue su curso. El control avisa, no frena
  * — mismo criterio que las guardas de cupo y stock que eligió Mati en julio.
  */
-async function controlarListas(items: Array<{ cod_articulo: number; cantidad: number; cod_lista: number }>): Promise<ResultadoPedido | null> {
+async function controlarListas(items: Array<{ cod_articulo: number; cantidad: number; cod_lista: number; descuento?: number }>): Promise<ResultadoPedido | null> {
   try {
-    const [reglas, catalogo] = [await reglasActivas(), await catalogoParaListas()];
-    return evaluarPedido(items, catalogo, reglas);
+    const reglas = await reglasActivas();
+    const descuentos = await descuentosActivos();
+    const catalogo = await catalogoParaListas();
+    return evaluarPedido(items, catalogo, reglas, descuentos);
   } catch (e: any) {
     console.warn('[controlarListas] no se pudo evaluar, sigo sin control:', e?.message);
     return null;
@@ -95,7 +116,7 @@ async function controlarListas(items: Array<{ cod_articulo: number; cantidad: nu
 export async function validarListasPedido(req: Request & { user?: JwtPayload }, res: Response) {
   try {
     const items = (Array.isArray(req.body?.items) ? req.body.items : [])
-      .map((it: any) => ({ cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad), cod_lista: Number(it.cod_lista) }))
+      .map((it: any) => ({ cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad), cod_lista: Number(it.cod_lista), descuento: Number(it.descuento_porc) || 0 }))
       .filter((it: any) => it.cod_articulo > 0 && it.cantidad > 0);
     if (!items.length) { res.json({ ok: true, bultos: 0, promo_general: false, avisos: [] }); return; }
     const r = await controlarListas(items);
@@ -171,7 +192,7 @@ async function resolverYControlar(
   // avisa, pero el vendedor puede tener un motivo. Y si el control no pudo correr (IM caído,
   // Supabase sin responder) tampoco se frena: no se pierde una venta por un problema nuestro.
   const control = await controlarListas(items.map((it) => ({
-    cod_articulo: it.cod_articulo, cantidad: it.cantidad, cod_lista: it.cod_lista,
+    cod_articulo: it.cod_articulo, cantidad: it.cantidad, cod_lista: it.cod_lista, descuento: it.descuento_porc,
   })));
   // Sin precio SÍ se frena siempre (arriba): no es una regla comercial opinable, es que el
   // artículo no tiene precio en esa lista y no se puede vender. Lo de abajo es distinto:
@@ -306,7 +327,7 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
         cod_lista_precios: it.cod_lista,
         descuento_porc: it.descuento_porc,
         lista_sugerida: av?.lista_sugerida ?? null,
-        aviso_lista: av?.mensaje ?? null,
+        aviso_lista: [av?.mensaje, av?.mensaje_descuento].filter(Boolean).join(' · ') || null,
         iva_por: it.iva,
         subtotal: it.subtotal,
         orden: i,
@@ -521,7 +542,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         cod_lista_precios: it.cod_lista,
         descuento_porc: it.descuento_porc,
         lista_sugerida: av?.lista_sugerida ?? null,
-        aviso_lista: av?.mensaje ?? null,
+        aviso_lista: [av?.mensaje, av?.mensaje_descuento].filter(Boolean).join(' · ') || null,
         iva_por: it.iva,
         subtotal: it.subtotal,
         orden: i,

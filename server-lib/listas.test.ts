@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   clasificarArticulo, bultosDelPedido, evaluarPedido,
-  type ArticuloInfo, type ReglaLista,
+  type ArticuloInfo, type ReglaLista, type ReglaDescuento,
 } from './listas.js';
 
 /** Artículos reales del catálogo de IM (bajados 26/08/2026), con sus datos crudos. */
@@ -386,5 +386,83 @@ describe('🪤 una línea partida en varios subrubros de IM acumula junta (audit
       { cod_articulo: 119, cantidad: 2, cod_lista: 14 },
     ], c, reglas);
     expect(r.avisos.every(a => a.severidad === 'margen')).toBe(true);
+  });
+});
+
+describe('control de descuentos (reglas de Mati del 27/08)', () => {
+  // 25% desde 1 · 30% desde 5 · 35% desde 10 · 40% desde 30, contando el SURTIDO de la
+  // línea, y ÚNICAMENTE en Lista 1. Los porcentajes son topes.
+  const CEREALES: ReglaDescuento[] = [
+    { nombre: 'CEREALES PARA DESAYUNO', match_tipo: 'subrubro', match_valor: 'Cereales para desayuno', desde_cantidad: 1, ambito: 'linea', porcentaje_max: 25, requiere_lista: 12, requiere_mejor_lista: false, aviso: null },
+    { nombre: 'CEREALES PARA DESAYUNO', match_tipo: 'subrubro', match_valor: 'Cereales para desayuno', desde_cantidad: 5, ambito: 'linea', porcentaje_max: 30, requiere_lista: 12, requiere_mejor_lista: false, aviso: null },
+    { nombre: 'CEREALES PARA DESAYUNO', match_tipo: 'subrubro', match_valor: 'Cereales para desayuno', desde_cantidad: 10, ambito: 'linea', porcentaje_max: 35, requiere_lista: 12, requiere_mejor_lista: false, aviso: null },
+    { nombre: 'CEREALES PARA DESAYUNO', match_tipo: 'subrubro', match_valor: 'Cereales para desayuno', desde_cantidad: 30, ambito: 'linea', porcentaje_max: 40, requiere_lista: 12, requiere_mejor_lista: false, aviso: null },
+    // 2% para Gran Campeón, sólo sobre la mejor lista y sólo contado.
+    { nombre: 'LINEA GRAN CAMPEON', match_tipo: 'subrubro', match_valor: 'Gran Campeon', desde_cantidad: 1, ambito: 'articulo', porcentaje_max: 2, requiere_lista: null, requiere_mejor_lista: true, aviso: 'Este 2% sólo vale si el pedido se paga de contado.' },
+  ];
+  const anillos = clasificarArticulo({ cod_articulo: 311, descripcion: 'ANILLOS FRUTADOS x 2.5 Kg', subrubro: 'Cereales para desayuno', unidad_de_medida: 'Bolsas', equivalencia_um: 2.5 });
+  const almoh = clasificarArticulo({ cod_articulo: 301, descripcion: 'ALMOHADITA DE FRUTILLA X 2.5 KG', subrubro: 'Cereales para desayuno', unidad_de_medida: 'Bolsas', equivalencia_um: 2.5 });
+  const c = new Map([[311, anillos], [301, almoh], [140, clasificarArticulo(CRUDO.granCampeon)]]);
+  const av = (items: any[]) => evaluarPedido(items, c, REGLAS, CEREALES).avisos;
+
+  it('1 unidad en L1 admite hasta 25%', () => {
+    expect(av([{ cod_articulo: 311, cantidad: 1, cod_lista: 12, descuento: 25 }])[0].mensaje_descuento).toBeNull();
+    const p = av([{ cod_articulo: 311, cantidad: 1, cod_lista: 12, descuento: 30 }])[0];
+    expect(p.descuento_max).toBe(25);
+    expect(p.mensaje_descuento).toContain('máximo para esta cantidad es 25%');
+  });
+
+  it('🔑 los escalones cuentan el SURTIDO de la línea: 2 anillos + 3 almohaditas = 5 → 30%', () => {
+    const r = av([
+      { cod_articulo: 311, cantidad: 2, cod_lista: 12, descuento: 30 },
+      { cod_articulo: 301, cantidad: 3, cod_lista: 12, descuento: 30 },
+    ]);
+    expect(r.every(a => a.mensaje_descuento === null)).toBe(true);
+    expect(r[0].descuento_max).toBe(30);
+  });
+
+  it('poner menos del tope está bien (son topes, no valores exactos)', () => {
+    expect(av([{ cod_articulo: 311, cantidad: 10, cod_lista: 12, descuento: 12 }])[0].mensaje_descuento).toBeNull();
+  });
+
+  it('30 unidades llegan al 40%', () => {
+    expect(av([{ cod_articulo: 311, cantidad: 30, cod_lista: 12, descuento: 40 }])[0].descuento_max).toBe(40);
+  });
+
+  it('🔑 el descuento de cereales NO vale fuera de Lista 1', () => {
+    const p = av([{ cod_articulo: 311, cantidad: 10, cod_lista: 13, descuento: 35 }])[0];
+    expect(p.descuento_max).toBe(0);
+    expect(p.mensaje_descuento).toContain('sólo se puede aplicar en L1');
+  });
+
+  it('un artículo sin reglas no tiene descuentos habilitados', () => {
+    const ca = cat('ganave');
+    const p = evaluarPedido([{ cod_articulo: 1, cantidad: 5, cod_lista: 12, descuento: 5 }], ca, REGLAS, CEREALES).avisos[0];
+    expect(p.descuento_max).toBe(0);
+    expect(p.mensaje_descuento).toContain('no tiene descuentos habilitados');
+  });
+
+  it('sin descuento puesto no molesta a nadie', () => {
+    const ca = cat('ganave');
+    const p = evaluarPedido([{ cod_articulo: 1, cantidad: 5, cod_lista: 12 }], ca, REGLAS, CEREALES).avisos[0];
+    expect(p.descuento).toBe(0);
+    expect(p.mensaje_descuento).toBeNull();
+    expect(p.nota_descuento).toBeNull();
+  });
+
+  it('🔑 el 2% de Gran Campeón sólo vale sobre la mejor lista, y avisa lo del contado', () => {
+    // L3 es su techo (L2 y L3 están LIBRE): ahí el 2% vale.
+    const ok = av([{ cod_articulo: 140, cantidad: 1, cod_lista: 14, descuento: 2 }])[0];
+    expect(ok.descuento_max).toBe(2);
+    expect(ok.mensaje_descuento).toBeNull();
+    expect(ok.nota_descuento).toContain('contado');
+    // En L1 no está en su mejor lista: el 2% no corresponde.
+    const mal = av([{ cod_articulo: 140, cantidad: 1, cod_lista: 12, descuento: 2 }])[0];
+    expect(mal.descuento_max).toBe(0);
+    expect(mal.mensaje_descuento).toContain('mejor precio');
+  });
+
+  it('el aviso de contado no aparece si no se usó descuento', () => {
+    expect(av([{ cod_articulo: 140, cantidad: 1, cod_lista: 14 }])[0].nota_descuento).toBeNull();
   });
 });

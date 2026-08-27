@@ -63,6 +63,34 @@ export interface RenglonPedido {
   cantidad: number;
   /** La que eligió el vendedor. */
   cod_lista: number;
+  /** Descuento porcentual que puso el vendedor en este renglón (0 a 100). */
+  descuento?: number;
+}
+
+/**
+ * Cuánto descuento se puede hacer sobre un renglón. Reglas de Mati del 27/08:
+ *   · CEREALES PARA DESAYUNO — 25% desde 1 unidad, 30% desde 5, 35% desde 10, 40% desde 30,
+ *     contando el SURTIDO de la línea, y únicamente si el renglón va en Lista 1.
+ *   · LINEA FLECKY y LINEA GRAN CAMPEON — 2%, sólo si el renglón ya está en su mejor lista,
+ *     y sólo con pago contado (no lo sabe el sistema: se avisa).
+ *   · El resto de los artículos NO tiene descuentos habilitados.
+ * Los porcentajes son TOPES: poner menos está bien, pasarse no.
+ */
+export interface ReglaDescuento {
+  nombre: string;
+  match_tipo: 'subrubro' | 'articulo';
+  match_valor: string;
+  /** Desde qué cantidad aplica este tope. */
+  desde_cantidad: number;
+  /** 'linea' = suma todos los renglones de la línea; 'articulo' = sólo este renglón. */
+  ambito: 'articulo' | 'linea';
+  porcentaje_max: number;
+  /** Si está, el descuento SOLO vale en esa lista (los cereales, únicamente L1). */
+  requiere_lista: number | null;
+  /** Si es true, sólo vale cuando el renglón ya está en la mejor lista a la que llega. */
+  requiere_mejor_lista: boolean;
+  /** Recordatorio para el vendedor cuando usa el descuento (ej: "tiene que ser contado"). */
+  aviso: string | null;
 }
 
 export type Severidad = 'ok' | 'margen' | 'cliente' | 'sin_regla';
@@ -74,6 +102,14 @@ export interface AvisoRenglon {
   severidad: Severidad;
   /** null cuando está todo bien. */
   mensaje: string | null;
+  /** Descuento que puso el vendedor. */
+  descuento: number;
+  /** Tope permitido para este renglón según las reglas. 0 = no tiene descuentos habilitados. */
+  descuento_max: number;
+  /** Se pasó del tope: qué está mal y cuánto puede. null si está bien. */
+  mensaje_descuento: string | null;
+  /** Condición que el sistema no puede verificar solo (ej: que el pago sea contado). */
+  nota_descuento: string | null;
 }
 
 export interface ResultadoPedido {
@@ -168,6 +204,61 @@ function reglasDe(art: ArticuloInfo | undefined, reglas: ReglaLista[]): ReglaLis
 }
 
 /**
+ * Cuánto descuento admite un renglón y si el vendedor se pasó.
+ *
+ * Los porcentajes son TOPES (Mati 27/08): poner menos está bien. Un artículo sin ninguna
+ * regla NO tiene descuentos habilitados, así que cualquier número mayor a cero se marca.
+ */
+function evaluarDescuento(
+  r: RenglonPedido,
+  art: ArticuloInfo | undefined,
+  techo: number,
+  propio: { bultos: number; kilos: number },
+  linea: { bultos: number; kilos: number },
+  reglasDescuento: ReglaDescuento[],
+  nombre: string,
+): Pick<AvisoRenglon, 'descuento' | 'descuento_max' | 'mensaje_descuento' | 'nota_descuento'> {
+  const puesto = Math.max(0, Number(r.descuento) || 0);
+
+  const mias = art
+    ? (() => {
+        const porArt = reglasDescuento.filter(g => g.match_tipo === 'articulo' && Number(g.match_valor) === art.cod_articulo);
+        if (porArt.length) return porArt;
+        const sub = art.subrubro.toLowerCase();
+        return reglasDescuento.filter(g => g.match_tipo === 'subrubro' && g.match_valor.toLowerCase() === sub);
+      })()
+    : [];
+
+  // De las que aplican a este renglón, gana el tope más alto.
+  const aplican = mias.filter((g) => {
+    if (g.requiere_lista != null && r.cod_lista !== g.requiere_lista) return false;
+    if (g.requiere_mejor_lista && r.cod_lista !== techo) return false;
+    const base = g.ambito === 'linea' ? linea : propio;
+    return base.bultos >= g.desde_cantidad;
+  });
+  const max = aplican.reduce((m, g) => Math.max(m, g.porcentaje_max), 0);
+  const nota = puesto > 0 ? (aplican.find(g => g.aviso)?.aviso ?? null) : null;
+
+  if (puesto <= max) {
+    return { descuento: puesto, descuento_max: max, mensaje_descuento: null, nota_descuento: nota };
+  }
+  // Se pasó: el mensaje tiene que decir POR QUÉ, que es lo accionable.
+  let motivo: string;
+  if (!mias.length) {
+    motivo = `${nombre}: no tiene descuentos habilitados.`;
+  } else if (max === 0) {
+    const porLista = mias.find(g => g.requiere_lista != null && r.cod_lista !== g.requiere_lista);
+    const porMejor = mias.find(g => g.requiere_mejor_lista && r.cod_lista !== techo);
+    if (porLista) motivo = `${nombre}: el descuento sólo se puede aplicar en ${nombreLista(porLista.requiere_lista as number)}, y este renglón está en ${nombreLista(r.cod_lista)}.`;
+    else if (porMejor) motivo = `${nombre}: el descuento sólo vale con el mejor precio (${nombreLista(techo)}), y este renglón está en ${nombreLista(r.cod_lista)}.`;
+    else motivo = `${nombre}: por esta cantidad todavía no le corresponde descuento.`;
+  } else {
+    motivo = `${nombre}: el descuento máximo para esta cantidad es ${max}% y pusiste ${puesto}%.`;
+  }
+  return { descuento: puesto, descuento_max: max, mensaje_descuento: motivo, nota_descuento: nota };
+}
+
+/**
  * Evalúa un pedido completo y devuelve un aviso por renglón.
  *
  * El error va en dos direcciones y NO son lo mismo:
@@ -178,6 +269,7 @@ export function evaluarPedido(
   renglones: RenglonPedido[],
   catalogo: Map<number, ArticuloInfo>,
   reglas: ReglaLista[],
+  reglasDescuento: ReglaDescuento[] = [],
 ): ResultadoPedido {
   const bultos = bultosDelPedido(renglones, catalogo);
   const promoGeneral = bultos >= BULTOS_PROMO_GENERAL;
@@ -210,15 +302,18 @@ export function evaluarPedido(
 
   const avisos = renglones.map<AvisoRenglon>((r) => {
     const art = catalogo.get(r.cod_articulo);
-    const misReglas = reglasDe(art, reglas);
-    if (!misReglas.length) {
-      return { cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: null,
-        severidad: 'sin_regla', mensaje: null };
-    }
-
+    const nombre = art?.descripcion || `artículo ${r.cod_articulo}`;
     const propio = medirRenglon(r, art);
     const kLinea = claveLinea(art);
     const linea = (kLinea && porLinea.get(kLinea)) || propio;
+
+    const misReglas = reglasDe(art, reglas);
+    if (!misReglas.length) {
+      // Sin regla de LISTA, pero puede tener regla de DESCUENTO: son dos cosas distintas.
+      return { cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: null,
+        severidad: 'sin_regla', mensaje: null,
+        ...evaluarDescuento(r, art, LISTA_BASE, propio, linea, reglasDescuento, nombre) };
+    }
 
     const cumple = misReglas.filter((g) => {
       if (g.condicion === 'libre') return true;
@@ -246,19 +341,22 @@ export function evaluarPedido(
     const porCantidad = cumple.filter((g) => !OPCIONALES.has(g.condicion)).map((g) => g.cod_lista);
     const derecho = porCantidad.length ? Math.max(...porCantidad) : LISTA_BASE;
 
-    const nombre = art?.descripcion || `artículo ${r.cod_articulo}`;
+    const desc = evaluarDescuento(r, art, techo, propio, linea, reglasDescuento, nombre);
+
     if (r.cod_lista > techo) {
       return { cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: techo,
         severidad: 'margen',
-        mensaje: `${nombre}: está en ${nombreLista(r.cod_lista)} pero por esta cantidad le corresponde ${nombreLista(techo)}. Le estás vendiendo más barato de lo que corresponde.` };
+        mensaje: `${nombre}: está en ${nombreLista(r.cod_lista)} pero por esta cantidad le corresponde ${nombreLista(techo)}. Le estás vendiendo más barato de lo que corresponde.`,
+        ...desc };
     }
     if (r.cod_lista < derecho) {
       return { cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: derecho,
         severidad: 'cliente',
-        mensaje: `${nombre}: tiene derecho a ${nombreLista(derecho)} y está en ${nombreLista(r.cod_lista)}. Le estás cobrando de más.` };
+        mensaje: `${nombre}: tiene derecho a ${nombreLista(derecho)} y está en ${nombreLista(r.cod_lista)}. Le estás cobrando de más.`,
+        ...desc };
     }
     return { cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: techo,
-      severidad: 'ok', mensaje: null };
+      severidad: 'ok', mensaje: null, ...desc };
   });
 
   return { bultos, promo_general: promoGeneral, avisos };
