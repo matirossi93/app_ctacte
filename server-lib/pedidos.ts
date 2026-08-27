@@ -101,10 +101,54 @@ async function controlarListas(items: Array<{ cod_articulo: number; cantidad: nu
     const reglas = await reglasActivas();
     const descuentos = await descuentosActivos();
     const catalogo = await catalogoParaListas();
-    return evaluarPedido(items, catalogo, reglas, descuentos);
+    const r = evaluarPedido(items, catalogo, reglas, descuentos);
+    await silenciarSiElPrecioYaEstaBien(r, items);
+    return r;
   } catch (e: any) {
     console.warn('[controlarListas] no se pudo evaluar, sigo sin control:', e?.message);
     return null;
+  }
+}
+
+
+/**
+ * Un descuento y una lista son dos caminos al MISMO precio, y el vendedor elige cuál usar
+ * (Mati, 27/08: "conviven las dos"). Se verificó contra los precios reales: en los cereales
+ * de desayuno, L1 con 25% da exactamente L2, y con 30% exactamente L3.
+ *
+ * Entonces el aviso "tiene derecho a L2 y está en L1, le estás cobrando de más" es un FALSO
+ * POSITIVO cuando el renglón lleva un descuento que ya lo deja en ese precio o mejor. Acá se
+ * compara la PLATA en vez de la etiqueta de la lista, y se silencia el aviso si corresponde.
+ *
+ * Sólo se consultan precios para los renglones que tienen aviso Y descuento, que son pocos, y
+ * getPrecioLista cachea 5 minutos: en el peor caso son dos requests por renglón, la primera vez.
+ */
+async function silenciarSiElPrecioYaEstaBien(
+  r: ResultadoPedido,
+  items: Array<{ cod_articulo: number; cod_lista: number; descuento?: number }>,
+): Promise<void> {
+  for (const a of r.avisos) {
+    if (a.severidad !== 'cliente' || a.lista_sugerida == null) continue;
+    const it = items.find((x) => x.cod_articulo === a.cod_articulo);
+    const desc = Number(it?.descuento) || 0;
+    if (!it || desc <= 0) continue;
+    try {
+      const [elegida, sugerida] = [
+        await getPrecioLista(a.cod_articulo, a.lista_elegida),
+        await getPrecioLista(a.cod_articulo, a.lista_sugerida),
+      ];
+      if (!elegida || !sugerida) continue;
+      const final = elegida.precio_vta * (1 - desc / 100);
+      // Un centavo de tolerancia: los precios de IM vienen con decimales redondeados.
+      if (final <= sugerida.precio_vta + 0.01) {
+        a.severidad = 'ok';
+        a.mensaje = null;
+      }
+    } catch (e: any) {
+      // Si no se puede consultar el precio, se deja el aviso como estaba: avisar de más es
+      // mejor que callar un caso real.
+      console.warn('[controlarListas] no pude comparar precios:', e?.message);
+    }
   }
 }
 

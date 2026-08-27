@@ -764,13 +764,32 @@ export async function actualizarPresupuestoCantidades(
   }
 }
 
+/**
+ * Precios cacheados 5 minutos por (artículo, lista).
+ *
+ * El control de listas necesita comparar el precio de DOS listas del mismo artículo para
+ * saber si un descuento ya alcanza el precio que corresponde, y eso corre en vivo mientras
+ * el vendedor arma el carrito: sin cache serían dos requests a IM por renglón por tecleo, y
+ * la regla de oro del proyecto es no saturar a IM.
+ *
+ * 5 minutos es seguro: los precios se actualizan una vez por día (el propio endpoint
+ * devuelve `ult_actualizacion_precio` con fecha, no con hora).
+ */
+const PRECIO_TTL_MS = 5 * 60 * 1000;
+const _precioCache = new Map<string, { precio: PrecioLista | null; fetchedAt: number }>();
+
 export async function getPrecioLista(codArticulo: number, codLista: number): Promise<PrecioLista | null> {
+  const k = `${codArticulo}|${codLista}`;
+  const hit = _precioCache.get(k);
+  if (hit && Date.now() - hit.fetchedAt < PRECIO_TTL_MS) return hit.precio;
   const cli = await imClient();
   const { data } = await imGetRetry(
     () => cli.get('/articulos/precio-ldp', { params: { cod_articulo: codArticulo, cod_lista: codLista } }),
     `precio-ldp art=${codArticulo} lista=${codLista}`
   );
-  return parsePrecioLista(data, codArticulo);
+  const precio = parsePrecioLista(data, codArticulo);
+  _precioCache.set(k, { precio, fetchedAt: Date.now() });
+  return precio;
 }
 
 
