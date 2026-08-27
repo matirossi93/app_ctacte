@@ -701,6 +701,58 @@ export function parsePrecioLista(data: any, codArticulo: number): PrecioLista | 
   };
 }
 
+/** Renglones de un comprobante en IM, con el id que necesita el PUT de presupuestos. */
+export async function getItemsComprobante(idComprobante: string | number): Promise<Array<{ id: number; cod_articulo: number; cantidad: number; cod_lista_precios: number | null }>> {
+  const cli = await imClient();
+  const { data } = await imGetRetry(() => cli.get(`/ventas/${idComprobante}`), `ventas/${idComprobante}`);
+  const items: any[] = data?.items ?? data?.results?.items ?? [];
+  return items.map((it) => ({
+    id: Number(it.id),
+    cod_articulo: Number(it.cod_articulo),
+    cantidad: Number(it.cantidad),
+    cod_lista_precios: it.cod_lista_precios != null ? Number(it.cod_lista_precios) : null,
+  }));
+}
+
+/** ¿El presupuesto ya se facturó? 404 = no tiene factura vinculada (no es un error). */
+export async function presupuestoFacturado(idPresupuesto: string | number): Promise<{ facturado: boolean; desconocido?: boolean }> {
+  const cli = await imClient();
+  try {
+    const { data } = await cli.get(`/presupuestos/obtener_facturas/${idPresupuesto}`);
+    const rows = data?.results ?? (Array.isArray(data) ? data : data ? [data] : []);
+    return { facturado: rows.length > 0 };
+  } catch (err: any) {
+    if (err?.response?.status === 404) return { facturado: false };
+    // 500 / timeout: NO se sabe. Quien llama decide, pero nunca hay que asumir "libre".
+    return { facturado: false, desconocido: true };
+  }
+}
+
+/**
+ * PUT /presupuestos/{id} — actualiza un presupuesto ya creado.
+ *
+ * ⚠️ El schema VentasPresupuestosActualizar sólo acepta `items` (con `id` y `cantidad`) y
+ * `tipo_presupuesto`. O sea: SOLO se pueden cambiar cantidades de renglones que ya existen.
+ * Para agregar o sacar productos, o cambiar la lista de precios, hay que anular y crear de
+ * nuevo. El `id` de cada renglón sale de getItemsComprobante().
+ */
+export async function actualizarPresupuestoCantidades(
+  idPresupuesto: string | number,
+  items: Array<{ id: number; cantidad: number }>,
+): Promise<{ ok: boolean; error?: string; raw?: any }> {
+  const cli = await imClient();
+  try {
+    const { data } = await cli.put(`/presupuestos/${idPresupuesto}`, { items });
+    // IM devuelve 200 igual con error de negocio en el body (mismo patrón que el resto).
+    if (data?.error != null && Number(data.error) !== 0) {
+      return { ok: false, error: String(data.detalles ?? data.mensaje ?? 'IM rechazó la actualización'), raw: data };
+    }
+    return { ok: true, raw: data };
+  } catch (err: any) {
+    return { ok: false, error: err?.message ?? 'sin respuesta de IM', raw: err?.response?.data };
+  }
+}
+
 export async function getPrecioLista(codArticulo: number, codLista: number): Promise<PrecioLista | null> {
   const cli = await imClient();
   const { data } = await imGetRetry(

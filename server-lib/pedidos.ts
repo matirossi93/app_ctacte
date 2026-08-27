@@ -4,6 +4,7 @@ import { sb, TENANT_ID } from './supabase.js';
 import {
   crearPresupuesto, anularComprobante, getPrecioLista, getDisponibleCliente,
   fetchClientesIMCached, fetchArticulosCatalogo, fetchArticulosDeDeposito,
+  getItemsComprobante, presupuestoFacturado, actualizarPresupuestoCantidades,
 } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
 import {
@@ -100,6 +101,81 @@ export async function validarListasPedido(req: Request & { user?: JwtPayload }, 
   }
 }
 
+
+/** Un renglón ya resuelto: con su precio, su lista y su subtotal. */
+export interface ItemResuelto {
+  cod_articulo: number; cantidad: number; cod_lista: number;
+  descripcion: string; precio: number; iva: number; subtotal: number;
+}
+
+/**
+ * Le pone precio a cada renglón y corre el control de listas. Devuelve el motivo del
+ * rechazo si el pedido no puede seguir, para que crearPedido y editarPedido respondan igual.
+ *
+ * Los precios se piden SECUENCIALMENTE: IM se satura con requests en paralelo.
+ */
+async function resolverYControlar(
+  itemsValidos: Array<{ cod_articulo: number; cantidad: number; cod_lista?: number }>,
+  codListaCliente: number,
+  etiqueta: string,
+): Promise<
+  | { ok: true; items: ItemResuelto[]; total: number; control: ResultadoPedido | null }
+  | { ok: false; status: number; body: Record<string, any> }
+> {
+  const items: ItemResuelto[] = [];
+  let total = 0;
+  for (const it of itemsValidos) {
+    // La lista del RENGLON manda; si el vendedor no eligió una, va la del cliente.
+    const listaItem = it.cod_lista ?? codListaCliente;
+    let precio = 0, iva = 21, descripcion = '';
+    try {
+      const p = await getPrecioLista(it.cod_articulo, listaItem);
+      if (p) { precio = p.precio_vta; iva = p.iva; descripcion = p.descripcion; }
+    } catch (e: any) {
+      console.warn(`[${etiqueta}] precio-ldp falló art=${it.cod_articulo} lista=${listaItem}:`, e?.message);
+    }
+    const subtotal = Math.round(precio * it.cantidad * 100) / 100;
+    total += subtotal;
+    items.push({ cod_articulo: it.cod_articulo, cantidad: it.cantidad, cod_lista: listaItem, descripcion, precio, iva, subtotal });
+  }
+  total = Math.round(total * 100) / 100;
+
+  // 🪤 Sin precio no se vende. IM contesta 200 con el error en el body cuando el artículo no
+  // está en esa lista, y eso pasaba como precio 0: el renglón se guardaba en cero y se
+  // mandaba así. Pasó con el art 918 COLLAR AHORQUE CHICO en Lista 3.
+  const sinPrecio = items.filter((it) => !(it.precio > 0));
+  if (sinPrecio.length) {
+    const nombres = sinPrecio.map((it) => it.descripcion || `artículo ${it.cod_articulo}`).join(', ');
+    return { ok: false, status: 422, body: {
+      ok: false, bloqueado: true,
+      error: `${nombres}: no tiene precio cargado en la lista elegida. Probá con otra lista o avisá a la oficina.`,
+      sin_precio: sinPrecio.map((it) => ({ cod_articulo: it.cod_articulo, cod_lista: it.cod_lista })),
+    } };
+  }
+
+  // 🔒 Vender MÁS BARATO de lo que corresponde se FRENA (Mati, 26/08: "no le deje
+  // presupuestar un producto a un precio más bajo del que le corresponde, sino pierde el
+  // sentido de ese control"). Es plata que se pierde y no la recupera nadie después.
+  //
+  // Al revés NO se frena: cobrarle de más a un cliente que tenía derecho a mejor precio se
+  // avisa, pero el vendedor puede tener un motivo. Y si el control no pudo correr (IM caído,
+  // Supabase sin responder) tampoco se frena: no se pierde una venta por un problema nuestro.
+  const control = await controlarListas(items.map((it) => ({
+    cod_articulo: it.cod_articulo, cantidad: it.cantidad, cod_lista: it.cod_lista,
+  })));
+  const bloqueos = (control?.avisos ?? []).filter((a) => a.severidad === 'margen');
+  if (bloqueos.length) {
+    return { ok: false, status: 422, body: {
+      ok: false, bloqueado: true,
+      error: bloqueos.length === 1
+        ? bloqueos[0].mensaje
+        : `Hay ${bloqueos.length} renglones con la lista mal elegida. Corregilos antes de enviar el pedido.`,
+      avisos: bloqueos,
+    } };
+  }
+  return { ok: true, items, total, control };
+}
+
 /** Resuelve cod_vendedor del pedido según rol (vendedor = el suyo; admin/gerente = del body o del cliente). */
 async function resolverCodVendedor(user: JwtPayload, codCliente: number, bodyCodVend?: any): Promise<number> {
   if (user.rol === 'vendedor') return user.cod_vendedor ?? 0;
@@ -168,65 +244,10 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
 
     const codVendedor = await resolverCodVendedor(user, codCliente, body.cod_vendedor);
 
-    // Resolver precio de cada item en la lista del cliente (secuencial: IM se satura en paralelo).
-    const itemsConPrecio: Array<{ cod_articulo: number; cantidad: number; descripcion: string; precio: number; iva: number; subtotal: number; cod_lista: number }> = [];
-    let totalEstimado = 0;
-    for (const it of itemsValidos) {
-      // La lista del RENGLON manda; si el vendedor no eligió una, va la del cliente.
-      const listaItem = it.cod_lista ?? codLista;
-      let precio = 0, iva = 21, descripcion = '';
-      try {
-        const p = await getPrecioLista(it.cod_articulo, listaItem);
-        if (p) { precio = p.precio_vta; iva = p.iva; descripcion = p.descripcion; }
-      } catch (e: any) {
-        console.warn(`[crearPedido] precio-ldp falló art=${it.cod_articulo} lista=${listaItem}:`, e?.message);
-      }
-      const subtotal = Math.round(precio * it.cantidad * 100) / 100;
-      totalEstimado += subtotal;
-      itemsConPrecio.push({ ...it, descripcion, precio, iva, subtotal, cod_lista: listaItem });
-    }
-
-    // 🪤 Sin precio no se vende. IM contesta 200 con el error en el body cuando el artículo
-    // no está en esa lista de precios, y eso pasaba como precio 0: el renglón se guardaba
-    // en cero y se mandaba así. Pasó con el art 918 COLLAR AHORQUE CHICO en Lista 3.
-    const sinPrecio = itemsConPrecio.filter((it) => !(it.precio > 0));
-    if (sinPrecio.length) {
-      const nombres = sinPrecio.map((it) => it.descripcion || `artículo ${it.cod_articulo}`).join(', ');
-      res.status(422).json({
-        ok: false, bloqueado: true,
-        error: `${nombres}: no tiene precio cargado en la lista elegida. Probá con otra lista o avisá a la oficina.`,
-        sin_precio: sinPrecio.map((it) => ({ cod_articulo: it.cod_articulo, cod_lista: it.cod_lista })),
-      });
-      return;
-    }
-    totalEstimado = Math.round(totalEstimado * 100) / 100;
-
-    // Control de listas ANTES de escribir nada: si hay que frenar el pedido, no queremos
-    // haber dejado una cabecera huérfana en Supabase.
-    //
-    // 🔒 Vender MÁS BARATO de lo que corresponde se FRENA (Mati, 26/08: "no le deje
-    // presupuestar un producto a un precio más bajo del que le corresponde, sino pierde
-    // el sentido de ese control"). Es plata que se pierde y nadie la recupera después.
-    //
-    // Al revés NO se frena: cobrarle de más a un cliente que tenía derecho a mejor precio
-    // se avisa, pero el vendedor puede tener un motivo. Y si el control no pudo correr
-    // (IM caído, Supabase sin responder) tampoco se frena: no se pierde una venta por un
-    // problema nuestro.
-    const control = await controlarListas(itemsConPrecio.map((it) => ({
-      cod_articulo: it.cod_articulo, cantidad: it.cantidad, cod_lista: it.cod_lista,
-    })));
+    const resuelto = await resolverYControlar(itemsValidos, codLista, 'crearPedido');
+    if (!resuelto.ok) { res.status(resuelto.status).json(resuelto.body); return; }
+    const { items: itemsConPrecio, total: totalEstimado, control } = resuelto;
     const avisoPorArt = new Map(control?.avisos.map((a) => [a.cod_articulo, a]) ?? []);
-    const bloqueos = (control?.avisos ?? []).filter((a) => a.severidad === 'margen');
-    if (bloqueos.length) {
-      res.status(422).json({
-        ok: false, bloqueado: true,
-        error: bloqueos.length === 1
-          ? bloqueos[0].mensaje
-          : `Hay ${bloqueos.length} renglones con la lista mal elegida. Corregilos antes de enviar el pedido.`,
-        avisos: bloqueos,
-      });
-      return;
-    }
 
     // 1. Guardar el pedido en Supabase (estado borrador).
     const pedidoId = randomUUID();
@@ -318,6 +339,163 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
     }
   } catch (err: any) {
     console.error('crearPedido error:', err);
+    res.status(500).json({ error: err?.message ?? 'error interno' });
+  }
+}
+
+/**
+ * PUT /api/pedidos/:id — editar un pedido que todavía no se facturó.
+ *
+ * Híbrido, porque InfoManager no deja hacer todo (Mati eligió esto el 26/08):
+ *   · si SOLO cambiaron cantidades  -> PUT /presupuestos/{id} y el número se conserva.
+ *   · si cambió el surtido o alguna lista -> se anula el presupuesto y se crea uno nuevo,
+ *     porque el schema VentasPresupuestosActualizar sólo acepta {id, cantidad} por renglón:
+ *     no se pueden agregar ni sacar productos, ni cambiar la lista de precios.
+ * La respuesta dice cuál de los dos caminos se tomó (`numero_cambio`) para que el frontend
+ * pueda avisarle al vendedor que el presupuesto pasó a tener otro número.
+ *
+ * Quién puede: el vendedor sus propios pedidos; admin y gerencia cualquiera (Jorgelina
+ * necesita poder corregir lo que ve, que es justamente lo que le queremos ahorrar a mano).
+ */
+export async function editarPedido(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    let q = sb().from('pedidos_vendedor').select('*').eq('id', req.params.id).eq('tenant_id', TENANT_ID);
+    if (user.rol === 'vendedor') q = q.eq('cod_vendedor', user.cod_vendedor ?? -1);
+    const { data: pedido, error } = await q.maybeSingle();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    if (!pedido) { res.status(404).json({ error: 'Pedido no encontrado' }); return; }
+
+    if (pedido.estado === 'anulado') { res.status(409).json({ error: 'El pedido está anulado: no se puede editar.' }); return; }
+    if (pedido.estado === 'facturado') { res.status(409).json({ error: 'El pedido ya está facturado: no se puede editar.' }); return; }
+    if (pedido.estado === 'sin_respuesta') {
+      res.status(409).json({ error: 'No sabemos si este pedido entró en InfoManager. Revisalo a mano antes de tocarlo.' }); return;
+    }
+
+    // ¿Ya lo facturaron en IM mientras tanto? Si sí, se sincroniza el estado y se corta.
+    if (pedido.im_presupuesto_id) {
+      const f = await presupuestoFacturado(pedido.im_presupuesto_id);
+      if (f.desconocido) {
+        res.status(502).json({ error: 'No se pudo verificar en InfoManager si el pedido ya está facturado. Probá de nuevo en un rato.' }); return;
+      }
+      if (f.facturado) {
+        await sb().from('pedidos_vendedor').update({ estado: 'facturado' }).eq('id', pedido.id);
+        res.status(409).json({ error: 'El pedido ya fue facturado en InfoManager: no se puede editar.' }); return;
+      }
+    }
+
+    const body = req.body ?? {};
+    const itemsInput: ItemInput[] = Array.isArray(body.items) ? body.items : [];
+    const itemsValidos = itemsInput
+      .map((it) => ({
+        cod_articulo: Number(it.cod_articulo),
+        cantidad: Number(it.cantidad),
+        cod_lista: LISTAS_VALIDAS.has(Number(it.cod_lista)) ? Number(it.cod_lista) : undefined,
+      }))
+      .filter((it) => it.cod_articulo > 0 && it.cantidad > 0);
+    if (!itemsValidos.length) { res.status(400).json({ error: 'El pedido no tiene items válidos' }); return; }
+
+    const resuelto = await resolverYControlar(itemsValidos, Number(pedido.cod_lista_precios) || PEDIDO_LISTA_FALLBACK, 'editarPedido');
+    if (!resuelto.ok) { res.status(resuelto.status).json(resuelto.body); return; }
+    const { items: nuevos, total, control } = resuelto;
+    const avisoPorArt = new Map(control?.avisos.map((a) => [a.cod_articulo, a]) ?? []);
+
+    // ¿Alcanza con actualizar cantidades? Sólo si el surtido y las listas son los mismos.
+    const { data: actuales } = await sb().from('pedidos_vendedor_items')
+      .select('cod_articulo, cod_lista_precios').eq('pedido_id', pedido.id);
+    const firma = (xs: Array<{ cod_articulo: any; cod_lista: any }>) =>
+      xs.map((x) => `${Number(x.cod_articulo)}:${Number(x.cod_lista)}`).sort().join('|');
+    const soloCantidades = firma(nuevos) === firma((actuales ?? []).map((a: any) => ({
+      cod_articulo: a.cod_articulo, cod_lista: a.cod_lista_precios,
+    })));
+
+    const observaciones = body.observaciones != null ? String(body.observaciones) : pedido.observaciones;
+    let numeroCambio = false;
+    let imUpdate: Record<string, any> = {};
+
+    if (PEDIDOS_DRY_RUN || !pedido.im_presupuesto_id) {
+      // Nunca llegó a IM (dry-run o quedó en borrador): sólo se reescribe en Supabase.
+      console.log('[editarPedido] sin push a IM (dry_run o pedido en borrador)', pedido.id);
+    } else if (soloCantidades) {
+      // Camino barato: se conserva el número de presupuesto.
+      const imItems = await getItemsComprobante(pedido.im_presupuesto_id);
+      const porArticulo = new Map(imItems.map((i) => [i.cod_articulo, i.id]));
+      const payload = nuevos
+        .map((it) => ({ id: porArticulo.get(it.cod_articulo) as number, cantidad: it.cantidad }))
+        .filter((x) => Number.isFinite(x.id));
+      if (payload.length !== nuevos.length) {
+        res.status(409).json({ error: 'Los renglones del presupuesto en InfoManager no coinciden con los de la app. Anulá el pedido y cargalo de nuevo.' });
+        return;
+      }
+      const r = await actualizarPresupuestoCantidades(pedido.im_presupuesto_id, payload);
+      if (!r.ok) { res.status(400).json({ ok: false, error: `InfoManager no pudo actualizar el presupuesto: ${r.error}`, raw: r.raw }); return; }
+    } else {
+      // Cambió el surtido o una lista: IM no lo permite sobre el mismo presupuesto.
+      const anul = await anularComprobante({
+        id: pedido.im_presupuesto_id,
+        numero: pedido.im_numero,
+        punto_de_venta: pedido.im_punto_de_venta ?? PEDIDO_PUNTO_DE_VENTA,
+        fecha: new Date(pedido.created_at).toISOString().slice(0, 10),
+        observaciones: `Reemplazado por edición · pedido ${String(pedido.id).slice(0, 8)}`,
+      });
+      if (!anul.ok) {
+        res.status(400).json({ ok: false, error: `No se pudo anular el presupuesto anterior en InfoManager: ${anul.error}. No se cambió nada.` });
+        return;
+      }
+      const imRes = await crearPresupuesto({
+        cod_empresa: Number(pedido.cod_empresa) || PEDIDO_EMPRESA_DEFAULT,
+        cod_cliente: Number(pedido.cod_cliente),
+        cod_vendedor: Number(pedido.cod_vendedor),
+        cod_lista_precios: Number(pedido.cod_lista_precios) || PEDIDO_LISTA_FALLBACK,
+        usuario: IM_USUARIO_PEDIDOS,
+        punto_de_venta: PEDIDO_PUNTO_DE_VENTA,
+        observaciones: (observaciones || `Pedido app · vend ${pedido.cod_vendedor}`).slice(0, 500),
+        cod_compatibilidad: String(pedido.id).slice(0, 8),
+        items: nuevos.map((it) => ({
+          cod_articulo: it.cod_articulo, cantidad: it.cantidad,
+          precio: it.precio > 0 ? String(it.precio) : undefined, iva_por: it.iva,
+        })),
+      });
+      if (!imRes.ok) {
+        // El viejo quedó anulado y el nuevo no entró: hay que decirlo fuerte, no dejarlo pasar.
+        await sb().from('pedidos_vendedor').update({
+          estado: imRes.sinRespuesta ? 'sin_respuesta' : 'error', im_error: imRes.error,
+        }).eq('id', pedido.id);
+        res.status(imRes.sinRespuesta ? 202 : 400).json({
+          ok: false,
+          error: `Se anuló el presupuesto ${pedido.im_numero} pero el nuevo NO se pudo crear: ${imRes.error}. Revisalo en InfoManager.`,
+        });
+        return;
+      }
+      numeroCambio = true;
+      imUpdate = { im_presupuesto_id: imRes.id, im_numero: imRes.numero, im_error: null };
+    }
+
+    // Los renglones se reemplazan enteros: es más simple y no deja restos.
+    await sb().from('pedidos_vendedor_items').delete().eq('pedido_id', pedido.id);
+    await sb().from('pedidos_vendedor_items').insert(nuevos.map((it, i) => {
+      const av = avisoPorArt.get(it.cod_articulo);
+      return {
+        pedido_id: pedido.id,
+        cod_articulo: it.cod_articulo,
+        descripcion: it.descripcion || null,
+        cantidad: it.cantidad,
+        precio_unit: it.precio,
+        cod_lista_precios: it.cod_lista,
+        lista_sugerida: av?.lista_sugerida ?? null,
+        aviso_lista: av?.mensaje ?? null,
+        iva_por: it.iva,
+        subtotal: it.subtotal,
+        orden: i,
+      };
+    }));
+    const { data: final } = await sb().from('pedidos_vendedor')
+      .update({ total_estimado: total, observaciones, ...imUpdate })
+      .eq('id', pedido.id).select().maybeSingle();
+
+    res.json({ ok: true, pedido: final, numero_cambio: numeroCambio, solo_cantidades: soloCantidades });
+  } catch (err: any) {
+    console.error('editarPedido error:', err);
     res.status(500).json({ error: err?.message ?? 'error interno' });
   }
 }

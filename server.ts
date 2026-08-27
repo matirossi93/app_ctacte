@@ -46,7 +46,7 @@ import { getConciliacion, exportConciliacion, listSnapshotsConciliacion, guardar
 import { cruceCarpetaHandler, exportCruceHandler } from './server-lib/cruceCarpeta.js';
 import { listRebotes, listRecargos, syncRebotesNow, syncRebotes } from './server-lib/rebotes.js';
 import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos, hermanosDeFamilia } from './server-lib/productGoals.js';
-import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, precioArticulo, catalogoPedido, validarListasPedido } from './server-lib/pedidos.js';
+import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, precioArticulo, catalogoPedido, validarListasPedido, editarPedido } from './server-lib/pedidos.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -652,6 +652,7 @@ app.post('/api/pedidos/validar', requireJwt, (req: any, res) => validarListasPed
 app.get('/api/pedidos', requireJwt, (req: any, res) => listPedidos(req, res));
 app.post('/api/pedidos', requireJwt, (req: any, res) => crearPedido(req, res));
 app.get('/api/pedidos/:id', requireJwt, (req: any, res) => getPedidoById(req, res));
+app.put('/api/pedidos/:id', requireJwt, (req: any, res) => editarPedido(req, res));
 app.post('/api/pedidos/:id/anular', requireJwt, (req: any, res) => anularPedido(req, res));
 
 // Reportes admin-only (xlsx)

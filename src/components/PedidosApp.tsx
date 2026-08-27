@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     X, Search, User, ShoppingCart, Plus, Minus, Trash2, Send, Loader2,
     CheckCircle2, AlertCircle, ArrowLeft, PackageSearch, Wallet, Ban,
-    Package, AlertTriangle,
+    Package, AlertTriangle, Pencil,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import './PedidosApp.css';
@@ -96,6 +96,9 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     const [clienteSearch, setClienteSearch] = useState('');
 
     const idempotencyKey = useRef<string>(crypto.randomUUID());
+    // id del pedido que se está editando (null = pedido nuevo). Editar reusa el mismo
+    // wizard: para el vendedor es la misma pantalla, sólo cambia a dónde se manda al final.
+    const [editando, setEditando] = useState<string | null>(null);
 
     // ── Buscador de clientes ────────────────────────────────────────────────
     const clientesFiltrados = useMemo(() => {
@@ -220,6 +223,43 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     // rechaza). Cobrarle de más al cliente sólo avisa: ahí el vendedor puede tener un motivo.
     const bloqueos = control?.avisos?.filter(a => a.severidad === 'margen') ?? [];
 
+    // ── Editar un pedido ya cargado ─────────────────────────────────────────
+    const [abriendo, setAbriendo] = useState<string | null>(null);
+    async function editarPedido(p: Pedido) {
+        setAbriendo(p.id);
+        try {
+            const r = await fetch(`/api/pedidos/${p.id}`, { headers: authHeaders() });
+            const d = await r.json();
+            if (!r.ok || !d?.ok) { alert(d?.error ?? 'No se pudo abrir el pedido'); return; }
+            setCart((d.items ?? []).map((i: any) => ({
+                cod_articulo: Number(i.cod_articulo),
+                descripcion: String(i.descripcion ?? `Artículo ${i.cod_articulo}`),
+                cantidad: Number(i.cantidad),
+                precio: Number(i.precio_unit),
+                cod_lista: Number(i.cod_lista_precios) || LISTA_DEFECTO,
+            })));
+            setCliente({ cod: String(p.cod_cliente), name: p.cliente_nombre ?? `Cliente ${p.cod_cliente}` });
+            setObs(d.pedido?.observaciones ?? '');
+            setEditando(p.id);
+            setResultado(null);
+            setMode('nuevo');
+            setStep('productos');
+            setCredito(null); setCredLoading(true);
+            try {
+                const rc = await fetch(`/api/pedidos/credito/${p.cod_cliente}`, { headers: authHeaders() });
+                const dc = await rc.json();
+                if (dc?.ok && dc.credito) setCredito(dc.credito);
+            } catch { /* sin crédito, no bloquea */ }
+            setCredLoading(false);
+        } catch (e: any) {
+            alert(e?.message ?? 'Error de red');
+        } finally {
+            setAbriendo(null);
+        }
+    }
+    /** Facturado o anulado ya no se toca. */
+    const editable = (p: Pedido) => p.estado !== 'facturado' && p.estado !== 'anulado' && p.estado !== 'sin_respuesta';
+
     // ── Confirmar ───────────────────────────────────────────────────────────
     const [enviando, setEnviando] = useState(false);
     const [resultado, setResultado] = useState<{ ok: boolean; numero?: number | null; msg: string; warn?: boolean } | null>(null);
@@ -228,19 +268,34 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         if (!cliente || !cart.length) return;
         setEnviando(true); setResultado(null);
         try {
-            const r = await fetch('/api/pedidos', {
-                method: 'POST',
-                headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    cod_cliente: Number(cliente.cod),
-                    observaciones: obs || undefined,
-                    idempotency_key: idempotencyKey.current,
-                    items: cart.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista: i.cod_lista })),
-                }),
-            });
+            const items = cart.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista: i.cod_lista }));
+            const r = editando
+                ? await fetch(`/api/pedidos/${editando}`, {
+                    method: 'PUT',
+                    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ observaciones: obs || undefined, items }),
+                })
+                : await fetch('/api/pedidos', {
+                    method: 'POST',
+                    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        cod_cliente: Number(cliente.cod),
+                        observaciones: obs || undefined,
+                        idempotency_key: idempotencyKey.current,
+                        items,
+                    }),
+                });
             const d = await r.json();
             if (r.ok && d?.ok) {
-                setResultado({ ok: true, numero: d.pedido?.im_numero ?? null, msg: d.dry_run ? 'Guardado (DRY-RUN, no se envió a IM)' : 'Pedido enviado a InfoManager' });
+                setResultado({
+                    ok: true,
+                    numero: d.pedido?.im_numero ?? null,
+                    msg: !editando
+                        ? (d.dry_run ? 'Guardado (DRY-RUN, no se envió a IM)' : 'Pedido enviado a InfoManager')
+                        : d.numero_cambio
+                            ? 'Pedido modificado. Como cambiaron los productos, InfoManager le dio un número nuevo y anuló el anterior.'
+                            : 'Pedido modificado en InfoManager.',
+                });
                 setStep('listo');
             } else if (r.status === 202 || d?.sin_respuesta) {
                 setResultado({ ok: false, warn: true, msg: d?.error ?? 'IM no respondió — revisá antes de reintentar' });
@@ -263,7 +318,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
 
     function nuevoPedido() {
         setStep('cliente'); setCliente(null); setCredito(null); setCart([]); setObs(''); setListaCliente(LISTA_DEFECTO);
-        setClienteSearch(''); setCatQuery(''); setCatResults([]); setResultado(null);
+        setClienteSearch(''); setCatQuery(''); setCatResults([]); setResultado(null); setEditando(null);
         idempotencyKey.current = crypto.randomUUID();
     }
 
@@ -302,11 +357,17 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                             const e = ESTADO_LABEL[p.estado] ?? { txt: p.estado, cls: 'gray' };
                             return (
                                 <div key={p.id} className="ped-row">
-                                    <div>
+                                    <div className="ped-row-info">
                                         <div className="ped-row-cli">{p.cliente_nombre ?? `Cliente ${p.cod_cliente}`}</div>
                                         <div className="ped-row-sub">{new Date(p.created_at).toLocaleDateString('es-AR')} · {money(p.total_estimado)}{p.im_numero ? ` · Nº ${p.im_numero}` : ''}</div>
                                     </div>
                                     <span className={`ped-chip ${e.cls}`}>{e.txt}</span>
+                                    {editable(p) && (
+                                        <button className="ped-editar" disabled={abriendo === p.id} onClick={() => editarPedido(p)}>
+                                            {abriendo === p.id ? <Loader2 className="spin" size={14} /> : <Pencil size={14} />}
+                                            Editar
+                                        </button>
+                                    )}
                                 </div>
                             );
                         })}
@@ -333,8 +394,16 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                     <>
                         <div className="ped-body">
                             {/* Cliente + crédito */}
+                            {editando && (
+                                <div className="ped-editando">
+                                    <Pencil size={14} />
+                                    <span>Estás editando un pedido ya cargado. Al confirmar se actualiza en InfoManager.</span>
+                                </div>
+                            )}
                             <div className="ped-cliente-box">
-                                <button className="ped-back" onClick={() => setStep('cliente')}><ArrowLeft size={16} /></button>
+                                {/* Al editar no se puede cambiar de cliente: InfoManager no lo permite
+                                    sobre un presupuesto existente. Habría que anularlo y cargarlo de nuevo. */}
+                                {!editando && <button className="ped-back" onClick={() => setStep('cliente')}><ArrowLeft size={16} /></button>}
                                 <div className="ped-cliente-info">
                                     <div className="ped-cli-name">{cliente.name}</div>
                                     <div className={`ped-credito ${credColor}`}>
@@ -446,7 +515,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                             <div className="ped-footer-row">
                                 <div className="ped-total">Total <b>{money(total)}</b><span className="ped-total-nota">IM recalcula al facturar</span></div>
                                 <button className="ped-confirm" disabled={!cart.length || enviando || bloqueos.length > 0} onClick={confirmar}>
-                                    {enviando ? <><Loader2 className="spin" size={18} /> Enviando…</> : <><Send size={18} /> Confirmar pedido</>}
+                                        {enviando ? <><Loader2 className="spin" size={18} /> Enviando…</> : <><Send size={18} /> {editando ? 'Guardar cambios' : 'Confirmar pedido'}</>}
                                 </button>
                             </div>
                         </footer>
