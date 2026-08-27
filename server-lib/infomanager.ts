@@ -408,7 +408,14 @@ export async function fetchComprobPendientes(codEmpresa: number, codCliente?: nu
 let vendedoresCache: { data: Array<{ cod_vendedor: number; nombre: string }>; fetchedAt: number } | null = null;
 const VENDEDORES_TTL_MS = 60 * 60 * 1000;
 
-export async function fetchVendedores(): Promise<Array<{ cod_vendedor: number; nombre: string }>> {
+/**
+ * Vendedores de IM. La ficha trae `usuario`: el login de InfoManager de ESE vendedor, que es
+ * con el que hay que crear sus presupuestos.
+ *
+ * Al 27/08/2026 los 12 vendedores lo tienen en null — el campo existe en IM pero nadie lo
+ * cargó. Cuando lo carguen, usuarioIM() lo toma solo (ver server-lib/pedidos.ts).
+ */
+export async function fetchVendedores(): Promise<Array<{ cod_vendedor: number; nombre: string; usuario?: string | null; inactivo?: string }>> {
   const now = Date.now();
   if (vendedoresCache && (now - vendedoresCache.fetchedAt) < VENDEDORES_TTL_MS) {
     return vendedoresCache.data;

@@ -5,7 +5,7 @@ import {
   crearPresupuesto, anularComprobante, getPrecioLista, getDisponibleCliente,
   fetchClientesIMCached, fetchArticulosCatalogo, fetchArticulosDeDeposito,
   getItemsComprobante, presupuestoFacturado, actualizarPresupuestoCantidades,
-  fechaComprobante, fechaArgentina,
+  fechaComprobante, fechaArgentina, fetchVendedores,
 } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
 import {
@@ -27,17 +27,42 @@ if (!IM_USUARIO_PEDIDOS) {
 /**
  * Con qué usuario de InfoManager se crea el presupuesto.
  *
- * En IM el campo `usuario` no es el vendedor sino el OPERADOR que carga el comprobante (el
- * vendedor viaja aparte, en cod_vendedor). Hasta el 27/08 iba siempre el usuario único de la
- * app, así que en IM todos los pedidos figuraban cargados por la misma persona. Ahora, si el
- * vendedor tiene su propio login de IM guardado en `usuarios.im_usuario`, se usa ese.
+ * Ojo con qué es este campo: en IM `usuario` no es el vendedor sino el OPERADOR que carga el
+ * comprobante — el vendedor viaja aparte, en cod_vendedor. Hasta el 27/08 iba siempre el
+ * usuario único de la app, así que en IM todos los pedidos figuraban cargados por la misma
+ * persona (verificado: de 1.052 comprobantes de Casa Central, jorgelina cargó 879 y susana
+ * 143, cada una para 6 o 7 vendedores distintos).
  *
- * El fallback NO es opcional: un usuario que IM no reconozca puede hacer que rechace el
- * presupuesto entero. Si la columna está vacía se sigue usando el de siempre, que anda.
+ * Se resuelve en tres pasos, y el orden importa:
+ *   1. `usuarios.im_usuario` — override manual nuestro. Gana siempre, para poder arreglar un
+ *      caso puntual sin depender de que alguien toque IM.
+ *   2. El campo `usuario` de la ficha del vendedor en IM (GET /vendedores). Es la fuente
+ *      natural: se carga una vez allá y no hay nada que mantener sincronizado de este lado.
+ *      Al 27/08/2026 viene null en los 12 vendedores — el campo existe, está sin cargar.
+ *   3. IM_USUARIO_PEDIDOS, el usuario único de la app. Lo de siempre.
+ *
+ * El fallback NO es cosmético: un usuario que IM no reconozca puede hacer que rechace el
+ * presupuesto entero, y ahí ningún vendedor puede cargar nada. Si IM no contesta o el campo
+ * está vacío, se usa el que ya sabemos que funciona.
  */
-export function usuarioIM(user?: { im_usuario?: string | null } | null): string {
+export async function usuarioIM(
+  user?: { im_usuario?: string | null; cod_vendedor?: number | null } | null,
+): Promise<string> {
   const propio = String(user?.im_usuario ?? '').trim();
-  return propio || IM_USUARIO_PEDIDOS;
+  if (propio) return propio;
+
+  const cod = Number(user?.cod_vendedor);
+  if (Number.isFinite(cod) && cod > 0) {
+    try {
+      // fetchVendedores cachea, así que esto no agrega requests a IM por pedido.
+      const v = (await fetchVendedores()).find((x) => Number(x.cod_vendedor) === cod);
+      const deIM = String(v?.usuario ?? '').trim();
+      if (deIM) return deIM;
+    } catch (e: any) {
+      console.warn('[usuarioIM] no pude leer /vendedores, uso el usuario de la app:', e?.message);
+    }
+  }
+  return IM_USUARIO_PEDIDOS;
 }
 
 const PEDIDO_EMPRESA_DEFAULT = Number(env.PEDIDO_EMPRESA_DEFAULT || 1);
@@ -421,7 +446,7 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
       cod_cliente: codCliente,
       cod_vendedor: codVendedor,
       cod_lista_precios: codLista,
-      usuario: usuarioIM(user),
+      usuario: await usuarioIM(user),
       punto_de_venta: PEDIDO_PUNTO_DE_VENTA,
       // 🪤 Era un ternario: si el vendedor escribia CUALQUIER cosa, el marcador desaparecia.
       // El campo `usuario` de IM es el operador de la oficina (hoy siempre el mismo para todos
@@ -579,7 +604,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         cod_cliente: Number(pedido.cod_cliente),
         cod_vendedor: Number(pedido.cod_vendedor),
         cod_lista_precios: Number(pedido.cod_lista_precios) || PEDIDO_LISTA_FALLBACK,
-        usuario: usuarioIM(user),
+        usuario: await usuarioIM(user),
         punto_de_venta: PEDIDO_PUNTO_DE_VENTA,
         observaciones: `Pedido app · ${user.nombre || `vend ${pedido.cod_vendedor}`}${observaciones ? ` · ${observaciones}` : ''}`.slice(0, 500),
         cod_compatibilidad: String(pedido.id).slice(0, 8),
