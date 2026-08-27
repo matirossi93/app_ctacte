@@ -247,7 +247,10 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                 const r = await fetch('/api/pedidos/validar', {
                     method: 'POST', signal: ctrl.signal,
                     headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ items: cart.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista: i.cod_lista })) }),
+                    // 🪤 El descuento TIENE que ir acá. Sin él, el motor evalúa cada renglón
+                    // con descuento 0 y nunca encuentra nada que avisar: el vendedor podía
+                    // poner cualquier % y el control se quedaba mudo hasta el envío final.
+                    body: JSON.stringify({ items: cart.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista: i.cod_lista, descuento_porc: i.descuento || 0 })) }),
                 });
                 const d = await r.json();
                 if (d?.ok) setControl(d);
