@@ -871,6 +871,70 @@ export async function getPrecioLista(codArticulo: number, codLista: number): Pro
 }
 
 
+/**
+ * Todos los precios de UNA lista, de una sola llamada.
+ *
+ * 🪤 El buscador de productos mostraba `precio_venta` de /articulos/stock, y ese campo está
+ * MUERTO en IM: 428 de 1.390 artículos (31%) lo traen en 0 — justo las bolsas, que es lo que
+ * vende el mayorista — y cuando trae un número tampoco es el precio real (PAJARO 4mm figura
+ * en $2.203 y se factura a $46.864). El precio de verdad vive en la lista de precios.
+ *
+ * Pedirlo artículo por artículo sería un round-trip por resultado de búsqueda, así que se trae
+ * la lista entera y se cachea. TTL de 1 h, igual que el catálogo: los precios se actualizan
+ * una vez por día (el propio endpoint de precio devuelve `ult_actualizacion_precio` con fecha
+ * y sin hora).
+ *
+ * El swagger de IM no documenta el shape de la respuesta, así que se aceptan varios nombres
+ * de campo y, si no se entiende nada, devuelve un Map VACÍO: sin precio es mejor que con un
+ * precio equivocado, que es de donde venimos.
+ */
+const LISTA_PRECIOS_TTL_MS = 60 * 60 * 1000;
+const _listaPreciosCache = new Map<number, { precios: Map<number, number>; fetchedAt: number }>();
+const _listaPreciosPending = new Map<number, Promise<Map<number, number>>>();
+
+/** Separado para poder testearlo sin IM. Devuelve cod_articulo -> precio de venta. */
+export function parseListaPrecios(data: any): Map<number, number> {
+  const filas: any[] = Array.isArray(data)
+    ? data
+    : (data?.results ?? data?.items ?? data?.articulos ?? data?.data ?? []);
+  const out = new Map<number, number>();
+  for (const f of filas) {
+    const cod = Number(f?.cod_articulo ?? f?.codigo ?? f?.cod ?? 0);
+    const precio = Number(
+      f?.precio_vta ?? f?.precio_venta ?? f?.precio ?? f?.importe ?? f?.precio_unitario ?? 0,
+    );
+    if (cod > 0 && Number.isFinite(precio) && precio > 0) out.set(cod, precio);
+  }
+  return out;
+}
+
+export async function fetchPreciosDeLista(codLista: number): Promise<Map<number, number>> {
+  const hit = _listaPreciosCache.get(codLista);
+  if (hit && Date.now() - hit.fetchedAt < LISTA_PRECIOS_TTL_MS) return hit.precios;
+  const enVuelo = _listaPreciosPending.get(codLista);
+  if (enVuelo) return enVuelo;
+
+  const p = (async () => {
+    try {
+      const cli = await imClient();
+      const { data } = await imGetRetry(
+        () => cli.get(`/listaprecios/items/${codLista}`), `listaprecios/items/${codLista}`,
+      );
+      const precios = parseListaPrecios(data);
+      console.log(`[fetchPreciosDeLista] lista ${codLista}: ${precios.size} precios`);
+      _listaPreciosCache.set(codLista, { precios, fetchedAt: Date.now() });
+      return precios;
+    } catch (e: any) {
+      console.warn(`[fetchPreciosDeLista] lista ${codLista} fallo, el buscador va sin precio:`, e?.message);
+      // Vacío y SIN cachear: que el próximo intento vuelva a probar.
+      return new Map<number, number>();
+    }
+  })().finally(() => { _listaPreciosPending.delete(codLista); });
+
+  _listaPreciosPending.set(codLista, p);
+  return p;
+}
+
 export interface DisponibleCliente {
   cod_cliente: number;
   nombre: string;

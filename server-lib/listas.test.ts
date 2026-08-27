@@ -466,3 +466,82 @@ describe('control de descuentos (reglas de Mati del 27/08)', () => {
     expect(av([{ cod_articulo: 140, cantidad: 1, cod_lista: 14 }])[0].nota_descuento).toBeNull();
   });
 });
+
+/**
+ * Mati, 27/08: "lo ideal sería que cada vendedor pueda cargar el mismo artículo en renglones
+ * distintos". Antes la identidad del renglón era el cod_articulo, así que el frontend
+ * emparejaba los avisos con .find() por código y las dos filas mostraban el del primero.
+ * Ahora cada aviso trae su posición y hay uno por renglón, en orden.
+ */
+describe('🪤 el mismo artículo en dos renglones distintos (Mati 27/08)', () => {
+  const c = cat('alpiste');
+
+  it('devuelve UN aviso por renglón, no uno por artículo', () => {
+    const r = evaluarPedido([
+      { cod_articulo: 400, cantidad: 30, cod_lista: 13 },
+      { cod_articulo: 400, cantidad: 5, cod_lista: 12 },
+    ], c, REGLAS);
+    expect(r.avisos).toHaveLength(2);
+  });
+
+  it('cada aviso trae su posición, en orden', () => {
+    const r = evaluarPedido([
+      { cod_articulo: 400, cantidad: 30, cod_lista: 13 },
+      { cod_articulo: 400, cantidad: 5, cod_lista: 12 },
+    ], c, REGLAS);
+    expect(r.avisos.map(a => a.idx)).toEqual([0, 1]);
+  });
+
+  it('el derecho sale de lo que se lleva el cliente EN TOTAL, no de cada renglón suelto', () => {
+    // 30 + 5 = 35 kg de alpiste. El cliente pasó los 20 kg, así que le corresponde L2 en los
+    // DOS renglones. Juzgar el de 5 kg por sí solo lo dejaría en L1 y sería cobrarle de más
+    // por haber partido el pedido.
+    const r = evaluarPedido([
+      { cod_articulo: 400, cantidad: 30, cod_lista: 13 },
+      { cod_articulo: 400, cantidad: 5, cod_lista: 13 },
+    ], c, REGLAS);
+    expect(r.avisos.map(a => a.lista_sugerida)).toEqual([13, 13]);
+    expect(r.avisos.map(a => a.severidad)).toEqual(['ok', 'ok']);
+  });
+
+  it('marca el renglón equivocado sin arrastrar al que está bien', () => {
+    // Mismos 35 kg, pero el segundo renglón quedó en L1: a ese cliente le están cobrando de
+    // más. El primero está bien y no tiene que ensuciarse.
+    const r = evaluarPedido([
+      { cod_articulo: 400, cantidad: 30, cod_lista: 13 },
+      { cod_articulo: 400, cantidad: 5, cod_lista: 12 },
+    ], c, REGLAS);
+    expect(r.avisos[0].severidad).toBe('ok');
+    expect(r.avisos[1].severidad).toBe('cliente');
+    expect(r.avisos[1].lista_sugerida).toBe(13);
+  });
+
+  it('y al revés: un renglón por encima del techo se marca como pérdida de margen', () => {
+    const r = evaluarPedido([
+      { cod_articulo: 400, cantidad: 30, cod_lista: 13 },
+      { cod_articulo: 400, cantidad: 5, cod_lista: 15 },
+    ], c, REGLAS);
+    expect(r.avisos[0].severidad).toBe('ok');
+    expect(r.avisos[1].severidad).toBe('margen');
+  });
+
+  it('🪤 los kilos del mismo articulo se suman: partirlo no baja los bultos', () => {
+    // 12 + 12 = 24 kg de granel = 1 bulto (el granel cuenta como UNO, no acumula).
+    // Midiendo renglon por renglon daba CERO: ninguno de los dos llega solo a 20 kg.
+    const r = evaluarPedido([
+      { cod_articulo: 400, cantidad: 12, cod_lista: 12 },
+      { cod_articulo: 400, cantidad: 12, cod_lista: 12 },
+    ], c, REGLAS);
+    expect(r.bultos).toBe(1);
+  });
+
+  it('🪤 partir la cantidad no sirve para esquivar el umbral de la lista', () => {
+    // 15 + 15 = 30 kg: al cliente le corresponde L2 en LOS DOS renglones, no L1 en cada uno
+    // por separado. Sin esto, partir el renglon era un agujero en el control.
+    const r = evaluarPedido([
+      { cod_articulo: 400, cantidad: 15, cod_lista: 12 },
+      { cod_articulo: 400, cantidad: 15, cod_lista: 12 },
+    ], c, REGLAS);
+    expect(r.avisos.map(a => a.lista_sugerida)).toEqual([13, 13]);
+  });
+});

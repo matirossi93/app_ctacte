@@ -22,7 +22,7 @@ import {
 import { hasSupabase, sb, TENANT_ID } from './server-lib/supabase.js';
 import { syncVentasMesActual, syncVentasMeses } from './server-lib/syncVentas.js';
 import { getMonthlyVentasRaw, getMonthlyItemsRaw, snapshotCacheStats } from './server-lib/snapshotCache.js';
-import { fetchArticulosCatalogo, imGetRetry, fetchVendedores } from './server-lib/infomanager.js';
+import { fetchArticulosCatalogo, imGetRetry, fetchVendedores, imClient } from './server-lib/infomanager.js';
 import {
   uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, editarRecibo, cuentasDebug, cuentasRefresh, cuentasEfectivo,
   reverificarMP, elegirMatchMP, procesarColaMP, caducarRecibosPendientes, mpConfig
@@ -718,6 +718,27 @@ app.get('/api/debug/im-vendedores', requireJwt, requireAdmin, async (_req: any, 
         });
     } catch (err: any) {
         res.status(502).json({ ok: false, error: `No se pudo consultar /vendedores en IM: ${err?.message ?? 'sin respuesta'}` });
+    }
+});
+// Que devuelve /listaprecios/items de IM, crudo. El swagger no documenta el shape (dice
+// solo "200 OK"), asi que el parser acepta varias formas y este endpoint sirve para
+// confirmar cual es la buena sin adivinar. Admin/gerente, solo lectura.
+app.get('/api/debug/im-lista-precios', requireJwt, requireAdmin, async (req: any, res) => {
+    try {
+        const codLista = Number(req.query.cod_lista) || 12;
+        const cli = await imClient();
+        const { data } = await imGetRetry(() => cli.get(`/listaprecios/items/${codLista}`), `listaprecios/items/${codLista}`);
+        const filas = Array.isArray(data) ? data : (data?.results ?? data?.items ?? data?.articulos ?? data?.data ?? []);
+        res.json({
+            ok: true, cod_lista: codLista,
+            es_array: Array.isArray(data),
+            claves_de_la_respuesta: Array.isArray(data) ? null : Object.keys(data ?? {}),
+            cuantas_filas: Array.isArray(filas) ? filas.length : 0,
+            campos_de_una_fila: Array.isArray(filas) && filas.length ? Object.keys(filas[0]) : [],
+            primeras_3: Array.isArray(filas) ? filas.slice(0, 3) : null,
+        });
+    } catch (err: any) {
+        res.status(502).json({ ok: false, error: `No se pudo consultar /listaprecios/items en IM: ${err?.message ?? 'sin respuesta'}` });
     }
 });
 app.post('/api/cuentas/refresh', requireJwt, (req: any, res) => cuentasRefresh(req, res));

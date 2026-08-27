@@ -5,7 +5,7 @@ import {
   crearPresupuesto, anularComprobante, getPrecioLista, getDisponibleCliente,
   fetchClientesIMCached, fetchArticulosCatalogo, fetchArticulosDeDeposito,
   getItemsComprobante, presupuestoFacturado, actualizarPresupuestoCantidades,
-  fechaComprobante, fechaArgentina, fetchVendedores,
+  fechaComprobante, fechaArgentina, fetchVendedores, fetchPreciosDeLista,
 } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
 import {
@@ -406,7 +406,11 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
     const resuelto = await resolverYControlar(itemsValidos, codLista, 'crearPedido');
     if (!resuelto.ok) { res.status(resuelto.status).json(resuelto.body); return; }
     const { items: itemsConPrecio, total: totalEstimado, control } = resuelto;
-    const avisoPorArt = new Map(control?.avisos.map((a) => [a.cod_articulo, a]) ?? []);
+    // 🪤 Esto era un Map por cod_articulo. Ahora el mismo articulo puede ir en DOS renglones
+    // (distinta lista o distinto descuento) y el Map se quedaba con UNO solo: las dos filas
+    // guardaban el aviso del ultimo. evaluarPedido devuelve un aviso por renglon y EN ORDEN,
+    // asi que la posicion es la forma correcta de emparejarlos.
+    const avisoDe = (i: number) => control?.avisos[i];
 
     // 1. Guardar el pedido en Supabase (estado borrador).
     const pedidoId = randomUUID();
@@ -439,7 +443,7 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
     // dejando una cabecera con total y CERO renglones. Si faltara una migración, pasaría
     // en el 100% de los pedidos y en silencio.
     const { error: itemsErr } = await sb().from('pedidos_vendedor_items').insert(itemsConPrecio.map((it, i) => {
-      const av = avisoPorArt.get(it.cod_articulo);
+      const av = avisoDe(i);
       return {
         pedido_id: pedidoId,
         cod_articulo: it.cod_articulo,
@@ -585,7 +589,11 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
     const resuelto = await resolverYControlar(itemsValidos, Number(pedido.cod_lista_precios) || PEDIDO_LISTA_FALLBACK, 'editarPedido');
     if (!resuelto.ok) { res.status(resuelto.status).json(resuelto.body); return; }
     const { items: nuevos, total, control } = resuelto;
-    const avisoPorArt = new Map(control?.avisos.map((a) => [a.cod_articulo, a]) ?? []);
+    // 🪤 Esto era un Map por cod_articulo. Ahora el mismo articulo puede ir en DOS renglones
+    // (distinta lista o distinto descuento) y el Map se quedaba con UNO solo: las dos filas
+    // guardaban el aviso del ultimo. evaluarPedido devuelve un aviso por renglon y EN ORDEN,
+    // asi que la posicion es la forma correcta de emparejarlos.
+    const avisoDe = (i: number) => control?.avisos[i];
 
     // ¿Alcanza con actualizar cantidades? Sólo si el surtido y las listas son los mismos.
     const { data: actuales } = await sb().from('pedidos_vendedor_items')
@@ -614,9 +622,20 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
     } else if (soloCantidades) {
       // Camino barato: se conserva el número de presupuesto.
       const imItems = await getItemsComprobante(pedido.im_presupuesto_id);
-      const porArticulo = new Map(imItems.map((i) => [i.cod_articulo, i.id]));
+      // 🪤 Era un Map cod_articulo -> id, que con dos renglones del mismo articulo se
+      // quedaba con UNO: los dos updates iban al MISMO renglon de IM (el segundo pisaba al
+      // primero) y el otro se quedaba con la cantidad vieja. Se factura lo que quedo en IM,
+      // no lo que el vendedor guardo. Ahora se consume una cola por articulo, en orden: los
+      // renglones se crearon en este mismo orden, asi que la n-esima aparicion de acá es la
+      // n-esima de allá. Si las cantidades no coinciden, el chequeo de abajo lo ataja.
+      const colaPorArticulo = new Map<number, number[]>();
+      for (const it of imItems) {
+        const cola = colaPorArticulo.get(it.cod_articulo) ?? [];
+        cola.push(it.id);
+        colaPorArticulo.set(it.cod_articulo, cola);
+      }
       const payload = nuevos
-        .map((it) => ({ id: porArticulo.get(it.cod_articulo) as number, cantidad: it.cantidad }))
+        .map((it) => ({ id: colaPorArticulo.get(it.cod_articulo)?.shift() as number, cantidad: it.cantidad }))
         .filter((x) => Number.isFinite(x.id));
       if (payload.length !== nuevos.length) {
         res.status(409).json({ error: 'Los renglones del presupuesto en InfoManager no coinciden con los de la app. Anulá el pedido y cargalo de nuevo.' });
@@ -676,7 +695,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
       return;
     }
     const { error: insErr2 } = await sb().from('pedidos_vendedor_items').insert(nuevos.map((it, i) => {
-      const av = avisoPorArt.get(it.cod_articulo);
+      const av = avisoDe(i);
       return {
         pedido_id: pedido.id,
         cod_articulo: it.cod_articulo,
@@ -887,13 +906,28 @@ export async function catalogoPedido(req: Request & { user?: JwtPayload }, res: 
 
     const all = Array.from(map.entries())
       .filter(([cod]) => !deDeposito || deDeposito.has(cod))
-      .map(([cod, a]) => ({
-        cod_articulo: cod, descripcion: a.descripcion, precio_venta: a.precio_venta, cod_rubro: a.cod_rubro,
-      }));
+      .map(([cod, a]) => ({ cod_articulo: cod, descripcion: a.descripcion, cod_rubro: a.cod_rubro }));
     const filtered = term
       ? all.filter((a) => a.descripcion.toLowerCase().includes(term) || String(a.cod_articulo).includes(term))
       : all;
-    res.json({ ok: true, articulos: filtered.slice(0, 80), solo_casa_central: !todos && !!deDeposito });
+    const pagina = filtered.slice(0, 80);
+
+    // 🪤 Acá se devolvía `precio_venta` del catálogo de /articulos/stock. Ese campo está
+    // muerto en IM: 31% de los artículos lo tienen en 0 (justo las bolsas del mayorista) y
+    // cuando trae un número tampoco es el real. El precio bueno sale de la lista de precios,
+    // que se trae entera de una sola llamada y se cachea una hora.
+    const codLista = LISTAS_VALIDAS.has(Number(req.query.cod_lista))
+      ? Number(req.query.cod_lista) : PEDIDO_LISTA_FALLBACK;
+    let precios = new Map<number, number>();
+    try { precios = await fetchPreciosDeLista(codLista); } catch { /* va sin precio */ }
+
+    res.json({
+      ok: true,
+      cod_lista: codLista,
+      // null y no 0: el front tiene que poder distinguir "no sé el precio" de "vale cero".
+      articulos: pagina.map((a) => ({ ...a, precio_venta: precios.get(a.cod_articulo) ?? null })),
+      solo_casa_central: !todos && !!deDeposito,
+    });
   } catch (err: any) {
     res.status(502).json({ error: `No se pudo cargar el catálogo desde IM: ${err?.message ?? 'sin respuesta'}` });
   }

@@ -96,6 +96,12 @@ export interface ReglaDescuento {
 export type Severidad = 'ok' | 'margen' | 'cliente' | 'sin_regla';
 
 export interface AvisoRenglon {
+  /**
+   * Posicion del renglon en el pedido. Existe porque el mismo articulo puede ir en DOS
+   * renglones (distinta lista, distinto descuento) y entonces cod_articulo ya no alcanza
+   * para saber de cual de los dos habla el aviso.
+   */
+  idx: number;
   cod_articulo: number;
   lista_elegida: number;
   lista_sugerida: number | null;
@@ -179,9 +185,49 @@ function medirRenglon(r: RenglonPedido, art: ArticuloInfo | undefined) {
   return { bultos: r.cantidad >= KG_PARA_CONTAR_BULTO ? 1 : 0, kilos: r.cantidad };
 }
 
+/**
+ * Cuánto se lleva el cliente de CADA artículo, sumando todos sus renglones.
+ *
+ * 🪤 Desde el 27/08 el mismo artículo puede ir en varios renglones (distinta lista, distinto
+ * descuento). Medir renglón por renglón abría un agujero en el granel: 24 kg de alpiste en un
+ * renglón son 1 bulto, pero partidos en 12 + 12 daban CERO, porque ninguno llega solo a los
+ * 20 kg. Se perdía un bulto para la promo general y, peor, alcanzaba con partir la cantidad
+ * para esquivar cualquier umbral del control.
+ *
+ * Con un solo renglón por artículo —como funcionó hasta hoy— el resultado es idéntico.
+ */
+function medirPorArticulo(
+  renglones: RenglonPedido[],
+  catalogo: Map<number, ArticuloInfo>,
+): Map<number, { bultos: number; kilos: number }> {
+  const kilosPorArt = new Map<number, number>();
+  const bultosPorArt = new Map<number, number>();
+  for (const r of renglones) {
+    const art = catalogo.get(r.cod_articulo);
+    const m = medirRenglon(r, art);
+    kilosPorArt.set(r.cod_articulo, (kilosPorArt.get(r.cod_articulo) ?? 0) + m.kilos);
+    if (art?.es_bulto) bultosPorArt.set(r.cod_articulo, (bultosPorArt.get(r.cod_articulo) ?? 0) + m.bultos);
+  }
+  const out = new Map<number, { bultos: number; kilos: number }>();
+  for (const [cod, kilos] of kilosPorArt) {
+    const art = catalogo.get(cod);
+    // El granel suma UN bulto a partir de 20 kg y no acumula (Mati: "60 kg siguen siendo 1").
+    const bultos = art?.es_bulto
+      ? (bultosPorArt.get(cod) ?? 0)
+      : (kilos >= KG_PARA_CONTAR_BULTO ? 1 : 0);
+    out.set(cod, { bultos, kilos });
+  }
+  for (const [cod, bultos] of bultosPorArt) {
+    if (!out.has(cod)) out.set(cod, { bultos, kilos: 0 });
+  }
+  return out;
+}
+
 /** Bultos surtidos de todo el pedido — lo que define si entra la promo general. */
 export function bultosDelPedido(renglones: RenglonPedido[], catalogo: Map<number, ArticuloInfo>): number {
-  return renglones.reduce((acc, r) => acc + medirRenglon(r, catalogo.get(r.cod_articulo)).bultos, 0);
+  let n = 0;
+  for (const m of medirPorArticulo(renglones, catalogo).values()) n += m.bultos;
+  return n;
 }
 
 /**
@@ -290,27 +336,30 @@ export function evaluarPedido(
     return lineaDeSubrubro.get(sub) ?? sub;
   };
 
+  // Se mide por artículo y no por renglón: ver medirPorArticulo. Si el vendedor parte la
+  // cantidad de un producto en dos renglones, el cliente igual se lleva la suma.
+  const porArticulo = medirPorArticulo(renglones, catalogo);
+
   const porLinea = new Map<string, { bultos: number; kilos: number }>();
-  for (const r of renglones) {
-    const art = catalogo.get(r.cod_articulo);
-    const k = claveLinea(art);
+  for (const [cod, m] of porArticulo) {
+    const k = claveLinea(catalogo.get(cod));
     if (!k) continue;
-    const m = medirRenglon(r, art);
     const acc = porLinea.get(k) ?? { bultos: 0, kilos: 0 };
     porLinea.set(k, { bultos: acc.bultos + m.bultos, kilos: acc.kilos + m.kilos });
   }
 
-  const avisos = renglones.map<AvisoRenglon>((r) => {
+  const avisos = renglones.map<AvisoRenglon>((r, idx) => {
     const art = catalogo.get(r.cod_articulo);
     const nombre = art?.descripcion || `artículo ${r.cod_articulo}`;
-    const propio = medirRenglon(r, art);
+    // Lo que se lleva el cliente de ESTE artículo, contando todos sus renglones.
+    const propio = porArticulo.get(r.cod_articulo) ?? medirRenglon(r, art);
     const kLinea = claveLinea(art);
     const linea = (kLinea && porLinea.get(kLinea)) || propio;
 
     const misReglas = reglasDe(art, reglas);
     if (!misReglas.length) {
       // Sin regla de LISTA, pero puede tener regla de DESCUENTO: son dos cosas distintas.
-      return { cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: null,
+      return { idx, cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: null,
         severidad: 'sin_regla', mensaje: null,
         ...evaluarDescuento(r, art, LISTA_BASE, propio, linea, reglasDescuento, nombre) };
     }
@@ -344,18 +393,18 @@ export function evaluarPedido(
     const desc = evaluarDescuento(r, art, techo, propio, linea, reglasDescuento, nombre);
 
     if (r.cod_lista > techo) {
-      return { cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: techo,
+      return { idx, cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: techo,
         severidad: 'margen',
         mensaje: `${nombre}: está en ${nombreLista(r.cod_lista)} pero por esta cantidad le corresponde ${nombreLista(techo)}. Le estás vendiendo más barato de lo que corresponde.`,
         ...desc };
     }
     if (r.cod_lista < derecho) {
-      return { cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: derecho,
+      return { idx, cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: derecho,
         severidad: 'cliente',
         mensaje: `${nombre}: tiene derecho a ${nombreLista(derecho)} y está en ${nombreLista(r.cod_lista)}. Le estás cobrando de más.`,
         ...desc };
     }
-    return { cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: techo,
+    return { idx, cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: techo,
       severidad: 'ok', mensaje: null, ...desc };
   });
 

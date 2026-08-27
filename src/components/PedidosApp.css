@@ -262,3 +262,7 @@
 .ped-sin-resultados.error button { border-color: currentColor; color: inherit; }
 .ped-promo.aviso { background: var(--color-warning-bg); color: #8A5A12; }
 .ped-promo.aviso svg { flex-shrink: 0; color: var(--color-warning, #E59B33); }
+
+/* El artículo no tiene precio en la lista del cliente. Se dice en texto, no con $0:
+   mostrar cero era el bug que reportó Mati el 27/08. */
+.ped-cat-sinprecio { font-size: 0.7rem; font-weight: 500; color: var(--color-text-muted); }

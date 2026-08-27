@@ -15,8 +15,26 @@ interface Props {
 
 interface ClienteOpt { cod: string; name: string; localidad?: string }
 interface Credito { saldo: number; disponible: number; control_margen_venta: string }
-interface CatItem { cod_articulo: number; descripcion: string; precio_venta: number }
-interface CartItem { cod_articulo: number; descripcion: string; cantidad: number; precio: number; cod_lista: number; descuento: number }
+/**
+ * Un resultado del buscador. `precio_venta` es null cuando el artículo no tiene precio en la
+ * lista del cliente: null y 0 NO son lo mismo, y mostrar $0 fue justo el problema que reportó
+ * Mati el 27/08 (el catálogo de IM trae ese campo en cero para el 31% de los artículos).
+ */
+interface CatItem { cod_articulo: number; descripcion: string; precio_venta: number | null }
+/**
+ * Un renglón del pedido.
+ *
+ * 🪤 `uid` es la identidad del RENGLÓN, y no se confunde con `cod_articulo`. El mismo
+ * producto puede ir en dos renglones (Mati 27/08: "que cada vendedor pueda cargar el mismo
+ * artículo en renglones distintos" — típicamente con distinta lista). Cuando la identidad era
+ * el código, borrar uno borraba los dos, y la cantidad, la lista y el descuento se movían
+ * juntos. `cod_articulo` queda sólo para hablar con InfoManager.
+ */
+interface CartItem {
+    uid: string;
+    cod_articulo: number; descripcion: string; cantidad: number; precio: number;
+    cod_lista: number; descuento: number;
+}
 
 /**
  * Listas mayoristas de IM. El vendedor la elige RENGLON POR RENGLON segun la
@@ -34,6 +52,8 @@ const NOMBRE_LISTA: Record<number, string> = { 12: 'L1', 13: 'L2', 14: 'L3', 15:
 
 /** Lo que devuelve POST /api/pedidos/validar. */
 interface AvisoLista {
+    /** Posición del renglón en el pedido: el mismo artículo puede estar dos veces. */
+    idx: number;
     cod_articulo: number;
     lista_elegida: number;
     lista_sugerida: number | null;
@@ -171,7 +191,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         const ctrl = new AbortController();
         const timer = setTimeout(async () => {
             try {
-                const r = await fetch(`/api/pedidos/catalogo?q=${encodeURIComponent(t)}${catTodos ? '&todos=1' : ''}`, { headers: authHeaders(), signal: ctrl.signal });
+                const r = await fetch(`/api/pedidos/catalogo?q=${encodeURIComponent(t)}&cod_lista=${listaCliente}${catTodos ? '&todos=1' : ''}`, { headers: authHeaders(), signal: ctrl.signal });
                 const d = await r.json().catch(() => null);
                 if (r.ok && d?.ok) { setCatResults(d.articulos ?? []); setCatError(null); }
                 else { setCatResults([]); setCatError(d?.error ?? 'No se pudo consultar el catálogo de InfoManager.'); }
@@ -182,7 +202,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
             setCatLoading(false);
         }, 300);
         return () => { clearTimeout(timer); ctrl.abort(); };
-    }, [catQuery, step, catTodos]);
+    }, [catQuery, step, catTodos, listaCliente]);
 
     const [agregando, setAgregando] = useState<number | null>(null);
     async function agregarArticulo(a: CatItem) {
@@ -193,17 +213,15 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         // salía con el doble de cantidad, y encima bultosDelPedido contaba doble, prendía la
         // promo general de más y APAGABA el bloqueo por margen. Ahora el chequeo va adentro
         // del updater funcional (ve el estado real) y el resultado muestra que trabaja.
+        // Sigue frenando el doble toque MIENTRAS busca el precio (ahí no se renderiza nada y
+        // el vendedor no tiene forma de saber que ya lo tomó). Lo que ya NO se hace es
+        // impedir el artículo repetido: cargarlo dos veces es algo que el vendedor quiere
+        // poder hacer, y antes se le sumaba 1 a un renglón que ni estaba mirando.
         if (agregando != null) return;
-        const yaEsta = cart.find(i => i.cod_articulo === a.cod_articulo);
-        if (yaEsta) {
-            // Ya está en el carrito: sumarle uno, en vez de no hacer absolutamente nada.
-            setQty(a.cod_articulo, Math.floor(yaEsta.cantidad) + 1);
-            setCatQuery(''); setCatResults([]);
-            return;
-        }
         setAgregando(a.cod_articulo);
-        // Precio de la lista del cliente (no el genérico del catálogo).
-        let precio = a.precio_venta;
+        // Precio de la lista del cliente. El del buscador ya viene de esa lista, pero se
+        // recotiza igual porque es el número que se guarda en el renglón.
+        let precio = a.precio_venta ?? 0;
         let listaDelItem = listaCliente;
         try {
             const r = await fetch(`/api/pedidos/precio?cod_articulo=${a.cod_articulo}&cod_cliente=${cliente?.cod ?? ''}`, { headers: authHeaders() });
@@ -212,14 +230,16 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
             // el backend nos dice con que lista cotizo: esa es la del cliente
             if (d?.ok && Number(d.cod_lista) > 0) { listaDelItem = Number(d.cod_lista); setListaCliente(listaDelItem); }
         } catch { /* usa el genérico */ }
-        setCart(c => c.some(i => i.cod_articulo === a.cod_articulo)
-            ? c
-            : [...c, { cod_articulo: a.cod_articulo, descripcion: a.descripcion, cantidad: 1, precio, cod_lista: listaDelItem, descuento: 0 }]);
+        setCart(c => [...c, {
+            uid: crypto.randomUUID(),
+            cod_articulo: a.cod_articulo, descripcion: a.descripcion, cantidad: 1,
+            precio, cod_lista: listaDelItem, descuento: 0,
+        }]);
         setAgregando(null);
         setCatQuery(''); setCatResults([]);
     }
-    const setQty = (cod: number, q: number) =>
-        setCart(c => c.map(i => i.cod_articulo === cod ? { ...i, cantidad: q } : i));
+    const setQty = (uid: string, q: number) =>
+        setCart(c => c.map(i => i.uid === uid ? { ...i, cantidad: q } : i));
 
     // 🪤 El input era type="number" y hacía Number(e.target.value) directo. Al borrar el
     // contenido para escribir otra cantidad, Number('') daba 0 y el mínimo lo dejaba en
@@ -227,23 +247,23 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     // al pasar por "1." se perdía el punto. Ahora el texto se edita libre y recién se
     // normaliza al salir del campo. type="text" + inputMode="decimal" también evita los
     // spinners minúsculos y abre el teclado numérico en el celular, que es donde se usa.
-    const [qtyTexto, setQtyTexto] = useState<Record<number, string>>({});
-    function escribirQty(cod: number, txt: string) {
+    const [qtyTexto, setQtyTexto] = useState<Record<string, string>>({});
+    function escribirQty(uid: string, txt: string) {
         if (!/^\d*[.,]?\d*$/.test(txt)) return;      // sólo números y un separador decimal
-        setQtyTexto(q => ({ ...q, [cod]: txt }));
+        setQtyTexto(q => ({ ...q, [uid]: txt }));
         const n = Number(txt.replace(',', '.'));
-        if (txt !== '' && Number.isFinite(n) && n > 0) setQty(cod, n);
+        if (txt !== '' && Number.isFinite(n) && n > 0) setQty(uid, n);
     }
-    function cerrarQty(cod: number) {
-        const txt = qtyTexto[cod];
-        setQtyTexto(q => { const c = { ...q }; delete c[cod]; return c; });
+    function cerrarQty(uid: string) {
+        const txt = qtyTexto[uid];
+        setQtyTexto(q => { const c = { ...q }; delete c[uid]; return c; });
         const n = Number(String(txt ?? '').replace(',', '.'));
-        if (txt !== undefined && (!Number.isFinite(n) || n <= 0)) setQty(cod, 1);
+        if (txt !== undefined && (!Number.isFinite(n) || n <= 0)) setQty(uid, 1);
     }
 
     /** Cambiar la lista de un renglon: se re-pide el precio de ESA lista. */
-    async function setLista(cod: number, codLista: number) {
-        setCart(c => c.map(i => i.cod_articulo === cod ? { ...i, cod_lista: codLista } : i));
+    async function setLista(uid: string, cod: number, codLista: number) {
+        setCart(c => c.map(i => i.uid === uid ? { ...i, cod_lista: codLista } : i));
         try {
             const r = await fetch(`/api/pedidos/precio?cod_articulo=${cod}&cod_lista=${codLista}`, { headers: authHeaders() });
             const d = await r.json();
@@ -252,22 +272,22 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
             // y ese es justo el número que le canta al cliente por teléfono.
             if (d?.ok && d.precio?.precio_vta != null && Number(d.cod_lista) === codLista) {
                 const nuevo = Number(d.precio.precio_vta);
-                setCart(c => c.map(i => i.cod_articulo === cod ? { ...i, precio: nuevo } : i));
+                setCart(c => c.map(i => i.uid === uid ? { ...i, precio: nuevo } : i));
             }
         } catch { /* si falla, queda el precio anterior y el backend recalcula al enviar */ }
     }
     /** Descuento del renglón, 0 a 100. Se edita como texto (mismo motivo que la cantidad). */
-    const [descTexto, setDescTexto] = useState<Record<number, string>>({});
-    function escribirDesc(cod: number, txt: string) {
+    const [descTexto, setDescTexto] = useState<Record<string, string>>({});
+    function escribirDesc(uid: string, txt: string) {
         if (!/^\d{0,3}([.,]\d{0,2})?$/.test(txt)) return;
-        setDescTexto(q => ({ ...q, [cod]: txt }));
+        setDescTexto(q => ({ ...q, [uid]: txt }));
         const n = Math.min(Math.max(Number(txt.replace(',', '.')) || 0, 0), 100);
-        setCart(c => c.map(i => i.cod_articulo === cod ? { ...i, descuento: n } : i));
+        setCart(c => c.map(i => i.uid === uid ? { ...i, descuento: n } : i));
     }
-    function cerrarDesc(cod: number) {
-        setDescTexto(q => { const c = { ...q }; delete c[cod]; return c; });
+    function cerrarDesc(uid: string) {
+        setDescTexto(q => { const c = { ...q }; delete c[uid]; return c; });
     }
-    const quitar = (cod: number) => setCart(c => c.filter(i => i.cod_articulo !== cod));
+    const quitar = (uid: string) => setCart(c => c.filter(i => i.uid !== uid));
     const subtotalDe = (i: CartItem) => i.cantidad * i.precio * (1 - (i.descuento || 0) / 100);
     const total = useMemo(() => cart.reduce((a, i) => a + subtotalDe(i), 0), [cart]);
 
@@ -295,8 +315,11 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         }, 400);
         return () => { clearTimeout(timer); ctrl.abort(); };
     }, [cart]);
-    const avisoDe = (cod: number) => control?.avisos?.find(a => a.cod_articulo === cod && a.mensaje);
-    const descDe = (cod: number) => control?.avisos?.find(a => a.cod_articulo === cod);
+    // 🪤 Esto buscaba por cod_articulo con .find(), o sea que con el mismo artículo en dos
+    // renglones los dos mostraban el aviso del PRIMERO. El backend manda un aviso por
+    // renglón y en orden, con su `idx`: la posición es lo que los empareja.
+    const avisoDe = (idx: number) => { const a = control?.avisos?.[idx]; return a?.mensaje ? a : undefined; };
+    const descDe = (idx: number) => control?.avisos?.[idx];
     const faltanBultos = control ? Math.max(0, 10 - control.bultos) : 0;
     // El control AVISA, no frena (Mati lo dio de baja el 27/08 mientras la parametrización
     // se sigue afinando: un falso positivo le bloquea una venta legítima al vendedor).
@@ -312,7 +335,11 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
             const r = await fetch(`/api/pedidos/${p.id}`, { headers: authHeaders() });
             const d = await r.json();
             if (!r.ok || !d?.ok) { alert(d?.error ?? 'No se pudo abrir el pedido'); return; }
-            setCart((d.items ?? []).map((i: any) => ({
+            // 🪤 El `uid` va SI O SI. Sin el, los renglones rearmados quedaban todos con
+            // uid undefined y volvia el bug entero justo aca, que es el unico camino por el
+            // que hoy entran renglones repetidos (la tabla no tiene indice unico).
+            setCart((d.items ?? []).map((i: any): CartItem => ({
+                uid: crypto.randomUUID(),
                 cod_articulo: Number(i.cod_articulo),
                 descripcion: String(i.descripcion ?? `Artículo ${i.cod_articulo}`),
                 cantidad: Number(i.cantidad),
@@ -570,7 +597,9 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                     onClick={() => agregarArticulo(a)}>
                                     {agregando === a.cod_articulo ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
                                     <div className="ped-cat-desc">{a.descripcion}</div>
-                                    <div className="ped-cat-precio">{money(a.precio_venta)}</div>
+                                    <div className="ped-cat-precio">
+                                        {a.precio_venta != null ? money(a.precio_venta) : <span className="ped-cat-sinprecio">sin precio en esta lista</span>}
+                                    </div>
                                 </button>
                             ))}
                             {catError && !catLoading && (
@@ -614,29 +643,29 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                 </div>
                             )}
 
-                            {cart.map(i => {
-                                const av = avisoDe(i.cod_articulo);
-                                const dsc = descDe(i.cod_articulo);
+                            {cart.map((i, idx) => {
+                                const av = avisoDe(idx);
+                                const dsc = descDe(idx);
                                 return (
-                                <div key={i.cod_articulo} className="ped-cart-item">
+                                <div key={i.uid} className="ped-cart-item">
                                     <div className="ped-cart-desc">{i.descripcion}<span className="ped-cart-precio">{money(i.precio)} c/u</span></div>
                                     <div className="ped-qty">
                                         <button aria-label="Restar uno" disabled={i.cantidad <= 1}
-                                            onClick={() => setQty(i.cod_articulo, Math.max(1, Math.round(i.cantidad) - 1))}><Minus size={16} /></button>
+                                            onClick={() => setQty(i.uid, Math.max(1, Math.round(i.cantidad) - 1))}><Minus size={16} /></button>
                                         <input
                                             type="text" inputMode="decimal" aria-label={`Cantidad de ${i.descripcion}`}
-                                            value={qtyTexto[i.cod_articulo] ?? String(i.cantidad)}
-                                            onChange={e => escribirQty(i.cod_articulo, e.target.value)}
+                                            value={qtyTexto[i.uid] ?? String(i.cantidad)}
+                                            onChange={e => escribirQty(i.uid, e.target.value)}
                                             onFocus={e => e.currentTarget.select()}
-                                            onBlur={() => cerrarQty(i.cod_articulo)}
+                                            onBlur={() => cerrarQty(i.uid)}
                                         />
                                         <button aria-label="Sumar uno"
-                                            onClick={() => setQty(i.cod_articulo, Math.floor(i.cantidad) + 1)}><Plus size={16} /></button>
+                                            onClick={() => setQty(i.uid, Math.floor(i.cantidad) + 1)}><Plus size={16} /></button>
                                     </div>
                                     <select
                                         className={`ped-cart-lista${av ? ' alerta' : ''}`}
                                         value={i.cod_lista}
-                                        onChange={e => setLista(i.cod_articulo, Number(e.target.value))}
+                                        onChange={e => setLista(i.uid, i.cod_articulo, Number(e.target.value))}
                                         title="Lista de precios de este renglón"
                                     >
                                         {LISTAS.map(l => <option key={l.cod} value={l.cod}>{l.label}</option>)}
@@ -646,10 +675,10 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                         <input
                                             type="text" inputMode="decimal" placeholder="0"
                                             aria-label={`Descuento en porcentaje de ${i.descripcion}`}
-                                            value={descTexto[i.cod_articulo] ?? (i.descuento ? String(i.descuento) : '')}
-                                            onChange={e => escribirDesc(i.cod_articulo, e.target.value)}
+                                            value={descTexto[i.uid] ?? (i.descuento ? String(i.descuento) : '')}
+                                            onChange={e => escribirDesc(i.uid, e.target.value)}
                                             onFocus={e => e.currentTarget.select()}
-                                            onBlur={() => cerrarDesc(i.cod_articulo)}
+                                            onBlur={() => cerrarDesc(i.uid)}
                                         />
                                         <span>%</span>
                                     </label>
@@ -657,18 +686,18 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                         {money(subtotalDe(i))}
                                         {i.descuento > 0 && <span className="ped-cart-tachado">{money(i.cantidad * i.precio)}</span>}
                                     </div>
-                                    <button className="ped-cart-del" onClick={() => quitar(i.cod_articulo)}><Trash2 size={14} /></button>
+                                    <button className="ped-cart-del" onClick={() => quitar(i.uid)}><Trash2 size={14} /></button>
                                     {dsc?.mensaje_descuento && (
                                         <div className="ped-aviso margen">
                                             <AlertTriangle size={14} />
                                             <span>{dsc.mensaje_descuento}</span>
                                             {dsc.descuento_max > 0 && (
-                                                <button onClick={() => escribirDesc(i.cod_articulo, String(dsc.descuento_max))}>
+                                                <button onClick={() => escribirDesc(i.uid, String(dsc.descuento_max))}>
                                                     Poner {dsc.descuento_max}%
                                                 </button>
                                             )}
                                             {dsc.descuento_max === 0 && (
-                                                <button onClick={() => escribirDesc(i.cod_articulo, '')}>Sacar</button>
+                                                <button onClick={() => escribirDesc(i.uid, '')}>Sacar</button>
                                             )}
                                         </div>
                                     )}
@@ -683,7 +712,7 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                             <AlertTriangle size={14} />
                                             <span>{av.mensaje}</span>
                                             {/* Botón y no :hover: las sucursales cargan desde el celular. */}
-                                            <button onClick={() => setLista(i.cod_articulo, av.lista_sugerida!)}>
+                                            <button onClick={() => setLista(i.uid, i.cod_articulo, av.lista_sugerida!)}>
                                                 Poner {NOMBRE_LISTA[av.lista_sugerida] ?? av.lista_sugerida}
                                             </button>
                                         </div>
