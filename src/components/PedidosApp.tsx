@@ -5,6 +5,7 @@ import {
     Package, AlertTriangle, Pencil,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
+import { buscarClientes } from '../utils/buscarClientes';
 import './PedidosApp.css';
 
 interface Props {
@@ -75,17 +76,35 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     const [mode, setMode] = useState<'nuevo' | 'lista'>('nuevo');
 
     // ── Maestro de clientes (prop + lookup completo) ────────────────────────
+    // 🪤 El prop `clients` NO es el maestro de clientes: VendorShell lo arma con `clientsAgg`,
+    // que es la lista de DEUDORES de cobranzas (saldo > $2.000). Sirve para cobrar, no para
+    // vender: el cliente al día, el que paga contado y el cliente nuevo no están ahí. Por eso
+    // el maestro real (este lookup, ya filtrado por vendedor en el backend) es obligatorio y
+    // no un adorno — si falla, se avisa en vez de dejar una lista muda y recortada.
     const [fullClients, setFullClients] = useState<ClienteOpt[]>([]);
+    const [cliError, setCliError] = useState<string | null>(null);
+    const [cliLoading, setCliLoading] = useState(true);
     useEffect(() => {
+        let vivo = true;
         fetch('/api/clientes/lookup', { headers: authHeaders() })
-            .then(r => r.ok ? r.json() : null)
-            .then(d => {
-                const arr = d?.clientes ?? d?.results ?? [];
-                if (Array.isArray(arr)) setFullClients(arr.map((c: any) => ({
-                    cod: String(c.cod_cliente ?? c.cod), name: String(c.razon_social ?? c.nombre ?? c.name ?? ''), localidad: c.localidad ?? '',
+            .then(async r => ({ ok: r.ok, d: await r.json().catch(() => null) }))
+            .then(({ ok, d }) => {
+                if (!vivo) return;
+                // 🪤 El endpoint responde { ok, items }. Acá se leía `d.clientes ?? d.results`,
+                // que no existen: el array quedaba vacío SIEMPRE y nadie se enteraba.
+                const arr = d?.items ?? d?.clientes ?? d?.results ?? null;
+                if (!ok || !Array.isArray(arr)) {
+                    setCliError(d?.error ?? 'No se pudo cargar el listado de clientes.');
+                    return;
+                }
+                setCliError(null);
+                setFullClients(arr.map((c: any) => ({
+                    cod: String(c.cod ?? c.cod_cliente), name: String(c.name ?? c.razon_social ?? c.nombre ?? ''), localidad: c.localidad ?? '',
                 })));
             })
-            .catch(() => { /* usamos el prop */ });
+            .catch(() => { if (vivo) setCliError('Sin conexión: no se pudo cargar el listado de clientes.'); })
+            .finally(() => { if (vivo) setCliLoading(false); });
+        return () => { vivo = false; };
     }, []);
     const clientList = useMemo(() => {
         const m = new Map<string, ClienteOpt>();
@@ -112,11 +131,10 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     const [editando, setEditando] = useState<string | null>(null);
 
     // ── Buscador de clientes ────────────────────────────────────────────────
-    const clientesFiltrados = useMemo(() => {
-        const t = clienteSearch.trim().toLowerCase();
-        if (!t) return clientList.slice(0, 30);
-        return clientList.filter(c => c.name.toLowerCase().includes(t) || c.cod.includes(t)).slice(0, 30);
-    }, [clienteSearch, clientList]);
+    // El ranking y la normalización viven en utils/buscarClientes.ts, con tests: es lo que
+    // falló el 27/08 y tiene que poder verificarse sin montar el componente.
+    const { resultados: clientesFiltrados, deMas: clientesDeMas } =
+        useMemo(() => buscarClientes(clientList, clienteSearch), [clienteSearch, clientList]);
 
     async function elegirCliente(c: ClienteOpt) {
         setCliente(c); setStep('productos'); setCredito(null); setCredLoading(true);
@@ -494,7 +512,18 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                 <div><div className="ped-cli-name">{c.name}</div>{c.localidad && <div className="ped-cli-loc">{c.localidad}</div>}</div>
                             </button>
                         ))}
-                        {!clientesFiltrados.length && <div className="ped-empty">Sin resultados.</div>}
+                        {cliError && (
+                            <div className="ped-sin-resultados error">
+                                <AlertTriangle size={15} />
+                                <span>{cliError} La lista puede estar incompleta.</span>
+                            </div>
+                        )}
+                        {clientesDeMas > 0 && (
+                            <div className="ped-sin-resultados"><span>y {clientesDeMas} cliente{clientesDeMas === 1 ? '' : 's'} más — afiná la búsqueda.</span></div>
+                        )}
+                        {!clientesFiltrados.length && (
+                            <div className="ped-empty">{cliLoading ? 'Cargando clientes…' : 'Sin resultados.'}</div>
+                        )}
                     </div>
                 )}
 
