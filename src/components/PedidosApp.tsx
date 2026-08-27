@@ -453,9 +453,12 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
     }, [mode, resultado]);
 
     // ── Semáforo de crédito ─────────────────────────────────────────────────
-    const credColor = credito
-        ? (credito.disponible <= 0 || credito.saldo < 0 ? 'red' : credito.disponible < (Math.abs(credito.saldo) * 0.1) ? 'amber' : 'green')
-        : 'gray';
+    // 🪤 Esto era un semáforo calculado sobre `disponible` (el cupo). Al sacar el cupo de la
+    // pantalla el color quedaría dependiendo de un número que no se ve, así que ahora sólo
+    // refleja el saldo, que es el que está a la vista: verde = al día o a favor, gris = debe.
+    // No pinta de rojo a un deudor normal a propósito: en cuenta corriente casi todos deben
+    // algo y un rojo permanente deja de mirarse.
+    const credColor = credito ? (credito.saldo > 0 ? 'gray' : 'green') : 'gray';
 
     return (
         /* 🪤 El overlay cerraba con cualquier tap. El modal mide 92vh y va pegado abajo, así
@@ -550,8 +553,8 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                     <div className={`ped-credito ${credColor}`}>
                                         <Wallet size={14} />
                                         {credLoading ? 'Consultando crédito…' : credito
-                                            ? <>Saldo {money(credito.saldo)} · Cupo {money(credito.disponible)}</>
-                                            : 'Sin datos de crédito'}
+                                            ? <>Saldo {money(credito.saldo)}</>
+                                            : 'Sin datos de saldo'}
                                     </div>
                                 </div>
                             </div>
