@@ -3,7 +3,7 @@ import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
 import {
   crearPresupuesto, anularComprobante, getPrecioLista, getDisponibleCliente,
-  fetchClientesIMCached, fetchArticulosCatalogo,
+  fetchClientesIMCached, fetchArticulosCatalogo, fetchArticulosDeDeposito,
 } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
 import {
@@ -25,6 +25,9 @@ if (!IM_USUARIO_PEDIDOS) {
 const PEDIDO_EMPRESA_DEFAULT = Number(env.PEDIDO_EMPRESA_DEFAULT || 1);
 const PEDIDO_PUNTO_DE_VENTA = Number(env.PEDIDO_PUNTO_DE_VENTA || 1);
 const PEDIDO_LISTA_FALLBACK = Number(env.PEDIDO_LISTA_FALLBACK || 12); // LISTA 1
+// Deposito cuyo stock define que productos ve el buscador. 1 = Deposito General (casa
+// central, empresa 1). Los otros son 2=BRS, 3=San Juan, 6=Jujuy.
+const PEDIDO_DEPOSITO = Number(env.PEDIDO_DEPOSITO || 1);
 // Dry-run: NO postea a IM, solo guarda el borrador en Supabase y loguea el payload.
 // Útil para probar el flujo sin ensuciar InfoManager. Apagar (borrar/0) para producción.
 const PEDIDOS_DRY_RUN = String(env.PEDIDOS_DRY_RUN || '').toLowerCase() === 'true' || env.PEDIDOS_DRY_RUN === '1';
@@ -395,18 +398,43 @@ export async function precioArticulo(req: Request & { user?: JwtPayload }, res: 
   }
 }
 
-/** GET /api/pedidos-catalogo?q= — catálogo de artículos (para el buscador). */
+/**
+ * GET /api/pedidos-catalogo?q=&todos=1 — catálogo de artículos (para el buscador).
+ *
+ * Por defecto muestra SOLO lo que hay en el depósito de casa central: el catálogo completo
+ * de IM son 1.390 artículos y 804 de ellos existen únicamente en las minoristas, así que el
+ * vendedor buscaba entre el doble de cosas de las que puede vender.
+ *
+ * `todos=1` levanta el filtro. Lo usa el frontend cuando una búsqueda no da resultados, para
+ * no bloquear una venta: hay un puñado de artículos que se facturan desde casa central sin
+ * figurar en su depósito.
+ */
 export async function catalogoPedido(req: Request & { user?: JwtPayload }, res: Response) {
   try {
     const term = String(req.query.q ?? '').trim().toLowerCase();
+    const todos = req.query.todos === '1' || req.query.todos === 'true';
     const map = await fetchArticulosCatalogo();
-    const all = Array.from(map.entries()).map(([cod, a]) => ({
-      cod_articulo: cod, descripcion: a.descripcion, precio_venta: a.precio_venta, cod_rubro: a.cod_rubro,
-    }));
+
+    let deDeposito: Set<number> | null = null;
+    if (!todos) {
+      try {
+        deDeposito = await fetchArticulosDeDeposito(PEDIDO_DEPOSITO);
+      } catch (e: any) {
+        // Si IM no responde el stock por depósito, se muestra el catálogo entero: es
+        // preferible que sobren productos a que el vendedor no pueda cargar el pedido.
+        console.warn('[catalogoPedido] no se pudo filtrar por depósito, muestro todo:', e?.message);
+      }
+    }
+
+    const all = Array.from(map.entries())
+      .filter(([cod]) => !deDeposito || deDeposito.has(cod))
+      .map(([cod, a]) => ({
+        cod_articulo: cod, descripcion: a.descripcion, precio_venta: a.precio_venta, cod_rubro: a.cod_rubro,
+      }));
     const filtered = term
       ? all.filter((a) => a.descripcion.toLowerCase().includes(term) || String(a.cod_articulo).includes(term))
       : all;
-    res.json({ ok: true, articulos: filtered.slice(0, 80) });
+    res.json({ ok: true, articulos: filtered.slice(0, 80), solo_casa_central: !todos && !!deDeposito });
   } catch (err: any) {
     res.status(502).json({ error: `No se pudo cargar el catálogo desde IM: ${err?.message ?? 'sin respuesta'}` });
   }

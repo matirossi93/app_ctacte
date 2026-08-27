@@ -118,6 +118,12 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     const [catQuery, setCatQuery] = useState('');
     const [catResults, setCatResults] = useState<CatItem[]>([]);
     const [catLoading, setCatLoading] = useState(false);
+    // El buscador muestra sólo lo que hay en el depósito de casa central. Si una búsqueda
+    // no encuentra nada, se ofrece ampliar a todo el catálogo: hay un puñado de artículos
+    // que se facturan desde acá sin figurar en el depósito, y no poder cargarlos frenaría
+    // una venta.
+    const [catTodos, setCatTodos] = useState(false);
+    useEffect(() => { setCatTodos(false); }, [catQuery]);
     useEffect(() => {
         if (step !== 'productos') return;
         const t = catQuery.trim();
@@ -126,14 +132,14 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         const ctrl = new AbortController();
         const timer = setTimeout(async () => {
             try {
-                const r = await fetch(`/api/pedidos/catalogo?q=${encodeURIComponent(t)}`, { headers: authHeaders(), signal: ctrl.signal });
+                const r = await fetch(`/api/pedidos/catalogo?q=${encodeURIComponent(t)}${catTodos ? '&todos=1' : ''}`, { headers: authHeaders(), signal: ctrl.signal });
                 const d = await r.json();
                 if (d?.ok) setCatResults(d.articulos ?? []);
             } catch { /* abort/red */ }
             setCatLoading(false);
         }, 300);
         return () => { clearTimeout(timer); ctrl.abort(); };
-    }, [catQuery, step]);
+    }, [catQuery, step, catTodos]);
 
     async function agregarArticulo(a: CatItem) {
         if (cart.some(i => i.cod_articulo === a.cod_articulo)) return;
@@ -324,6 +330,19 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                                     <div className="ped-cat-precio">{money(a.precio_venta)}</div>
                                 </button>
                             ))}
+                            {catQuery.trim().length >= 2 && !catLoading && !catResults.length && (
+                                <div className="ped-sin-resultados">
+                                    {catTodos
+                                        ? <span>No hay ningún producto que coincida con «{catQuery.trim()}».</span>
+                                        : <>
+                                            <span>No hay productos de casa central que coincidan.</span>
+                                            <button onClick={() => setCatTodos(true)}>Buscar en todo el catálogo</button>
+                                        </>}
+                                </div>
+                            )}
+                            {catTodos && catResults.length > 0 && (
+                                <div className="ped-sin-resultados"><span>Mostrando también productos de las sucursales.</span></div>
+                            )}
 
                             {/* Carrito */}
                             {cart.length > 0 && <div className="ped-cart-title">Pedido ({cart.length})</div>}

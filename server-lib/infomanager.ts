@@ -226,6 +226,37 @@ export async function fetchArticulosCatalogo(force = false): Promise<Map<number,
 export function invalidateArticulosCatalogo(): void { _articulosCache = null; }
 
 /**
+ * Códigos de artículo que existen en UN depósito. Cacheado 1h, igual que el catálogo.
+ *
+ * `/articulos/stock` devuelve el consolidado de toda la empresa y NO acepta filtro por
+ * depósito (probado 26/08: mandarle cod_deposito devuelve las mismas 1.392 filas para
+ * los cuatro). El que sí discrimina es `/depositos/stock_por_deposito/{cod}`.
+ *
+ * Se toma la PRESENCIA en el depósito, no la existencia > 0: hay artículos que se venden
+ * con stock en cero o negativo, y filtrar por existencia dejaba afuera 52 de los 428 que
+ * Casa Central facturó en tres semanas. Por presencia se pierden 10, casi todos de una
+ * sola venta en el período.
+ */
+const DEPOSITO_TTL_MS = 60 * 60 * 1000;
+const _depositoCache = new Map<number, { cods: Set<number>; fetchedAt: number }>();
+
+export async function fetchArticulosDeDeposito(codDeposito: number): Promise<Set<number>> {
+  const hit = _depositoCache.get(codDeposito);
+  if (hit && Date.now() - hit.fetchedAt < DEPOSITO_TTL_MS) return hit.cods;
+  const cli = await imClient();
+  const { data } = await imGetRetry(
+    () => cli.get(`/depositos/stock_por_deposito/${codDeposito}`), `stock_por_deposito/${codDeposito}`);
+  const rows: any[] = data?.stocks ?? data?.results ?? (Array.isArray(data) ? data : []);
+  const cods = new Set<number>();
+  for (const r of rows) {
+    const c = Number(r.cod_articulo);
+    if (Number.isFinite(c)) cods.add(c);
+  }
+  _depositoCache.set(codDeposito, { cods, fetchedAt: Date.now() });
+  return cods;
+}
+
+/**
  * POST /api/v1/recibo — emitir recibo en InfoManager.
  * Shape exacto del swagger (todos strings, patterns obligatorios).
  */

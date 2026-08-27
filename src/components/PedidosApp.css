@@ -149,3 +149,19 @@
   min-height: 28px;
 }
 .ped-cart-lista.alerta { border-color: var(--color-warning); border-width: 2px; }
+
+/* Buscador acotado a casa central: cuando no encuentra nada, ofrece ampliar. */
+.ped-sin-resultados {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; flex-wrap: wrap;
+  padding: 0.6rem 0.7rem; margin: 0.3rem 0;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-surface-hover, #f2f2f2);
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+.ped-sin-resultados button {
+  border: 1px solid var(--color-primary); background: transparent; color: var(--color-primary);
+  font-weight: 700; font-size: 0.76rem;
+  padding: 0.35rem 0.6rem; border-radius: var(--radius-sm, 6px);
+  cursor: pointer; min-height: 32px;
+}
