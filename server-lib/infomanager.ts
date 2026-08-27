@@ -673,25 +673,43 @@ export interface PrecioLista {
 }
 
 /** GET /articulos/precio-ldp — precio de UN artículo en UNA lista de precios. */
+/**
+ * Parsea la respuesta de /articulos/precio-ldp. Separado para poder testearlo.
+ *
+ * 🪤 IM contesta HTTP 200 IGUAL cuando el artículo no tiene precio en esa lista, con el
+ * error en el body: {mensaje, detalles:"El artículo no existe, no se encuentra en la lista
+ * seleccionada o su precio es cero", error:-1}. Antes ese cuerpo pasaba como precio válido
+ * porque `row` no era null: quedaba precio 0 y descripción vacía, y el renglón se guardaba
+ * y se mandaba a InfoManager a $0. Pasó de verdad con el art 918 COLLAR AHORQUE CHICO en
+ * Lista 3 (pedido de prueba del 26/08).
+ */
+export function parsePrecioLista(data: any, codArticulo: number): PrecioLista | null {
+  const row = Array.isArray(data) ? data[0] : (data?.results?.[0] ?? data);
+  if (!row) return null;
+  if (row.error != null && Number(row.error) !== 0) return null;   // error de negocio con status 200
+  const precio = Number(row.precio_vta ?? row.precio ?? NaN);
+  if (!Number.isFinite(precio) || precio <= 0) return null;        // sin precio en esa lista
+  return {
+    cod_articulo: Number(row.cod_articulo ?? codArticulo),
+    descripcion: String(row.descripcion ?? ''),
+    precio_vta: precio,
+    iva: Number(row.iva ?? 0),
+    precio_con_iva: Number(row.precio_con_iva ?? precio),
+    cod_rubro: row.cod_rubro != null ? Number(row.cod_rubro) : undefined,
+    rubro: row.rubro ?? undefined,
+    ult_actualizacion_precio: row.ult_actualizacion_precio ?? undefined,
+  };
+}
+
 export async function getPrecioLista(codArticulo: number, codLista: number): Promise<PrecioLista | null> {
   const cli = await imClient();
   const { data } = await imGetRetry(
     () => cli.get('/articulos/precio-ldp', { params: { cod_articulo: codArticulo, cod_lista: codLista } }),
     `precio-ldp art=${codArticulo} lista=${codLista}`
   );
-  const row = Array.isArray(data) ? data[0] : (data?.results?.[0] ?? data);
-  if (!row) return null;
-  return {
-    cod_articulo: Number(row.cod_articulo ?? codArticulo),
-    descripcion: String(row.descripcion ?? ''),
-    precio_vta: Number(row.precio_vta ?? row.precio ?? 0),
-    iva: Number(row.iva ?? 0),
-    precio_con_iva: Number(row.precio_con_iva ?? row.precio_vta ?? 0),
-    cod_rubro: row.cod_rubro != null ? Number(row.cod_rubro) : undefined,
-    rubro: row.rubro ?? undefined,
-    ult_actualizacion_precio: row.ult_actualizacion_precio ?? undefined,
-  };
+  return parsePrecioLista(data, codArticulo);
 }
+
 
 export interface DisponibleCliente {
   cod_cliente: number;

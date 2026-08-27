@@ -185,6 +185,20 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
       totalEstimado += subtotal;
       itemsConPrecio.push({ ...it, descripcion, precio, iva, subtotal, cod_lista: listaItem });
     }
+
+    // 🪤 Sin precio no se vende. IM contesta 200 con el error en el body cuando el artículo
+    // no está en esa lista de precios, y eso pasaba como precio 0: el renglón se guardaba
+    // en cero y se mandaba así. Pasó con el art 918 COLLAR AHORQUE CHICO en Lista 3.
+    const sinPrecio = itemsConPrecio.filter((it) => !(it.precio > 0));
+    if (sinPrecio.length) {
+      const nombres = sinPrecio.map((it) => it.descripcion || `artículo ${it.cod_articulo}`).join(', ');
+      res.status(422).json({
+        ok: false, bloqueado: true,
+        error: `${nombres}: no tiene precio cargado en la lista elegida. Probá con otra lista o avisá a la oficina.`,
+        sin_precio: sinPrecio.map((it) => ({ cod_articulo: it.cod_articulo, cod_lista: it.cod_lista })),
+      });
+      return;
+    }
     totalEstimado = Math.round(totalEstimado * 100) / 100;
 
     // Control de listas ANTES de escribir nada: si hay que frenar el pedido, no queremos
