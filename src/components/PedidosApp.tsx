@@ -156,7 +156,28 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         setCart(c => [...c, { cod_articulo: a.cod_articulo, descripcion: a.descripcion, cantidad: 1, precio, cod_lista: listaDelItem }]);
         setCatQuery(''); setCatResults([]);
     }
-    const setQty = (cod: number, q: number) => setCart(c => c.map(i => i.cod_articulo === cod ? { ...i, cantidad: Math.max(0.001, q) } : i));
+    const setQty = (cod: number, q: number) =>
+        setCart(c => c.map(i => i.cod_articulo === cod ? { ...i, cantidad: q } : i));
+
+    // 🪤 El input era type="number" y hacía Number(e.target.value) directo. Al borrar el
+    // contenido para escribir otra cantidad, Number('') daba 0 y el mínimo lo dejaba en
+    // 0,001: el campo quedaba trabado y había que borrar el renglón. Y escribiendo "1.5",
+    // al pasar por "1." se perdía el punto. Ahora el texto se edita libre y recién se
+    // normaliza al salir del campo. type="text" + inputMode="decimal" también evita los
+    // spinners minúsculos y abre el teclado numérico en el celular, que es donde se usa.
+    const [qtyTexto, setQtyTexto] = useState<Record<number, string>>({});
+    function escribirQty(cod: number, txt: string) {
+        if (!/^\d*[.,]?\d*$/.test(txt)) return;      // sólo números y un separador decimal
+        setQtyTexto(q => ({ ...q, [cod]: txt }));
+        const n = Number(txt.replace(',', '.'));
+        if (txt !== '' && Number.isFinite(n) && n > 0) setQty(cod, n);
+    }
+    function cerrarQty(cod: number) {
+        const txt = qtyTexto[cod];
+        setQtyTexto(q => { const c = { ...q }; delete c[cod]; return c; });
+        const n = Number(String(txt ?? '').replace(',', '.'));
+        if (txt !== undefined && (!Number.isFinite(n) || n <= 0)) setQty(cod, 1);
+    }
 
     /** Cambiar la lista de un renglon: se re-pide el precio de ESA lista. */
     async function setLista(cod: number, codLista: number) {
@@ -195,6 +216,9 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     }, [cart]);
     const avisoDe = (cod: number) => control?.avisos?.find(a => a.cod_articulo === cod && a.mensaje);
     const faltanBultos = control ? Math.max(0, 10 - control.bultos) : 0;
+    // Vender más barato de lo que corresponde FRENA el pedido (el backend también lo
+    // rechaza). Cobrarle de más al cliente sólo avisa: ahí el vendedor puede tener un motivo.
+    const bloqueos = control?.avisos?.filter(a => a.severidad === 'margen') ?? [];
 
     // ── Confirmar ───────────────────────────────────────────────────────────
     const [enviando, setEnviando] = useState(false);
@@ -221,6 +245,11 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
             } else if (r.status === 202 || d?.sin_respuesta) {
                 setResultado({ ok: false, warn: true, msg: d?.error ?? 'IM no respondió — revisá antes de reintentar' });
                 setStep('listo');
+            } else if (r.status === 422 && d?.bloqueado) {
+                // El backend rechazó por lista mal elegida. No se manda a la pantalla final:
+                // el vendedor tiene que corregir el renglón, que ya está marcado en rojo.
+                setEnviando(false);
+                return;
             } else {
                 setResultado({ ok: false, msg: d?.error ?? 'No se pudo crear el pedido' });
                 setStep('listo');
@@ -364,9 +393,17 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                                 <div key={i.cod_articulo} className="ped-cart-item">
                                     <div className="ped-cart-desc">{i.descripcion}<span className="ped-cart-precio">{money(i.precio)} c/u</span></div>
                                     <div className="ped-qty">
-                                        <button onClick={() => setQty(i.cod_articulo, i.cantidad - 1)}><Minus size={14} /></button>
-                                        <input type="number" value={i.cantidad} onChange={e => setQty(i.cod_articulo, Number(e.target.value))} />
-                                        <button onClick={() => setQty(i.cod_articulo, i.cantidad + 1)}><Plus size={14} /></button>
+                                        <button aria-label="Restar uno" disabled={i.cantidad <= 1}
+                                            onClick={() => setQty(i.cod_articulo, Math.max(1, Math.round(i.cantidad) - 1))}><Minus size={16} /></button>
+                                        <input
+                                            type="text" inputMode="decimal" aria-label={`Cantidad de ${i.descripcion}`}
+                                            value={qtyTexto[i.cod_articulo] ?? String(i.cantidad)}
+                                            onChange={e => escribirQty(i.cod_articulo, e.target.value)}
+                                            onFocus={e => e.currentTarget.select()}
+                                            onBlur={() => cerrarQty(i.cod_articulo)}
+                                        />
+                                        <button aria-label="Sumar uno"
+                                            onClick={() => setQty(i.cod_articulo, Math.floor(i.cantidad) + 1)}><Plus size={16} /></button>
                                     </div>
                                     <select
                                         className={`ped-cart-lista${av ? ' alerta' : ''}`}
@@ -398,10 +435,20 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                         </div>
 
                         <footer className="ped-footer">
-                            <div className="ped-total">Total <b>{money(total)}</b><span className="ped-total-nota">IM recalcula al facturar</span></div>
-                            <button className="ped-confirm" disabled={!cart.length || enviando} onClick={confirmar}>
-                                {enviando ? <><Loader2 className="spin" size={18} /> Enviando…</> : <><Send size={18} /> Confirmar pedido</>}
-                            </button>
+                            {bloqueos.length > 0 && (
+                                <div className="ped-bloqueo">
+                                    <AlertTriangle size={16} />
+                                    {bloqueos.length === 1
+                                        ? <span>Corregí la lista del renglón marcado en rojo para poder enviar el pedido.</span>
+                                        : <span>Corregí los <b>{bloqueos.length} renglones</b> marcados en rojo para poder enviar el pedido.</span>}
+                                </div>
+                            )}
+                            <div className="ped-footer-row">
+                                <div className="ped-total">Total <b>{money(total)}</b><span className="ped-total-nota">IM recalcula al facturar</span></div>
+                                <button className="ped-confirm" disabled={!cart.length || enviando || bloqueos.length > 0} onClick={confirmar}>
+                                    {enviando ? <><Loader2 className="spin" size={18} /> Enviando…</> : <><Send size={18} /> Confirmar pedido</>}
+                                </button>
+                            </div>
                         </footer>
                     </>
                 )}

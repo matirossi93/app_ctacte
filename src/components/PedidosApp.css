@@ -165,3 +165,30 @@
   padding: 0.35rem 0.6rem; border-radius: var(--radius-sm, 6px);
   cursor: pointer; min-height: 32px;
 }
+
+/* Bloqueo del envío cuando se estaría vendiendo por debajo de la lista que corresponde. */
+.ped-footer { flex-direction: column; align-items: stretch; gap: 0.5rem; }
+.ped-footer-row { display: flex; align-items: center; gap: 0.8rem; }
+.ped-bloqueo {
+  display: flex; align-items: center; gap: 0.45rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-danger-bg); color: var(--color-danger);
+  font-size: 0.8rem; line-height: 1.35;
+}
+.ped-bloqueo svg { flex-shrink: 0; }
+
+/* El carrito se usa desde el celular: los +/- y el campo de cantidad tienen que ser
+   cómodos con el dedo, y el input abre teclado numérico (inputMode="decimal"). */
+.ped-qty button { min-width: 40px; min-height: 40px; justify-content: center; }
+.ped-qty button:disabled { opacity: 0.35; }
+.ped-qty input { width: 4rem; min-height: 40px; font-size: 16px; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 560px) {
+  /* En pantalla chica el renglón se parte: producto arriba, controles abajo con aire. */
+  .ped-cart-item { grid-template-columns: 1fr auto auto; row-gap: 0.4rem; }
+  .ped-cart-desc { grid-column: 1 / -1; }
+  .ped-cart-sub { min-width: auto; }
+  .ped-aviso { flex-wrap: wrap; }
+  .ped-aviso button { width: 100%; }
+}

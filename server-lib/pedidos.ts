@@ -187,6 +187,33 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
     }
     totalEstimado = Math.round(totalEstimado * 100) / 100;
 
+    // Control de listas ANTES de escribir nada: si hay que frenar el pedido, no queremos
+    // haber dejado una cabecera huérfana en Supabase.
+    //
+    // 🔒 Vender MÁS BARATO de lo que corresponde se FRENA (Mati, 26/08: "no le deje
+    // presupuestar un producto a un precio más bajo del que le corresponde, sino pierde
+    // el sentido de ese control"). Es plata que se pierde y nadie la recupera después.
+    //
+    // Al revés NO se frena: cobrarle de más a un cliente que tenía derecho a mejor precio
+    // se avisa, pero el vendedor puede tener un motivo. Y si el control no pudo correr
+    // (IM caído, Supabase sin responder) tampoco se frena: no se pierde una venta por un
+    // problema nuestro.
+    const control = await controlarListas(itemsConPrecio.map((it) => ({
+      cod_articulo: it.cod_articulo, cantidad: it.cantidad, cod_lista: it.cod_lista,
+    })));
+    const avisoPorArt = new Map(control?.avisos.map((a) => [a.cod_articulo, a]) ?? []);
+    const bloqueos = (control?.avisos ?? []).filter((a) => a.severidad === 'margen');
+    if (bloqueos.length) {
+      res.status(422).json({
+        ok: false, bloqueado: true,
+        error: bloqueos.length === 1
+          ? bloqueos[0].mensaje
+          : `Hay ${bloqueos.length} renglones con la lista mal elegida. Corregilos antes de enviar el pedido.`,
+        avisos: bloqueos,
+      });
+      return;
+    }
+
     // 1. Guardar el pedido en Supabase (estado borrador).
     const pedidoId = randomUUID();
     const { error: insErr } = await sb().from('pedidos_vendedor').insert({
@@ -213,13 +240,6 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
       }
       res.status(500).json({ error: `insert pedido: ${insErr.message}` }); return;
     }
-    // Control de listas: queda registrado qué se le avisó al vendedor y qué mandó igual.
-    // Sin esto no hay forma de saber después si el aviso sirve o si lo ignoran siempre.
-    const control = await controlarListas(itemsConPrecio.map((it) => ({
-      cod_articulo: it.cod_articulo, cantidad: it.cantidad, cod_lista: it.cod_lista,
-    })));
-    const avisoPorArt = new Map(control?.avisos.map((a) => [a.cod_articulo, a]) ?? []);
-
     await sb().from('pedidos_vendedor_items').insert(itemsConPrecio.map((it, i) => {
       const av = avisoPorArt.get(it.cod_articulo);
       return {
