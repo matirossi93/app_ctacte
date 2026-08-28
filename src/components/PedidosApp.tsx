@@ -591,7 +591,6 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                         <div>
                                             <div className="ped-row-cli">{p.cliente_nombre ?? `Cliente ${p.cod_cliente}`}</div>
                                             <div className="ped-row-sub">{new Date(p.created_at).toLocaleDateString('es-AR')} · {money(p.total_estimado)}{p.im_numero ? ` · Nº ${p.im_numero}` : ''}</div>
-                                            {p.im_error && <div className="ped-row-alerta">{p.im_error}</div>}
                                         </div>
                                     </button>
                                     <span className={`ped-chip ${e.cls}`}>{e.txt}</span>
@@ -610,6 +609,15 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
 
                                     {abierto === p.id && (
                                         <div className="ped-detalle">
+                                            {/* El chip de la fila dice CUÁL mirar; el motivo —que suele ser
+                                                el error crudo de IM— vive acá adentro, a un toque. Sobre la
+                                                fila manchaba la lista entera y descolocaba chip y botones. */}
+                                            {p.im_error && (
+                                                <div className="ped-det-problema">
+                                                    <AlertTriangle size={14} />
+                                                    <span>{p.im_error}</span>
+                                                </div>
+                                            )}
                                             {detalle[p.id] === 'cargando' && (
                                                 <div className="ped-empty"><Loader2 className="spin" size={16} /> Cargando el detalle…</div>
                                             )}

@@ -351,11 +351,14 @@
   border-radius: var(--radius-sm, 6px); cursor: pointer; min-height: 28px;
 }
 
-/* El motivo por el que un pedido quedó marcado "Revisar": va completo y no truncado porque
-   suele decir qué número de presupuesto hay que anular a mano en InfoManager. Sólo aparece
-   en los pedidos que lo tienen, así que no le agrega alto a la lista normal. */
-.ped-row-alerta {
+/* El motivo por el que un pedido quedó en "Error" o en "Revisar". Va DENTRO del acordeón:
+   sobre la fila manchaba la lista entera con el texto crudo de la API y, al crecer
+   `.ped-row-info`, empujaba el chip y los botones a otro renglón. El chip alcanza para
+   saber cuál mirar; el porqué está a un toque. */
+.ped-det-problema {
+  display: flex; align-items: flex-start; gap: 0.4rem;
   font-size: 0.75rem; line-height: 1.35; color: var(--color-warning);
   background: var(--color-warning-bg); border-radius: var(--radius-sm);
-  padding: 0.3rem 0.45rem; margin-top: 0.3rem;
+  padding: 0.4rem 0.5rem; margin-bottom: 0.5rem;
 }
+.ped-det-problema svg { flex-shrink: 0; margin-top: 0.1rem; }

@@ -295,6 +295,42 @@ describe('editarPedido — que no se pierda de vista un presupuesto vivo', () =>
     expect(body.aviso).toContain('57999');   // el número que hay que anotar
   });
 
+  it('🔴 un pedido que IM rechazó al crearse SÍ se manda a IM cuando lo corrigen', async () => {
+    // 🪤 Un rechazo limpio de IM al crear deja el pedido sin `im_presupuesto_id`. Eso caía en
+    // la misma rama que el dry-run: se reescribían los renglones acá, se contestaba ok:true y
+    // el front decía "Pedido modificado en InfoManager" sin haber llamado a IM ni una vez. El
+    // pedido corregido no existía para la oficina y había que anularlo y cargarlo de cero.
+    im.sbMock.mockImplementation(() => ({
+      from: (t: string) => {
+        const res = t === 'pedidos_vendedor'
+          ? { data: { ...PEDIDO, estado: 'error', im_presupuesto_id: null, im_numero: null }, error: null }
+          : { data: ACTUALES, error: null };
+        const q: any = {
+          then: (r: any, j: any) => Promise.resolve(res).then(r, j),
+          maybeSingle: () => Promise.resolve(res),
+          update: (v: any) => { updates.push([t, v]); return q; },
+        };
+        for (const m of ['select', 'eq', 'order', 'delete', 'insert']) q[m] = () => q;
+        return q;
+      },
+    }));
+
+    // Mismos renglones que ya tiene: ni siquiera hace falta cambiar nada para re-mandarlo.
+    const { status, body } = await editar(SOLO_CANTIDADES);
+
+    expect(status).toBe(200);
+    expect(im.crearPresupuesto).toHaveBeenCalledTimes(1);
+    expect(im.anularComprobante).not.toHaveBeenCalled();   // no hay nada que anular
+    expect(im.cabeceraComprobante).not.toHaveBeenCalled(); // ni nada que consultar
+    // Y sale del rojo: sin esto queda en 'error' para siempre aunque en IM esté bien.
+    const upd = updates.filter(([t]) => t === 'pedidos_vendedor').pop()![1];
+    expect(upd.estado).toBe('enviado');
+    expect(upd.im_presupuesto_id).toBe('58700001');
+    expect(body.numero_cambio).toBe(true);
+    // Las observaciones NO pueden decir "reemplaza al PR null".
+    expect(im.crearPresupuesto.mock.calls[0][0].observaciones).not.toContain('reemplaza');
+  });
+
   it('🔴 el aviso de "quedaron los DOS vivos" no lo pisa el error de renglones', async () => {
     // 🪤 Los dos textos iban a la misma columna `im_error` y el segundo pisaba al primero:
     // se borraba justo el aviso que evita que le facturen dos veces al cliente.
