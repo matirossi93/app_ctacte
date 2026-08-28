@@ -5,6 +5,7 @@
  * Lo que se valida: que la app siga andando como app INDEPENDIENTE (login propio)
  * y ademas acepte a quien viene del PANEL (cookie del dominio compartido).
  */
+import { describe, it, expect } from 'vitest';
 import jwt from 'jsonwebtoken';
 
 const SECRET = 'test-secret';
@@ -45,12 +46,11 @@ const casos = [
   ['8. cookie del panel entre otras', { cookie: `otra=x; ${COOKIE_PANEL}=${bueno}; mas=y` }, true],
 ];
 
-let ok = 0;
-for (const [nombre, headers, esperado] of casos) {
-  const r = !!usuarioDeLaSesion({ headers });
-  const bien = r === esperado;
-  ok += bien;
-  console.log(`  ${bien ? 'OK  ' : 'FALLA'} ${nombre.padEnd(40)} entra=${String(r).padEnd(5)} esperado=${esperado}`);
-}
-console.log(`\n${ok}/${casos.length} correctos`);
-process.exit(ok === casos.length ? 0 : 1);
+// 🪤 Esto corria como script suelto (console.log + process.exit) pero el archivo se llama
+// `.test.mjs`, asi que vitest lo levantaba y el `process.exit(0)` le hacia fallar la suite
+// entera: `npm test` quedaba en rojo con los 8 casos pasando. Los mismos 8 casos, como test.
+describe('usuarioDeLaSesion — login propio y sesion del panel', () => {
+  it.each(casos)('%s', (_nombre, headers, esperado) => {
+    expect(!!usuarioDeLaSesion({ headers })).toBe(esperado);
+  });
+});
