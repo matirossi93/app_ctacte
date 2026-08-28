@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import { fetchClientesIMCached } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
+import { veTodosLosClientes } from './perfilUsuario.js';
 
 /**
  * Lookup de TODOS los clientes para el picker de Recibos.
@@ -24,7 +25,13 @@ export async function listClientesLookup(req: Request & { user?: JwtPayload }, r
         // Un vendedor sin cod_vendedor filtraba por -1 y devolvia [] con ok:true, o sea
         // exactamente lo mismo que "este vendedor no tiene clientes". Es un problema de
         // configuracion del usuario, no un listado vacio: que se distinga.
-        if (user.rol === 'vendedor' && user.cod_vendedor == null) {
+        // Una sola lectura para las dos decisiones de abajo.
+        const mostrador = await veTodosLosClientes(user);
+
+        // 🪤 El de mostrador NO necesita cod_vendedor para elegir a quién venderle: si se corta
+        // acá se queda sin listado y encima con un aviso diciéndole que le falta configurar
+        // algo que no le hace falta. Los que sí filtran por cartera siguen frenando igual.
+        if (user.rol === 'vendedor' && user.cod_vendedor == null && !mostrador) {
             res.json({ ok: true, items: [], source: 'none', sin_vendedor: true });
             return;
         }
@@ -49,7 +56,10 @@ export async function listClientesLookup(req: Request & { user?: JwtPayload }, r
                 cod_lista: Number((c as any).lista_precio) > 0 ? Number((c as any).lista_precio) : null,
             }));
 
-            if (user.rol === 'vendedor') {
+            // 🔑 El usuario de MOSTRADOR ve el maestro entero: en una sucursal le entra
+            // cualquier cliente por la puerta, y filtrar por su cod_vendedor le esconde justo
+            // al que tiene enfrente. Ver `usuarios.ve_todos_los_clientes` (migración 028).
+            if (user.rol === 'vendedor' && !mostrador) {
                 const cv = user.cod_vendedor ?? -1;
                 items = items.filter((i) => i.cod_vendedor === cv);
             } else if (req.query.cod_vendedor) {

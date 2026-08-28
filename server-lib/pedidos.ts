@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
 import { sucursalDe, type Sucursal } from './sucursales.js';
+import { filaUsuario, sucursalDelUsuario } from './perfilUsuario.js';
 import {
   crearPresupuesto, anularComprobante, getPrecioLista, getDisponibleCliente,
   fetchClientesIMCached, fetchArticulosCatalogo, fetchArticulosDeDeposito,
@@ -51,35 +52,6 @@ if (!IM_USUARIO_PEDIDOS) {
  * presupuesto entero, y ahí ningún vendedor puede cargar nada. Si IM o Supabase no contestan,
  * o el campo está vacío, se usa el que ya sabemos que funciona.
  */
-/**
- * Lo que el usuario tiene configurado en la app: su login de IM y a qué unidad pertenece.
- *
- * Va en UNA sola lectura porque crear un pedido necesita las dos cosas. Y se lee de la BASE en
- * cada pedido, no del JWT: son CONFIGURACIÓN, no credenciales — el token dura 8 h y cambiar el
- * valor por SQL no haría efecto hasta el próximo login.
- */
-async function filaUsuario(
-  user?: { sub?: string } | null,
-): Promise<{ im_usuario: string | null; cod_empresa: number | null }> {
-  if (!user?.sub) return { im_usuario: null, cod_empresa: null };
-  try {
-    const { data } = await sb().from('usuarios')
-      .select('im_usuario, cod_empresa').eq('tenant_id', TENANT_ID).eq('id', user.sub).maybeSingle();
-    return { im_usuario: data?.im_usuario ?? null, cod_empresa: data?.cod_empresa ?? null };
-  } catch (e: any) {
-    console.warn('[filaUsuario] no pude leer usuarios:', e?.message);
-    return { im_usuario: null, cod_empresa: null };
-  }
-}
-
-/**
- * La unidad del usuario (empresa + depósito + punto de venta de InfoManager).
- * Sin `cod_empresa` cargado da CASA CENTRAL, que es como venía funcionando todo.
- */
-export async function sucursalDelUsuario(user?: { sub?: string } | null): Promise<Sucursal> {
-  return sucursalDe((await filaUsuario(user)).cod_empresa);
-}
-
 /** El login de IM y la unidad de una sola lectura. Lo que necesita crear un presupuesto. */
 export async function perfilIM(
   user?: { sub?: string; cod_vendedor?: number | null } | null,

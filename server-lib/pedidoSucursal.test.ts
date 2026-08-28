@@ -29,7 +29,9 @@ vi.mock('./infomanager.js', () => ({
 }));
 vi.mock('./supabase.js', () => ({ sb: im.sbMock, TENANT_ID: 't', hasSupabase: () => true }));
 
-const { crearPedido, catalogoPedido, sucursalDelUsuario } = await import('./pedidos.js');
+const { crearPedido, catalogoPedido } = await import('./pedidos.js');
+// Vive en su propio módulo porque la config del usuario la necesitan pedidos Y clientes.
+const { sucursalDelUsuario } = await import('./perfilUsuario.js');
 
 /**
  * Cada unidad presupuesta con SUS códigos de InfoManager. Un número mal acá crea el
