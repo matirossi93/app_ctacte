@@ -1,4 +1,4 @@
--- Migration 018 — la lista de precios se guarda POR RENGLON (26/08/2026). Idempotente.
+-- Migration 019 — la lista de precios se guarda POR RENGLON (26/08/2026). Idempotente.
 --
 -- La 017 asumia una sola lista por pedido (la que el cliente tiene asignada en
 -- InfoManager). Pero los vendedores NO trabajan asi: eligen la lista producto por
