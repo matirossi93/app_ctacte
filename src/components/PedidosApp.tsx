@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     X, Search, User, ShoppingCart, Plus, Minus, Trash2, Send, Loader2,
     CheckCircle2, AlertCircle, ArrowLeft, PackageSearch, Wallet, Ban,
-    Package, AlertTriangle, Pencil, ChevronRight,
+    Package, AlertTriangle, Pencil, ChevronRight, Share2,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import { buscarClientes } from '../utils/buscarClientes';
@@ -331,6 +331,8 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     // Se corre EN VIVO mientras arma el carrito: avisar recién al confirmar llega tarde,
     // ahí ya cargó todo el pedido y tendría que volver renglón por renglón.
     const [control, setControl] = useState<ControlListas | null>(null);
+    /** Pedido cuyo PDF se está armando. jsPDF pesa, así que el módulo se importa recién acá. */
+    const [pdfDe, setPdfDe] = useState<string | null>(null);
     /** Identidad del carrito actual. Cambia al agregar, borrar o reordenar renglones. */
     const firmaCarrito = useMemo(() => cart.map(i => i.uid).join('|'), [cart]);
     useEffect(() => { setMsgBloqueo(null); }, [cart]);
@@ -412,6 +414,38 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         }
     }
     /** Facturado o anulado ya no se toca. */
+    /**
+     * Arma el PDF del presupuesto y abre el menú de compartir del celular (WhatsApp, mail…),
+     * que es como el vendedor se lo manda al cliente. Si el navegador no soporta compartir
+     * archivos, lo descarga.
+     *
+     * El import va acá adentro y no arriba: jsPDF + autotable son ~600 kB y no tienen por qué
+     * viajar en el bundle de la primera pantalla — el mismo criterio que ya se usa para
+     * PrintAvanceView.
+     */
+    async function compartirPdf(p: Pedido, items: ItemGuardado[], obs: string | null) {
+        setPdfDe(p.id);
+        try {
+            const { compartirPresupuestoPdf } = await import('../utils/pdfPresupuesto');
+            await compartirPresupuestoPdf({
+                numero: p.im_numero,
+                cliente: p.cliente_nombre ?? `Cliente ${p.cod_cliente}`,
+                fecha: p.created_at,
+                observaciones: obs,
+                items: items.map(i => ({
+                    descripcion: i.descripcion, cod_articulo: i.cod_articulo,
+                    cantidad: Number(i.cantidad), precio_unit: Number(i.precio_unit),
+                    descuento_porc: i.descuento_porc == null ? null : Number(i.descuento_porc),
+                    subtotal: Number(i.subtotal),
+                })),
+            });
+        } catch (e: any) {
+            setMsgBloqueo(`No se pudo armar el PDF: ${e?.message ?? 'error'}`);
+        } finally {
+            setPdfDe(null);
+        }
+    }
+
     const editable = (p: Pedido) => p.estado !== 'facturado' && p.estado !== 'anulado' && p.estado !== 'sin_respuesta';
 
     const [anulando, setAnulando] = useState<string | null>(null);
@@ -660,6 +694,11 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                                     <div className="ped-det-total">
                                                         <span>Total</span><b>{money(p.total_estimado)}</b>
                                                     </div>
+                                                    <button className="ped-compartir" disabled={pdfDe === p.id}
+                                                        onClick={() => compartirPdf(p, d.items, d.obs)}>
+                                                        {pdfDe === p.id ? <Loader2 className="spin" size={15} /> : <Share2 size={15} />}
+                                                        {pdfDe === p.id ? 'Armando el PDF…' : 'Compartir presupuesto'}
+                                                    </button>
                                                 </>);
                                             })()}
                                         </div>
