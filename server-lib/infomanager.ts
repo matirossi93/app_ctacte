@@ -565,10 +565,13 @@ export function invalidateClientesIMCache(): void { clientesIMCache = null; }
 export interface PresupuestoItemInput {
   cod_articulo: number;
   cantidad: number;
-  precio?: string | number;   // de la lista del cliente; si falta, IM usa la lista
+  /** BRUTO, el de la lista. IM le aplica `descuento_porc` encima: NO mandar el ya rebajado. */
+  precio?: string | number;
   cod_cuenta?: string;        // cuenta contable de venta (default IM_CUENTA_VENTA)
   iva_por?: number;           // default 21
   descuento_porc?: number;
+  /** La lista DE ESTE RENGLÓN. El pedido puede tener un producto en L1 y otro en L3. */
+  cod_lista_precios?: number;
 }
 
 export interface CrearPresupuestoInput {
@@ -631,19 +634,35 @@ export async function crearPresupuesto(input: CrearPresupuestoInput): Promise<Pr
     cod_compatibilidad: (input.cod_compatibilidad || '').slice(0, 8),
     cod_deposito: 0, cod_deposito_destino: 0,
     cod_lista_precios: input.cod_lista_precios,
-    items: input.items.map((it) => ({
-      cod_articulo: it.cod_articulo,
-      cantidad: it.cantidad,
-      iva_por: it.iva_por ?? 21,
-      ...(it.precio != null ? { precio: String(it.precio) } : {}),
-      cod_cuenta: it.cod_cuenta || cuentaDefault,
-      ...(it.descuento_porc != null ? { descuento_porc: it.descuento_porc } : {}),
-    })),
+    items: input.items.map((it) => {
+      // `precio` va BRUTO y IM le aplica el descuento: devuelve `precio_orig` (el de lista) y
+      // `precio` (el neto que calculó él). Mandar el precio ya rebajado lo descuenta DOS VECES
+      // — probado el 28/08: 21.141,16 con 25% quedó en 11.891,90 en vez de 15.855,87.
+      const bruto = it.precio != null ? Number(it.precio) : null;
+      const cuenta = Number(it.cod_cuenta || cuentaDefault);
+      return {
+        cod_articulo: it.cod_articulo,
+        cantidad: it.cantidad,
+        iva_por: it.iva_por ?? 21,
+        ...(bruto != null && Number.isFinite(bruto) ? { precio: bruto, precio_orig: bruto, precio_con_iva: bruto } : {}),
+        ...(Number.isFinite(cuenta) ? { cod_cuenta: cuenta } : {}),
+        ...(it.descuento_porc != null ? { descuento_porc: it.descuento_porc } : {}),
+        // La lista del renglón. En el endpoint viejo este campo NO existía y por eso TODOS los
+        // renglones salían con la lista de la cabecera (Mati 28/08: "el precio sí cambia pero
+        // la lista sigue figurando 1").
+        ...(it.cod_lista_precios != null ? { cod_lista_precios: it.cod_lista_precios } : {}),
+      };
+    }),
   };
 
   try {
     const cli = await imClient();
-    const { data } = await cli.post('/presupuestos', payload);
+    // 🔑 `/presupuestos/UnidadDeVenta` y NO `/presupuestos`. Misma cabecera exacta (comparé los
+    // dos schemas del swagger: idénticas), pero el renglón es un superconjunto y es el ÚNICO que
+    // acepta `cod_lista_precios` por renglón — y además es el único donde IM APLICA el
+    // `descuento_porc` (el otro lo guarda en cero y factura el precio entero). Verificado el
+    // 28/08 con dos presupuestos reales, anulados: nº 57877 y 57878.
+    const { data } = await cli.post('/presupuestos/UnidadDeVenta', payload);
     // Éxito real = isCreated. IM puede responder 200 con {mensaje:"Ocurrió un
     // error..."} y sin isCreated cuando rechaza por reglas de negocio.
     const venta = data?.venta ?? data;

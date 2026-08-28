@@ -548,6 +548,7 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
         precio: it.precio > 0 ? String(it.precio) : undefined,
         iva_por: it.iva,
         descuento_porc: it.descuento_porc > 0 ? it.descuento_porc : undefined,
+        cod_lista_precios: it.cod_lista,
       })),
     });
 
@@ -735,6 +736,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
           cod_articulo: it.cod_articulo, cantidad: it.cantidad,
           precio: it.precio > 0 ? String(it.precio) : undefined, iva_por: it.iva,
           descuento_porc: it.descuento_porc > 0 ? it.descuento_porc : undefined,
+          cod_lista_precios: it.cod_lista,
         })),
       });
       if (!imRes.ok) {
