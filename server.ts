@@ -565,9 +565,8 @@ app.post('/api/auth/login-v2', async (req: express.Request, res: express.Respons
  * volver a escribir la contraseña.
  */
 const COOKIE_PANEL = 'semillero_sesion';
-function tokenDeLaRequest(req: express.Request): string | null {
-    const auth = req.headers.authorization;
-    if (auth?.startsWith('Bearer ')) return auth.slice(7);
+
+function cookieDelPanel(req: express.Request): string | null {
     const raw = req.headers.cookie;
     if (!raw) return null;
     for (const parte of raw.split(';')) {
@@ -577,23 +576,36 @@ function tokenDeLaRequest(req: express.Request): string | null {
     return null;
 }
 
+/**
+ * Devuelve el usuario de la sesion, mirando las DOS vias: el header (login
+ * propio de esta app, como siempre) y la cookie del panel unico.
+ *
+ * Si el header trae un token VENCIDO igual se prueba la cookie: pasa cuando
+ * alguien tiene la app abierta hace dias en el telefono y entra por el panel.
+ * Si solo mirara el header, quedaria afuera sin entender por que.
+ */
+function usuarioDeLaSesion(req: express.Request): JwtPayload | null {
+    const auth = req.headers.authorization;
+    if (auth?.startsWith('Bearer ')) {
+        const p = verifyJwt(auth.slice(7));
+        if (p) return p;
+    }
+    const ck = cookieDelPanel(req);
+    return ck ? verifyJwt(ck) : null;
+}
+
 // Middleware JWT: adjunta req.user si hay Bearer válido
 const requireJwt = (req: express.Request & { user?: JwtPayload }, res: express.Response, next: express.NextFunction): void => {
-    const token = tokenDeLaRequest(req);
-    if (!token) { res.status(401).json({ error: 'No autorizado' }); return; }
-    const payload = verifyJwt(token);
-    if (!payload) { res.status(401).json({ error: 'Sesión inválida o expirada' }); return; }
+    const payload = usuarioDeLaSesion(req);
+    if (!payload) { res.status(401).json({ error: 'No autorizado' }); return; }
     req.user = payload;
     next();
 };
 
 // Middleware opcional: si hay JWT lo adjunta, sino sigue (compat con legacy SQLite tokens)
 const maybeJwt = (req: express.Request & { user?: JwtPayload }, _res: express.Response, next: express.NextFunction): void => {
-    const token = tokenDeLaRequest(req);
-    if (token) {
-        const payload = verifyJwt(token);
-        if (payload) req.user = payload;
-    }
+    const payload = usuarioDeLaSesion(req);
+    if (payload) req.user = payload;
     next();
 };
 
