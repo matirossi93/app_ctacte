@@ -70,6 +70,14 @@ describe('crearPresupuesto — el payload que ve InfoManager', () => {
     expect(typeof it.precio).toBe('number');   // el schema de este endpoint lo pide número
   });
 
+  it('🔴 el presupuesto nace CONFIRMADO', async () => {
+    // 🪤 Iba 'NC' (No confirmado) y la oficina los pasaba a mano uno por uno desde facturación.
+    // El swagger: "tipo_presupuesto — Valores posibles: NC: No confirmado | C: Confirmado".
+    const { body } = await postDe([{ cod_articulo: 400, cantidad: 5, precio: 1303.16 }]);
+    expect(body.tipo_presupuesto).toBe('C');
+    expect(body.tipo_comprobante).toBe('PR');
+  });
+
   it('un renglón sin lista propia no rompe: se omite y queda la de la cabecera', async () => {
     const { body } = await postDe([{ cod_articulo: 400, cantidad: 5, precio: 1303.16 }]);
     expect('cod_lista_precios' in body.items[0]).toBe(false);

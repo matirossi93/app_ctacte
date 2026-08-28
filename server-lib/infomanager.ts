@@ -609,7 +609,12 @@ export async function crearPresupuesto(input: CrearPresupuestoInput): Promise<Pr
     fecha,
     fecha_entrega: input.fecha_entrega || fecha,
     tipo_comprobante: 'PR',
-    tipo_presupuesto: 'NC',
+    // 🔑 'C' = Confirmado. Iba 'NC' (No confirmado) y la oficina tenía que pasarlos a mano uno
+    // por uno desde facturación antes de poder facturarlos. El swagger lo documenta:
+    // "tipo_presupuesto — Valores posibles: NC: No confirmado | C: Confirmado".
+    // Un pedido que el vendedor confirmó en la app YA está confirmado: no hay un paso
+    // intermedio de aceptación del lado nuestro que justifique nacer sin confirmar.
+    tipo_presupuesto: 'C',
     numero: 0,                       // IM asigna el correlativo
     id_destino: input.id_destino ?? 1,
     cod_cliente: input.cod_cliente,
