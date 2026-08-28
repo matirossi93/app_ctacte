@@ -725,8 +725,18 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                 <input placeholder="Buscar producto…" value={catQuery} onChange={e => setCatQuery(e.target.value)} />
                                 {catLoading && <Loader2 className="spin" size={16} />}
                             </div>
-                            {catResults.map(a => (
-                                <button key={a.cod_articulo} className="ped-cat-opt" disabled={agregando != null}
+                            {catResults.map(a => {
+                                // 🪤 Se podía agregar igual: el renglón quedaba en $0, el total del pie
+                                // MENTÍA y recién frenaba al tocar Confirmar — con el pedido entero ya
+                                // cargado y, peor, con ese total ya cantado por teléfono. El backend lo
+                                // bloquea siempre, así que acá se falla temprano.
+                                // Sólo cuando SABEMOS que la lista se pudo consultar (`hayPrecios`): si no
+                                // se pudo, el artículo puede tener precio y se deja intentar — al agregarlo
+                                // se recotiza contra IM.
+                                const sinPrecio = hayPrecios && a.precio_venta == null;
+                                return (
+                                <button key={a.cod_articulo} className="ped-cat-opt" disabled={agregando != null || sinPrecio}
+                                    title={sinPrecio ? 'No tiene precio en la lista de este cliente' : undefined}
                                     onClick={() => agregarArticulo(a)}>
                                     {agregando === a.cod_articulo ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
                                     <div className="ped-cat-desc">{a.descripcion}</div>
@@ -736,7 +746,8 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                             : <span className="ped-cat-sinprecio">{hayPrecios ? 'sin precio en esta lista' : 'precio no disponible'}</span>}
                                     </div>
                                 </button>
-                            ))}
+                                );
+                            })}
                             {catError && !catLoading && (
                                 <div className="ped-sin-resultados error">
                                     <AlertTriangle size={15} />

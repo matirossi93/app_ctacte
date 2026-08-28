@@ -921,7 +921,10 @@ export async function getPrecioLista(codArticulo: number, codLista: number): Pro
  * de campo y, si no se entiende nada, devuelve un Map VACÍO: sin precio es mejor que con un
  * precio equivocado, que es de donde venimos.
  */
-const LISTA_PRECIOS_TTL_MS = 60 * 60 * 1000;
+// 🪤 Esto era 1 hora mientras `getPrecioLista` (el precio del RENGLÓN) cachea 5 minutos: si
+// actualizaban precios en el medio, la misma pantalla mostraba un número en el buscador y otro
+// en el renglón del mismo producto. Son el mismo dato: va el mismo TTL.
+const LISTA_PRECIOS_TTL_MS = PRECIO_TTL_MS;
 /** Cuánto se recuerda un fallo antes de volver a molestar a IM. */
 const FALLO_REINTENTO_MS = 60 * 1000;
 const _listaPreciosCache = new Map<number, { precios: Map<number, number>; fetchedAt: number }>();

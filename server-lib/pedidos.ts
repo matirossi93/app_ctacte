@@ -784,7 +784,11 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
           // BIEN: esto NO puede contestar error, porque si el vendedor cree que falló lo
           // vuelve a guardar y crea un TERCERO. Va ok:true con aviso ámbar (el front ya lo
           // pinta así) y queda escrito en im_error para que se vea en la lista.
-          avisoAnular = `OJO: el pedido quedó en el presupuesto ${imRes.numero}, pero NO se pudo anular el anterior (${numViejo}): quedaron los DOS en InfoManager. Avisale a la oficina para que anulen el ${numViejo}, si no se le factura dos veces al cliente. (${anul.error})`;
+          // 🪤 El número de presupuesto NO es único en IM: reusa el correlativo después de
+          // anular (verificado el 28/08: hay dos 57874 y dos 57878). "Anulen el 57874" a secas
+          // es ambiguo, así que va con el cliente y con el id interno, que sí es único.
+          const quien = pedido.cliente_nombre ? `${pedido.cliente_nombre} (${pedido.cod_cliente})` : `cliente ${pedido.cod_cliente}`;
+          avisoAnular = `OJO: el pedido quedó en el presupuesto ${imRes.numero}, pero NO se pudo anular el anterior (${numViejo}): quedaron los DOS en InfoManager. Avisale a la oficina para que anulen el PR ${numViejo} de ${quien} (id interno ${pedido.im_presupuesto_id}), si no se le factura dos veces al cliente. (${anul.error})`;
         }
       }
       numeroCambio = true;
