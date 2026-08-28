@@ -99,6 +99,8 @@ interface ItemGuardado {
 interface Pedido {
     id: string; cod_cliente: number; cliente_nombre: string | null; estado: string;
     im_numero: number | null; total_estimado: number; created_at: string;
+    /** Problema que quedó pendiente de resolver a mano en IM. Ver el badge "Revisar". */
+    im_error?: string | null;
 }
 
 type Step = 'cliente' | 'productos' | 'listo';
@@ -568,7 +570,15 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                         {pedLoading && <div className="ped-empty"><Loader2 className="spin" size={20} /> Cargando…</div>}
                         {!pedLoading && !pedidos.length && <div className="ped-empty">Todavía no cargaste pedidos.</div>}
                         {pedidos.map(p => {
-                            const e = ESTADO_LABEL[p.estado] ?? { txt: p.estado, cls: 'gray' };
+                            // 🪤 Un pedido puede estar 'enviado' y a la vez tener algo que alguien
+                            // tiene que ir a arreglar a mano: el caso real es que se creó el
+                            // presupuesto nuevo pero NO se pudo anular el viejo, así que quedaron
+                            // los DOS vivos y facturables. Eso se guardaba en `im_error` "para que
+                            // se vea en la lista", pero la lista sólo miraba `estado` y lo pintaba
+                            // VERDE, igual que un pedido sano. En verde no lo mira nadie nunca.
+                            const e = p.im_error && p.estado === 'enviado'
+                                ? { txt: 'Revisar ⚠️', cls: 'amber' }
+                                : ESTADO_LABEL[p.estado] ?? { txt: p.estado, cls: 'gray' };
                             return (
                                 <div key={p.id} className="ped-row">
                                     {/* Toda la fila abre el detalle: en el celular un chevron de 16px
@@ -581,6 +591,7 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                         <div>
                                             <div className="ped-row-cli">{p.cliente_nombre ?? `Cliente ${p.cod_cliente}`}</div>
                                             <div className="ped-row-sub">{new Date(p.created_at).toLocaleDateString('es-AR')} · {money(p.total_estimado)}{p.im_numero ? ` · Nº ${p.im_numero}` : ''}</div>
+                                            {p.im_error && <div className="ped-row-alerta">{p.im_error}</div>}
                                         </div>
                                     </button>
                                     <span className={`ped-chip ${e.cls}`}>{e.txt}</span>

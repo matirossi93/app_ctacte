@@ -5,7 +5,7 @@ import {
   crearPresupuesto, anularComprobante, getPrecioLista, getDisponibleCliente,
   fetchClientesIMCached, fetchArticulosCatalogo, fetchArticulosDeDeposito,
   getItemsComprobante, presupuestoFacturado, actualizarPresupuestoCantidades,
-  fechaComprobante, fechaArgentina, fetchVendedores, fetchPreciosDeLista,
+  fechaComprobante, cabeceraComprobante, fechaArgentina, fetchVendedores, fetchPreciosDeLista,
 } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
 import {
@@ -664,11 +664,29 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
     const observaciones = body.observaciones != null ? String(body.observaciones) : pedido.observaciones;
     let numeroCambio = false;
     let imUpdate: Record<string, any> = {};
+    let avisoAnular: string | null = null;   // 🔴 quedaron los DOS presupuestos vivos
+
+    // Cómo está el comprobante en IM: con qué fecha quedó guardado y si YA está anulado. Las
+    // dos salen del MISMO GET que antes hacía fechaComprobante, así que al camino de recrear
+    // no le agrega llamadas; al barato sí una, y la pago.
+    //
+    // 🪤 Sin esto el pedido roto del 28/08 no se recupera: quedó apuntando a un presupuesto
+    // ANULADO y con sus renglones viejos intactos acá, así que la próxima edición que sólo
+    // cambie cantidades da la MISMA firma y le manda el PUT a un comprobante MUERTO (hoy
+    // muere en el 409 "los renglones no coinciden", que tampoco tiene salida: anularlo
+    // también falla porque ya está anulado).
+    const cab = PEDIDOS_DRY_RUN || !pedido.im_presupuesto_id
+      ? { fecha: null, anulada: null as boolean | null }
+      : await cabeceraComprobante(pedido.im_presupuesto_id);
+    // null es "no sé": se sigue como siempre. Sólo `true` cambia el comportamiento.
+    const yaAnulado = cab.anulada === true;
+    // Un presupuesto anulado no se actualiza: aunque sólo cambien las cantidades, hay que recrear.
+    const recrear = !soloCantidades || yaAnulado;
 
     if (PEDIDOS_DRY_RUN || !pedido.im_presupuesto_id) {
       // Nunca llegó a IM (dry-run o quedó en borrador): sólo se reescribe en Supabase.
       console.log('[editarPedido] sin push a IM (dry_run o pedido en borrador)', pedido.id);
-    } else if (soloCantidades) {
+    } else if (!recrear) {
       // Camino barato: se conserva el número de presupuesto.
       const imItems = await getItemsComprobante(pedido.im_presupuesto_id);
       // Emparejado por posición dentro de cada artículo. Sólo es válido porque la firma de
@@ -681,18 +699,19 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
       const r = await actualizarPresupuestoCantidades(pedido.im_presupuesto_id, payload);
       if (!r.ok) { res.status(400).json({ ok: false, error: `InfoManager no pudo actualizar el presupuesto: ${r.error}`, raw: r.raw }); return; }
     } else {
-      // Cambió el surtido o una lista: IM no lo permite sobre el mismo presupuesto.
-      const anul = await anularComprobante({
-        id: pedido.im_presupuesto_id,
-        numero: pedido.im_numero,
-        punto_de_venta: pedido.im_punto_de_venta ?? PEDIDO_PUNTO_DE_VENTA,
-        fecha: (await fechaComprobante(pedido.im_presupuesto_id)) ?? fechaArgentina(pedido.created_at),
-        observaciones: `Reemplazado por edición · pedido ${String(pedido.id).slice(0, 8)}`,
-      });
-      if (!anul.ok) {
-        res.status(400).json({ ok: false, error: `No se pudo anular el presupuesto anterior en InfoManager: ${anul.error}. No se cambió nada.` });
-        return;
-      }
+      // Cambió el surtido, una lista o un descuento: IM no lo permite sobre el mismo
+      // presupuesto (VentasPresupuestosActualizar sólo acepta {id, cantidad}).
+      //
+      // 🔑 PRIMERO SE CREA EL NUEVO, RECIÉN DESPUÉS SE ANULA EL VIEJO. Al revés (como estaba
+      // hasta el 28/08) un create fallido dejaba al pedido SIN NINGÚN presupuesto vivo: el
+      // vendedor perdía el pedido y en IM no quedaba nada para facturar. De los dos pasos el
+      // que falla es el create (tiene toda la validación de negocio de IM más la trampa del
+      // 200-sin-isCreated); el anular es un flag sobre un comprobante que ya verificamos que
+      // existe y no está facturado. La frágil va primero, donde fallar no cuesta nada. El
+      // precio es que puedan quedar los dos vivos un rato — eso se ve, se avisa y se arregla
+      // anulando uno. Un presupuesto de más se borra; un pedido que no existe hay que
+      // reconstruirlo de memoria.
+      const numViejo = pedido.im_numero ?? pedido.im_presupuesto_id;
       const imRes = await crearPresupuesto({
         cod_empresa: Number(pedido.cod_empresa) || PEDIDO_EMPRESA_DEFAULT,
         cod_cliente: Number(pedido.cod_cliente),
@@ -700,8 +719,18 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         cod_lista_precios: Number(pedido.cod_lista_precios) || PEDIDO_LISTA_FALLBACK,
         usuario: await usuarioIM(user),
         punto_de_venta: PEDIDO_PUNTO_DE_VENTA,
-        observaciones: `Pedido app · ${user.nombre || `vend ${pedido.cod_vendedor}`}${observaciones ? ` · ${observaciones}` : ''}`.slice(0, 500),
-        cod_compatibilidad: String(pedido.id).slice(0, 8),
+        // "reemplaza al PR N" es para el que mira el comprobante en IM: si por lo que sea
+        // quedan los dos, el propio papel dice cuál es el bueno.
+        observaciones: `Pedido app · ${user.nombre || `vend ${pedido.cod_vendedor}`} · reemplaza al PR ${numViejo}${observaciones ? ` · ${observaciones}` : ''}`.slice(0, 500),
+        // 🪤 Acá iba `String(pedido.id).slice(0, 8)`: el MISMO código que ya había gastado el
+        // presupuesto original. IM exige que cod_compatibilidad sea único INCLUYENDO los
+        // anulados (verificado: el 58640964 quedó anulada:"S", con 0 renglones, y retiene su
+        // "3c6e378c"), así que por este camino el 400 era seguro, SIEMPRE. El campo es de
+        // sólo escritura — no hay una sola lectura ni búsqueda por él en el repo — así que
+        // puede ser cualquier cosa de 8 chars. Va aleatorio y NO derivado del pedido a
+        // propósito: un código determinista vuelve a colisionar en cada reintento y deja el
+        // pedido ineditable para siempre, que es exactamente el bug que estamos arreglando.
+        cod_compatibilidad: randomUUID().slice(0, 8),
         items: nuevos.map((it) => ({
           cod_articulo: it.cod_articulo, cantidad: it.cantidad,
           precio: it.precio > 0 ? String(it.precio) : undefined, iva_por: it.iva,
@@ -709,18 +738,46 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         })),
       });
       if (!imRes.ok) {
-        // El viejo quedó anulado y el nuevo no entró: hay que decirlo fuerte, no dejarlo pasar.
-        await sb().from('pedidos_vendedor').update({
-          estado: imRes.sinRespuesta ? 'sin_respuesta' : 'error', im_error: imRes.error,
-        }).eq('id', pedido.id);
-        res.status(imRes.sinRespuesta ? 202 : 400).json({
-          ok: false,
-          error: `Se anuló el presupuesto ${pedido.im_numero} pero el nuevo NO se pudo crear: ${imRes.error}. Revisalo en InfoManager.`,
-        });
+        if (imRes.sinRespuesta) {
+          // Timeout: NO se sabe si el nuevo entró. NO se anula el viejo (si el nuevo no entró
+          // el cliente se queda sin nada) y NO se reintenta solo (si entró, el reintento crea
+          // el segundo). Queda congelado a propósito: editarPedido:614 y anularPedido:817
+          // rechazan 'sin_respuesta'.
+          const cabeza = `InfoManager no contestó al crear el presupuesto de reemplazo. El ${numViejo} SIGUE VIGENTE y no se tocó.`;
+          await sb().from('pedidos_vendedor')
+            .update({ estado: 'sin_respuesta', im_error: `${cabeza} ${imRes.error}` }).eq('id', pedido.id);
+          res.status(202).json({ ok: false, sin_respuesta: true,
+            error: `${cabeza} Fijate en InfoManager si quedó un presupuesto nuevo de este cliente: si está, anulá el ${numViejo}; si no está, avisá para volver a habilitar el pedido. NO lo cargues de nuevo hasta verificarlo. (${imRes.error})` });
+          return;
+        }
+        // Rechazo limpio: IM no creó nada y el viejo está intacto. El pedido NO se marca en
+        // error — no le pasó nada, está igual que antes (marcarlo ensuciaba un pedido sano).
+        res.status(400).json({ ok: false, raw: imRes.raw,
+          error: `No se pudo modificar el pedido: InfoManager rechazó el presupuesto nuevo (${imRes.error}). NO se cambió nada: el ${numViejo} sigue vigente tal cual estaba. Corregí lo que dice el error y volvé a guardar.` });
         return;
       }
+      // El nuevo YA existe: de acá en adelante el pedido ES el nuevo, pase lo que pase con la
+      // anulación del viejo.
+      if (!yaAnulado) {
+        const anul = await anularComprobante({
+          id: pedido.im_presupuesto_id,
+          numero: pedido.im_numero,
+          punto_de_venta: pedido.im_punto_de_venta ?? PEDIDO_PUNTO_DE_VENTA,
+          fecha: cab.fecha ?? fechaArgentina(pedido.created_at),   // ← ya no re-consulta IM
+          observaciones: `Reemplazado por edición · pedido ${String(pedido.id).slice(0, 8)} · ver PR ${imRes.numero ?? imRes.id}`,
+        });
+        if (!anul.ok) {
+          // 🔴 Quedaron los DOS vivos y los dos se pueden facturar. Pero la edición SALIÓ
+          // BIEN: esto NO puede contestar error, porque si el vendedor cree que falló lo
+          // vuelve a guardar y crea un TERCERO. Va ok:true con aviso ámbar (el front ya lo
+          // pinta así) y queda escrito en im_error para que se vea en la lista.
+          avisoAnular = `OJO: el pedido quedó en el presupuesto ${imRes.numero}, pero NO se pudo anular el anterior (${numViejo}): quedaron los DOS en InfoManager. Avisale a la oficina para que anulen el ${numViejo}, si no se le factura dos veces al cliente. (${anul.error})`;
+        }
+      }
       numeroCambio = true;
-      imUpdate = { im_presupuesto_id: imRes.id, im_numero: imRes.numero, im_error: null };
+      // `estado` va SÍ O SÍ: el pedido puede venir de un intento fallido y sin esto queda en
+      // rojo para siempre aunque en IM esté todo bien.
+      imUpdate = { im_presupuesto_id: imRes.id, im_numero: imRes.numero, im_error: avisoAnular, estado: 'enviado' };
     }
 
     // Los renglones se reemplazan enteros: es más simple y no deja restos. Se chequean los
@@ -728,6 +785,16 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
     // presupuesto en IM ya está actualizado — hay que decirlo, no responder ok.
     const { error: delErr } = await sb().from('pedidos_vendedor_items').delete().eq('pedido_id', pedido.id);
     if (delErr) {
+      // 🪤 Acá se salía sin escribir `imUpdate`, que hasta este punto vive SÓLO en memoria. El
+      // presupuesto nuevo ya existe en IM y el viejo ya está anulado, así que irse sin guardar
+      // deja la fila apuntando al MUERTO y al nuevo huérfano: el vendedor reintenta, `yaAnulado`
+      // fuerza recrear, y como el viejo ya está anulado no se anula nada — cada reintento suma
+      // otro presupuesto vivo y facturable. La rama gemela de abajo (insErr2) ya lo hacía bien.
+      await sb().from('pedidos_vendedor').update({
+        ...imUpdate,
+        estado: 'error',
+        im_error: [avisoAnular, `Los renglones no se pudieron reemplazar en la app: ${delErr.message}. En InfoManager el presupuesto SÍ quedó creado.`].filter(Boolean).join(' | '),
+      }).eq('id', pedido.id);
       res.status(500).json({ error: `No se pudieron reemplazar los renglones: ${delErr.message}` });
       return;
     }
@@ -750,17 +817,29 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
     }));
     if (insErr2) {
       await sb().from('pedidos_vendedor').update({
+        ...imUpdate,                       // ← primero: el estado de abajo pisa y gana
         estado: 'error',
-        im_error: `Los renglones no se pudieron guardar en la app: ${insErr2.message}. En InfoManager el presupuesto SÍ quedó actualizado.`,
+        // 🪤 Esto pisaba `imUpdate.im_error`, que es el ÚNICO lugar donde queda escrito que
+        // quedaron los DOS presupuestos vivos. Se borraba justo el aviso que evita facturarle
+        // dos veces al cliente. Van los dos textos concatenados.
+        im_error: [avisoAnular, `Los renglones no se pudieron guardar en la app: ${insErr2.message}. En InfoManager el presupuesto SÍ quedó actualizado.`].filter(Boolean).join(' | '),
       }).eq('id', pedido.id);
       res.status(500).json({ error: `El presupuesto se actualizó en InfoManager pero los renglones no se pudieron guardar acá: ${insErr2.message}. Revisalo.` });
       return;
     }
-    const { data: final } = await sb().from('pedidos_vendedor')
+    // 🪤 Este update sólo desestructuraba `data`. Si fallaba, la app contestaba ok:true y verde
+    // igual, con la fila apuntando al presupuesto VIEJO (ya anulado) y el NUEVO vivo y huérfano
+    // en IM: nadie se enteraba de su número. `crearPedido` ya lo maneja así (mismo patrón).
+    const { data: final, error: errFinal } = await sb().from('pedidos_vendedor')
       .update({ total_estimado: total, observaciones, ...imUpdate })
       .eq('id', pedido.id).select().maybeSingle();
+    if (errFinal) console.error('[editarPedido] IM quedó OK pero no se pudo guardar acá. Presupuesto:', imUpdate.im_numero ?? pedido.im_numero, errFinal.message);
+    const avisoGuardado = errFinal
+      ? `El pedido quedó bien en InfoManager (presupuesto ${imUpdate.im_numero ?? pedido.im_numero}) pero no se pudo actualizar acá: ${errFinal.message}. Anotá ese número.`
+      : null;
 
-    res.json({ ok: true, pedido: final, numero_cambio: numeroCambio, solo_cantidades: soloCantidades });
+    res.json({ ok: true, pedido: final, numero_cambio: numeroCambio, solo_cantidades: !recrear,
+      ...(avisoAnular || avisoGuardado ? { aviso: [avisoAnular, avisoGuardado].filter(Boolean).join(' | ') } : {}) });
   } catch (err: any) {
     console.error('editarPedido error:', err);
     res.status(500).json({ error: err?.message ?? 'error interno' });

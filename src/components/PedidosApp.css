@@ -350,3 +350,12 @@
   font-weight: 700; font-size: 0.72rem; padding: 0.25rem 0.5rem;
   border-radius: var(--radius-sm, 6px); cursor: pointer; min-height: 28px;
 }
+
+/* El motivo por el que un pedido quedó marcado "Revisar": va completo y no truncado porque
+   suele decir qué número de presupuesto hay que anular a mano en InfoManager. Sólo aparece
+   en los pedidos que lo tienen, así que no le agrega alto a la lista normal. */
+.ped-row-alerta {
+  font-size: 0.75rem; line-height: 1.35; color: var(--color-warning);
+  background: var(--color-warning-bg); border-radius: var(--radius-sm);
+  padding: 0.3rem 0.45rem; margin-top: 0.3rem;
+}

@@ -581,7 +581,8 @@ export interface CrearPresupuestoInput {
   id_destino?: number;        // default 1 (Manual)
   cod_cuenta_default?: string; // cuenta de venta para items sin cod_cuenta propio
   observaciones?: string;
-  cod_compatibilidad?: string; // id de NUESTRO sistema (<=8 chars) para trazabilidad
+  /** Único POR INTENTO: IM rechaza un código ya usado, incluso si ese comprobante está ANULADO. */
+  cod_compatibilidad?: string;
   fecha?: string;             // YYYY-MM-DD (default hoy)
   fecha_entrega?: string;
   items: PresupuestoItemInput[];
@@ -760,21 +761,34 @@ export function parsePrecioLista(data: any, codArticulo: number): PrecioLista | 
 }
 
 /**
- * Fecha con la que IM tiene guardado el comprobante.
+ * Cabecera del comprobante tal como la tiene IM: la fecha con la que quedó guardado y si ya
+ * está anulado. Las dos salen del MISMO GET porque editarPedido necesita las dos cosas.
  *
- * Anular manda la fecha en el body. Recalcularla del created_at nuestro puede dar un dia
- * distinto al que IM registro (los pedidos viejos quedaron con fecha UTC), y entonces la
- * anulacion le pisa la fecha al presupuesto. La unica fuente confiable es el propio IM.
+ * La fecha importa porque anular la manda en el body: recalcularla de nuestro created_at
+ * puede dar un día distinto al que IM registró (los pedidos viejos quedaron con fecha UTC)
+ * y la anulación le pisa la fecha al presupuesto. La única fuente confiable es el propio IM.
+ *
+ * `anulada: null` es "no sé" (IM no contestó, o no mandó el campo) y NO es lo mismo que
+ * false: quien llama lo tiene que tratar distinto.
  */
-export async function fechaComprobante(idComprobante: string | number): Promise<string | null> {
+export async function cabeceraComprobante(
+  idComprobante: string | number,
+): Promise<{ fecha: string | null; anulada: boolean | null }> {
   try {
     const cli = await imClient();
-    const { data } = await imGetRetry(() => cli.get(`/ventas/${idComprobante}`), `ventas/${idComprobante} fecha`);
+    const { data } = await imGetRetry(() => cli.get(`/ventas/${idComprobante}`), `ventas/${idComprobante} cabecera`);
     const f = data?.fecha ?? data?.results?.fecha ?? data?.venta?.fecha;
-    return typeof f === 'string' && f.length >= 10 ? f.slice(0, 10) : null;
-  } catch {
-    return null;
-  }
+    const a = data?.anulada ?? data?.results?.anulada ?? data?.venta?.anulada;
+    return {
+      fecha: typeof f === 'string' && f.length >= 10 ? f.slice(0, 10) : null,
+      anulada: a == null ? null : String(a).trim().toUpperCase() === 'S',
+    };
+  } catch { return { fecha: null, anulada: null }; }
+}
+
+/** Sólo la fecha. La usa anularPedido, que no necesita el resto. */
+export async function fechaComprobante(idComprobante: string | number): Promise<string | null> {
+  return (await cabeceraComprobante(idComprobante)).fecha;
 }
 
 /** Renglones de un comprobante en IM, con el id que necesita el PUT de presupuestos. */
