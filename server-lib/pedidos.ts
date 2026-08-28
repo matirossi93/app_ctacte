@@ -863,6 +863,59 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
   }
 }
 
+/**
+ * Marca como `facturado` los pedidos que Jorgelina ya facturó en IM.
+ *
+ * 🪤 El chequeo existía pero sólo corría al tocar Editar o Anular: el vendedor no tenía CÓMO
+ * saber que su pedido ya estaba facturado hasta que intentaba tocarlo y se comía un 409.
+ * Medido el 28/08: 2 de 9 pedidos "Enviado a IM" ya estaban facturados ($429.089 y $136.776).
+ *
+ * Se consulta de a uno porque IM no tiene un endpoint masivo que sirva: `/confirmados`
+ * TIMEOUTEA a los 25 s y `/no_confirmados` es otro circuito (devuelve 15 filas, una de 2023).
+ * Que no escale mal se apoya en tres cosas:
+ *   1. Sólo miran los `enviado`: un facturado o anulado ya no se vuelve a consultar NUNCA.
+ *   2. `facturado` es TERMINAL y se persiste ⇒ el pedido sale del conjunto para siempre.
+ *   3. Cache corta en memoria para el "todavía no", así abrir la lista de nuevo no pega a IM.
+ * ⇒ en régimen sólo se consultan los pedidos realmente pendientes, que son los de estos días.
+ *
+ * Si IM no contesta se deja el pedido como está: nunca inventar "libre" ni "facturado".
+ */
+const FACTURADO_TTL_MS = 3 * 60 * 1000;
+const _factCache = new Map<string, { facturado: boolean; at: number }>();
+/** Tope de consultas por request, para que un backlog raro no cuelgue la lista. */
+const TOPE_CHEQUEO_FACTURADO = 60;
+
+export async function marcarFacturados(pedidos: any[]): Promise<void> {
+  const candidatos = pedidos.filter((p) => p.estado === 'enviado' && p.im_presupuesto_id);
+  if (!candidatos.length) return;
+  const aConsultar = candidatos.slice(0, TOPE_CHEQUEO_FACTURADO);
+  if (candidatos.length > aConsultar.length) {
+    // Nunca en silencio: si se recorta, que quede dicho cuántos quedaron sin mirar.
+    console.warn(`[listPedidos] ${candidatos.length - aConsultar.length} pedidos quedaron sin chequear contra IM (tope ${TOPE_CHEQUEO_FACTURADO})`);
+  }
+  const recienFacturados: string[] = [];
+  for (const p of aConsultar) {          // SECUENCIAL: IM no tolera llamadas en paralelo
+    const clave = String(p.im_presupuesto_id);
+    const hit = _factCache.get(clave);
+    let facturado: boolean;
+    if (hit && Date.now() - hit.at < FACTURADO_TTL_MS) {
+      facturado = hit.facturado;
+    } else {
+      const f = await presupuestoFacturado(p.im_presupuesto_id);
+      if (f.desconocido) continue;       // IM no contestó: no se toca nada
+      facturado = f.facturado;
+      _factCache.set(clave, { facturado, at: Date.now() });
+    }
+    if (facturado) { p.estado = 'facturado'; recienFacturados.push(p.id); }
+  }
+  if (recienFacturados.length) {
+    const { error } = await sb().from('pedidos_vendedor')
+      .update({ estado: 'facturado' }).in('id', recienFacturados);
+    // Si no se pudo persistir, la respuesta ya sale bien igual: se reintenta al próximo listado.
+    if (error) console.warn('[listPedidos] no se pudo persistir facturado:', error.message);
+  }
+}
+
 /** GET /api/pedidos — lista (vendedor ve los suyos; admin/gerente todos). Query: estado?, dias?=30, limit?=200 */
 export async function listPedidos(req: Request & { user?: JwtPayload }, res: Response) {
   try {
@@ -877,7 +930,12 @@ export async function listPedidos(req: Request & { user?: JwtPayload }, res: Res
     q = q.order('created_at', { ascending: false }).limit(limit);
     const { data, error } = await q;
     if (error) { res.status(500).json({ error: error.message }); return; }
-    res.json({ ok: true, pedidos: data ?? [] });
+    const pedidos = data ?? [];
+    // Antes de contestar: los que ya facturó la oficina tienen que salir como facturados y
+    // sin botones. Nunca tira — si IM está caído, la lista sale igual con los estados viejos.
+    try { await marcarFacturados(pedidos); }
+    catch (e: any) { console.warn('[listPedidos] no se pudo chequear facturados:', e?.message); }
+    res.json({ ok: true, pedidos });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'error' });
   }

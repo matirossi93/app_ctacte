@@ -110,7 +110,9 @@ const money = (n: number) => n.toLocaleString('es-AR', { style: 'currency', curr
 const ESTADO_LABEL: Record<string, { txt: string; cls: string }> = {
     borrador: { txt: 'Borrador', cls: 'gray' },
     enviado: { txt: 'Enviado a IM', cls: 'green' },
-    facturado: { txt: 'Facturado', cls: 'green' },
+    // Verde igual que 'enviado' se leía como "todo bien, seguí": es el estado CERRADO, el
+    // único donde el vendedor no puede hacer nada. Va con su propio color y con el candado.
+    facturado: { txt: 'Facturado 🔒', cls: 'cerrado' },
     anulado: { txt: 'Anulado', cls: 'gray' },
     error: { txt: 'Error', cls: 'red' },
     sin_respuesta: { txt: 'Sin respuesta ⚠️', cls: 'amber' },
@@ -626,6 +628,12 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                                     <AlertTriangle size={14} />
                                                     <span>No se pudo cargar el detalle.</span>
                                                     <button onClick={() => verDetalle(p)}>Reintentar</button>
+                                                </div>
+                                            )}
+                                            {p.estado === 'facturado' && (
+                                                <div className="ped-det-cerrado">
+                                                    Ya lo facturó la oficina. No se puede editar ni anular desde acá:
+                                                    si hay que cambiar algo, hablalo con administración.
                                                 </div>
                                             )}
                                             {typeof detalle[p.id] === 'object' && (() => {
