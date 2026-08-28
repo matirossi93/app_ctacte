@@ -42,6 +42,20 @@
 .ped-cli-opt:hover, .ped-cat-opt:hover { background: var(--color-surface-hover); }
 .ped-cli-name { font-weight: 600; font-size: 0.92rem; }
 .ped-cli-loc { font-size: 0.78rem; color: var(--color-text-muted); }
+
+/* La lista de CLIENTES va en una sola línea (nombre + localidad al lado). Medido a 390px:
+   la fila pasa de 63,6 a 44,7 px. Los 44,7 son a propósito y no menos: por debajo de 44 px
+   el dedo empieza a errarle, y esto se usa casi siempre desde el celular.
+   Va scopeado a `.ped-cli-opt` porque `.ped-cli-name` lo comparte el encabezado del cliente
+   ya elegido, y el padding lo comparte `.ped-cat-opt` (el buscador de productos). */
+.ped-cli-opt { padding: 0.75rem 0.7rem; gap: 0.55rem; }
+.ped-cli-txt { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 0.35rem; }
+/* El nombre manda: la localidad se achica 3 veces más rápido y se corta primero. Con nombres
+   de 30+ caracteres se corta también el nombre, pero el `APELLIDO, Nombre` del principio
+   —que es por donde se busca— nunca se pierde. */
+.ped-cli-opt .ped-cli-name { font-size: 0.9rem; line-height: 1.3; flex-shrink: 1; }
+.ped-cli-opt .ped-cli-loc { font-size: 0.75rem; line-height: 1.3; flex-shrink: 3; }
+.ped-cli-opt .ped-cli-name, .ped-cli-opt .ped-cli-loc { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ped-cat-desc { flex: 1; font-size: 0.9rem; }
 .ped-cat-precio { font-weight: 700; color: var(--color-primary); font-variant-numeric: tabular-nums; }
 

@@ -652,7 +652,12 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                         {clientesFiltrados.map(c => (
                             <button key={c.cod} className="ped-cli-opt" onClick={() => elegirCliente(c)}>
                                 <User size={16} />
-                                <div><div className="ped-cli-name">{c.name}</div>{c.localidad && <div className="ped-cli-loc">{c.localidad}</div>}</div>
+                                {/* Nombre y localidad en UNA linea: la lista se recorre en el celular
+                                    y dos renglones por cliente hacian que entraran 6 en pantalla. */}
+                                <span className="ped-cli-txt">
+                                    <span className="ped-cli-name">{c.name}</span>
+                                    {c.localidad && <span className="ped-cli-loc">{c.localidad}</span>}
+                                </span>
                             </button>
                         ))}
                         {cliError && (
