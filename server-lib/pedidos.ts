@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
+import { sucursalDe, type Sucursal } from './sucursales.js';
 import {
   crearPresupuesto, anularComprobante, getPrecioLista, getDisponibleCliente,
   fetchClientesIMCached, fetchArticulosCatalogo, fetchArticulosDeDeposito,
@@ -50,19 +51,49 @@ if (!IM_USUARIO_PEDIDOS) {
  * presupuesto entero, y ahí ningún vendedor puede cargar nada. Si IM o Supabase no contestan,
  * o el campo está vacío, se usa el que ya sabemos que funciona.
  */
+/**
+ * Lo que el usuario tiene configurado en la app: su login de IM y a qué unidad pertenece.
+ *
+ * Va en UNA sola lectura porque crear un pedido necesita las dos cosas. Y se lee de la BASE en
+ * cada pedido, no del JWT: son CONFIGURACIÓN, no credenciales — el token dura 8 h y cambiar el
+ * valor por SQL no haría efecto hasta el próximo login.
+ */
+async function filaUsuario(
+  user?: { sub?: string } | null,
+): Promise<{ im_usuario: string | null; cod_empresa: number | null }> {
+  if (!user?.sub) return { im_usuario: null, cod_empresa: null };
+  try {
+    const { data } = await sb().from('usuarios')
+      .select('im_usuario, cod_empresa').eq('tenant_id', TENANT_ID).eq('id', user.sub).maybeSingle();
+    return { im_usuario: data?.im_usuario ?? null, cod_empresa: data?.cod_empresa ?? null };
+  } catch (e: any) {
+    console.warn('[filaUsuario] no pude leer usuarios:', e?.message);
+    return { im_usuario: null, cod_empresa: null };
+  }
+}
+
+/**
+ * La unidad del usuario (empresa + depósito + punto de venta de InfoManager).
+ * Sin `cod_empresa` cargado da CASA CENTRAL, que es como venía funcionando todo.
+ */
+export async function sucursalDelUsuario(user?: { sub?: string } | null): Promise<Sucursal> {
+  return sucursalDe((await filaUsuario(user)).cod_empresa);
+}
+
+/** El login de IM y la unidad de una sola lectura. Lo que necesita crear un presupuesto. */
+export async function perfilIM(
+  user?: { sub?: string; cod_vendedor?: number | null } | null,
+): Promise<{ usuario: string; sucursal: Sucursal }> {
+  const fila = await filaUsuario(user);
+  return { usuario: await usuarioIM(user, fila), sucursal: sucursalDe(fila.cod_empresa) };
+}
+
 export async function usuarioIM(
   user?: { sub?: string; cod_vendedor?: number | null } | null,
+  fila?: { im_usuario: string | null },
 ): Promise<string> {
-  if (user?.sub) {
-    try {
-      const { data } = await sb().from('usuarios')
-        .select('im_usuario').eq('tenant_id', TENANT_ID).eq('id', user.sub).maybeSingle();
-      const propio = String(data?.im_usuario ?? '').trim();
-      if (propio) return propio;
-    } catch (e: any) {
-      console.warn('[usuarioIM] no pude leer usuarios.im_usuario:', e?.message);
-    }
-  }
+  const propioDeLaFila = String((fila ?? (user?.sub ? await filaUsuario(user) : null))?.im_usuario ?? '').trim();
+  if (propioDeLaFila) return propioDeLaFila;
 
   const cod = Number(user?.cod_vendedor);
   if (Number.isFinite(cod) && cod > 0) {
@@ -103,7 +134,6 @@ interface ItemInput { cod_articulo: number; cantidad: number; cod_lista?: number
 const LISTAS_VALIDAS = new Set([9, 11, 12, 13, 14, 15]);
 // 1 = Casa Central, 2 = BRS, 3 = San Juan, 6 = Jujuy. Los pedidos de vendedor son de CC,
 // pero la lista queda abierta a las otras por si mañana se usa desde una sucursal.
-const EMPRESAS_VALIDAS = new Set([1, 2, 3, 6]);
 
 // ── Control de listas ─────────────────────────────────────────────────────────
 // Las reglas son datos de negocio que Mati cambia sin que cambie el código, así que
@@ -427,10 +457,12 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
       .filter((it) => it.cod_articulo > 0 && it.cantidad > 0);
     if (!itemsValidos.length) { res.status(400).json({ error: 'El pedido no tiene items válidos' }); return; }
 
-    // El cod_empresa venía del body sin validar: un numero cualquiera creaba el presupuesto
-    // en una empresa que no existe (o en otra sucursal). Misma lista blanca que las listas.
-    const codEmpresaPedido = Number(body.cod_empresa);
-    const codEmpresa = EMPRESAS_VALIDAS.has(codEmpresaPedido) ? codEmpresaPedido : PEDIDO_EMPRESA_DEFAULT;
+    // 🔑 La unidad sale de QUIÉN CARGA el pedido, no del body: el vendedor de una sucursal no
+    // elige en qué empresa factura. Antes venía del body contra una lista blanca `{1,2,3,6}`
+    // que en realidad era la de DEPÓSITOS — aceptaba una empresa 6 que no existe y rechazaba
+    // la 4, que es Jujuy. De acá salen también el punto de venta y el depósito.
+    const { usuario: usuarioDeIM, sucursal } = await perfilIM(user);
+    const codEmpresa = sucursal.cod_empresa;
     const idempotencyKey = body.idempotency_key ? String(body.idempotency_key) : null;
 
     // Idempotencia: si ya existe un pedido con esta key, lo devolvemos (no recreamos).
@@ -479,7 +511,7 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
       total_estimado: totalEstimado,
       observaciones: body.observaciones ? String(body.observaciones) : null,
       idempotency_key: idempotencyKey,
-      im_punto_de_venta: PEDIDO_PUNTO_DE_VENTA,
+      im_punto_de_venta: sucursal.punto_de_venta,
       created_by: user.sub,
     });
     if (insErr) {
@@ -533,8 +565,8 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
       cod_cliente: codCliente,
       cod_vendedor: codVendedor,
       cod_lista_precios: codLista,
-      usuario: await usuarioIM(user),
-      punto_de_venta: PEDIDO_PUNTO_DE_VENTA,
+      usuario: usuarioDeIM,
+      punto_de_venta: sucursal.punto_de_venta,
       // 🪤 Era un ternario: si el vendedor escribia CUALQUIER cosa, el marcador desaparecia.
       // El campo `usuario` de IM es el operador de la oficina (hoy siempre el mismo para todos
       // los pedidos de la app), asi que esta es la unica linea de la cabecera donde se lee en
@@ -721,12 +753,14 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
       // null cuando el pedido nunca llegó a IM: no hay nada vigente de qué hablar.
       const numViejo = sinPresupuesto ? null : (pedido.im_numero ?? pedido.im_presupuesto_id);
       const imRes = await crearPresupuesto({
+        // Del PEDIDO, no del usuario que edita: si lo abre alguien de otra unidad, el
+        // presupuesto de reemplazo tiene que seguir siendo de la unidad original.
         cod_empresa: Number(pedido.cod_empresa) || PEDIDO_EMPRESA_DEFAULT,
         cod_cliente: Number(pedido.cod_cliente),
         cod_vendedor: Number(pedido.cod_vendedor),
         cod_lista_precios: Number(pedido.cod_lista_precios) || PEDIDO_LISTA_FALLBACK,
         usuario: await usuarioIM(user),
-        punto_de_venta: PEDIDO_PUNTO_DE_VENTA,
+        punto_de_venta: pedido.im_punto_de_venta ?? PEDIDO_PUNTO_DE_VENTA,
         // "reemplaza al PR N" es para el que mira el comprobante en IM: si por lo que sea
         // quedan los dos, el propio papel dice cuál es el bueno.
         observaciones: `Pedido app · ${user.nombre || `vend ${pedido.cod_vendedor}`}${numViejo ? ` · reemplaza al PR ${numViejo}` : ''}${observaciones ? ` · ${observaciones}` : ''}`.slice(0, 500),
@@ -1087,7 +1121,9 @@ export async function catalogoPedido(req: Request & { user?: JwtPayload }, res: 
     let deDeposito: Set<number> | null = null;
     if (!todos) {
       try {
-        deDeposito = await fetchArticulosDeDeposito(PEDIDO_DEPOSITO);
+        // El depósito de la unidad del usuario: BRS ve los 798 de BRS, no los 590 de CC.
+        const suc = await sucursalDelUsuario(req.user);
+        deDeposito = await fetchArticulosDeDeposito(suc.cod_deposito);
       } catch (e: any) {
         // Si IM no responde el stock por depósito, se muestra el catálogo entero: es
         // preferible que sobren productos a que el vendedor no pueda cargar el pedido.
