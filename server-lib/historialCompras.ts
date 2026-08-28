@@ -393,7 +393,11 @@ export async function historialComprasCliente(req: import('express').Request & {
     }
 
     const user = req.user!;
-    if (!user || (user.rol !== 'admin' && user.rol !== 'gerente' && user.rol !== 'vendedor')) {
+    // `socio` y `administrativo` se suman con el panel único: sin esto, pasar a
+    // alguien de `vendedor` a `administrativo` le sacaba el historial de compras
+    // que ya venía usando.
+    const PUEDEN_VER: string[] = ['admin', 'socio', 'gerente', 'administrativo', 'vendedor'];
+    if (!user || !PUEDEN_VER.includes(user.rol)) {
       res.status(403).json({ error: 'No autorizado para ver el historial de compras' });
       return;
     }
