@@ -4,8 +4,9 @@ import {
     CheckCircle2, AlertCircle, ArrowLeft, PackageSearch, Wallet, Ban,
     Package, AlertTriangle, Pencil, ChevronRight, Share2,
 } from 'lucide-react';
-import { authHeaders } from '../utils/auth';
+import { authHeaders, getUser } from '../utils/auth';
 import { buscarClientes } from '../utils/buscarClientes';
+import { ultimoArriba } from '../utils/carrito';
 import './PedidosApp.css';
 
 interface Props {
@@ -430,6 +431,9 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
             await compartirPresupuestoPdf({
                 numero: p.im_numero,
                 cliente: p.cliente_nombre ?? `Cliente ${p.cod_cliente}`,
+                // Quién lo atiende. El PDF ya tenía el campo pero nadie se lo pasaba, así que
+                // el presupuesto salía sin decir con quién hablar para cerrarlo.
+                vendedor: getUser()?.nombre ?? null,
                 fecha: p.created_at,
                 observaciones: obs,
                 items: items.map(i => ({
@@ -836,7 +840,12 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                 </div>
                             )}
 
-                            {cart.map((i, idx) => {
+                            {/* El último cargado va ARRIBA: en un presupuesto largo el renglón
+                                nuevo quedaba abajo de todo y había que scrollear para tocarle la
+                                cantidad o la lista. Se invierte SÓLO la vista — `idx` sigue
+                                siendo la posición real del renglón, que es con la que se
+                                emparejan los avisos del control de listas. Ver utils/carrito.ts. */}
+                            {ultimoArriba(cart).map(({ item: i, idx }) => {
                                 const av = avisoDe(idx);
                                 const dsc = descDe(idx);
                                 return (
