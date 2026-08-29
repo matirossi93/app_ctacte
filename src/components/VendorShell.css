@@ -711,23 +711,37 @@
     display: flex; z-index: 20;
     box-shadow: 0 18px 40px -10px rgba(20,24,20,.5), inset 0 1px 0 rgba(255,255,255,.06);
 }
-/* 6 tabs: cada botón ocupa 1/6 del ancho útil (contenedor con padding 6px). */
+/* La píldora dorada que marca la sección activa.
+   🪤 Estaba calculada a mano para SEIS tabs (16.6667% = 1/6) y con ajustes de píxeles
+   empíricos por posición (+4, +2, 0, -2, -4). Al sacar Actividad quedaron cinco botones de
+   20% cada uno y la píldora quedó corrida en todas las secciones menos la primera.
+   Ahora sale de una cuenta, no de números a ojo: los botones son `flex: 1`, así que cada
+   uno mide exactamente el ancho útil dividido la cantidad de tabs. Si mañana se agrega o
+   saca una sección, se toca --tabs y nada más. */
+.vs-nav {
+    --tabs: 5;
+    --nav-util: calc(100% - 12px);           /* el padding del contenedor: 6px de cada lado */
+    --nav-paso: calc(var(--nav-util) / var(--tabs));
+    --pill-aire: 2px;                        /* respiro entre la píldora y el borde del botón */
+}
 .vs-nav-pill {
     position: absolute; top: 6px; bottom: 6px;
-    width: calc(16.6667% - 3px);
+    width: calc(var(--nav-paso) - var(--pill-aire) * 2);
     background: linear-gradient(135deg, #EEC045 0%, #FFD971 100%);
     border-radius: 18px;
     transition: left .35s cubic-bezier(.4,1.4,.5,1);
     box-shadow: 0 6px 16px -4px rgba(238,192,69,.5);
     z-index: 1;
-    left: 6px;
+    left: calc(6px + var(--pill-aire));
 }
-.vs-nav[data-tab="hoy"] .vs-nav-pill { left: 6px }
-.vs-nav[data-tab="cobranzas"] .vs-nav-pill { left: calc(16.6667% + 4px) }
-.vs-nav[data-tab="objetivos"] .vs-nav-pill { left: calc(33.3333% + 2px) }
-.vs-nav[data-tab="comisiones"] .vs-nav-pill { left: calc(50% + 0px) }
-.vs-nav[data-tab="rebotes"] .vs-nav-pill { left: calc(66.6667% - 2px) }
-.vs-nav[data-tab="actividad"] .vs-nav-pill { left: calc(83.3333% - 4px) }
+.vs-nav[data-tab="hoy"]        .vs-nav-pill { left: calc(6px + var(--pill-aire)) }
+.vs-nav[data-tab="cobranzas"]  .vs-nav-pill { left: calc(6px + var(--pill-aire) + var(--nav-paso)) }
+.vs-nav[data-tab="objetivos"]  .vs-nav-pill { left: calc(6px + var(--pill-aire) + var(--nav-paso) * 2) }
+.vs-nav[data-tab="comisiones"] .vs-nav-pill { left: calc(6px + var(--pill-aire) + var(--nav-paso) * 3) }
+.vs-nav[data-tab="rebotes"]    .vs-nav-pill { left: calc(6px + var(--pill-aire) + var(--nav-paso) * 4) }
+/* Actividad salió del menú pero se sigue alcanzando desde la ficha del cliente: sin botón
+   al que apuntar, la píldora se esconde en vez de quedar marcando una sección equivocada. */
+.vs-nav[data-tab="actividad"]  .vs-nav-pill { opacity: 0 }
 .vs-nav-btn {
     flex: 1; min-width: 0;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
