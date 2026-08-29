@@ -729,16 +729,31 @@
     width: calc(var(--nav-paso) - var(--pill-aire) * 2);
     background: linear-gradient(135deg, #EEC045 0%, #FFD971 100%);
     border-radius: 18px;
-    transition: left .35s cubic-bezier(.4,1.4,.5,1);
     box-shadow: 0 6px 16px -4px rgba(238,192,69,.5);
     z-index: 1;
     left: calc(6px + var(--pill-aire));
+    /* 🪤 Se anima `transform` y NO `left`: mover `left` obliga al navegador a recalcular el
+       layout en CADA cuadro, y en los celulares con los que trabajan los vendedores eso se
+       ve a los tirones. `transform` lo resuelve la GPU sin tocar el layout.
+       El rebote se bajó de 1.4 a 1.18: con 5 botones el paso es más largo que con 6 y el
+       overshoot viejo hacía que la píldora se pasara de largo y volviera. */
+    transition: transform .32s cubic-bezier(.34, 1.18, .5, 1), opacity .18s ease;
+    will-change: transform;
 }
-.vs-nav[data-tab="hoy"]        .vs-nav-pill { left: calc(6px + var(--pill-aire)) }
-.vs-nav[data-tab="cobranzas"]  .vs-nav-pill { left: calc(6px + var(--pill-aire) + var(--nav-paso)) }
-.vs-nav[data-tab="objetivos"]  .vs-nav-pill { left: calc(6px + var(--pill-aire) + var(--nav-paso) * 2) }
-.vs-nav[data-tab="comisiones"] .vs-nav-pill { left: calc(6px + var(--pill-aire) + var(--nav-paso) * 3) }
-.vs-nav[data-tab="rebotes"]    .vs-nav-pill { left: calc(6px + var(--pill-aire) + var(--nav-paso) * 4) }
+/* 🪤 El paso NO se puede escribir como `translateX(var(--nav-paso))`: dentro de un
+   `translate` los porcentajes se resuelven contra el ancho del PROPIO elemento (la píldora),
+   no contra el contenedor, así que se movía 10 px en vez de 70. Como la píldora mide
+   exactamente un paso menos el aire de los dos lados, un paso es su propio 100% más ese
+   aire — y eso sí se puede escribir sin salir del CSS. */
+.vs-nav[data-tab="hoy"]        .vs-nav-pill { transform: translateX(0) }
+.vs-nav[data-tab="cobranzas"]  .vs-nav-pill { transform: translateX(calc(100% + var(--pill-aire) * 2)) }
+.vs-nav[data-tab="objetivos"]  .vs-nav-pill { transform: translateX(calc(200% + var(--pill-aire) * 4)) }
+.vs-nav[data-tab="comisiones"] .vs-nav-pill { transform: translateX(calc(300% + var(--pill-aire) * 6)) }
+.vs-nav[data-tab="rebotes"]    .vs-nav-pill { transform: translateX(calc(400% + var(--pill-aire) * 8)) }
+/* Quien prefiere menos movimiento no tiene por qué ver la píldora viajar. */
+@media (prefers-reduced-motion: reduce) {
+    .vs-nav-pill { transition: none }
+}
 /* Actividad salió del menú pero se sigue alcanzando desde la ficha del cliente: sin botón
    al que apuntar, la píldora se esconde en vez de quedar marcando una sección equivocada. */
 .vs-nav[data-tab="actividad"]  .vs-nav-pill { opacity: 0 }
