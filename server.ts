@@ -33,6 +33,7 @@ import { listOverrides, addOverride, deleteOverride } from './server-lib/comisio
 import { listClientesLookup } from './server-lib/clientes.js';
 import { historialComprasCliente } from './server-lib/historialCompras.js';
 import { listActivity, createActivity, updateActivity, deleteActivity, listNotificaciones } from './server-lib/activity.js';
+import { registrarVista, resumenVistas } from './server-lib/sectionViews.js';
 import {
   isWebPushEnabled, getVapidPublicKeyHandler, subscribePush, unsubscribePush, testPush,
   dispararRecordatoriosPromesa, dispatchPushNow,
@@ -989,6 +990,12 @@ app.get('/api/debug/im-clientes-sample', requireJwt, requireAdmin, async (req: a
 // ─── Actividad ───────────────────────────────────────────────────────────────
 app.get('/api/activity', requireJwt, (req: any, res) => listActivity(req, res));
 app.post('/api/activity', requireJwt, (req: any, res) => createActivity(req, res));
+
+// Telemetría de uso: qué secciones abre la gente. Sirve para decidir qué sacar del menú con
+// datos y no con impresiones (ver server-lib/sectionViews.ts). No guarda contenido, sólo
+// qué sección y quién.
+app.post('/api/telemetria/vista', requireJwt, (req: any, res) => registrarVista(req, res));
+app.get('/api/telemetria/secciones', requireJwt, (req: any, res) => resumenVistas(req, res));
 app.put('/api/activity/:id', requireJwt, (req: any, res) => updateActivity(req, res));
 app.delete('/api/activity/:id', requireJwt, (req: any, res) => deleteActivity(req, res));
 app.get('/api/notificaciones', requireJwt, (req: any, res) => listNotificaciones(req, res));
@@ -1570,11 +1577,20 @@ cron.schedule('*/5 * * * *', async () => {
 });
 console.log('Cron MP verify: */5 * * * *');
 
-// ─── Cron: disparar Web Push de recordatorios vencidos ───────────────────────
-// Cada minuto chequea promesas con fecha+hora <= now y push_notificado_at IS NULL.
-// Solo arranca si VAPID está configurado. Lock contra overlap por las dudas.
+// ─── Cron: recordatorios de promesas — APAGADO el 29/08/2026 ─────────────────
+// Corría cada minuto y fallaba SIEMPRE: la query pide `vendor_activity.asignado_por`,
+// una columna que no existe en la base ni en ninguna migración de supabase/migrations
+// (o sea que nunca existió: no es una migración pendiente). En el log del contenedor
+// había 501 "[cron push] query fail: column vendor_activity.asignado_por does not
+// exist" en 8 horas — una por minuto, desde siempre. Nadie lo notó porque no hay
+// promesas que notificar: `vendor_activity` tiene 6 filas en toda su historia y
+// NINGUNA de tipo 'promesa'.
+// Se apaga junto con la sección Actividad, que se sacó de la app por el mismo motivo.
+// El handler `dispararRecordatoriosPromesa` queda en webpush.ts por si algún día
+// vuelve la funcionalidad; lo que se corta es que se ejecute en vano.
+const CRON_PROMESAS_ACTIVO = false;
 let pushInFlight = false;
-if (hasSupabase()) {
+if (CRON_PROMESAS_ACTIVO && hasSupabase()) {
     cron.schedule('* * * * *', async () => {
         if (pushInFlight) return;
         pushInFlight = true;

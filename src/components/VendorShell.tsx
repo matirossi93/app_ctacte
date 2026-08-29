@@ -241,6 +241,19 @@ export const VendorShell = ({ onLogout }: Props) => {
     const user = getUser();
     const isAdmin = user?.rol === 'admin' || user?.rol === 'gerente';
     const [tab, setTab] = useState<Tab>('hoy');
+
+    // Telemetría de uso: avisa qué sección se abrió. Sirve para decidir con datos qué sacar
+    // del menú — de las secciones de sólo consulta (Hoy, Objetivos, Comisiones, Rebotes) no
+    // quedaba ninguna huella y no había forma de saber si alguien las mira.
+    // Va de fondo y sin await: si falla, el vendedor no se entera de nada.
+    useEffect(() => {
+        fetch('/api/telemetria/vista', {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ seccion: tab }),
+            keepalive: true,
+        }).catch(() => { /* telemetría: nunca molesta */ });
+    }, [tab]);
     const [showRecibos, setShowRecibos] = useState(false);
     const [showPedidos, setShowPedidos] = useState(false);
     const [bucket, setBucket] = useState<'todos' | 'reciente' | 'medio' | 'vencido'>('todos');
@@ -608,7 +621,6 @@ export const VendorShell = ({ onLogout }: Props) => {
                         cods={codsQs}
                         onGoToTab={(t) => setTab(t)}
                         onOpenCobClient={(cod) => { setPendingCobClient(cod); setTab('cobranzas'); }}
-                        onOpenActivityForClient={(cod, name) => { setPendingNewActivity({ cod_cliente: cod, name }); setTab('actividad'); }}
                     />
                 )}
 
@@ -670,10 +682,6 @@ export const VendorShell = ({ onLogout }: Props) => {
                     <PackageX size={22} />
                     <span>Rebotes</span>
                 </button>
-                <button className={`vs-nav-btn ${tab === 'actividad' ? 'is-active' : ''}`} onClick={() => setTab('actividad')}>
-                    <ActivityIcon size={22} />
-                    <span>Actividad</span>
-                </button>
             </nav>
 
             {/* FAB: nuevo pedido (apilado arriba del de pago) */}
@@ -712,7 +720,7 @@ export const VendorShell = ({ onLogout }: Props) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // HOY VIEW (Dashboard del día)
 // ═══════════════════════════════════════════════════════════════════════════
-function HoyView({ clientsAgg, user, isAdmin, selectedVendor, cods, onGoToTab, onOpenCobClient, onOpenActivityForClient }:
+function HoyView({ clientsAgg, user, isAdmin, selectedVendor, cods, onGoToTab, onOpenCobClient }:
     {
         clientsAgg: ClientAgg[];
         user: any;
@@ -721,30 +729,22 @@ function HoyView({ clientsAgg, user, isAdmin, selectedVendor, cods, onGoToTab, o
         cods: string;
         onGoToTab: (t: Tab) => void;
         onOpenCobClient: (cod: string) => void;
-        onOpenActivityForClient: (cod: string, name: string) => void;
     }) {
     const [goal, setGoal] = useState<GoalData | null>(null);
     const [rankingItems, setRankingItems] = useState<any[]>([]);
     const [teamTotales, setTeamTotales] = useState<{ target: number; avance: number; pct: number | null; proyeccion: number; diasRestantes: number } | null>(null);
-    const [activity, setActivity] = useState<ActivityItem[]>([]);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
 
     const load = async () => {
         setLoading(true); setErr(null);
         try {
-            const actParams = new URLSearchParams();
-            if (isAdmin && selectedVendor != null) actParams.set('cod_vendedor', String(selectedVendor));
-            else if (isAdmin && cods) actParams.set('cods', cods);
-            actParams.set('limit', '200');
-            const actQs = actParams.toString() ? `?${actParams.toString()}` : '';
-
-            const [gr, ar] = await Promise.all([
-                fetch(`/api/goals`, { headers: authHeaders() }).then(r => r.json()),
-                fetch(`/api/activity${actQs}`, { headers: authHeaders() }).then(r => r.json()),
-            ]);
+            // 29/08/2026: el Hoy ya no pide /api/activity. Lo único que consumía esa
+            // llamada era el widget de Promesas, que se sacó — la tabla tenía 6 registros
+            // en toda su historia y ninguno de tipo 'promesa', así que ese recuadro nunca
+            // mostró nada. Una request menos en la pantalla que más se abre.
+            const gr = await fetch(`/api/goals`, { headers: authHeaders() }).then(r => r.json());
             if (!gr.ok) throw new Error(gr.error || 'goals error');
-            if (!ar.ok) throw new Error(ar.error || 'activity error');
 
             const items = (gr.items ?? []) as any[];
             setRankingItems(items);
@@ -773,26 +773,11 @@ function HoyView({ clientsAgg, user, isAdmin, selectedVendor, cods, onGoToTab, o
                 setTeamTotales(null);
             }
 
-            setActivity((ar.items ?? []) as ActivityItem[]);
         } catch (e: any) { setErr(e.message); }
         finally { setLoading(false); }
     };
     useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [isAdmin, selectedVendor, cods]);
 
-    // Promesas vigentes (≤ hoy + 2d), ordenadas por urgencia
-    const promesas = useMemo(() => {
-        const today = new Date(); today.setHours(0, 0, 0, 0);
-        const limit = new Date(today); limit.setDate(limit.getDate() + 2);
-        return activity
-            .filter(a => a.tipo === 'promesa' && a.fecha_promesa)
-            .map(a => {
-                const fp = new Date(a.fecha_promesa + 'T00:00:00');
-                const diff = Math.floor((fp.getTime() - today.getTime()) / 86400000);
-                return { ...a, _fp: fp, _diff: diff };
-            })
-            .filter(p => p._fp <= limit)
-            .sort((a, b) => a._fp.getTime() - b._fp.getTime());
-    }, [activity]);
 
     // Top deudores (mora > 15d)
     const topDeudores = useMemo(() => {
@@ -822,22 +807,14 @@ function HoyView({ clientsAgg, user, isAdmin, selectedVendor, cods, onGoToTab, o
             <div className="vs-hoy-saludo">
                 <h1>{saludo}, <em>{nombreCorto}</em></h1>
                 <p>
-                    {promesas.length > 0
-                        ? <>⚡ <strong>{promesas.length}</strong> {promesas.length === 1 ? 'promesa' : 'promesas'} en los próximos días</>
-                        : <>Sin promesas urgentes esta semana.</>}
-                    {topDeudores.length > 0 && <> · <strong>{topDeudores.length}</strong> {topDeudores.length === 1 ? 'cliente' : 'clientes'} con mora alta</>}
+                    {topDeudores.length > 0
+                        ? <><strong>{topDeudores.length}</strong> {topDeudores.length === 1 ? 'cliente' : 'clientes'} con mora alta</>
+                        : <>Sin clientes con mora alta.</>}
                 </p>
                 {err && <div className="vs-error" style={{ marginTop: 8 }}><AlertCircle size={14} /> {err}</div>}
             </div>
 
             <div className="vs-hoy-grid">
-                {/* Promesas vigentes — fila completa */}
-                <WidgetPromesas items={promesas} isAdmin={isAdmin} onOpen={(p) => {
-                    const cc = clientsAgg.find(c => c.cod === String(p.cod_cliente));
-                    const name = cc?.name ?? `Cliente ${p.cod_cliente}`;
-                    onOpenActivityForClient(String(p.cod_cliente), name);
-                }} onGoToActividad={() => onGoToTab('actividad')} />
-
                 {/* Avance o Equipo */}
                 {isAdmin
                     ? <WidgetEquipo totales={teamTotales} top3={top3} onGoTo={() => onGoToTab('objetivos')} />
@@ -851,41 +828,6 @@ function HoyView({ clientsAgg, user, isAdmin, selectedVendor, cods, onGoToTab, o
     );
 }
 
-function WidgetPromesas({ items, isAdmin, onOpen, onGoToActividad }: { items: any[]; isAdmin: boolean; onOpen: (p: any) => void; onGoToActividad: () => void }) {
-    return (
-        <div className="vs-widget vs-widget--wide">
-            <div className="vs-widget-head">
-                <h3>📌 Promesas vigentes</h3>
-                <button className="vs-widget-more" onClick={onGoToActividad} title="Ver todas">
-                    Ver todo <ChevronRight size={14} />
-                </button>
-            </div>
-            {items.length === 0 ? (
-                <div className="vs-widget-empty">No tenés promesas para esta semana. 🎉</div>
-            ) : (
-                <div className="vs-promesa-list">
-                    {items.slice(0, 6).map(p => {
-                        const tone = p._diff < 0 ? 'late' : p._diff === 0 ? 'today' : 'soon';
-                        const label = p._diff < 0 ? `hace ${Math.abs(p._diff)}d` : p._diff === 0 ? 'HOY' : `en ${p._diff}d`;
-                        return (
-                            <button key={p.id} className={`vs-promesa vs-promesa--${tone}`} onClick={() => onOpen(p)}>
-                                <div className="vs-promesa-date">{label}</div>
-                                <div className="vs-promesa-body">
-                                    <strong>Cliente {p.cod_cliente ?? '—'}</strong>
-                                    {p.monto != null && <span className="vs-promesa-monto">{formatMoney(p.monto)}</span>}
-                                    {p.contenido && <span className="vs-promesa-note">{p.contenido}</span>}
-                                    {isAdmin && p.created_by_nombre && <span className="vs-promesa-owner">· {p.created_by_nombre}</span>}
-                                </div>
-                                <ChevronRight size={16} className="vs-promesa-arrow" />
-                            </button>
-                        );
-                    })}
-                    {items.length > 6 && <button className="vs-widget-more-link" onClick={onGoToActividad}>+ {items.length - 6} más</button>}
-                </div>
-            )}
-        </div>
-    );
-}
 
 function WidgetAvance({ goal, onGoTo }: { goal: GoalData | null; onGoTo: () => void }) {
     // Animación de entrada del anillo (arranca en 0). El hook va antes del early
