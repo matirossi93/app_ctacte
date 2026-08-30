@@ -1,8 +1,7 @@
-import { fetchVentas, fetchVentasItems } from './infomanager.js';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import { computeVentaNeta, monthKey } from '../src/utils/ventas.js';
 import { invalidateByPrefix as invalidateGoalsPrefix } from './goalsResponseCache.js';
-import { invalidateMonth as invalidateSnapshotMonth, invalidateItemsMonth } from './snapshotCache.js';
+import { getMonthlyVentasRaw, getMonthlyItemsRaw } from './snapshotCache.js';
 import { invalidateAlertasVendedor } from './notificacionesAlertas.js';
 import { invalidateHistorialCache } from './historialCompras.js';
 import {
@@ -12,26 +11,24 @@ import {
 import { loadVendedorOverrides, resolveCodVendedor } from './comisionOverrides.js';
 
 /**
- * Invalida los caches de Goals / snapshot / items para el mes recién sincronizado.
- * Antes se llamaba `invalidateAll()` sobre el response cache, lo que tiraba
- * meses históricos que no habían cambiado y bajaba el hit rate. Ahora limpia
- * solo el prefijo del mes afectado (goals + clientes) y el dataset crudo del
- * mismo mes en snapshotCache para que /api/goals/snapshot vea las ventas
- * frescas inmediatamente, sin esperar al TTL de 5 min.
+ * Invalida los caches DERIVADOS (goals/clientes/alertas/historial) para el mes
+ * recién sincronizado. El crudo del snapshotCache NO se toca: desde el fix del
+ * 429 (31/07/2026) el sync obtiene los datos VÍA snapshotCache con force, así
+ * que la entrada del mes queda recién escrita — invalidarla acá (como se hacía
+ * antes) tiraba a la basura la descarga que acabábamos de pagar contra IM y
+ * obligaba al prewarm/los usuarios a re-bajarla entera.
  *
- * Además tira los caches de alertas de abandono (campana por vendedor + historial
+ * Tira los caches de alertas de abandono (campana por vendedor + historial
  * por cliente): son resultados derivados de estas mismas ventas, así que si no se
  * invalidan, un producto que el cliente acaba de recomprar seguiría marcado como
  * "caído" hasta que expire su propio TTL. Se limpian enteros (clear total) porque
  * el sync no sabe qué vendedores/clientes cambiaron; el costo es 1 recómputo por
  * vendedor/cliente en la próxima request, no en el hot path.
  */
-export function invalidateMonthCaches(year: number, month: number, codEmpresa?: number): void {
+export function invalidateMonthCaches(year: number, month: number, _codEmpresa?: number): void {
   const mm = String(month).padStart(2, '0');
   invalidateGoalsPrefix(`goals:${year}-${mm}:`);
   invalidateGoalsPrefix(`clientes:${year}-${mm}:`);
-  invalidateSnapshotMonth(year, month, codEmpresa);
-  invalidateItemsMonth(year, month, codEmpresa);
   invalidateAlertasVendedor();
   invalidateHistorialCache();
 }
@@ -48,30 +45,38 @@ export interface SyncResult {
   error?: string;
 }
 
-function ymdMonthStart(date = new Date()): string {
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-01`;
-}
-
 function ymdMonthEnd(year: number, month: number): string {
   const lastDay = new Date(year, month, 0).getDate();
   return `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 }
 
 /**
- * Sync de ventas para un rango arbitrario de fechas.
- * Consulta /ventas, agrega por cliente+mes y vendedor+mes, upsertea en Supabase.
+ * Sync de ventas de UN MES CALENDARIO completo.
+ * Obtiene el crudo vía snapshotCache, agrega por cliente+mes y vendedor+mes,
+ * upsertea en Supabase.
+ *
+ * Antes recibía un rango de fechas arbitrario y bajaba de IM por su cuenta
+ * (fetchVentas/fetchVentasItems): la MISMA descarga (~30 páginas del mes) que
+ * el prewarm del snapshot hacía por su lado — ~60 req/h duplicadas contra la
+ * cuota horaria única de IM (429 recurrente del 31/07/2026). Ahora hay UNA
+ * descarga compartida: force=true refresca el snapshotCache y goals/
+ * comisiones/historial la reusan al instante. Sin codEmpresa en la key del
+ * cache: IM ignora ese filtro en /ventas (se filtra en código, abajo) y así
+ * se comparte la entrada `empall` del prewarm.
  *
  * El UPSERT por PK (tenant, cod, year, month) hace seguro re-correr para captar
  * NCs tardías o backfills históricos: sobrescribe el row existente, no duplica.
  */
-async function syncVentasRango(opts: {
-  desde: string;
-  hasta: string;
+async function syncVentasMesCalendario(opts: {
+  year: number;
+  month: number;
   codEmpresa?: number;
   label?: string;
 }): Promise<SyncResult> {
   const t0 = Date.now();
-  const { desde, hasta, codEmpresa, label } = opts;
+  const { year, month, codEmpresa, label } = opts;
+  const desde = `${year}-${String(month).padStart(2, '0')}-01`;
+  const hasta = ymdMonthEnd(year, month);
   if (!hasSupabase()) {
     return { ok: false, comprobantes: 0, clientes: 0, vendedores: 0, elapsedMs: 0, desde, hasta, label, error: 'Supabase no configurado' };
   }
@@ -82,9 +87,9 @@ async function syncVentasRango(opts: {
     // el mismo número que `comisiones.ts` (ya validado contra el Excel manual
     // de Mati), y evita la diff que aparecía cuando se sumaba `fa_total` por
     // cabecera (incluye IVA/redondeos que items no tiene).
-    const [ventas, items, overrides] = await Promise.all([
-      fetchVentas(desde, hasta, { codEmpresa }),
-      fetchVentasItems(desde, hasta, { codEmpresa }),
+    const [{ ventas }, { items }, overrides] = await Promise.all([
+      getMonthlyVentasRaw(year, month, { force: true }),
+      getMonthlyItemsRaw(year, month, { force: true }),
       loadVendedorOverrides(),
     ]);
 
@@ -247,14 +252,14 @@ async function syncVentasRango(opts: {
  */
 export async function syncVentasMesActual(opts?: { codEmpresa?: number }): Promise<SyncResult> {
   const now = new Date();
-  const r = await syncVentasRango({
-    desde: ymdMonthStart(),
-    hasta: ymdMonthEnd(now.getUTCFullYear(), now.getUTCMonth() + 1),
+  const r = await syncVentasMesCalendario({
+    year: now.getUTCFullYear(),
+    month: now.getUTCMonth() + 1,
     codEmpresa: opts?.codEmpresa ?? COD_EMPRESA_DEFAULT,
     label: 'mes-actual',
   });
-  // El cron */30 actualiza vendor/client_sales_monthly del mes actual:
-  // invalidar caches del mes para que la próxima carga vea el nuevo avance.
+  // El cron horario (:05) actualiza vendor/client_sales_monthly del mes actual:
+  // invalidar caches derivados del mes para que la próxima carga vea el avance.
   if (r.ok) invalidateMonthCaches(now.getUTCFullYear(), now.getUTCMonth() + 1, opts?.codEmpresa);
   return r;
 }
@@ -265,10 +270,8 @@ export async function syncVentasMesActual(opts?: { codEmpresa?: number }): Promi
  * anticipadas) — el cron lo refresca cada media hora.
  */
 export async function syncVentasMes(year: number, month: number, opts?: { codEmpresa?: number }): Promise<SyncResult> {
-  const desde = `${year}-${String(month).padStart(2, '0')}-01`;
-  const hasta = ymdMonthEnd(year, month);
-  return syncVentasRango({
-    desde, hasta,
+  return syncVentasMesCalendario({
+    year, month,
     codEmpresa: opts?.codEmpresa ?? COD_EMPRESA_DEFAULT,
     label: `${year}-${String(month).padStart(2, '0')}`,
   });

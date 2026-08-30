@@ -180,7 +180,12 @@ interface NormalizedData {
     /** No pudimos traer datos de InfoManager: lo que se muestra NO es confiable. */
     degraded?: string;
 }
-let dataCache: { data: NormalizedData; timestamp: number; key: number } | null = null;
+// Cache de /api/data POR EMPRESA. Antes era un slot único keyed por
+// codEmpresa||0: el Dashboard (codEmpresa=1 → key 1) y el prewarm cron +
+// /api/bot (sin parámetro → key 0) se pisaban el slot bajando EL MISMO dato
+// (sin parámetro fetchIMData también trae la empresa 1) — cada alternancia
+// era un miss = 2 requests a IM, y el prewarm no le servía a nadie.
+const dataCacheByEmpresa = new Map<number, { data: NormalizedData; timestamp: number }>();
 
 // ─── Sheets Fetch ────────────────────────────────────────────────────────────
 const fetchSheetsData = async (force = false): Promise<{ invoices: string; clients: string }> => {
@@ -409,15 +414,18 @@ async function fetchIMData(codEmpresa?: number): Promise<NormalizedData> {
 
 // ─── Unified Data Fetch (IM primary, Sheets fallback) ────────────────────────
 async function fetchData(force = false, codEmpresa?: number): Promise<NormalizedData> {
-    const cacheKey = codEmpresa || 0;
-    if (!force && dataCache && dataCache.key === cacheKey && Date.now() - dataCache.timestamp < CACHE_TTL) {
-        return dataCache.data;
+    // Sin codEmpresa, fetchIMData baja la empresa 1 igual → misma key que
+    // codEmpresa=1, así prewarm/bot/Dashboard comparten entrada.
+    const cacheKey = codEmpresa || 1;
+    const cached = dataCacheByEmpresa.get(cacheKey);
+    if (!force && cached && Date.now() - cached.timestamp < CACHE_TTL) {
+        return cached.data;
     }
 
     if (DATA_SOURCE === 'infomanager') {
         try {
             const data = await fetchIMData(codEmpresa);
-            dataCache = { data, timestamp: Date.now(), key: cacheKey };
+            dataCacheByEmpresa.set(cacheKey, { data, timestamp: Date.now() });
             return data;
         } catch (err: any) {
             console.error('InfoManager failed:', err.message);
@@ -427,10 +435,15 @@ async function fetchData(force = false, codEmpresa?: number): Promise<Normalized
             // pantalla mostraba TODO EN CERO sin un solo error a la vista —
             // alguien puede decidir sobre saldos falsos. Preferimos el último
             // dato REAL de IM aunque esté vencido, avisando la antigüedad.
-            if (dataCache?.key === cacheKey && dataCache.data.source === 'infomanager') {
-                const staleMin = Math.round((Date.now() - dataCache.timestamp) / 60000);
+            // No se sobreescribe la entrada: conserva el último dato bueno y el
+            // próximo request (timestamp vencido) vuelve a intentar contra IM.
+            // Se relee del Map (no `cached`): otro request pudo actualizarla
+            // mientras este fetch estaba en vuelo.
+            const prev = dataCacheByEmpresa.get(cacheKey);
+            if (prev && prev.data.source === 'infomanager') {
+                const staleMin = Math.round((Date.now() - prev.timestamp) / 60000);
                 console.warn(`Sirviendo cache de InfoManager de hace ${staleMin} min`);
-                return { ...dataCache.data, stale: true, staleMin };
+                return { ...prev.data, stale: true, staleMin };
             }
         }
     }
@@ -446,7 +459,7 @@ async function fetchData(force = false, codEmpresa?: number): Promise<Normalized
             ? 'No se pudo consultar InfoManager. Los datos que ves son de respaldo y pueden estar desactualizados.'
             : undefined,
     };
-    dataCache = { data: result, timestamp: Date.now(), key: 0 };
+    dataCacheByEmpresa.set(cacheKey, { data: result, timestamp: Date.now() });
     return result;
 }
 
@@ -709,7 +722,7 @@ app.post('/api/clientes/refresh-contactos', requireJwt, requireAdmin, async (_re
             return;
         }
         imClientesCache = { data: rows, timestamp: Date.now() }; // pisa contactos IM (TTL 1h)
-        dataCache = null; // invalida /api/data para que rearme con los teléfonos nuevos
+        dataCacheByEmpresa.clear(); // invalida /api/data para que rearme con los teléfonos nuevos
         res.json({ ok: true, contactos: rows.length, refreshedAt: new Date().toISOString() });
     } catch (err: any) {
         console.error('[refresh-contactos]', err?.message ?? err);

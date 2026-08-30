@@ -49,9 +49,13 @@ export async function imClient(): Promise<AxiosInstance> {
 
 /**
  * Reintenta una llamada IDEMPOTENTE (GET) ante fallos TRANSITORIOS de IM:
- * timeout (ECONNABORTED), error de red sin respuesta, 5xx, 429 o 401 (token
+ * timeout (ECONNABORTED), error de red sin respuesta, 5xx o 401 (token
  * invalidado server-side). NO reintenta el resto de los 4xx (errores del
  * cliente, no transitorios). Backoff exponencial 1s/2s/4s.
+ * El 429 tampoco se reintenta: es el límite de solicitudes POR HORA de IM
+ * (cuota compartida por todas las apps del ecosistema) y su ventana de espera
+ * es de minutos (`reintentarEnSegundos` llegó a 2331); reintentar en 1-2s no
+ * puede funcionar y solo suma requests contra la cuota (incidente 31/07/2026).
  * IM tuvo episodios de sobrecarga documentados; un transient de 10-20s a mitad
  * de una página paginada tiraba el sync entero. SOLO para GET — NO usar en
  * POST/crearRecibo sin hacerlo idempotente primero.
@@ -64,7 +68,7 @@ export async function imGetRetry<T>(fn: () => Promise<T>, label: string, attempt
     } catch (err: any) {
       lastErr = err;
       const status = err?.response?.status;
-      const transitorio = status === undefined || status >= 500 || status === 429 || status === 401
+      const transitorio = status === undefined || status >= 500 || status === 401
         || ['ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN'].includes(err?.code);
       // IM puede matar sesiones server-side antes del exp del JWT y responder
       // 500 body vacío o 401 con token 'vigente' (incidente 06-07/07/2026)

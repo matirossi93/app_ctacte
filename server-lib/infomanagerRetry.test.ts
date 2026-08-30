@@ -63,6 +63,23 @@ describe('imGetRetry', () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
+  it('ante 429 (rate limit horario) NO reintenta: la ventana dura minutos y reintentar solo gasta cuota', async () => {
+    const fn = vi.fn().mockRejectedValue(httpError(429));
+    await expect(imGetRetry(fn, 'test-429')).rejects.toThrow('HTTP 429');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('el 429 NO invalida el token: la credencial autenticó bien, el rechazo es por cuota', async () => {
+    vi.mocked(axios.post).mockResolvedValueOnce({ data: { token: 'tok-1' } } as any);
+    expect(await imToken()).toBe('tok-1');
+
+    const fn = vi.fn().mockRejectedValue(httpError(429));
+    await expect(imGetRetry(fn, 'test-429-token')).rejects.toThrow('HTTP 429');
+
+    expect(await imToken()).toBe('tok-1'); // sigue cacheado: sin login extra
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
   it('agota los reintentos y propaga el último error', async () => {
     const fn = vi.fn().mockRejectedValue(httpError(500));
     const p = imGetRetry(fn, 'test-agotado');
