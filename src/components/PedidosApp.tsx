@@ -241,7 +241,11 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         return () => { clearTimeout(timer); ctrl.abort(); };
     }, [catQuery, step, catTodos, listaCliente]);
 
+    /** El buscador de productos, para devolverle el foco cuando el vendedor cierra una cantidad. */
+    const buscadorRef = useRef<HTMLInputElement>(null);
     const [agregando, setAgregando] = useState<number | null>(null);
+    /** Renglón recién agregado: su casillero de cantidad se enfoca solo apenas se renderiza. */
+    const [focoCantidad, setFocoCantidad] = useState<string | null>(null);
     async function agregarArticulo(a: CatItem) {
         // 🪤 El chequeo de duplicado estaba ACÁ, antes del await que va a buscar el precio a
         // IM. Como nada se renderizaba mientras tanto, dos toques seguidos leían el mismo
@@ -267,11 +271,17 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
             // el backend nos dice con que lista cotizo: esa es la del cliente
             if (d?.ok && Number(d.cod_lista) > 0) { listaDelItem = Number(d.cod_lista); setListaCliente(listaDelItem); }
         } catch { /* usa el genérico */ }
+        const uid = crypto.randomUUID();
         setCart(c => [...c, {
-            uid: crypto.randomUUID(),
+            uid,
             cod_articulo: a.cod_articulo, descripcion: a.descripcion, cantidad: 1,
             precio, cod_lista: listaDelItem, descuento: 0,
         }]);
+        // Apenas entra el producto, el cursor va a su cantidad: el vendedor teclea el número
+        // y sigue, sin tener que apuntarle al casillero (Mati 30/08: "que sea lo más rápida y
+        // práctica posible"). El input hace `select()` al enfocarse, así que lo que escribe
+        // REEMPLAZA el 1 en vez de quedar "15".
+        setFocoCantidad(uid);
         setAgregando(null);
         setCatQuery(''); setCatResults([]);
     }
@@ -773,7 +783,7 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                             {/* Buscador de productos */}
                             <div className="ped-search">
                                 <PackageSearch size={18} />
-                                <input placeholder="Buscar producto…" value={catQuery} onChange={e => setCatQuery(e.target.value)} />
+                                <input ref={buscadorRef} placeholder="Buscar producto…" value={catQuery} onChange={e => setCatQuery(e.target.value)} />
                                 {catLoading && <Loader2 className="spin" size={16} />}
                             </div>
                             {catResults.map(a => {
@@ -854,12 +864,31 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                     <div className="ped-qty">
                                         <button aria-label="Restar uno" disabled={i.cantidad <= 1}
                                             onClick={() => setQty(i.uid, Math.max(1, Math.round(i.cantidad) - 1))}><Minus size={16} /></button>
+                                        {/* El ref corre cuando el renglón ya está en pantalla: recién ahí se
+                                            puede enfocar. La marca se limpia en el acto para no robarle el foco
+                                            al vendedor si después toca otro campo y esto se vuelve a renderizar. */}
                                         <input
                                             type="text" inputMode="decimal" aria-label={`Cantidad de ${i.descripcion}`}
+                                            ref={el => {
+                                                if (el && focoCantidad === i.uid) {
+                                                    setFocoCantidad(null);
+                                                    el.focus();
+                                                    el.select();
+                                                }
+                                            }}
                                             value={qtyTexto[i.uid] ?? String(i.cantidad)}
                                             onChange={e => escribirQty(i.uid, e.target.value)}
                                             onFocus={e => e.currentTarget.select()}
                                             onBlur={() => cerrarQty(i.uid)}
+                                            // Enter cierra la cantidad y devuelve el cursor al buscador: el ciclo
+                                            // completo de cargar un producto queda sin tocar la pantalla —
+                                            // buscar, agregar, tipear la cantidad, Enter, buscar el siguiente.
+                                            onKeyDown={e => {
+                                                if (e.key !== 'Enter') return;
+                                                e.preventDefault();
+                                                e.currentTarget.blur();
+                                                buscadorRef.current?.focus();
+                                            }}
                                         />
                                         <button aria-label="Sumar uno"
                                             onClick={() => setQty(i.uid, Math.floor(i.cantidad) + 1)}><Plus size={16} /></button>
