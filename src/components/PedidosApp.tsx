@@ -247,43 +247,56 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     /** Renglón recién agregado: su casillero de cantidad se enfoca solo apenas se renderiza. */
     const [focoCantidad, setFocoCantidad] = useState<string | null>(null);
     async function agregarArticulo(a: CatItem) {
-        // 🪤 El chequeo de duplicado estaba ACÁ, antes del await que va a buscar el precio a
-        // IM. Como nada se renderizaba mientras tanto, dos toques seguidos leían el mismo
-        // `cart` del closure, los dos pasaban, y el artículo entraba DOS VECES. Con dos
-        // renglones del mismo código, setQty y setLista mueven los dos juntos: el pedido
-        // salía con el doble de cantidad, y encima bultosDelPedido contaba doble, prendía la
-        // promo general de más y APAGABA el bloqueo por margen. Ahora el chequeo va adentro
-        // del updater funcional (ve el estado real) y el resultado muestra que trabaja.
-        // Sigue frenando el doble toque MIENTRAS busca el precio (ahí no se renderiza nada y
-        // el vendedor no tiene forma de saber que ya lo tomó). Lo que ya NO se hace es
-        // impedir el artículo repetido: cargarlo dos veces es algo que el vendedor quiere
-        // poder hacer, y antes se le sumaba 1 a un renglón que ni estaba mirando.
+        // 🪤 El chequeo de duplicado estaba antes del await que va a buscar el precio a IM.
+        // Como nada se renderizaba mientras tanto, dos toques seguidos leían el mismo `cart`
+        // del closure, los dos pasaban, y el artículo entraba DOS VECES. Con dos renglones
+        // del mismo código, setQty y setLista mueven los dos juntos: el pedido salía con el
+        // doble de cantidad, y encima bultosDelPedido contaba doble, prendía la promo general
+        // de más y APAGABA el bloqueo por margen. Lo que sí se sostiene es que el artículo
+        // repetido A PROPÓSITO está permitido: cargarlo dos veces (con distinta lista) es
+        // algo que el vendedor quiere poder hacer.
         if (agregando != null) return;
-        setAgregando(a.cod_articulo);
-        // Precio de la lista del cliente. El del buscador ya viene de esa lista, pero se
-        // recotiza igual porque es el número que se guarda en el renglón.
-        let precio = a.precio_venta ?? 0;
-        let listaDelItem = listaCliente;
-        try {
-            const r = await fetch(`/api/pedidos/precio?cod_articulo=${a.cod_articulo}&cod_cliente=${cliente?.cod ?? ''}`, { headers: authHeaders() });
-            const d = await r.json();
-            if (d?.ok && d.precio?.precio_vta != null) precio = Number(d.precio.precio_vta);
-            // el backend nos dice con que lista cotizo: esa es la del cliente
-            if (d?.ok && Number(d.cod_lista) > 0) { listaDelItem = Number(d.cod_lista); setListaCliente(listaDelItem); }
-        } catch { /* usa el genérico */ }
+
+        // 🍎 El renglón entra ANTES de ir a buscar el precio, y no después. El motivo es iOS:
+        // Safari sólo abre el teclado si el foco ocurre DENTRO del gesto que lo originó, y
+        // con el `await` de por medio la cadena se corta — el campo quedaba enfocado pero sin
+        // teclado, y hay iPhones en el equipo (Mati, 30/08). Además el producto aparece al
+        // instante en vez de después de la ida y vuelta a InfoManager.
+        // El precio inicial es el del buscador, que YA viene cotizado con la lista del
+        // cliente; lo de abajo sólo lo confirma o lo corrige.
         const uid = crypto.randomUUID();
+        const listaInicial = listaCliente;
         setCart(c => [...c, {
             uid,
             cod_articulo: a.cod_articulo, descripcion: a.descripcion, cantidad: 1,
-            precio, cod_lista: listaDelItem, descuento: 0,
+            precio: a.precio_venta ?? 0, cod_lista: listaInicial, descuento: 0,
         }]);
-        // Apenas entra el producto, el cursor va a su cantidad: el vendedor teclea el número
-        // y sigue, sin tener que apuntarle al casillero (Mati 30/08: "que sea lo más rápida y
-        // práctica posible"). El input hace `select()` al enfocarse, así que lo que escribe
-        // REEMPLAZA el 1 en vez de quedar "15".
+        // El cursor va derecho a la cantidad: el vendedor teclea el número y sigue, sin
+        // apuntarle al casillero. El input hace `select()` al enfocarse, así que lo que
+        // escribe REEMPLAZA el 1 en vez de quedar "15".
         setFocoCantidad(uid);
-        setAgregando(null);
         setCatQuery(''); setCatResults([]);
+
+        // Recotización contra IM: es el número que se guarda en el renglón.
+        setAgregando(a.cod_articulo);
+        try {
+            const r = await fetch(`/api/pedidos/precio?cod_articulo=${a.cod_articulo}&cod_cliente=${cliente?.cod ?? ''}`, { headers: authHeaders() });
+            const d = await r.json();
+            const precioIM = d?.ok && d.precio?.precio_vta != null ? Number(d.precio.precio_vta) : null;
+            // el backend nos dice con qué lista cotizó: esa es la del cliente
+            const listaIM = d?.ok && Number(d.cod_lista) > 0 ? Number(d.cod_lista) : null;
+            if (listaIM) setListaCliente(listaIM);
+            if (precioIM != null || listaIM) {
+                setCart(c => c.map(it => {
+                    if (it.uid !== uid) return it;                 // se borró, o es otro renglón
+                    // 🪤 Si en el rato que tardó IM el vendedor ya le cambió la lista a mano,
+                    // su elección manda: pisarla le cambiaría el precio abajo del dedo.
+                    if (it.cod_lista !== listaInicial) return it;
+                    return { ...it, precio: precioIM ?? it.precio, cod_lista: listaIM ?? it.cod_lista };
+                }));
+            }
+        } catch { /* queda el precio del buscador; el backend recalcula al enviar */ }
+        setAgregando(null);
     }
     const setQty = (uid: string, q: number) =>
         setCart(c => c.map(i => i.uid === uid ? { ...i, cantidad: q } : i));
