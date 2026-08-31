@@ -392,3 +392,44 @@
   font-weight: 600; font-size: 0.85rem; cursor: pointer;
 }
 .ped-compartir:disabled { opacity: 0.6; cursor: default; }
+
+/* ── El pedido que volvió solo ────────────────────────────────────────────────
+   31/08/2026: un vendedor perdió un pedido grande al ver un cartel de "sin conexión".
+   Ahora el carrito se guarda en el teléfono y este cartel avisa que se recuperó. Verde y
+   no ámbar a propósito: es una buena noticia, no algo que haya que revisar. */
+.ped-recuperado {
+  display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+  padding: 0.5rem 0.6rem; margin-bottom: 0.5rem;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-success-bg); color: var(--color-success);
+  font-size: 0.78rem; line-height: 1.35;
+}
+.ped-recuperado svg { flex-shrink: 0; }
+/* El texto se lleva toda la primera fila (menos el icono) y los dos botones caen juntos a
+   la segunda, alineados a la derecha. Sin esto, en 375px la × quedaba sola en una fila. */
+.ped-recuperado span { flex: 1 1 calc(100% - 1.6rem); min-width: 0; }
+.ped-recuperado span + button { margin-left: auto; }
+.ped-recuperado button {
+  flex-shrink: 0;
+  border: 1px solid currentColor; background: transparent; color: inherit;
+  font-weight: 700; font-size: 0.72rem;
+  padding: 0.25rem 0.5rem; border-radius: var(--radius-sm, 6px);
+  cursor: pointer; min-height: 32px;
+}
+/* La X sólo cierra el cartel: sin borde, para que no compita con "Empezar otro", que sí
+   descarta el pedido. */
+.ped-recuperado-x { border-color: transparent !important; min-width: 32px; }
+
+/* El envío que no salió. Ámbar cuando el pedido PUDO haber entrado igual (hay que mirar
+   antes de reintentar) y rojo cuando se sabe que no entró. */
+.ped-bloqueo { flex-wrap: wrap; }
+.ped-bloqueo span { flex: 1; min-width: 60%; }
+.ped-bloqueo.aviso { background: var(--color-warning-bg); color: #8A5A12; }
+.ped-bloqueo.aviso svg { color: var(--color-warning, #E59B33); }
+.ped-bloqueo button {
+  flex-shrink: 0;
+  border: 1px solid currentColor; background: transparent; color: inherit;
+  font-weight: 700; font-size: 0.72rem;
+  padding: 0.25rem 0.5rem; border-radius: var(--radius-sm, 6px);
+  cursor: pointer; min-height: 32px;
+}

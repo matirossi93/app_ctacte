@@ -5,6 +5,7 @@ import {
     Package, AlertTriangle, Pencil, ChevronRight, Share2,
 } from 'lucide-react';
 import { authHeaders, getUser } from '../utils/auth';
+import { borrarBorrador, cuandoSeGuardo, guardarBorrador, leerBorrador } from '../utils/borradorPedido';
 import { buscarClientes } from '../utils/buscarClientes';
 import { ultimoArriba } from '../utils/carrito';
 import './PedidosApp.css';
@@ -167,27 +168,83 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     }, [clients, fullClients]);
 
     // ── Estado del pedido ───────────────────────────────────────────────────
-    const [step, setStep] = useState<Step>('cliente');
-    const [cliente, setCliente] = useState<ClienteOpt | null>(null);
+    // 🔴 31/08/2026: un vendedor perdió un pedido grande entero al ver un cartel de "sin
+    // conexión" y tuvo que pedírselo de nuevo al cliente. El carrito vivía SÓLO acá adentro,
+    // así que cualquier cosa que desmontara esta pantalla se lo llevaba puesto. Ahora cada
+    // cambio se guarda en el teléfono y se recupera solo al volver a entrar.
+    //
+    // 🪤 El borrador se lee en el inicializador del `useState`, NO en un `useEffect`: los
+    // efectos del primer render corren todos en el mismo commit, así que el efecto que guarda
+    // vería el carrito vacío del render inicial y BORRARÍA el borrador un instante antes de
+    // que el efecto que restaura lo pusiera en pantalla.
+    const [emailUsuario] = useState(() => getUser()?.email ?? '');
+    const [borrador] = useState(() => leerBorrador(emailUsuario));
+    const [step, setStep] = useState<Step>(borrador ? 'productos' : 'cliente');
+    const [cliente, setCliente] = useState<ClienteOpt | null>(borrador?.cliente ?? null);
     // Lista con la que arranca cada renglon nuevo: la que el cliente tiene en IM.
     // El vendedor la cambia por renglon si la cantidad lo amerita.
-    const [listaCliente, setListaCliente] = useState<number>(LISTA_DEFECTO);
+    const [listaCliente, setListaCliente] = useState<number>(borrador?.listaCliente ?? LISTA_DEFECTO);
     const [credito, setCredito] = useState<Credito | null>(null);
     const [credLoading, setCredLoading] = useState(false);
-    const [cart, setCart] = useState<CartItem[]>([]);
-    const [obs, setObs] = useState('');
+    const [cart, setCart] = useState<CartItem[]>(borrador?.cart ?? []);
+    const [obs, setObs] = useState(borrador?.obs ?? '');
     const [clienteSearch, setClienteSearch] = useState('');
+    /** Cartel de "recuperamos tu pedido". Se muestra hasta que el vendedor lo cierra. */
+    const [avisoBorrador, setAvisoBorrador] = useState(borrador != null);
 
-    const idempotencyKey = useRef<string>(crypto.randomUUID());
+    // 🔑 Al recuperar un pedido se conserva la clave del intento anterior en vez de generar
+    // una nueva: si el POST había salido y la red se cortó en la respuesta, el pedido pudo
+    // haber entrado a InfoManager igual. Con la misma clave el backend devuelve el que ya
+    // existe; con una nueva le crearía al cliente un SEGUNDO presupuesto.
+    const idempotencyKey = useRef<string>(borrador?.idempotencyKey ?? crypto.randomUUID());
     // id del pedido que se está editando (null = pedido nuevo). Editar reusa el mismo
     // wizard: para el vendedor es la misma pantalla, sólo cambia a dónde se manda al final.
-    const [editando, setEditando] = useState<string | null>(null);
+    const [editando, setEditando] = useState<string | null>(borrador?.editando ?? null);
+
+    /**
+     * Guarda el pedido en curso apenas cambia algo.
+     *
+     * 🪤 Sin debounce a propósito. Los otros efectos de esta pantalla esperan 300-400 ms
+     * porque salen a la red; este escribe en el teléfono y tarda menos que el re-render que
+     * ya provocó la misma tecla. Con debounce, cerrar la pantalla dentro de esos 300 ms
+     * cancelaba el timer y se perdía el último cambio — que es justo el renglón que el
+     * vendedor estaba tipeando cuando algo lo interrumpió.
+     *
+     * Cuando el carrito queda vacío se borra: si el vendedor sacó los renglones uno por uno
+     * fue a propósito, y no tiene por qué volver a aparecerle el pedido la próxima vez.
+     */
+    useEffect(() => {
+        if (!cliente || !cart.length) { borrarBorrador(emailUsuario); return; }
+        guardarBorrador({
+            email: emailUsuario, cliente, listaCliente, cart, obs, editando,
+            idempotencyKey: idempotencyKey.current,
+        });
+    }, [cart, cliente, obs, listaCliente, editando, emailUsuario]);
+
+    // Al recuperar un borrador no se pasó por `elegirCliente`, así que el saldo hay que ir a
+    // buscarlo igual: sin esto el encabezado dice "Sin datos de saldo" de un cliente que sí
+    // los tiene, y el vendedor cierra la venta sin ver que está pasado de cuenta corriente.
+    useEffect(() => {
+        if (borrador) cargarCredito(borrador.cliente.cod);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // ── Buscador de clientes ────────────────────────────────────────────────
     // El ranking y la normalización viven en utils/buscarClientes.ts, con tests: es lo que
     // falló el 27/08 y tiene que poder verificarse sin montar el componente.
     const { resultados: clientesFiltrados, deMas: clientesDeMas } =
         useMemo(() => buscarClientes(clientList, clienteSearch), [clienteSearch, clientList]);
+
+    /** El saldo del cliente en el encabezado. Nunca frena el pedido: si falla, no se muestra. */
+    async function cargarCredito(cod: string | number) {
+        setCredito(null); setCredLoading(true);
+        try {
+            const r = await fetch(`/api/pedidos/credito/${cod}`, { headers: authHeaders() });
+            const d = await r.json();
+            if (d?.ok && d.credito) setCredito(d.credito);
+        } catch { /* sin crédito, no bloquea */ }
+        setCredLoading(false);
+    }
 
     async function elegirCliente(c: ClienteOpt) {
         // 🪤 `listaCliente` arrancaba SIEMPRE en L1 y recién se corregía adentro de
@@ -196,13 +253,8 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         // le canta por teléfono. Peor al volver atrás y elegir otro cliente: arrastraba la
         // lista del ANTERIOR. El maestro ya trae la lista de cada cliente.
         setListaCliente(c.cod_lista ?? LISTA_DEFECTO);
-        setCliente(c); setStep('productos'); setCredito(null); setCredLoading(true);
-        try {
-            const r = await fetch(`/api/pedidos/credito/${c.cod}`, { headers: authHeaders() });
-            const d = await r.json();
-            if (d?.ok && d.credito) setCredito(d.credito);
-        } catch { /* sin crédito, no bloquea */ }
-        setCredLoading(false);
+        setCliente(c); setStep('productos');
+        await cargarCredito(c.cod);
     }
 
     // ── Buscador de artículos ───────────────────────────────────────────────
@@ -359,7 +411,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     const [pdfDe, setPdfDe] = useState<string | null>(null);
     /** Identidad del carrito actual. Cambia al agregar, borrar o reordenar renglones. */
     const firmaCarrito = useMemo(() => cart.map(i => i.uid).join('|'), [cart]);
-    useEffect(() => { setMsgBloqueo(null); }, [cart]);
+    useEffect(() => { setMsgBloqueo(null); setFallo(null); }, [cart]);
     useEffect(() => {
         if (!cart.length) { setControl(null); return; }
         const ctrl = new AbortController();
@@ -398,6 +450,12 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     // ── Editar un pedido ya cargado ─────────────────────────────────────────
     const [abriendo, setAbriendo] = useState<string | null>(null);
     async function editarPedido(p: Pedido) {
+        // 🪤 Abrir un pedido para editar PISA el carrito en curso, y desde que el pedido se
+        // guarda en el teléfono también pisa el borrador: sin esta pregunta, mirar «Mis
+        // pedidos» y tocar Editar se lleva puesto el pedido que estaba armando.
+        if (cart.length && !confirm(
+            `Tenés un pedido a medio cargar (${cart.length} ${cart.length === 1 ? 'producto' : 'productos'}). Si abrís este otro, ese se pierde.\n\n¿Seguir igual?`
+        )) return;
         setAbriendo(p.id);
         try {
             const r = await fetch(`/api/pedidos/${p.id}`, { headers: authHeaders() });
@@ -422,15 +480,13 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
             setObs(d.pedido?.observaciones ?? '');
             setEditando(p.id);
             setResultado(null);
+            setFallo(null);
+            // El pedido que se abre para editar pisa al borrador: el cartel de recuperación
+            // hablaría de un pedido que ya no es el que está en pantalla.
+            setAvisoBorrador(false);
             setMode('nuevo');
             setStep('productos');
-            setCredito(null); setCredLoading(true);
-            try {
-                const rc = await fetch(`/api/pedidos/credito/${p.cod_cliente}`, { headers: authHeaders() });
-                const dc = await rc.json();
-                if (dc?.ok && dc.credito) setCredito(dc.credito);
-            } catch { /* sin crédito, no bloquea */ }
-            setCredLoading(false);
+            await cargarCredito(p.cod_cliente);
         } catch (e: any) {
             alert(e?.message ?? 'Error de red');
         } finally {
@@ -499,11 +555,32 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
     const [enviando, setEnviando] = useState(false);
     // Motivo por el que el backend rechazó el último envío. Se limpia al tocar el carrito.
     const [msgBloqueo, setMsgBloqueo] = useState<string | null>(null);
+    /**
+     * Por qué no salió el último envío.
+     *
+     * 🔴 A diferencia de `resultado`, esto NO saca al vendedor del carrito. Antes cualquier
+     * falla —red cortada, IM sin responder, un 500— lo mandaba a la pantalla de resultado, y
+     * ahí los únicos botones eran «Otro pedido» (que vacía el carrito) y «Cerrar»: el pedido
+     * quedaba encerrado en una pantalla sin retorno. Es lo que pasó el 31/08/2026. Ahora el
+     * pedido queda en pantalla y «Confirmar» vuelve a intentarlo con la MISMA
+     * idempotency_key, así que reintentar no puede duplicar el presupuesto en InfoManager.
+     *
+     * `revisar` = pudo haber entrado igual: primero hay que mirar «Mis pedidos».
+     */
+    const [fallo, setFallo] = useState<{ msg: string; revisar?: boolean } | null>(null);
     const [resultado, setResultado] = useState<{ ok: boolean; numero?: number | null; msg: string; warn?: boolean } | null>(null);
 
     async function confirmar() {
         if (!cliente || !cart.length) return;
-        setEnviando(true); setResultado(null); setMsgBloqueo(null);
+        setEnviando(true); setResultado(null); setMsgBloqueo(null); setFallo(null);
+        // 🪤 Reintentar NO es lo mismo en los dos caminos y no se le puede decir lo mismo al
+        // vendedor. El POST lleva `idempotency_key` con índice único, así que volver a
+        // confirmar un pedido nuevo devuelve el que ya existe. El PUT de edición NO tiene
+        // idempotencia: si el cambio entró y se reintenta, InfoManager crea OTRO presupuesto y
+        // anula el anterior.
+        const colaReintento = editando
+            ? 'Si el cambio ya quedó, no lo guardes de nuevo: InfoManager le daría otro número.'
+            : 'Si no está, volvé a confirmar: el pedido no se pierde ni se duplica.';
         try {
             const items = cart.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista: i.cod_lista, descuento_porc: i.descuento || 0 }));
             const r = editando
@@ -522,8 +599,26 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                         items,
                     }),
                 });
-            const d = await r.json();
-            if (r.ok && d?.ok) {
+            // 🪤 `r.json()` pelado tiraba SyntaxError cuando el proxy contesta HTML en vez de
+            // JSON (el 502/504 típico de un celular con mala señal, o de IM caído) y caía en el
+            // catch de abajo: el vendedor leía "se cortó la conexión" con la red perfecta. El
+            // resto del archivo ya usa esta guarda.
+            const d = await r.json().catch(() => null);
+            // 🔴 `duplicado` = el backend encontró este pedido por la idempotency_key, o sea que
+            // es un REINTENTO. Si el que ya existía nunca llegó a InfoManager (quedó en
+            // 'borrador' porque el server se cayó a mitad de camino), contestar el tilde verde
+            // "Pedido cargado" le hace creer al vendedor que la oficina lo va a ver, y no.
+            const reintentoSinLlegarAIM = d?.duplicado && d?.pedido?.im_numero == null
+                && d?.pedido?.estado !== 'enviado';
+            if (r.ok && d?.ok && reintentoSinLlegarAIM) {
+                setFallo({
+                    msg: 'Este pedido ya estaba guardado pero NO figura enviado a InfoManager. Miralo en «Mis pedidos» y avisale a la oficina antes de volver a cargarlo.',
+                    revisar: true,
+                });
+            } else if (r.ok && d?.ok) {
+                // El pedido ya está guardado del otro lado: el borrador dejó de ser una red y
+                // pasaría a ser una trampa (volvería a aparecer y se cargaría dos veces).
+                borrarBorrador(emailUsuario);
                 setResultado({
                     ok: true,
                     warn: !!d.aviso,
@@ -539,8 +634,10 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                 });
                 setStep('listo');
             } else if (r.status === 202 || d?.sin_respuesta) {
-                setResultado({ ok: false, warn: true, msg: d?.error ?? 'IM no respondió — revisá antes de reintentar' });
-                setStep('listo');
+                // El pedido está guardado de este lado pero IM no contestó: aparece en «Mis
+                // pedidos» como "Sin respuesta ⚠️". El carrito queda igual por si hay que
+                // reintentar, pero primero se mira, que para eso está el botón.
+                setFallo({ msg: `${d?.error ?? 'InfoManager no respondió.'} Fijate en «Mis pedidos». ${colaReintento}`, revisar: true });
             } else if (r.status === 422 && d?.bloqueado) {
                 // 🪤 Antes esto hacía `return` sin mostrar nada, asumiendo que el renglón ya
                 // estaba marcado en rojo. Falso: si estuviera en rojo el botón estaría
@@ -555,16 +652,14 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                 setEnviando(false);
                 return;
             } else {
-                setResultado({ ok: false, msg: d?.error ?? 'No se pudo crear el pedido' });
-                setStep('listo');
+                setFallo({ msg: d?.error ?? 'No se pudo enviar el pedido. Probá de nuevo en un momento.' });
             }
         } catch {
             // Si la red se corta DESPUES de que salio el POST, el pedido pudo haber entrado a
             // IM igual. "Error de red" a secas invita a cargarlo de nuevo => presupuesto
             // duplicado. El backend distingue este caso con un 202; el catch no puede, asi que
             // avisa en ambar en vez de dar por fallado.
-            setResultado({ ok: false, warn: true, msg: 'Se cortó la conexión y no se sabe si el pedido entró. Fijate en «Mis pedidos» antes de cargarlo de nuevo.' });
-            setStep('listo');
+            setFallo({ msg: `Se cortó la conexión y no se sabe si el pedido entró. Fijate en «Mis pedidos». ${colaReintento}`, revisar: true });
         }
         setEnviando(false);
     }
@@ -572,6 +667,10 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
     function nuevoPedido() {
         setStep('cliente'); setCliente(null); setCredito(null); setCart([]); setObs(''); setListaCliente(LISTA_DEFECTO);
         setClienteSearch(''); setCatQuery(''); setCatResults([]); setResultado(null); setEditando(null);
+        setFallo(null); setAvisoBorrador(false);
+        borrarBorrador(emailUsuario);
+        // Pedido nuevo, clave nueva: si se reusara la del anterior, InfoManager devolvería
+        // aquel pedido en vez de crear este.
         idempotencyKey.current = crypto.randomUUID();
     }
 
@@ -771,6 +870,19 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                 {mode === 'nuevo' && step === 'productos' && cliente && (
                     <>
                         <div className="ped-body">
+                            {/* El pedido volvió solo después de que algo cortó la carga. Dice de
+                                cuándo es porque un borrador de anteayer tiene precios viejos, y
+                                deja salir de él sin tener que borrar renglón por renglón. */}
+                            {avisoBorrador && borrador && (
+                                <div className="ped-recuperado">
+                                    <ShoppingCart size={15} />
+                                    <span>
+                                        Recuperamos el pedido que habías empezado: <b>{borrador.cart.length} {borrador.cart.length === 1 ? 'producto' : 'productos'}</b>, del {cuandoSeGuardo(borrador.ts)}.
+                                    </span>
+                                    <button onClick={() => { if (confirm('¿Descartar este pedido y empezar uno nuevo?')) nuevoPedido(); }}>Empezar otro</button>
+                                    <button className="ped-recuperado-x" aria-label="Cerrar el aviso" onClick={() => setAvisoBorrador(false)}><X size={14} /></button>
+                                </div>
+                            )}
                             {/* Cliente + crédito */}
                             {editando && (
                                 <div className="ped-editando">
@@ -971,6 +1083,17 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                         </div>
 
                         <footer className="ped-footer">
+                            {/* No salió el envío. El pedido sigue en pantalla y el botón de abajo
+                                vuelve a intentarlo: reintentar con la misma clave no duplica. */}
+                            {fallo && (
+                                <div className={`ped-bloqueo${fallo.revisar ? ' aviso' : ''}`}>
+                                    <AlertTriangle size={16} />
+                                    <span>{fallo.msg}</span>
+                                    {fallo.revisar && (
+                                        <button onClick={() => setMode('lista')}>Mis pedidos</button>
+                                    )}
+                                </div>
+                            )}
                             {msgBloqueo && (
                                 <div className="ped-bloqueo">
                                     <AlertTriangle size={16} />
