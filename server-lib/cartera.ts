@@ -33,22 +33,28 @@ const ROLES_CARTERA = new Set(['admin', 'gerente', 'socio']);
 /**
  * De qué unidad puede ver la cartera este usuario.
  *
- * 🔴 31/08/2026, verificado contra la base: los 4 `socio` NO son dueños de la empresa, son
- * **socios de cada sucursal** — elvio→BRS(2), daniel→San Juan(3), enzo→Jujuy(4),
- * andrea→Casa Central(1). Sin esto, cualquiera de ellos pedía `?cod_empresa=1` (o nada, que
- * es el default) y se llevaba la cartera ENTERA de Casa Central. Es la misma forma del bug
- * que se arregló esta mañana en Objetivos (`d799d0a`: un socio veía el objetivo de otro).
+ * 🔴 31/08/2026: el rol `socio` junta dos cosas distintas. Mati lo aclaró textual —
+ * **elvio y andrea son dueños de TODA la empresa; enzo y daniel sólo de sus sucursales**
+ * (Jujuy y San Juan). Mientras el código los trató a los cuatro igual, `/api/cartera` le
+ * servía la cartera ENTERA de Casa Central a los cuatro, porque tomaba la empresa del query
+ * con default 1. Es la misma forma del bug de Objetivos de esa misma mañana (`d799d0a`).
  *
- * admin y gerente sí miran cualquier unidad: son los que hacen el consolidado.
+ * 🪤 La distinción NO se puede deducir de `cod_empresa`: ese campo es la unidad desde la que
+ * el usuario EMITE (depósito y punto de venta de IM), no lo que puede mirar — elvio tiene
+ * cod_empresa=2 (BRS) y ve todo. Va por el flag explícito `ve_toda_la_empresa` (migración
+ * 030), mismo criterio que `ve_todos_los_clientes` (028).
+ *
+ * admin y gerente miran cualquier unidad: son los que hacen el consolidado.
  */
 export function empresaPermitida(
   rol: string,
   empresaDelUsuario: number | null,
   empresaPedida: number,
+  veTodaLaEmpresa = false,
 ): number {
-  if (rol === 'admin' || rol === 'gerente') return empresaPedida;
-  // Un socio ve la suya y nada más. Sin unidad cargada cae en Casa Central, que es el
-  // default documentado de toda la app (ver sucursalDe en sucursales.ts).
+  if (rol === 'admin' || rol === 'gerente' || veTodaLaEmpresa) return empresaPedida;
+  // Sin unidad cargada cae en Casa Central, que es el default documentado de toda la app
+  // (ver sucursalDe en sucursales.ts).
   return empresaDelUsuario ?? 1;
 }
 
@@ -262,7 +268,8 @@ export async function getCartera(req: Request & { user?: JwtPayload }, res: Resp
     const empresaPedida = Number(req.query.cod_empresa) || 1;
     if (![1, 2, 3, 4].includes(empresaPedida)) { res.status(400).json({ error: 'cod_empresa inválida' }); return; }
     // La unidad sale de QUIÉN pregunta, no sólo del query: ver empresaPermitida.
-    const codEmpresa = empresaPermitida(String(user.rol), (await filaUsuario(user)).cod_empresa, empresaPedida);
+    const fila = await filaUsuario(user);
+    const codEmpresa = empresaPermitida(String(user.rol), fila.cod_empresa, empresaPedida, fila.ve_toda_la_empresa);
     const cods = parsearCods(req.query.cods);
     const hoy = hoyISOArgentina();
     const fuente = resolverFuente(req.query.fecha as string | undefined, hoy);

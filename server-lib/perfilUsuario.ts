@@ -12,20 +12,34 @@ export interface FilaUsuario {
   im_usuario: string | null;
   cod_empresa: number | null;
   ve_todos_los_clientes: boolean;
+  /**
+   * Dueño de TODA la empresa, no de una unidad (migración 030).
+   *
+   * 🪤 No se deduce de `cod_empresa`: ese campo es desde dónde EMITE, no qué puede MIRAR.
+   * Elvio tiene cod_empresa=2 (BRS) y sin embargo es dueño de todo.
+   */
+  ve_toda_la_empresa: boolean;
 }
 
-const VACIA: FilaUsuario = { im_usuario: null, cod_empresa: null, ve_todos_los_clientes: false };
+const VACIA: FilaUsuario = { im_usuario: null, cod_empresa: null, ve_todos_los_clientes: false, ve_toda_la_empresa: false };
 
 export async function filaUsuario(user?: { sub?: string } | null): Promise<FilaUsuario> {
   if (!user?.sub) return VACIA;
   try {
-    const { data } = await sb().from('usuarios')
-      .select('im_usuario, cod_empresa, ve_todos_los_clientes')
+    const { data, error } = await sb().from('usuarios')
+      .select('im_usuario, cod_empresa, ve_todos_los_clientes, ve_toda_la_empresa')
       .eq('tenant_id', TENANT_ID).eq('id', user.sub).maybeSingle();
+    // 🔴 supabase-js NO tira excepción: resuelve con {data:null, error}. Sin este chequeo, una
+    // columna que falta (deploy hecho ANTES de correr su migración) devolvía la fila VACÍA en
+    // silencio, y con ella todos los permisos en su valor más restrictivo o más laxo según el
+    // caso: el usuario de mostrador perdía `ve_todos_los_clientes` y el socio dueño de toda la
+    // empresa quedaba mirando Casa Central. Que se vea en el log.
+    if (error) console.warn(`[filaUsuario] la consulta falló (¿falta correr una migración?): ${error.message}`);
     return {
       im_usuario: data?.im_usuario ?? null,
       cod_empresa: data?.cod_empresa ?? null,
       ve_todos_los_clientes: data?.ve_todos_los_clientes === true,
+      ve_toda_la_empresa: data?.ve_toda_la_empresa === true,
     };
   } catch (e: any) {
     console.warn('[filaUsuario] no pude leer usuarios:', e?.message);
