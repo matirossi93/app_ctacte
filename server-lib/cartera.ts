@@ -6,9 +6,10 @@ import { filaUsuario } from './perfilUsuario.js';
 import {
   agruparConciliacion, armarConciliacion, fetchRecibosTransito,
   getSnapshotConciliacion, hoyISOArgentina,
-  type ClienteMaestro, type MaestroSnapshot, type ReciboTransito, type ResultadoConciliacion,
+  type ClienteMaestro, type MaestroSnapshot, type PendienteIM, type ReciboTransito, type ResultadoConciliacion,
 } from './conciliacion.js';
 import { ESTADOS_NO_TERMINALES } from './conciliacion.js';
+import { normalizarInvoices, resolverSinVendedor, type InvoiceIM } from './invoicesIM.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Cartera de cuenta corriente: "cuánto hay en la calle", a una FECHA y por vendedor.
@@ -246,6 +247,110 @@ async function fetchRecibosParaCorte(codEmpresa: number, corte: string): Promise
   const rows = (data ?? []) as ReciboTransito[];
   if (rows.length === 4000) console.warn('[cartera] comprobantes_pago devolvió 4000 filas (el tope): posible truncación');
   return rows;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// La LISTA de clientes a una fecha pasada — "el estado de todas las cuentas a esa fecha"
+// (Mati, 31/08/2026). Hasta acá la fecha movía sólo el total: la lista de abajo era siempre
+// la de hoy, y estaba dicho en pantalla porque no había de dónde sacar la otra.
+//
+// Sale de la MISMA foto que el total, así que no cuesta una sola llamada a InfoManager.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Los comprobantes de la foto, con el shape que la pantalla ya lee.
+ *
+ * 🔑 El vendedor sale del maestro CONGELADO en la foto: es el mismo criterio que usa el total
+ * que se muestra justo arriba (ver `maestroFotoAClientes`). Si la lista usara el maestro de
+ * hoy, un cliente reasignado en agosto movería su deuda de julio al vendedor nuevo y el
+ * desglose por vendedor no cerraría contra su propia lista.
+ *
+ * Sin maestro (fotos viejas) se cae a la heurística de /api/data: heredar el vendedor de otro
+ * comprobante del mismo cliente. Es peor, pero es lo que ya hacía la lista de hoy.
+ */
+export function invoicesDesdeFoto(
+  rows: PendienteIM[],
+  maestro: MaestroSnapshot | null,
+  codEmpresa: number,
+  nombreVendedor: (cod: number) => string,
+): InvoiceIM[] {
+  const invoices = normalizarInvoices(rows, codEmpresa, nombreVendedor);
+  if (!maestro) return resolverSinVendedor(invoices);
+
+  for (const inv of invoices) {
+    const delMaestro = maestro[inv.COD_CLIENT];
+    if (delMaestro?.cod_vendedor == null) continue;
+    inv.COD_VENDED = String(delMaestro.cod_vendedor);
+    inv.VENDEDORES = delMaestro.cod_vendedor === 0 ? 'SIN VENDEDOR' : nombreVendedor(delMaestro.cod_vendedor);
+  }
+  // Los que el maestro no conoce siguen pudiendo tener vendedor 0: misma red de siempre.
+  return resolverSinVendedor(invoices);
+}
+
+/** El mismo filtro por vendedor que aplica /api/data. Sin selección, no filtra. */
+export function filtrarPorCods(invoices: InvoiceIM[], cods: number[] | null): InvoiceIM[] {
+  if (!cods || !cods.length) return invoices;
+  const set = new Set(cods.map(String));
+  return invoices.filter(inv => set.has(inv.COD_VENDED));
+}
+
+/**
+ * GET /api/cartera/clientes?fecha=AAAA-MM-DD&cod_empresa=1&cods=2,3
+ *
+ * La lista de comprobantes pendientes tal como estaba esa fecha. Sólo fechas PASADAS: la de
+ * hoy es /api/data, que es el camino que la app ya usa y tiene su propio cache.
+ */
+export async function getCarteraClientes(req: Request & { user?: JwtPayload }, res: Response) {
+  try {
+    const user = req.user!;
+    // Mismo gate que el total: esta lista ES la cartera, sólo que abierta cliente por cliente.
+    if (!ROLES_CARTERA.has(String(user.rol))) {
+      res.status(403).json({ error: 'La cartera total la ven administración y los socios.' });
+      return;
+    }
+
+    const empresaPedida = Number(req.query.cod_empresa) || 1;
+    if (![1, 2, 3, 4].includes(empresaPedida)) { res.status(400).json({ error: 'cod_empresa inválida' }); return; }
+    const fila = await filaUsuario(user);
+    const codEmpresa = empresaPermitida(String(user.rol), fila.cod_empresa, empresaPedida, fila.ve_toda_la_empresa);
+    const cods = parsearCods(req.query.cods);
+    const hoy = hoyISOArgentina();
+    const fuente = resolverFuente(req.query.fecha as string | undefined, hoy);
+
+    if (fuente.tipo === 'invalida') { res.status(400).json({ error: fuente.motivo }); return; }
+    if (fuente.tipo === 'vivo') {
+      res.status(400).json({ error: 'Para el día de hoy la lista sale de /api/data, que es la que ya usa la app.' });
+      return;
+    }
+
+    const foto = await getSnapshotConciliacion(codEmpresa, fuente.fecha);
+    if (!foto) {
+      res.json({
+        ok: true, disponible: false, fecha: fuente.fecha, cod_empresa: codEmpresa,
+        fechas_disponibles: await fechasConFoto(codEmpresa),
+      });
+      return;
+    }
+
+    const vendedores = await fetchVendedores();
+    const porCod = new Map(vendedores.map(v => [v.cod_vendedor, v.nombre]));
+    const nombreVendedor = (cod: number) => porCod.get(cod) ?? `VENDEDOR ${cod}`;
+
+    const invoices = filtrarPorCods(
+      invoicesDesdeFoto(foto.rows, foto.maestro, codEmpresa, nombreVendedor),
+      cods,
+    );
+
+    res.json({
+      ok: true, disponible: true, fecha: fuente.fecha, cod_empresa: codEmpresa,
+      generado_at: foto.created_at,
+      maestro_congelado: foto.maestro != null,
+      invoices,
+    });
+  } catch (err: any) {
+    console.error('getCarteraClientes error:', err);
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
 }
 
 /**

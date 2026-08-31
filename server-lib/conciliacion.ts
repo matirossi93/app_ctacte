@@ -400,15 +400,26 @@ export function agruparConciliacion(
 // en tránsito NO se cachean (query barata a Supabase, siempre en vivo).
 
 const PENDIENTES_TTL_MS = 10 * 60 * 1000;
+/**
+ * Hasta cuándo un dato vencido se sigue considerando mostrable mientras se busca el nuevo.
+ *
+ * 🔑 Medido el 31/08/2026 en producción: la llamada a IM tarda **6,4 s**, y la paga entera el
+ * primero que entra después de que venció el TTL. Sirviendo lo viejo al toque y refrescando
+ * por atrás, esa espera desaparece **sin una sola llamada extra a InfoManager** — es la misma
+ * llamada, sólo que nadie se queda mirando el spinner.
+ *
+ * 🪤 Pero un dato de hace tres horas no es "un poco viejo": es otro número. Pasado el tope se
+ * espera el fresco, aunque tarde, porque mostrar el saldo de otro momento como si fuera el de
+ * ahora es justo lo que la regla de la cartera prohíbe.
+ */
+const PENDIENTES_STALE_MAX_MS = 60 * 60 * 1000;
 const pendientesCache = new Map<number, { rows: PendienteIM[]; fetchedAt: number }>();
 const pendientesPending = new Map<number, Promise<PendienteIM[]>>();
 
-export async function fetchPendientesCached(codEmpresa: number, force: boolean): Promise<{ rows: PendienteIM[]; fetchedAt: number }> {
-  const hit = pendientesCache.get(codEmpresa);
-  if (!force && hit && (Date.now() - hit.fetchedAt) < PENDIENTES_TTL_MS) return hit;
-  // Dedup de llamadas concurrentes (dos admins abriendo el panel a la vez)
-  const pending = pendientesPending.get(codEmpresa);
-  if (pending) { const rows = await pending; return pendientesCache.get(codEmpresa) ?? { rows, fetchedAt: Date.now() }; }
+/** Dispara (o reusa) el fetch a IM. Compartido por el camino sincrónico y el de background. */
+function refrescarPendientes(codEmpresa: number): Promise<PendienteIM[]> {
+  const enVuelo = pendientesPending.get(codEmpresa);
+  if (enVuelo) return enVuelo;
   const p = fetchComprobPendientes(codEmpresa, 0)
     .then(rows => {
       pendientesCache.set(codEmpresa, { rows, fetchedAt: Date.now() });
@@ -416,8 +427,34 @@ export async function fetchPendientesCached(codEmpresa: number, force: boolean):
     })
     .finally(() => { pendientesPending.delete(codEmpresa); });
   pendientesPending.set(codEmpresa, p);
-  const rows = await p;
-  return pendientesCache.get(codEmpresa) ?? { rows, fetchedAt: Date.now() };
+  return p;
+}
+
+/**
+ * Los comprobantes pendientes de IM, con cache de 10 min y stale-while-revalidate.
+ *
+ * `stale: true` avisa que lo devuelto es el dato anterior y que ya salió el refresh: quien
+ * muestre el número tiene que poder decir de qué momento es (la cartera muestra la hora).
+ */
+export async function fetchPendientesCached(codEmpresa: number, force: boolean): Promise<{ rows: PendienteIM[]; fetchedAt: number; stale: boolean }> {
+  const hit = pendientesCache.get(codEmpresa);
+  const edad = hit ? Date.now() - hit.fetchedAt : Infinity;
+
+  if (!force && hit && edad < PENDIENTES_TTL_MS) return { ...hit, stale: false };
+
+  // Vencido pero todavía representativo: se sirve al toque y el refresh queda corriendo solo.
+  // El catch va acá y no en el llamador porque nadie está esperando esta promesa: sin él, un
+  // IM caído tumbaría el proceso con un unhandled rejection.
+  if (!force && hit && edad < PENDIENTES_STALE_MAX_MS) {
+    refrescarPendientes(codEmpresa).catch(e => console.warn(`[pendientes] refresh en background falló (emp${codEmpresa}):`, e?.message));
+    return { ...hit, stale: true };
+  }
+
+  // Sin nada que mostrar (o demasiado viejo, o refresh forzado): se espera.
+  // Dedup de llamadas concurrentes (dos admins abriendo el panel a la vez).
+  const rows = await refrescarPendientes(codEmpresa);
+  const fresco = pendientesCache.get(codEmpresa);
+  return fresco ? { ...fresco, stale: false } : { rows, fetchedAt: Date.now(), stale: false };
 }
 
 /** Force-invalidate (uso testing). */
@@ -630,12 +667,46 @@ export interface SnapshotConciliacion {
   created_at: string;
 }
 
+// ─── Cache de las fotos históricas ───────────────────────────────────────────
+// Medido el 31/08/2026 en producción: bajar una foto tarda ~750 ms de los ~1.100 ms que
+// tardaba un corte a fecha pasada. Y es plata regalada, porque **la foto de un día que ya
+// pasó no cambia nunca**: el cron sólo escribe la de hoy.
+//
+// 🪤 Justamente por eso la de HOY no entra: `guardarSnapshotConciliacion` hace upsert y pisa
+// el created_at a propósito, así que durante el día se mueve.
+//
+// Cada foto pesa ~316 KB; el tope de 12 la deja en ~4 MB, que en este proceso no se nota.
+
+const SNAPSHOT_CACHE_MAX = 12;
+const snapshotCache = new Map<string, SnapshotConciliacion>();
+
+/** Estrictamente anterior a hoy. Las ISO se comparan como texto (ver resolverFuente). */
+function esHistorica(fecha: string): boolean {
+  return fecha < hoyISOArgentina();
+}
+
+/** Guarda tirando la entrada más vieja. Map conserva el orden de inserción: la primera key es la más vieja. */
+function guardarEnCacheSnapshot(key: string, foto: SnapshotConciliacion): void {
+  if (snapshotCache.size >= SNAPSHOT_CACHE_MAX) {
+    const masVieja = snapshotCache.keys().next().value;
+    if (masVieja !== undefined) snapshotCache.delete(masVieja);
+  }
+  snapshotCache.set(key, foto);
+}
+
+/** Force-invalidate (uso testing, y por si alguna vez se rellena una foto vieja a mano). */
+export function invalidateSnapshotCache(): void { snapshotCache.clear(); }
+
 /**
  * Snapshot completo de una fecha, o null si no existe. Un snapshot con 0
  * filas se trata como INEXISTENTE (jamás debería persistirse, pero si llegó
  * a existir no puede pasar por corte "exacto" con sistema vacío).
  */
 export async function getSnapshotConciliacion(codEmpresa: number, fecha: string): Promise<SnapshotConciliacion | null> {
+  const key = `${codEmpresa}|${fecha}`;
+  const cacheada = snapshotCache.get(key);
+  if (cacheada) return cacheada;
+
   const { data, error } = await sb().from('conciliacion_snapshot')
     .select('rows, maestro, created_at')
     .eq('tenant_id', TENANT_ID)
@@ -644,8 +715,13 @@ export async function getSnapshotConciliacion(codEmpresa: number, fecha: string)
     .maybeSingle();
   if (error) throw new Error(`conciliacion_snapshot select: ${error.message}`);
   const rows: PendienteIM[] = Array.isArray(data?.rows) ? data.rows : [];
+  // 🪤 El "no hay foto" NO se cachea: al 12/07 le falta la foto hoy, pero si alguien la
+  // rellena a mano mañana, un null cacheado dejaría a la app negando un dato que ya existe.
   if (!data || rows.length === 0) return null;
-  return { rows, maestro: data.maestro ?? null, created_at: String(data.created_at) };
+
+  const foto: SnapshotConciliacion = { rows, maestro: data.maestro ?? null, created_at: String(data.created_at) };
+  if (esHistorica(fecha)) guardarEnCacheSnapshot(key, foto);
+  return foto;
 }
 
 /**

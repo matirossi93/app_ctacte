@@ -44,7 +44,8 @@ import {
 import { importMaestroClientes } from './server-lib/sheetImport.js';
 import { descargarReporte } from './server-lib/reportes.js';
 import { getConciliacion, exportConciliacion, listSnapshotsConciliacion, guardarSnapshotConciliacion } from './server-lib/conciliacion.js';
-import { getCartera } from './server-lib/cartera.js';
+import { getCartera, getCarteraClientes } from './server-lib/cartera.js';
+import { normalizarInvoices, resolverSinVendedor } from './server-lib/invoicesIM.js';
 import { cruceCarpetaHandler, exportCruceHandler } from './server-lib/cruceCarpeta.js';
 import { listRebotes, listRecargos, syncRebotesNow, syncRebotes } from './server-lib/rebotes.js';
 import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos, hermanosDeFamilia } from './server-lib/productGoals.js';
@@ -348,57 +349,11 @@ async function fetchIMData(codEmpresa?: number): Promise<NormalizedData> {
         });
     }
 
-    // Normalize IM invoices to match InvoiceRaw shape
-    const normalize = (imInvoices: any[], codEmpresa: number) => {
-        return imInvoices.map((inv: any) => {
-            // Convert ISO date to DD/MM/YYYY
-            let fecha = '';
-            if (inv.fecha_factura) {
-                const d = new Date(inv.fecha_factura);
-                if (!isNaN(d.getTime())) {
-                    fecha = `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
-                }
-            }
-
-            return {
-                COD_CLIENT: String(inv.cod_cliente),
-                CLIENTES_N: inv.nombre || '',
-                COD_VENDED: String(inv.cod_vendedor),
-                VENDEDORES: inv.cod_vendedor === 0 ? 'SIN VENDEDOR' : (vendedorMap.get(inv.cod_vendedor) || `VENDEDOR ${inv.cod_vendedor}`),
-                NUMERO: String(inv.numero || ''),
-                ID: `IM-${codEmpresa}-${inv.tipo_comprobante}-${inv.punto_de_venta || 0}-${inv.numero || 0}`,
-                FECHA: fecha,
-                TOTAL: inv.importe_factura,
-                IMPORTE_PA: inv.importe_pagado,
-                SALDO: inv.saldo,
-                TIPO_COMPR: inv.tipo_comprobante || '',
-                DIAS_EMISI: inv.dias_deuda || 0,
-                COD_EMPRES: String(codEmpresa),
-            };
-        });
-    };
-
-    const allInvoices = empresas.flatMap((e, i) => normalize(invoiceResults[i].data, e));
-
-    // Reasignar comprobantes con cod_vendedor=0 al vendedor real del cliente
-    // (ASD/ASH del sistema no tienen vendedor asignado en InfoManager)
-    const clientVendorMap = new Map<string, { id: string; name: string }>();
-    allInvoices.forEach((inv: any) => {
-        if (inv.COD_VENDED !== '0' && !clientVendorMap.has(inv.COD_CLIENT)) {
-            clientVendorMap.set(inv.COD_CLIENT, { id: inv.COD_VENDED, name: inv.VENDEDORES });
-        }
-    });
-    // Reasignar o descartar comprobantes sin vendedor
-    const resolvedInvoices = allInvoices.filter((inv: any) => {
-        if (inv.COD_VENDED !== '0') return true;
-        const real = clientVendorMap.get(inv.COD_CLIENT);
-        if (real) {
-            inv.COD_VENDED = real.id;
-            inv.VENDEDORES = real.name;
-            return true;
-        }
-        return false; // Sin vendedor asignable → excluir
-    });
+    // La normalización y la reasignación de los sin-vendedor viven en server-lib/invoicesIM.ts:
+    // las comparte con la lista a fecha pasada, que sale de la foto guardada en vez de IM.
+    const nombreVendedor = (cod: number) => vendedorMap.get(cod) || `VENDEDOR ${cod}`;
+    const allInvoices = empresas.flatMap((e, i) => normalizarInvoices(invoiceResults[i].data, e, nombreVendedor));
+    const resolvedInvoices = resolverSinVendedor(allInvoices);
 
     // Enriquecer con datos operativos del maestro (Supabase + InfoManager /clientes).
     // En paralelo: Supabase y IM /clientes son fuentes independientes.
@@ -722,6 +677,9 @@ app.get('/api/conciliacion/snapshots', requireJwt, (req: any, res) => listSnapsh
 // calle". El gate de rol (admin/gerente/socio) va adentro del handler: requireJwt lo pasa
 // cualquier usuario con sesión válida.
 app.get('/api/cartera', requireJwt, (req: any, res) => getCartera(req, res));
+// La lista de clientes a una fecha pasada. Va antes que nada más de /api/cartera/* porque
+// Express matchea por orden; hoy es la única sub-ruta, pero la trampa es barata de evitar.
+app.get('/api/cartera/clientes', requireJwt, (req: any, res) => getCarteraClientes(req, res));
 // Wrapper del middleware de multer para responder JSON 400 ante rechazo del
 // fileFilter o archivo demasiado grande (sin esto, el error caía al handler
 // default de Express como HTML 500).

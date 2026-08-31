@@ -1,69 +1,121 @@
-/* "Cuánto hay en la calle" — el total de la cuenta corriente, a la fecha del selector.
-   Pedido de Mati (31/08/2026). Se usa desde el celular, así que todo lo tocable va a 40px. */
+/* "Cuánto hay en la calle" — el total de la cuenta corriente, a la fecha del calendario.
+   Pedido de Mati (31/08/2026). Se usa desde el celular, así que todo lo tocable va a 40px.
 
-.cartera-card {
-  background: var(--color-surface, #F9EFE3);
-  border: 1px solid var(--color-border, rgba(30, 18, 12, 0.1));
-  border-radius: 14px;
-  padding: 0.3rem 0.5rem 0.3rem 0.7rem;
-  margin-bottom: 0.9rem;
+   Segunda vuelta del mismo día: *"no me gusta cómo está diseñado, quería que sea algo más
+   integrado en la página, que no ocupe mucho espacio, ya noto que está bastante cargada"*.
+   Se le sacó la caja (borde + fondo + padding propios) y pasó a ser un renglón más del
+   encabezado, separado apenas por una línea. De 2 renglones dentro de una tarjeta a 1. */
+
+.cartera-wrap { margin: 0 0 0.6rem; }
+
+/* El renglón: el total a la izquierda, el calendario a la derecha. */
+.cartera-inline {
+  display: flex; align-items: center; gap: 0.4rem;
+  margin: 0 0 0.6rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--color-border, rgba(30, 18, 12, 0.1));
 }
-/* Con el detalle abierto respira como una tarjeta; cerrada es una banda y nada más. */
-.cartera-card:has(.cartera-detalle) { padding-bottom: 0.7rem; }
+.cartera-wrap .cartera-inline { margin-bottom: 0; }
 
-/* La banda ENTERA es el botón: en el celular no se le apunta a un link de 12px. */
-.cartera-banda {
-  display: flex; align-items: center; gap: 0.55rem;
-  width: 100%; min-height: 44px;
+/* Toda la línea es el botón: en el celular no se le apunta a un link de 12px. */
+.cartera-linea {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 0.4rem;
+  min-height: 40px;
   padding: 0; border: 0; background: transparent;
   cursor: pointer; text-align: left;
   font: inherit; color: var(--color-text, #1E120C);
 }
-.cartera-titulo {
-  display: inline-flex; align-items: center; gap: 0.3rem;
-  font-weight: 700; font-size: 0.8rem; letter-spacing: 0.02em;
-  text-transform: uppercase; white-space: nowrap;
-}
-.cartera-titulo > svg:first-child { color: var(--color-primary, #06652F); }
-.cartera-alerta { color: var(--color-warning, #E59B33); }
+.cartera-linea > svg:first-child { flex-shrink: 0; color: var(--color-primary, #06652F); }
 
-/* El número es lo único que crece: es a lo que se le viene a mirar. `margin-left:auto`
-   lo empuja a la derecha y deja el aire en el medio, no entre el número y su contexto. */
+.cartera-rotulo {
+  font-weight: 700; font-size: 0.74rem; letter-spacing: 0.02em;
+  text-transform: uppercase; white-space: nowrap;
+  color: var(--color-text-muted, #5a4a42);
+}
 .cartera-numero {
-  margin-left: auto;
-  font-size: 1.15rem; font-weight: 800; letter-spacing: -0.02em;
+  font-size: 1.02rem; font-weight: 800; letter-spacing: -0.01em;
   color: var(--color-primary, #06652F);
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
-.cartera-meta {
-  display: inline-flex; align-items: center; gap: 0.25rem;
+.cartera-cli {
   font-size: 0.72rem; color: var(--color-text-muted, #5a4a42); white-space: nowrap;
 }
+.cartera-alerta { flex-shrink: 0; color: var(--color-warning, #E59B33); }
 .cartera-chevron {
-  flex-shrink: 0; color: var(--color-text-muted, #5a4a42);
+  flex-shrink: 0; margin-left: auto;
+  color: var(--color-text-muted, #5a4a42);
   transition: transform 0.18s ease;
 }
-.cartera-banda.is-open .cartera-chevron { transform: rotate(180deg); }
+.cartera-linea.is-open .cartera-chevron { transform: rotate(180deg); }
 @media (prefers-reduced-motion: reduce) { .cartera-chevron { transition: none; } }
 
-/* En el celular no entran las 4 cosas en fila: el número se va abajo con su contexto y
-   quedan 2 renglones cortos, que siguen siendo un tercio de lo que ocupaba antes. */
-@media (max-width: 560px) {
-  .cartera-banda { flex-wrap: wrap; gap: 0.15rem 0.5rem; padding: 0.2rem 0; }
-  .cartera-titulo { order: 1; }
-  .cartera-chevron { order: 2; margin-left: auto; }
-  .cartera-numero { order: 3; margin-left: 0; flex-basis: 100%; font-size: 1.35rem; }
-  .cartera-meta { order: 4; flex-basis: 100%; }
+/* ── El filtro de fecha, a la vista ──────────────────────────────────────────
+   Antes esto existía sólo adentro de la pastilla del mes, en una solapa "Corte": dos clicks,
+   sin nada que dijera que movía la cartera, y para ver el 15/06 estando en agosto había que
+   elegir mes y después día. Mati: *"no veo dónde está ese filtro"*. Ahora vive al lado del
+   número que modifica y es un solo toque.
+
+   🪤 Se usa <input type="date"> nativo a propósito: en iOS abre la rueda de fecha, que es el
+   control que la gente ya sabe usar. `showPicker()` habría quedado más prolijo pero no está
+   en todas las versiones de Safari que hay en los celulares del equipo. */
+.cartera-fecha {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center;
+  min-height: 40px;
+}
+.cartera-fecha input[type="date"] {
+  /* 40px, como todo lo tocable de esta app: se usa desde el celular. */
+  min-height: 40px;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--color-border, rgba(30, 18, 12, 0.16));
+  border-radius: 9px;
+  background: var(--color-surface, #F9EFE3);
+  color: var(--color-text, #1E120C);
+  font: inherit; font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  /* Safari le mete un alto propio y lo desalinea del renglón. */
+  -webkit-appearance: none; appearance: none;
+}
+.cartera-fecha input[type="date"]:focus-visible {
+  outline: 2px solid var(--color-primary, #06652F); outline-offset: 1px;
 }
 
-/* Filas del detalle: concepto a la izquierda, plata a la derecha. Se leen como un
-   resumen de cuenta, que es lo que son. */
-.cartera-linea {
+/* Avisos en línea (calculando, sin foto, error): ocupan el lugar del número, no una caja. */
+.cartera-aviso {
+  flex: 1; min-width: 0;
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  min-height: 40px;
+  font-size: 0.76rem; line-height: 1.35;
+  color: var(--color-text-muted, #5a4a42);
+}
+.cartera-aviso svg { flex-shrink: 0; }
+/* Ámbar sólo-para-texto: el de marca da 1,68:1 sobre el crema y WCAG pide 4,5:1.
+   Mismo criterio que .ped-aviso.cliente en PedidosApp.css. */
+.cartera-aviso.amarillo { color: #8A5A12; }
+.cartera-aviso.amarillo svg { color: var(--color-warning, #E59B33); }
+.cartera-aviso.error { color: var(--color-danger, #ef4444); }
+.cartera-aviso .spin { animation: spin 1s linear infinite; }
+
+/* ── El detalle, al desplegar ────────────────────────────────────────────── */
+.cartera-detalle {
+  margin-top: 0.1rem; padding: 0.1rem 0 0.5rem;
+}
+.cartera-fila {
   display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem;
-  padding: 0.32rem 0;
+  padding: 0.34rem 0;
   font-size: 0.78rem; color: var(--color-text-muted, #5a4a42);
 }
-.cartera-linea--fuerte { color: var(--color-text, #1E120C); font-weight: 600; }
+.cartera-fila--fuerte { color: var(--color-text, #1E120C); font-weight: 600; }
+.cartera-cuando {
+  display: flex; align-items: center; gap: 0.25rem;
+  margin: -0.15rem 0 0.3rem;
+  font-size: 0.7rem; color: var(--color-text-muted, #5a4a42);
+}
+.cartera-monto { font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
+.cartera-vend { flex: 1; font-weight: 600; color: var(--color-text, #1E120C); }
+
 .cartera-subtitulo {
   margin-top: 0.5rem; padding-top: 0.45rem;
   border-top: 1px solid var(--color-border, rgba(30, 18, 12, 0.08));
@@ -76,23 +128,10 @@
   margin-top: 0.45rem; padding: 0.4rem 0.55rem;
   border-radius: 8px;
   background: var(--color-warning-bg, rgba(229, 155, 51, 0.1));
-  /* Ámbar sólo-para-texto: el de marca da 1,68:1 sobre el crema y WCAG pide 4,5:1.
-     Mismo criterio que .ped-aviso.cliente en PedidosApp.css. */
   color: #8A5A12;
   font-size: 0.73rem; line-height: 1.35;
 }
 .cartera-nota svg { flex-shrink: 0; margin-top: 1px; color: var(--color-warning, #E59B33); }
-
-.cartera-detalle { margin-top: 0.15rem; }
-.cartera-fila {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.4rem 0;
-  border-top: 1px solid var(--color-border, rgba(30, 18, 12, 0.08));
-  font-size: 0.8rem;
-}
-.cartera-vend { flex: 1; font-weight: 600; color: var(--color-text, #1E120C); }
-.cartera-cli { font-size: 0.72rem; color: var(--color-text-muted, #5a4a42); }
-.cartera-monto { font-variant-numeric: tabular-nums; font-weight: 700; }
 
 .cartera-internas {
   margin-top: 0.5rem; padding: 0.45rem 0.55rem;
@@ -102,13 +141,9 @@
   color: var(--color-text-muted, #5a4a42);
 }
 
-.cartera-vacia {
-  display: flex; align-items: flex-start; gap: 0.4rem;
-  font-size: 0.78rem; line-height: 1.4;
-  color: var(--color-text-muted, #5a4a42);
+/* En pantallas angostas el rótulo "EN LA CALLE" es lo primero que sobra: el ícono de
+   billetera y el calendario al lado ya dicen qué es. */
+@media (max-width: 400px) {
+  .cartera-rotulo { display: none; }
+  .cartera-numero { font-size: 1.08rem; }
 }
-.cartera-vacia svg { flex-shrink: 0; margin-top: 1px; }
-.cartera-vacia.aviso { color: #8A5A12; }
-.cartera-vacia.aviso svg { color: var(--color-warning, #E59B33); }
-.cartera-vacia.error { color: var(--color-danger, #ef4444); }
-.cartera-vacia .spin { animation: spin 1s linear infinite; }

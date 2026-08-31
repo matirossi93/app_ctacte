@@ -18,6 +18,7 @@ import { ComisionesSucursalModal } from './ComisionesSucursalModal';
 import { PeriodSelector, type ViewPeriod } from './PeriodSelector';
 import { HistoricBanner } from './HistoricBanner';
 import { CarteraCard } from './CarteraCard';
+import { fechaDeCorte, fechaLegible } from '../utils/fechaCorte';
 // 🪤 Import ESTÁTICO de PrintAvanceView arrastraba jsPDF + autotable + pako a la PRIMERA
 // pantalla: 141 kB gzip, el 49% de todo lo que bajaba el vendedor al abrir la app, para un
 // botón de exportar que casi nunca toca. Con lazy se baja recién cuando lo abre.
@@ -42,6 +43,9 @@ function loadInitialPeriod(): ViewPeriod {
         return { year: parsed.year, month: parsed.month, asOfDay: parsed.asOfDay ?? null };
     } catch { return fallback; }
 }
+/** Hoy en Argentina (UTC-3 fijo). Mismo criterio que el backend y que CarteraCard. */
+const hoyISOArg = () => new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
 function isCurrentPeriod(p: ViewPeriod): boolean {
     const t = new Date();
     return p.year === t.getUTCFullYear() && p.month === t.getUTCMonth() + 1 && (p.asOfDay == null);
@@ -350,6 +354,10 @@ export const VendorShell = ({ onLogout }: Props) => {
     // Data fetching
     const [invoices, setInvoices] = useState<Invoice[]>([]);
     const [clientDbMap, setClientDbMap] = useState<Record<string, any>>({});
+    // La lista a una fecha pasada. null = estamos en hoy y manda /api/data.
+    const [invoicesFecha, setInvoicesFecha] = useState<Invoice[] | null>(null);
+    const [avisoFecha, setAvisoFecha] = useState<string | null>(null);
+    const [cargandoFecha, setCargandoFecha] = useState(false);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
     const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
@@ -400,6 +408,54 @@ export const VendorShell = ({ onLogout }: Props) => {
     };
     useEffect(() => { loadData(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedVendor, codsQs]);
 
+    /**
+     * La lista de clientes a una FECHA PASADA.
+     *
+     * Pedido de Mati (31/08/2026, por audio): *"que se pueda ver el estado de todas las
+     * cuentas a esa fecha"*. Hasta acá el período movía sólo el total de la cartera y esta
+     * lista era siempre la de hoy — estaba dicho en pantalla porque no había de dónde sacar
+     * la otra. Ahora sale de la misma foto diaria que el total, sin tocar InfoManager.
+     *
+     * `null` = no aplica (estamos en hoy) y manda /api/data. Un array —aunque venga vacío—
+     * es la lista de esa fecha.
+     *
+     * 🪤 Sin foto de ese día la lista queda VACÍA con su aviso, y nunca cae a la de hoy:
+     * mostrar los saldos de hoy bajo el rótulo de otra fecha es exactamente el error que la
+     * regla de la cartera prohíbe.
+     */
+    const corteLista = fechaDeCorte(viewPeriod, hoyISOArg());
+    const fechaCorteLista = corteLista.tipo === 'fecha' ? corteLista.fecha : '';
+    useEffect(() => {
+        if (!veCartera || !fechaCorteLista) { setInvoicesFecha(null); setAvisoFecha(null); return; }
+        let vivo = true;
+        setCargandoFecha(true);
+        const qs = new URLSearchParams({ fecha: fechaCorteLista });
+        if (codsQs) qs.set('cods', codsQs);
+        fetch(`/api/cartera/clientes?${qs}`, { headers: authHeaders() })
+            .then(async r => ({ ok: r.ok, d: await r.json().catch(() => null) }))
+            .then(({ ok, d }) => {
+                if (!vivo) return;
+                if (!ok || !d?.ok) {
+                    setInvoicesFecha([]);
+                    setAvisoFecha(d?.error ?? 'No se pudo traer la lista de esa fecha.');
+                    return;
+                }
+                if (!d.disponible) {
+                    setInvoicesFecha([]);
+                    setAvisoFecha(`Del ${fechaCorteLista.split('-').reverse().join('/')} no hay foto guardada, así que no puedo mostrarte cómo estaban las cuentas ese día.`);
+                    return;
+                }
+                setInvoicesFecha(d.invoices ?? []);
+                setAvisoFecha(null);
+            })
+            .catch(() => { if (vivo) { setInvoicesFecha([]); setAvisoFecha('Sin conexión: no se pudo traer la lista de esa fecha.'); } })
+            .finally(() => { if (vivo) setCargandoFecha(false); });
+        return () => { vivo = false; };
+    }, [fechaCorteLista, codsQs, veCartera]);
+
+    /** Los comprobantes que se muestran: los de la fecha elegida, o los de hoy. */
+    const invoicesVista = invoicesFecha ?? invoices;
+
     // Fuerza releer los teléfonos/WhatsApp desde InfoManager (invalida los cachés
     // del server) y recarga la vista. Útil tras corregir un contacto en IM.
     const refrescarContactos = async () => {
@@ -445,7 +501,7 @@ export const VendorShell = ({ onLogout }: Props) => {
     const UMBRAL_SALDO_FACTURA = 2000;
     const clientsAggAll = useMemo<ClientAgg[]>(() => {
         const map = new Map<string, ClientAgg>();
-        for (const inv of invoices) {
+        for (const inv of invoicesVista) {
             const cod = inv.COD_CLIENT;
             if (!cod) continue;
             const saldo = Number(inv.SALDO) || 0;
@@ -474,7 +530,7 @@ export const VendorShell = ({ onLogout }: Props) => {
             c.invoices.push(inv);
         }
         return Array.from(map.values());
-    }, [invoices, clientDbMap]);
+    }, [invoicesVista, clientDbMap]);
 
     // Deudores (saldo neto deudor > umbral) para la vista de cobranzas. Umbral
     // unificado con el de comprobante ($2000) para no mostrar clientes "fantasma".
@@ -648,8 +704,12 @@ export const VendorShell = ({ onLogout }: Props) => {
                         pendingOpenClient={pendingCobClient}
                         onPendingOpenConsumed={() => setPendingCobClient(null)}
                         viewPeriod={viewPeriod}
+                        onPeriodoChange={setViewPeriod}
                         codsQs={codsQs}
                         veCartera={veCartera}
+                        fechaLista={invoicesFecha ? fechaCorteLista : ''}
+                        avisoFecha={avisoFecha}
+                        cargandoFecha={cargandoFecha}
                     />
                 )}
 
@@ -973,7 +1033,7 @@ function WidgetTopDeudores({ clients, onOpenClient, onGoToCobranzas }: { clients
 // ═══════════════════════════════════════════════════════════════════════════
 // COBRANZAS VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function CobranzasView({ clients, clientesConCredito, search, setSearch, bucket, setBucket, buckets, totalSaldo, totalClientes, onUploadPago, lastRefresh, loading, pendingOpenClient, onPendingOpenConsumed, viewPeriod, codsQs, veCartera }:
+function CobranzasView({ clients, clientesConCredito, search, setSearch, bucket, setBucket, buckets, totalSaldo, totalClientes, onUploadPago, lastRefresh, loading, pendingOpenClient, onPendingOpenConsumed, viewPeriod, onPeriodoChange, codsQs, veCartera, fechaLista, avisoFecha, cargandoFecha }:
     {
         clients: ClientAgg[]; clientesConCredito: ClientAgg[]; search: string; setSearch: (s: string) => void;
         bucket: 'todos' | 'reciente' | 'medio' | 'vencido'; setBucket: (b: any) => void;
@@ -985,9 +1045,15 @@ function CobranzasView({ clients, clientesConCredito, search, setSearch, bucket,
         pendingOpenClient?: string | null;
         onPendingOpenConsumed?: () => void;
         viewPeriod: ViewPeriod;
+        /** El calendario de la cartera mueve el período de toda la pantalla. */
+        onPeriodoChange: (p: ViewPeriod) => void;
         codsQs: string;
         /** "Cuánto hay en calle" es plata de la empresa: solo admin, gerente y socio. */
         veCartera: boolean;
+        /** Fecha de corte de la lista de abajo. '' = la de hoy. */
+        fechaLista: string;
+        avisoFecha: string | null;
+        cargandoFecha: boolean;
     }) {
     const [openClient, setOpenClient] = useState<string | null>(null);
     const [showCredito, setShowCredito] = useState(false);
@@ -1014,17 +1080,33 @@ function CobranzasView({ clients, clientesConCredito, search, setSearch, bucket,
                     cobranzas (umbral de $2.000, sólo deudores, las cuentas internas adentro).
                     La tarjeta de abajo usa las reglas de la conciliación. Nunca van a dar
                     igual, así que se rotulan distinto a propósito. */}
-                <p><span className="dot" /> {formatMoney(totalSaldo)} en mi lista · {totalClientes} clientes{lastRefresh && ` · ${lastRefresh.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`}</p>
+                <p>
+                    <span className="dot" /> {formatMoney(totalSaldo)} en mi lista · {totalClientes} clientes
+                    {fechaLista
+                        ? <> · al <b>{fechaLegible(fechaLista)}</b></>
+                        : lastRefresh && ` · ${lastRefresh.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`}
+                </p>
             </div>
 
-            {veCartera && <CarteraCard periodo={viewPeriod} cods={codsQs} />}
+            {veCartera && <CarteraCard periodo={viewPeriod} cods={codsQs} onPeriodoChange={onPeriodoChange} />}
 
-            {/* 🪤 El período de arriba mueve el TOTAL, no la lista: los clientes salen de
-                /api/data, que siempre trae la foto de hoy. Antes el cartel global decía
-                "Viendo cierre histórico" sobre unos saldos que eran los de hoy, a secas. */}
-            {!isCurrentPeriod(viewPeriod) && (
+            {/* Desde el 31/08/2026 la lista SÍ acompaña a la fecha (sale de la misma foto que
+                el total). El cartel de antes decía que era siempre la de hoy: dejarlo sería
+                mentir al revés. Sólo queda para quien no ve la cartera, que efectivamente
+                sigue mirando la lista de hoy. */}
+            {!isCurrentPeriod(viewPeriod) && !veCartera && (
                 <div className="vs-cobranzas-nota">
                     El total de arriba es el del período que elegiste. La lista de clientes de acá abajo es siempre la de <b>hoy</b>.
+                </div>
+            )}
+            {avisoFecha && (
+                <div className="vs-cobranzas-nota vs-cobranzas-nota--aviso">
+                    <AlertTriangle size={14} /> {avisoFecha}
+                </div>
+            )}
+            {cargandoFecha && (
+                <div className="vs-cobranzas-nota">
+                    <Loader2 size={14} className="spin" /> Trayendo cómo estaban las cuentas ese día…
                 </div>
             )}
 

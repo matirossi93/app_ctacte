@@ -4,7 +4,8 @@ import { describe, it, expect, vi } from 'vitest';
 vi.hoisted(() => { process.env.INFOMANAGER_CLIENT_SECRET = 'test-secret'; });
 
 import { resolverFuente, maestroFotoAClientes, recibosAlCorte, totalesCartera, parsearCods, empresaPermitida } from './cartera.js';
-import { agruparConciliacion, type PendienteIM, type ReciboTransito, type ClienteMaestro } from './conciliacion.js';
+import { agruparConciliacion, type PendienteIM, type ReciboTransito, type ClienteMaestro, type ResultadoConciliacion } from './conciliacion.js';
+import { sumarVendedores } from '../src/utils/carteraFiltrado.js';
 
 /**
  * La cartera: cuánta plata hay en la calle, a una fecha y por vendedor.
@@ -263,5 +264,43 @@ describe('empresaPermitida — qué unidad ve cada uno', () => {
 
     it('un socio sin unidad cargada cae en Casa Central', () => {
         expect(empresaPermitida('socio', null, 3)).toBe(1);
+    });
+});
+
+/**
+ * El filtro por vendedor se calcula ahora en la PANTALLA (src/utils/carteraFiltrado.ts): el
+ * desglose ya viene entero en la respuesta, así que pedirle al server que lo recalcule
+ * costaba una consulta completa por cada click en el selector — 1,1 s con una fecha pasada y
+ * hasta 6,4 s si había que ir a InfoManager (medido en producción el 31/08/2026).
+ *
+ * 🔑 El riesgo de tener el mismo cálculo en dos lados es que se separen y el mismo filtro
+ * muestre dos plata distintas. Esto lo ata: las dos funciones tienen que dar lo mismo.
+ */
+describe('la suma del filtro da igual en el server que en la pantalla', () => {
+    const VENDS = [
+        { cod_vendedor: 3, saldo_im: 62813774.55, en_transito: 1200000.25, ajustado: 61613774.30, n_clientes: 84 },
+        { cod_vendedor: 4, saldo_im: 45449633.10, en_transito: 800000.50, ajustado: 44649632.60, n_clientes: 71 },
+        { cod_vendedor: 2, saldo_im: 35593293.33, en_transito: 500000.10, ajustado: 35093293.23, n_clientes: 63 },
+        { cod_vendedor: 6, saldo_im: 5860870.00, en_transito: 0, ajustado: 5860870.00, n_clientes: 10 },
+    ];
+
+    const resultado = {
+        vendedores: VENDS.map(v => ({
+            cod_vendedor: v.cod_vendedor,
+            nombre: `V${v.cod_vendedor}`,
+            total_saldo_im: v.saldo_im,
+            total_en_transito: v.en_transito,
+            total_ajustado: v.ajustado,
+            clientes: Array.from({ length: v.n_clientes }, (_, i) => ({ cod_cliente: i })),
+        })),
+        totales: { saldo_im: 149717571.0, en_transito: 2500000.85, ajustado: 147217570.13 },
+        internas: [],
+    } as unknown as ResultadoConciliacion;
+
+    it('mismo número para cualquier selección', () => {
+        for (const cods of ['3', '3,4', '2,3,4,6', '99', '3,99']) {
+            const delServer = totalesCartera(resultado, cods.split(',').map(Number));
+            expect(sumarVendedores(VENDS, cods), cods).toEqual(delServer.filtrado);
+        }
     });
 });
