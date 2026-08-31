@@ -3,39 +3,60 @@ import { Dashboard } from './components/Dashboard';
 import { LoginScreen } from './components/LoginScreen';
 import { VendorShell } from './components/VendorShell';
 import { RepartidorShell } from './components/RepartidorShell';
-import { authHeaders, clearToken, getAuthMode, getUser, setUser } from './utils/auth';
+import { authHeaders, clearToken, getAuthMode, getToken, getUser, setUser } from './utils/auth';
+import { sesionRechazada } from './utils/sesionInicial';
 
 type AuthState = 'checking' | 'authenticated' | 'unauthenticated';
 
 function App() {
     const [authState, setAuthState] = useState<AuthState>('checking');
 
+    /**
+     * No se pudo PREGUNTAR si la sesión vale — que no es lo mismo que una sesión que no vale.
+     *
+     * 🔴 31/08/2026: acá se hacía `clearToken()` en el `.catch()` y en cualquier respuesta que
+     * no fuera 200. O sea que un bache de señal al abrir la app —o un 502 del proxy, o el
+     * server reiniciándose— **deslogueaba al vendedor** y lo dejaba en el login con «Error de
+     * conexión con el servidor», con la sesión ya borrada. En la calle, con la PWA que se
+     * relanza sola cada vez que el celular la descarta, eso pasa seguido.
+     *
+     * Si en este teléfono ya había entrado, entra igual: las pantallas piden sus datos por su
+     * cuenta y cada una ya sabe avisar cuando no hay red. Si el token de verdad está vencido,
+     * el server contesta 401 y ahí sí se borra, que es abajo.
+     */
+    const seguirConLaSesionGuardada = () => {
+        setAuthState(getToken() && getUser() ? 'authenticated' : 'unauthenticated');
+    };
+
     useEffect(() => {
         const mode = getAuthMode();
         if (mode === 'jwt') {
             fetch('/api/me', { headers: authHeaders() })
                 .then(async res => {
-                    if (res.ok) {
-                        const data = await res.json() as { ok: boolean; user: any };
-                        if (data.ok && data.user) {
-                            setUser({
-                                email: data.user.email,
-                                rol: data.user.rol,
-                                cod_vendedor: data.user.cod_vendedor ?? null,
-                                vendedor_key: data.user.vendedor_key ?? null,
-                                nombre: data.user.nombre ?? null,
-                            });
-                            setAuthState('authenticated');
-                        } else {
-                            clearToken();
-                            setAuthState('unauthenticated');
-                        }
-                    } else {
+                    const data = res.ok
+                        ? await res.json().catch(() => null) as { ok: boolean; user: any } | null
+                        : null;
+                    // La regla vive en utils/sesionInicial.ts, con tests: es la que estaba mal.
+                    if (sesionRechazada(res.status, !!(data?.ok && data.user))) {
                         clearToken();
                         setAuthState('unauthenticated');
+                        return;
                     }
+                    if (data?.ok && data.user) {
+                        setUser({
+                            email: data.user.email,
+                            rol: data.user.rol,
+                            cod_vendedor: data.user.cod_vendedor ?? null,
+                            vendedor_key: data.user.vendedor_key ?? null,
+                            nombre: data.user.nombre ?? null,
+                        });
+                        setAuthState('authenticated');
+                        return;
+                    }
+                    // El server no pudo contestar (5xx, proxy): se sigue con lo guardado.
+                    seguirConLaSesionGuardada();
                 })
-                .catch(() => { clearToken(); setAuthState('unauthenticated'); });
+                .catch(seguirConLaSesionGuardada);
             return;
         }
         fetch('/api/auth/check', { headers: authHeaders() })
@@ -47,12 +68,14 @@ function App() {
                     } else {
                         setAuthState('unauthenticated');
                     }
-                } else {
+                } else if (sesionRechazada(res.status, false)) {
                     clearToken();
                     setAuthState('unauthenticated');
+                } else {
+                    seguirConLaSesionGuardada();
                 }
             })
-            .catch(() => setAuthState('unauthenticated'));
+            .catch(seguirConLaSesionGuardada);
     }, []);
 
     if (authState === 'checking') {
