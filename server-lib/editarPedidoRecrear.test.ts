@@ -395,3 +395,21 @@ describe('editarPedido — que no se pierda de vista un presupuesto vivo', () =>
     expect(upd?.im_error).toContain('renglones'); // y el problema nuevo, sin tapar al anterior
   });
 });
+
+describe('anularPedido — el anulado tampoco queda a la vista', () => {
+  it('🔴 anular desde la app también le saca el confirmado', async () => {
+    // La oficina filtra la ventana de facturación por Tipo = Confirmado. Sin esto, los pedidos
+    // que el vendedor anula le siguen apareciendo ahí, igual que antes los reemplazados.
+    im.presupuestoFacturado.mockResolvedValue({ facturado: false });
+    im.fechaComprobante.mockResolvedValue('2026-08-31');
+    im.anularComprobante.mockResolvedValue({ ok: true, raw: {} });
+
+    const req: any = { params: { id: PEDIDO_ID }, body: {}, user: USER };
+    const res: any = { status: () => res, json: () => {} };
+    const { anularPedido } = await import('./pedidos.js');
+    await anularPedido(req, res);
+
+    expect(im.anularComprobante).toHaveBeenCalledTimes(1);
+    expect(im.desconfirmarPresupuesto).toHaveBeenCalledWith(PEDIDO.im_presupuesto_id);
+  });
+});

@@ -1026,6 +1026,12 @@ export async function anularPedido(req: Request & { user?: JwtPayload }, res: Re
       }
       res.status(400).json({ ok: false, error: `IM no pudo anular: ${imRes.error}`, raw: imRes.raw }); return;
     }
+    // Mismo criterio que al editar: el anulado ya no sirve y le ensucia a la oficina la
+    // ventana de facturación, que filtra por Tipo = Confirmado. Sacarle el confirmado lo saca
+    // de esa lista. Cosmético y después de anular bien: si falla, no cambia nada.
+    const desc = await desconfirmarPresupuesto(pedido.im_presupuesto_id);
+    if (!desc.ok) console.warn(`[anularPedido] no pude desconfirmar el PR ${pedido.im_numero}:`, desc.error);
+
     const { data } = await sb().from('pedidos_vendedor').update({ estado: 'anulado' }).eq('id', pedido.id).select().maybeSingle();
     res.json({ ok: true, pedido: data });
   } catch (err: any) {
