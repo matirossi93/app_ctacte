@@ -130,7 +130,7 @@ beforeEach(() => {
   im.getPrecioLista.mockResolvedValue({ precio_vta: 1000, iva: 21, descripcion: 'X' });
   im.fetchVendedores.mockResolvedValue([]);
   im.fetchArticulosCatalogo.mockResolvedValue(new Map());
-  im.cabeceraComprobante.mockResolvedValue({ fecha: '2026-08-27', anulada: false });
+  im.cabeceraComprobante.mockResolvedValue({ fecha: '2026-08-27', anulada: false, existe: true });
   im.fechaComprobante.mockResolvedValue('2026-08-27');
   im.anularComprobante.mockResolvedValue({ ok: true, raw: {} });
   im.desconfirmarPresupuesto.mockResolvedValue({ ok: true });
@@ -190,7 +190,7 @@ describe('editarPedido — recrear el presupuesto en IM', () => {
   it('🔴 YA ANULADO: un presupuesto muerto se recrea aunque sólo cambien las cantidades', async () => {
     // Así se recupera el pedido roto del 28/08: el vendedor abre y toca Confirmar. Sin esto
     // se va por el camino barato y le manda el PUT a un comprobante anulado (409 sin salida).
-    im.cabeceraComprobante.mockResolvedValue({ fecha: '2026-08-27', anulada: true });
+    im.cabeceraComprobante.mockResolvedValue({ fecha: '2026-08-27', anulada: true, existe: true });
 
     const { body } = await editar(SOLO_CANTIDADES);
 
@@ -216,6 +216,34 @@ describe('editarPedido — recrear el presupuesto en IM', () => {
     const upd = updates.filter(([t]) => t === 'pedidos_vendedor').pop()![1];
     expect(upd.im_presupuesto_id).toBe('58700001');
     expect(upd.im_error).toBeTruthy();
+  });
+
+  it('🔴 BORRADO en IM: se recrea igual, sin intentar anular un comprobante que no está', async () => {
+    // Pasa de verdad y seguido: en la oficina limpian los presupuestos anulados a mano, así
+    // que el pedido queda apuntando a un id muerto. Sin esto se iba por el camino barato,
+    // getItemsComprobante tiraba 404 y el vendedor se comía un 500 sin salida.
+    im.cabeceraComprobante.mockResolvedValue({ fecha: null, anulada: null, existe: false });
+
+    const { status, body } = await editar(SOLO_CANTIDADES);   // ni siquiera cambia nada
+
+    expect(status).toBe(200);
+    expect(im.actualizarPresupuestoCantidades).not.toHaveBeenCalled();
+    expect(im.anularComprobante).not.toHaveBeenCalled();
+    expect(im.desconfirmarPresupuesto).not.toHaveBeenCalled();
+    expect(im.crearPresupuesto).toHaveBeenCalledTimes(1);
+    expect(body.ok).toBe(true);
+  });
+
+  it('si IM no contesta la cabecera NO se asume que fue borrado: sigue el camino de siempre', async () => {
+    // `existe: null` es "no sé". Tratarlo como borrado recrearía el presupuesto por un hipo
+    // de red, dejando DOS vivos del mismo pedido.
+    im.cabeceraComprobante.mockResolvedValue({ fecha: null, anulada: null, existe: null });
+
+    const { body } = await editar(SOLO_CANTIDADES);
+
+    expect(im.actualizarPresupuestoCantidades).toHaveBeenCalledTimes(1);
+    expect(im.crearPresupuesto).not.toHaveBeenCalled();
+    expect(body.solo_cantidades).toBe(true);
   });
 
   it('🔴 el presupuesto reemplazado se saca de la lista de confirmados', async () => {

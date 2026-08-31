@@ -797,7 +797,7 @@ export function parsePrecioLista(data: any, codArticulo: number): PrecioLista | 
  */
 export async function cabeceraComprobante(
   idComprobante: string | number,
-): Promise<{ fecha: string | null; anulada: boolean | null }> {
+): Promise<{ fecha: string | null; anulada: boolean | null; existe: boolean | null }> {
   try {
     const cli = await imClient();
     const { data } = await imGetRetry(() => cli.get(`/ventas/${idComprobante}`), `ventas/${idComprobante} cabecera`);
@@ -806,8 +806,15 @@ export async function cabeceraComprobante(
     return {
       fecha: typeof f === 'string' && f.length >= 10 ? f.slice(0, 10) : null,
       anulada: a == null ? null : String(a).trim().toUpperCase() === 'S',
+      existe: true,
     };
-  } catch { return { fecha: null, anulada: null }; }
+  } catch (err: any) {
+    // 🔑 404 = el comprobante YA NO ESTÁ en IM. No es lo mismo que "no pude preguntar":
+    // los anulados se borran a mano seguido, así que un pedido puede quedar apuntando a un
+    // id muerto — y por el camino barato eso termina en un 500 sin explicación.
+    // `existe: null` es "no sé" (IM no contestó) y no habilita a nadie a asumir nada.
+    return { fecha: null, anulada: null, existe: err?.response?.status === 404 ? false : null };
+  }
 }
 
 /** Sólo la fecha. La usa anularPedido, que no necesita el resto. */

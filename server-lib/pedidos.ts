@@ -681,10 +681,15 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
     // muere en el 409 "los renglones no coinciden", que tampoco tiene salida: anularlo
     // también falla porque ya está anulado).
     const cab = PEDIDOS_DRY_RUN || !pedido.im_presupuesto_id
-      ? { fecha: null, anulada: null as boolean | null }
+      ? { fecha: null, anulada: null as boolean | null, existe: null as boolean | null }
       : await cabeceraComprobante(pedido.im_presupuesto_id);
     // null es "no sé": se sigue como siempre. Sólo `true` cambia el comportamiento.
     const yaAnulado = cab.anulada === true;
+    // 🪤 El comprobante puede haber sido BORRADO en IM: los anulados se limpian a mano
+    // seguido. Sin esto, editar un pedido así se iba por el camino barato, `getItemsComprobante`
+    // tiraba 404 (no lo atrapa) y el vendedor se comía un 500 sin explicación, sin salida.
+    // Recrear es exactamente lo que corresponde: no hay nada que actualizar ni que anular.
+    const noExiste = cab.existe === false;
     // 🪤 Un pedido que IM RECHAZÓ al crearse quedó sin `im_presupuesto_id`. Caía en la misma
     // rama que el dry-run: se le reescribían los renglones acá, se contestaba ok:true y el
     // front decía "Pedido modificado en InfoManager" sin haberle mandado NADA a IM. El pedido
@@ -692,7 +697,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
     // Ahora se crea de verdad — es el mismo bloque de abajo, sin nada que anular.
     const sinPresupuesto = !pedido.im_presupuesto_id;
     // Un presupuesto anulado no se actualiza: aunque sólo cambien las cantidades, hay que recrear.
-    const recrear = sinPresupuesto || !soloCantidades || yaAnulado;
+    const recrear = sinPresupuesto || !soloCantidades || yaAnulado || noExiste;
 
     if (PEDIDOS_DRY_RUN) {
       // Modo prueba: sólo se reescribe en Supabase.
@@ -777,7 +782,8 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
       }
       // El nuevo YA existe: de acá en adelante el pedido ES el nuevo, pase lo que pase con la
       // anulación del viejo.
-      if (!yaAnulado && !sinPresupuesto) {
+      // Nada que anular si nunca hubo presupuesto, si ya está anulado, o si lo borraron.
+      if (!yaAnulado && !sinPresupuesto && !noExiste) {
         const anul = await anularComprobante({
           id: pedido.im_presupuesto_id,
           numero: pedido.im_numero,
