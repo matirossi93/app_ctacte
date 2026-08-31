@@ -5,7 +5,8 @@ import {
     DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, MapPin,
     Sun, ChevronRight, ChevronDown, AlertTriangle, Download, Trash2, Pencil, Bell, Wallet, Send, Store, Scale, PackageX, ShoppingCart
 } from 'lucide-react';
-import { authHeaders, clearToken, getUser } from '../utils/auth';
+import { authHeaders, clearToken, getUser, type AuthUser } from '../utils/auth';
+import { elegirObjetivo, modoObjetivo } from '../utils/vistaObjetivo';
 import { RecibosApp } from './RecibosApp';
 import { PedidosApp } from './PedidosApp';
 import { ConciliacionApp } from './ConciliacionApp';
@@ -641,7 +642,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                     />
                 )}
 
-                {tab === 'objetivos' && <ObjetivosView selectedVendor={selectedVendor} cods={codsQs} isAdmin={isAdmin} showInactivos={showInactivos} reloadTick={reloadObjetivosTick} viewPeriod={viewPeriod} />}
+                {tab === 'objetivos' && <ObjetivosView user={user} selectedVendor={selectedVendor} cods={codsQs} isAdmin={isAdmin} showInactivos={showInactivos} reloadTick={reloadObjetivosTick} viewPeriod={viewPeriod} />}
 
                 {tab === 'comisiones' && <ComisionesView isAdmin={isAdmin} viewPeriod={viewPeriod} userCodVendedor={user?.cod_vendedor ?? null} />}
 
@@ -749,11 +750,11 @@ function HoyView({ clientsAgg, user, isAdmin, selectedVendor, cods, onGoToTab, o
             const items = (gr.items ?? []) as any[];
             setRankingItems(items);
 
-            if (isAdmin && selectedVendor != null) {
-                const g = items.find(i => i.cod_vendedor === selectedVendor) ?? null;
-                setGoal(g);
+            const seleccion = elegirObjetivo(user, selectedVendor, items);
+            if (seleccion.modo === 'vendedor') {
+                setGoal(seleccion.item);
                 setTeamTotales(null);
-            } else if (isAdmin) {
+            } else if (seleccion.modo === 'equipo') {
                 // Agregado del equipo activos
                 const activos = items.filter(i => i.activo !== false);
                 const sumTarget = activos.reduce((a, i) => a + (i.target_neto ?? 0), 0);
@@ -769,7 +770,7 @@ function HoyView({ clientsAgg, user, isAdmin, selectedVendor, cods, onGoToTab, o
                 });
                 setGoal(null);
             } else {
-                setGoal(items[0] ?? null);
+                setGoal(null);
                 setTeamTotales(null);
             }
 
@@ -816,7 +817,7 @@ function HoyView({ clientsAgg, user, isAdmin, selectedVendor, cods, onGoToTab, o
 
             <div className="vs-hoy-grid">
                 {/* Avance o Equipo */}
-                {isAdmin
+                {modoObjetivo(user, selectedVendor) === 'equipo'
                     ? <WidgetEquipo totales={teamTotales} top3={top3} onGoTo={() => onGoToTab('objetivos')} />
                     : <WidgetAvance goal={goal} onGoTo={() => onGoToTab('objetivos')} />
                 }
@@ -1155,7 +1156,10 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
 // ═══════════════════════════════════════════════════════════════════════════
 // OBJETIVOS VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTick, viewPeriod }: { selectedVendor: number | null; cods: string; isAdmin: boolean; showInactivos: boolean; reloadTick: number; viewPeriod: ViewPeriod }) {
+function ObjetivosView({ user, selectedVendor, cods, isAdmin, showInactivos, reloadTick, viewPeriod }: { user: AuthUser | null; selectedVendor: number | null; cods: string; isAdmin: boolean; showInactivos: boolean; reloadTick: number; viewPeriod: ViewPeriod }) {
+    // `isAdmin` es "puede EDITAR" (targets, feriados, objetivos por producto).
+    // Qué objetivo se MIRA es otra pregunta: un socio no edita nada pero ve el equipo.
+    const modo = modoObjetivo(user, selectedVendor);
     // En modo histórico O con corte asOfDay, las acciones de edición (target, feriados,
     // sync, holidays) se deshabilitan: la data viene de un snapshot fijo, no debería mutar.
     const isHistoricMode = !isCurrentPeriod(viewPeriod);
@@ -1229,9 +1233,10 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
     // y para fetch fresh, evitando lógica duplicada.
     const applyData = (gr: any, cr: any) => {
         let goal: GoalData | null = null;
-        if (isAdmin && selectedVendor != null) {
-            goal = (gr.items ?? []).find((i: any) => i.cod_vendedor === selectedVendor) ?? null;
-        } else if (isAdmin) {
+        const seleccion = elegirObjetivo(user, selectedVendor, (gr.items ?? []) as GoalData[]);
+        if (seleccion.modo === 'vendedor') {
+            goal = seleccion.item;
+        } else if (seleccion.modo === 'equipo') {
             const allItems = gr.items ?? [];
             const items = allItems.filter((i: any) => i.activo);
             const sumTarget = items.reduce((a: number, i: any) => a + (i.target_neto ?? 0), 0);
@@ -1248,8 +1253,6 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                 proyeccion: items.reduce((a: number, i: any) => a + (i.proyeccion ?? 0), 0),
                 necesario_por_dia: sumTarget && first.dias_restantes > 0 ? Math.max(0, (sumTarget - sumAvance) / first.dias_restantes) : null,
             } : null;
-        } else {
-            goal = gr.items?.[0] ?? null;
         }
         setG(goal);
         setMeta({ holidays: gr.holidays ?? [], dias_habiles_source: gr.dias_habiles_source ?? 'auto', year: gr.year, month: gr.month });
@@ -1577,7 +1580,7 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                         <span className="eyebrow">
                             {isLocFilter ? 'OBJETIVO · LOCALIDAD'
                                 : (isAdmin && selectedVendor != null) ? 'OBJETIVO DEL VENDEDOR'
-                                    : isAdmin ? 'OBJETIVO DEL EQUIPO'
+                                    : modo === 'equipo' ? 'OBJETIVO DEL EQUIPO'
                                         : 'OBJETIVO DEL MES'}
                         </span>
                         <h2>{isLocFilter ? localidad : g.nombre}</h2>
@@ -1694,8 +1697,8 @@ function ObjetivosView({ selectedVendor, cods, isAdmin, showInactivos, reloadTic
                 )}
             </div>
 
-            {/* ─── Ranking equipo (admin sin filtro) ─── */}
-            {isAdmin && selectedVendor == null && !isLocFilter && rankingItems.length > 0 && (
+            {/* ─── Ranking equipo (quien mira el equipo, sin filtro) ─── */}
+            {modo === 'equipo' && !isLocFilter && rankingItems.length > 0 && (
                 <RankingEquipo items={rankingItems} />
             )}
 
