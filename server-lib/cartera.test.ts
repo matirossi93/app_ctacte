@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 // fechaArgentina.test.ts y precioLista.test.ts).
 vi.hoisted(() => { process.env.INFOMANAGER_CLIENT_SECRET = 'test-secret'; });
 
-import { resolverFuente, maestroFotoAClientes, recibosAlCorte, totalesCartera, parsearCods } from './cartera.js';
+import { resolverFuente, maestroFotoAClientes, recibosAlCorte, totalesCartera, parsearCods, empresaPermitida } from './cartera.js';
 import { agruparConciliacion, type PendienteIM, type ReciboTransito, type ClienteMaestro } from './conciliacion.js';
 
 /**
@@ -223,5 +223,31 @@ describe('parsearCods', () => {
     // El 0 es "Sin vendedor" y es un grupo real: tiene que poder filtrarse.
     it('el 0 (Sin vendedor) es un código válido', () => {
         expect(parsearCods('0,3')).toEqual([0, 3]);
+    });
+});
+
+/**
+ * 🔴 Los 4 `socio` de la base NO son dueños de la empresa: son socios de cada sucursal
+ * (elvio→BRS, daniel→San Juan, enzo→Jujuy, andrea→Casa Central). Sin este filtro, cualquiera
+ * de ellos pedía la cartera de Casa Central —que además es el default— y se llevaba los
+ * $167M enteros. Es la misma forma del bug de Objetivos que se arregló esta mañana.
+ */
+describe('empresaPermitida — de qué sucursal ve la cartera cada uno', () => {
+    it('un socio ve SIEMPRE la suya, pida la que pida', () => {
+        expect(empresaPermitida('socio', 2, 1)).toBe(2);   // Elvio (BRS) pide Casa Central
+        expect(empresaPermitida('socio', 3, 1)).toBe(3);   // Daniel (San Juan)
+        expect(empresaPermitida('socio', 4, 2)).toBe(4);   // Enzo (Jujuy) pide BRS
+        expect(empresaPermitida('socio', 1, 1)).toBe(1);   // Andrea (Casa Central), la suya
+    });
+
+    it('admin y gerente miran cualquier unidad: hacen el consolidado', () => {
+        expect(empresaPermitida('admin', null, 3)).toBe(3);
+        expect(empresaPermitida('gerente', null, 2)).toBe(2);
+        expect(empresaPermitida('admin', 1, 4)).toBe(4);
+    });
+
+    // Ninguno hoy, pero el default de toda la app para una unidad sin cargar es Casa Central.
+    it('un socio sin unidad cargada cae en Casa Central', () => {
+        expect(empresaPermitida('socio', null, 3)).toBe(1);
     });
 });

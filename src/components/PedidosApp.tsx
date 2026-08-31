@@ -252,6 +252,21 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         // al vendedor precios de Lista 1 aunque el cliente fuera L3 — y ese es el número que
         // le canta por teléfono. Peor al volver atrás y elegir otro cliente: arrastraba la
         // lista del ANTERIOR. El maestro ya trae la lista de cada cliente.
+        // 🪤 Volver atrás con el carrito cargado y elegir OTRO cliente no lo limpiaba: los
+        // renglones del primero se le armaban al segundo, con la lista del segundo, y el
+        // pedido salía a nombre de quien no lo pidió. No avisaba nada. Cambiar de cliente es
+        // empezar un pedido nuevo, así que se pregunta y se arranca limpio.
+        const esOtro = cliente != null && String(cliente.cod) !== String(c.cod);
+        if (esOtro && cart.length) {
+            if (!confirm(
+                `El pedido que tenés armado (${cart.length} ${cart.length === 1 ? 'producto' : 'productos'}) es de ${cliente!.name}.\n\nSi pasás a ${c.name} se vacía y empezás de cero.\n\n¿Seguir?`
+            )) return;
+            setCart([]); setObs('');
+            // Cliente nuevo, pedido nuevo: con la clave del anterior InfoManager devolvería
+            // aquel pedido en vez de crear este.
+            idempotencyKey.current = crypto.randomUUID();
+            setEditando(null);
+        }
         setListaCliente(c.cod_lista ?? LISTA_DEFECTO);
         setCliente(c); setStep('productos');
         await cargarCredito(c.cod);

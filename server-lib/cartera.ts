@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import type { JwtPayload } from './auth.js';
 import { sb, TENANT_ID } from './supabase.js';
 import { fechaArgentina, fetchClientesIMCached, fetchVendedores } from './infomanager.js';
+import { filaUsuario } from './perfilUsuario.js';
 import {
   agruparConciliacion, armarConciliacion, fetchRecibosTransito,
   getSnapshotConciliacion, hoyISOArgentina,
@@ -26,8 +27,30 @@ import { ESTADOS_NO_TERMINALES } from './conciliacion.js';
 // mismo, y un total de cartera equivocado es peor que no tenerlo.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** Quién puede ver la cartera de toda la empresa. Mati, 31/08: admin, gerente y socio. */
+/** Quién puede ver la cartera. Mati, 31/08: admin, gerente y socio. */
 const ROLES_CARTERA = new Set(['admin', 'gerente', 'socio']);
+
+/**
+ * De qué unidad puede ver la cartera este usuario.
+ *
+ * 🔴 31/08/2026, verificado contra la base: los 4 `socio` NO son dueños de la empresa, son
+ * **socios de cada sucursal** — elvio→BRS(2), daniel→San Juan(3), enzo→Jujuy(4),
+ * andrea→Casa Central(1). Sin esto, cualquiera de ellos pedía `?cod_empresa=1` (o nada, que
+ * es el default) y se llevaba la cartera ENTERA de Casa Central. Es la misma forma del bug
+ * que se arregló esta mañana en Objetivos (`d799d0a`: un socio veía el objetivo de otro).
+ *
+ * admin y gerente sí miran cualquier unidad: son los que hacen el consolidado.
+ */
+export function empresaPermitida(
+  rol: string,
+  empresaDelUsuario: number | null,
+  empresaPedida: number,
+): number {
+  if (rol === 'admin' || rol === 'gerente') return empresaPedida;
+  // Un socio ve la suya y nada más. Sin unidad cargada cae en Casa Central, que es el
+  // default documentado de toda la app (ver sucursalDe en sucursales.ts).
+  return empresaDelUsuario ?? 1;
+}
 
 const ES_FECHA_ISO = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -236,8 +259,10 @@ export async function getCartera(req: Request & { user?: JwtPayload }, res: Resp
       return;
     }
 
-    const codEmpresa = Number(req.query.cod_empresa) || 1;
-    if (![1, 2, 3, 4].includes(codEmpresa)) { res.status(400).json({ error: 'cod_empresa inválida' }); return; }
+    const empresaPedida = Number(req.query.cod_empresa) || 1;
+    if (![1, 2, 3, 4].includes(empresaPedida)) { res.status(400).json({ error: 'cod_empresa inválida' }); return; }
+    // La unidad sale de QUIÉN pregunta, no sólo del query: ver empresaPermitida.
+    const codEmpresa = empresaPermitida(String(user.rol), (await filaUsuario(user)).cod_empresa, empresaPedida);
     const cods = parsearCods(req.query.cods);
     const hoy = hoyISOArgentina();
     const fuente = resolverFuente(req.query.fecha as string | undefined, hoy);
