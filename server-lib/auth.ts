@@ -15,12 +15,15 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
-// `administrativo` y `socio` los agregó el panel único (28/08/2026). Acá sólo
-// hacen falta para que el rol que viene de la base sea un valor conocido: los
+// `administrativo`, `socio` y `encargado` los agregó el panel único (28/08/2026). Acá
+// sólo hacen falta para que el rol que viene de la base sea un valor conocido: los
 // permisos de esta app se siguen decidiendo caso por caso, no por el tipo.
 // Un `administrativo` NO filtra por cartera (ve a todos los clientes, como
 // gerente) pero tampoco entra a lo que pide admin/gerente explícito.
-export type Rol = 'admin' | 'socio' | 'gerente' | 'administrativo' | 'vendedor' | 'repartidor';
+// ⚠️ `encargado` estaba FALTANDO acá y en AuthUser aunque la base ya emite 4 usuarios con
+// ese rol (Banda, San Juan, Pablo, Miguel) y App.tsx los manda al VendorShell: el tipo
+// mentía sobre un valor que llega de verdad. Se agregó el 31/08/2026.
+export type Rol = 'admin' | 'socio' | 'gerente' | 'administrativo' | 'vendedor' | 'repartidor' | 'encargado';
 
 export interface JwtPayload {
   sub: string;              // usuario.id

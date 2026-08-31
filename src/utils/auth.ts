@@ -1,7 +1,8 @@
 export interface AuthUser {
     email: string;
-    // `socio` y `administrativo` los agregó el panel único (28/08/2026).
-    rol: 'admin' | 'socio' | 'gerente' | 'administrativo' | 'vendedor' | 'repartidor';
+    // `socio`, `administrativo` y `encargado` los agregó el panel único (28/08/2026).
+    // `encargado` faltaba acá aunque la base ya lo emite — espejo de `Rol` en server-lib/auth.ts.
+    rol: 'admin' | 'socio' | 'gerente' | 'administrativo' | 'vendedor' | 'repartidor' | 'encargado';
     cod_vendedor: number | null;
     vendedor_key: string | null;
     nombre: string | null;

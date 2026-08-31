@@ -47,12 +47,21 @@ describe('roles en cuenta corriente', () => {
     expect(puedeHistorial('repartidor')).toBe(false);
   });
 
-  it('los 6 roles del panel son valores conocidos acá', () => {
-    for (const rol of ['admin', 'socio', 'gerente', 'administrativo', 'vendedor', 'repartidor']) {
+  it('los 7 roles del panel son valores conocidos acá', () => {
+    for (const rol of ['admin', 'socio', 'gerente', 'administrativo', 'vendedor', 'repartidor', 'encargado']) {
       expect(typeof puedeHistorial(rol)).toBe('boolean');
     }
-    // `encargado` (producción) no entra a cuenta corriente: no está en ningún permiso.
+  });
+
+  it('encargado: sin historial ni backoffice, pero SÍ entra a la app', () => {
+    // 🪤 Acá decía "`encargado` no entra a cuenta corriente: no está en ningún permiso".
+    // Las dos primeras aserciones eran ciertas; la frase, no: App.tsx:86 manda al
+    // VendorShell a todo rol que no sea `repartidor`, y en la base hay 4 usuarios
+    // `encargado` activos (Banda, San Juan, Pablo, Miguel). No tener permisos NO es lo
+    // mismo que no entrar — y mientras la frase decía eso, nadie miró qué veían.
     expect(puedeHistorial('encargado')).toBe(false);
     expect(esBackoffice('encargado')).toBe(false);
+    // Sin cod_vendedor no tienen cartera: miran el equipo. Ver src/utils/vistaObjetivo.ts.
+    expect(veSoloSuCartera('encargado')).toBe(false);
   });
 });
