@@ -29,6 +29,7 @@ const im = vi.hoisted(() => ({
   presupuestoFacturado: vi.fn(),
   cabeceraComprobante: vi.fn(),
   fechaComprobante: vi.fn(),
+  desconfirmarPresupuesto: vi.fn(),
   getPrecioLista: vi.fn(),
   fetchVendedores: vi.fn(),
   fetchArticulosCatalogo: vi.fn(),
@@ -44,6 +45,7 @@ vi.mock('./infomanager.js', () => ({
   // 🪤 Si falta en este factory queda `undefined` y explota al llamarla (importar no rompe).
   cabeceraComprobante: im.cabeceraComprobante,
   fechaComprobante: im.fechaComprobante,
+  desconfirmarPresupuesto: im.desconfirmarPresupuesto,
   getPrecioLista: im.getPrecioLista,
   fetchVendedores: im.fetchVendedores,
   fetchArticulosCatalogo: im.fetchArticulosCatalogo,
@@ -131,6 +133,7 @@ beforeEach(() => {
   im.cabeceraComprobante.mockResolvedValue({ fecha: '2026-08-27', anulada: false });
   im.fechaComprobante.mockResolvedValue('2026-08-27');
   im.anularComprobante.mockResolvedValue({ ok: true, raw: {} });
+  im.desconfirmarPresupuesto.mockResolvedValue({ ok: true });
   im.actualizarPresupuestoCantidades.mockResolvedValue({ ok: true });
   im.getItemsComprobante.mockResolvedValue([{ id: 1, cod_articulo: 100, cantidad: 5, cod_lista_precios: 12 }]);
   im.crearPresupuesto.mockResolvedValue({ ok: true, id: '58700001', numero: 57999, raw: {} });
@@ -213,6 +216,25 @@ describe('editarPedido — recrear el presupuesto en IM', () => {
     const upd = updates.filter(([t]) => t === 'pedidos_vendedor').pop()![1];
     expect(upd.im_presupuesto_id).toBe('58700001');
     expect(upd.im_error).toBeTruthy();
+  });
+
+  it('🔴 el presupuesto reemplazado se saca de la lista de confirmados', async () => {
+    // No se puede BORRAR (la API de IM no tiene un solo DELETE), pero el anulado le ensucia a
+    // la oficina la ventana de facturación. Sacándole el "confirmado" se cae de esa lista.
+    await editar(SURTIDO_NUEVO);
+    expect(im.desconfirmarPresupuesto).toHaveBeenCalledWith(PEDIDO.im_presupuesto_id);
+  });
+
+  it('🔴 si NO se pudo anular, se lo deja confirmado: tiene que seguir a la vista', async () => {
+    // Un presupuesto sólo desconfirmado SIGUE VIVO y se puede facturar. Esconderlo cuando la
+    // anulación falló es justo lo contrario de lo que hace falta: el aviso le pide a la oficina
+    // que lo anule a mano, y para eso tiene que poder encontrarlo.
+    im.anularComprobante.mockResolvedValue({ ok: false, error: 'HTTP 500' });
+
+    const { body } = await editar(SURTIDO_NUEVO);
+
+    expect(im.desconfirmarPresupuesto).not.toHaveBeenCalled();
+    expect(body.aviso).toContain('57874');
   });
 
   it('🔴 si IM no contesta el create, no se anula nada y el pedido queda congelado', async () => {

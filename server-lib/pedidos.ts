@@ -6,7 +6,7 @@ import { filaUsuario, sucursalDelUsuario } from './perfilUsuario.js';
 import {
   crearPresupuesto, anularComprobante, getPrecioLista, getDisponibleCliente,
   fetchClientesIMCached, fetchArticulosCatalogo, fetchArticulosDeDeposito,
-  getItemsComprobante, presupuestoFacturado, actualizarPresupuestoCantidades,
+  getItemsComprobante, presupuestoFacturado, actualizarPresupuestoCantidades, desconfirmarPresupuesto,
   fechaComprobante, cabeceraComprobante, fechaArgentina, fetchVendedores, fetchPreciosDeLista,
 } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
@@ -785,6 +785,13 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
           fecha: cab.fecha ?? fechaArgentina(pedido.created_at),   // ← ya no re-consulta IM
           observaciones: `Reemplazado por edición · pedido ${String(pedido.id).slice(0, 8)} · ver PR ${imRes.numero ?? imRes.id}`,
         });
+        if (anul.ok) {
+          // El anulado ya no sirve para nada y le ensucia a la oficina la ventana de
+          // facturación. No se puede borrar (IM no expone DELETE), pero sacándole el
+          // "confirmado" se cae de esa lista. Es cosmético: si falla, da igual.
+          const desc = await desconfirmarPresupuesto(pedido.im_presupuesto_id);
+          if (!desc.ok) console.warn(`[editarPedido] no pude desconfirmar el PR ${numViejo}:`, desc.error);
+        }
         if (!anul.ok) {
           // 🔴 Quedaron los DOS vivos y los dos se pueden facturar. Pero la edición SALIÓ
           // BIEN: esto NO puede contestar error, porque si el vendedor cree que falló lo

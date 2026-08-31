@@ -850,6 +850,33 @@ export async function presupuestoFacturado(idPresupuesto: string | number): Prom
  * Para agregar o sacar productos, o cambiar la lista de precios, hay que anular y crear de
  * nuevo. El `id` de cada renglón sale de getItemsComprobante().
  */
+/**
+ * Devuelve un presupuesto a "No confirmado".
+ *
+ * Cosmético y a propósito: al editar un pedido hay que anular el presupuesto viejo y crear uno
+ * nuevo (IM no deja cambiarle el surtido), y esos anulados le ensucian a la oficina la ventana
+ * de facturación. Borrarlos NO se puede: la API de InfoManager no tiene un solo endpoint DELETE.
+ * Pero el PUT sí acepta `tipo_presupuesto`, y como ahora los creamos como 'C' (confirmado), el
+ * viejo desaparece de la lista de confirmados apenas se lo marca 'NC'.
+ *
+ * NUNCA reemplaza al anular: un presupuesto sólo NC sigue vivo y se puede facturar. Esto corre
+ * DESPUÉS de una anulación exitosa, y si falla no pasa nada — el comprobante ya está anulado.
+ */
+export async function desconfirmarPresupuesto(
+  idPresupuesto: string | number,
+): Promise<{ ok: boolean; error?: string }> {
+  const cli = await imClient();
+  try {
+    const { data } = await cli.put(`/presupuestos/${idPresupuesto}`, { tipo_presupuesto: 'NC' });
+    if (data?.error != null && Number(data.error) !== 0) {
+      return { ok: false, error: String(data.detalles ?? data.mensaje ?? 'IM rechazó el cambio') };
+    }
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: err?.message ?? 'sin respuesta de IM' };
+  }
+}
+
 export async function actualizarPresupuestoCantidades(
   idPresupuesto: string | number,
   items: Array<{ id: number; cantidad: number }>,
