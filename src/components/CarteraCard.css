@@ -5,49 +5,71 @@
   background: var(--color-surface, #F9EFE3);
   border: 1px solid var(--color-border, rgba(30, 18, 12, 0.1));
   border-radius: 14px;
-  padding: 0.85rem 0.95rem;
+  padding: 0.3rem 0.5rem 0.3rem 0.7rem;
   margin-bottom: 0.9rem;
 }
+/* Con el detalle abierto respira como una tarjeta; cerrada es una banda y nada más. */
+.cartera-card:has(.cartera-detalle) { padding-bottom: 0.7rem; }
 
-.cartera-head {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 0.5rem; flex-wrap: wrap;
+/* La banda ENTERA es el botón: en el celular no se le apunta a un link de 12px. */
+.cartera-banda {
+  display: flex; align-items: center; gap: 0.55rem;
+  width: 100%; min-height: 44px;
+  padding: 0; border: 0; background: transparent;
+  cursor: pointer; text-align: left;
+  font: inherit; color: var(--color-text, #1E120C);
 }
 .cartera-titulo {
-  display: flex; align-items: center; gap: 0.35rem;
-  font-weight: 700; font-size: 0.82rem; letter-spacing: 0.02em;
-  color: var(--color-text, #1E120C); text-transform: uppercase;
-}
-.cartera-titulo svg { color: var(--color-primary, #06652F); }
-
-/* De dónde sale el número. Que se lea de reojo si es la foto exacta de un día cerrado o
-   el saldo de hoy, que se sigue moviendo. */
-.cartera-fuente {
   display: inline-flex; align-items: center; gap: 0.3rem;
-  font-size: 0.72rem; color: var(--color-text-muted, #5a4a42);
+  font-weight: 700; font-size: 0.8rem; letter-spacing: 0.02em;
+  text-transform: uppercase; white-space: nowrap;
+}
+.cartera-titulo > svg:first-child { color: var(--color-primary, #06652F); }
+.cartera-alerta { color: var(--color-warning, #E59B33); }
+
+/* El número es lo único que crece: es a lo que se le viene a mirar. `margin-left:auto`
+   lo empuja a la derecha y deja el aire en el medio, no entre el número y su contexto. */
+.cartera-numero {
+  margin-left: auto;
+  font-size: 1.15rem; font-weight: 800; letter-spacing: -0.02em;
+  color: var(--color-primary, #06652F);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.cartera-meta {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  font-size: 0.72rem; color: var(--color-text-muted, #5a4a42); white-space: nowrap;
+}
+.cartera-chevron {
+  flex-shrink: 0; color: var(--color-text-muted, #5a4a42);
+  transition: transform 0.18s ease;
+}
+.cartera-banda.is-open .cartera-chevron { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .cartera-chevron { transition: none; } }
+
+/* En el celular no entran las 4 cosas en fila: el número se va abajo con su contexto y
+   quedan 2 renglones cortos, que siguen siendo un tercio de lo que ocupaba antes. */
+@media (max-width: 560px) {
+  .cartera-banda { flex-wrap: wrap; gap: 0.15rem 0.5rem; padding: 0.2rem 0; }
+  .cartera-titulo { order: 1; }
+  .cartera-chevron { order: 2; margin-left: auto; }
+  .cartera-numero { order: 3; margin-left: 0; flex-basis: 100%; font-size: 1.35rem; }
+  .cartera-meta { order: 4; flex-basis: 100%; }
 }
 
-.cartera-numero {
-  font-size: 1.9rem; font-weight: 800; letter-spacing: -0.02em;
-  color: var(--color-primary, #06652F);
-  font-variant-numeric: tabular-nums;
-  margin: 0.25rem 0 0.1rem;
-  /* Un total de 9 cifras no entra en 375px al tamaño del título. */
-  overflow-wrap: anywhere;
+/* Filas del detalle: concepto a la izquierda, plata a la derecha. Se leen como un
+   resumen de cuenta, que es lo que son. */
+.cartera-linea {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem;
+  padding: 0.32rem 0;
+  font-size: 0.78rem; color: var(--color-text-muted, #5a4a42);
 }
-.cartera-sub {
-  font-size: 0.76rem; line-height: 1.4;
+.cartera-linea--fuerte { color: var(--color-text, #1E120C); font-weight: 600; }
+.cartera-subtitulo {
+  margin-top: 0.5rem; padding-top: 0.45rem;
+  border-top: 1px solid var(--color-border, rgba(30, 18, 12, 0.08));
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
   color: var(--color-text-muted, #5a4a42);
 }
-.cartera-sub b { color: var(--color-text, #1E120C); font-variant-numeric: tabular-nums; }
-
-.cartera-filtrado {
-  margin-top: 0.45rem; padding: 0.4rem 0.55rem;
-  border-radius: 8px;
-  background: var(--color-surface-hover, #f3e4d2);
-  font-size: 0.76rem; color: var(--color-text-muted, #5a4a42);
-}
-.cartera-filtrado b { color: var(--color-text, #1E120C); font-variant-numeric: tabular-nums; }
 
 .cartera-nota {
   display: flex; align-items: flex-start; gap: 0.35rem;
@@ -61,16 +83,7 @@
 }
 .cartera-nota svg { flex-shrink: 0; margin-top: 1px; color: var(--color-warning, #E59B33); }
 
-.cartera-toggle {
-  margin-top: 0.55rem;
-  width: 100%; min-height: 40px;
-  border: 1px solid var(--color-border, rgba(30, 18, 12, 0.12));
-  background: transparent; color: var(--color-text, #1E120C);
-  border-radius: 8px; cursor: pointer;
-  font-size: 0.78rem; font-weight: 600;
-}
-
-.cartera-detalle { margin-top: 0.5rem; }
+.cartera-detalle { margin-top: 0.15rem; }
 .cartera-fila {
   display: flex; align-items: center; gap: 0.5rem;
   padding: 0.4rem 0;

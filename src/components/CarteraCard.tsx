@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Wallet, AlertTriangle, Loader2, Camera, Clock } from 'lucide-react';
+import { Wallet, AlertTriangle, Loader2, Camera, Clock, ChevronDown } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import { fechaDeCorte, fechaLegible, type PeriodoCorte } from '../utils/fechaCorte';
 import './CarteraCard.css';
@@ -121,51 +121,64 @@ export function CarteraCard({ periodo, cods }: Props) {
 
     const { total, filtrado, por_vendedor = [], internas } = data;
     const esFoto = data.modo === 'foto';
+    // 🪤 Sin maestro congelado el reparto por vendedor usa el de HOY: el total sigue siendo
+    // exacto, pero un cliente reasignado desde el corte cae en el vendedor equivocado. El
+    // texto vive adentro del detalle, pero el triángulo se ve SIN abrir: un aviso que hay que
+    // desplegar para enterarse no es un aviso.
+    const repartoDudoso = esFoto && data.maestro_congelado === false;
 
     return (
         <div className="cartera-card">
-            <div className="cartera-head">
-                <div className="cartera-titulo">
-                    <Wallet size={16} />
-                    <span>En la calle</span>
-                </div>
-                <div className="cartera-fuente">
+            {/* Toda la banda es el botón: en el celular no hay que apuntarle a un link chico. */}
+            <button
+                className={`cartera-banda ${abierto ? 'is-open' : ''}`}
+                onClick={() => setAbierto(a => !a)}
+                aria-expanded={abierto}
+            >
+                <span className="cartera-titulo">
+                    <Wallet size={15} />
+                    En la calle
+                    {repartoDudoso && <AlertTriangle size={13} className="cartera-alerta" />}
+                </span>
+                <span className="cartera-numero">{money(total.saldo_im)}</span>
+                <span className="cartera-meta">
+                    {total.n_clientes} clientes ·{' '}
                     {esFoto
-                        ? <><Camera size={13} /> foto exacta del {fechaLegible(data.fecha)}</>
-                        : <><Clock size={13} /> al día de hoy{data.generado_at ? `, ${hora(data.generado_at)}` : ''}</>}
-                </div>
-            </div>
-
-            <div className="cartera-numero">{money(total.saldo_im)}</div>
-            <div className="cartera-sub">
-                {total.n_clientes} clientes con saldo
-                {total.en_transito > 0 && (
-                    <> · <b>{money(total.ajustado)}</b> descontando {money(total.en_transito)} que ya se cobró y todavía no se imputó en InfoManager</>
-                )}
-            </div>
-
-            {filtrado && (
-                <div className="cartera-filtrado">
-                    De los vendedores que tenés elegidos: <b>{money(filtrado.saldo_im)}</b> · {filtrado.n_clientes} clientes
-                </div>
-            )}
-
-            {/* 🪤 Sin maestro congelado el reparto por vendedor usa el de HOY: el total sigue
-                siendo exacto, pero un cliente reasignado desde el corte cae en el vendedor
-                equivocado. Hay que decirlo, no dejarlo pasar. */}
-            {esFoto && data.maestro_congelado === false && (
-                <div className="cartera-nota">
-                    <AlertTriangle size={13} />
-                    Esa foto es anterior a que se guardara el vendedor de cada cliente: el total es exacto, pero el reparto por vendedor usa el de hoy.
-                </div>
-            )}
-
-            <button className="cartera-toggle" onClick={() => setAbierto(a => !a)}>
-                {abierto ? 'Ocultar el detalle' : 'Ver por vendedor'}
+                        ? <><Camera size={12} /> foto del {fechaLegible(data.fecha)}</>
+                        : <><Clock size={12} /> hoy{data.generado_at ? ` ${hora(data.generado_at)}` : ''}</>}
+                </span>
+                <ChevronDown size={16} className="cartera-chevron" />
             </button>
 
             {abierto && (
                 <div className="cartera-detalle">
+                    {total.en_transito > 0 && (
+                        <div className="cartera-linea">
+                            <span>Ya cobrado, sin imputar en InfoManager</span>
+                            <span className="cartera-monto">−{money(total.en_transito)}</span>
+                        </div>
+                    )}
+                    {total.en_transito > 0 && (
+                        <div className="cartera-linea cartera-linea--fuerte">
+                            <span>Queda por cobrar</span>
+                            <span className="cartera-monto">{money(total.ajustado)}</span>
+                        </div>
+                    )}
+                    {filtrado && (
+                        <div className="cartera-linea">
+                            <span>De los vendedores que elegiste · {filtrado.n_clientes} clientes</span>
+                            <span className="cartera-monto">{money(filtrado.saldo_im)}</span>
+                        </div>
+                    )}
+
+                    {repartoDudoso && (
+                        <div className="cartera-nota">
+                            <AlertTriangle size={13} />
+                            Esa foto es anterior a que se guardara el vendedor de cada cliente: el total es exacto, pero el reparto por vendedor usa el de hoy.
+                        </div>
+                    )}
+
+                    <div className="cartera-subtitulo">Por vendedor</div>
                     {por_vendedor.map(v => (
                         <div key={v.cod_vendedor} className="cartera-fila">
                             <span className="cartera-vend">{v.nombre}</span>
