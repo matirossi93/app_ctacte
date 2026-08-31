@@ -2059,3 +2059,17 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
     color: #7a5312; border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 12px;
 }
 .vs-aviso-datos button:hover { background: #f6e6c8 }
+
+/* El período de arriba mueve el TOTAL de la cartera, no la lista de clientes (que sale de
+   /api/data y es siempre la de hoy). Decirlo evita leer los saldos de hoy como si fueran
+   los del cierre elegido. 31/08/2026. */
+.vs-cobranzas-nota {
+  padding: 0.45rem 0.6rem;
+  margin-bottom: 0.7rem;
+  border-radius: 8px;
+  background: var(--color-surface-hover, #f3e4d2);
+  color: var(--color-text-muted, #5a4a42);
+  font-size: 0.74rem;
+  line-height: 1.4;
+}
+.vs-cobranzas-nota b { color: var(--color-text, #1E120C); }

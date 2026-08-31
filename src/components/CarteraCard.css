@@ -1,0 +1,101 @@
+/* "Cuánto hay en la calle" — el total de la cuenta corriente, a la fecha del selector.
+   Pedido de Mati (31/08/2026). Se usa desde el celular, así que todo lo tocable va a 40px. */
+
+.cartera-card {
+  background: var(--color-surface, #F9EFE3);
+  border: 1px solid var(--color-border, rgba(30, 18, 12, 0.1));
+  border-radius: 14px;
+  padding: 0.85rem 0.95rem;
+  margin-bottom: 0.9rem;
+}
+
+.cartera-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.5rem; flex-wrap: wrap;
+}
+.cartera-titulo {
+  display: flex; align-items: center; gap: 0.35rem;
+  font-weight: 700; font-size: 0.82rem; letter-spacing: 0.02em;
+  color: var(--color-text, #1E120C); text-transform: uppercase;
+}
+.cartera-titulo svg { color: var(--color-primary, #06652F); }
+
+/* De dónde sale el número. Que se lea de reojo si es la foto exacta de un día cerrado o
+   el saldo de hoy, que se sigue moviendo. */
+.cartera-fuente {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  font-size: 0.72rem; color: var(--color-text-muted, #5a4a42);
+}
+
+.cartera-numero {
+  font-size: 1.9rem; font-weight: 800; letter-spacing: -0.02em;
+  color: var(--color-primary, #06652F);
+  font-variant-numeric: tabular-nums;
+  margin: 0.25rem 0 0.1rem;
+  /* Un total de 9 cifras no entra en 375px al tamaño del título. */
+  overflow-wrap: anywhere;
+}
+.cartera-sub {
+  font-size: 0.76rem; line-height: 1.4;
+  color: var(--color-text-muted, #5a4a42);
+}
+.cartera-sub b { color: var(--color-text, #1E120C); font-variant-numeric: tabular-nums; }
+
+.cartera-filtrado {
+  margin-top: 0.45rem; padding: 0.4rem 0.55rem;
+  border-radius: 8px;
+  background: var(--color-surface-hover, #f3e4d2);
+  font-size: 0.76rem; color: var(--color-text-muted, #5a4a42);
+}
+.cartera-filtrado b { color: var(--color-text, #1E120C); font-variant-numeric: tabular-nums; }
+
+.cartera-nota {
+  display: flex; align-items: flex-start; gap: 0.35rem;
+  margin-top: 0.45rem; padding: 0.4rem 0.55rem;
+  border-radius: 8px;
+  background: var(--color-warning-bg, rgba(229, 155, 51, 0.1));
+  /* Ámbar sólo-para-texto: el de marca da 1,68:1 sobre el crema y WCAG pide 4,5:1.
+     Mismo criterio que .ped-aviso.cliente en PedidosApp.css. */
+  color: #8A5A12;
+  font-size: 0.73rem; line-height: 1.35;
+}
+.cartera-nota svg { flex-shrink: 0; margin-top: 1px; color: var(--color-warning, #E59B33); }
+
+.cartera-toggle {
+  margin-top: 0.55rem;
+  width: 100%; min-height: 40px;
+  border: 1px solid var(--color-border, rgba(30, 18, 12, 0.12));
+  background: transparent; color: var(--color-text, #1E120C);
+  border-radius: 8px; cursor: pointer;
+  font-size: 0.78rem; font-weight: 600;
+}
+
+.cartera-detalle { margin-top: 0.5rem; }
+.cartera-fila {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-top: 1px solid var(--color-border, rgba(30, 18, 12, 0.08));
+  font-size: 0.8rem;
+}
+.cartera-vend { flex: 1; font-weight: 600; color: var(--color-text, #1E120C); }
+.cartera-cli { font-size: 0.72rem; color: var(--color-text-muted, #5a4a42); }
+.cartera-monto { font-variant-numeric: tabular-nums; font-weight: 700; }
+
+.cartera-internas {
+  margin-top: 0.5rem; padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  background: var(--color-surface-hover, #f3e4d2);
+  font-size: 0.72rem; line-height: 1.4;
+  color: var(--color-text-muted, #5a4a42);
+}
+
+.cartera-vacia {
+  display: flex; align-items: flex-start; gap: 0.4rem;
+  font-size: 0.78rem; line-height: 1.4;
+  color: var(--color-text-muted, #5a4a42);
+}
+.cartera-vacia svg { flex-shrink: 0; margin-top: 1px; }
+.cartera-vacia.aviso { color: #8A5A12; }
+.cartera-vacia.aviso svg { color: var(--color-warning, #E59B33); }
+.cartera-vacia.error { color: var(--color-danger, #ef4444); }
+.cartera-vacia .spin { animation: spin 1s linear infinite; }

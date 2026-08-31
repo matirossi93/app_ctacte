@@ -17,6 +17,7 @@ import { ReportesModal } from './ReportesModal';
 import { ComisionesSucursalModal } from './ComisionesSucursalModal';
 import { PeriodSelector, type ViewPeriod } from './PeriodSelector';
 import { HistoricBanner } from './HistoricBanner';
+import { CarteraCard } from './CarteraCard';
 // 🪤 Import ESTÁTICO de PrintAvanceView arrastraba jsPDF + autotable + pako a la PRIMERA
 // pantalla: 141 kB gzip, el 49% de todo lo que bajaba el vendedor al abrir la app, para un
 // botón de exportar que casi nunca toca. Con lazy se baja recién cuando lo abre.
@@ -241,6 +242,13 @@ interface Props {
 export const VendorShell = ({ onLogout }: Props) => {
     const user = getUser();
     const isAdmin = user?.rol === 'admin' || user?.rol === 'gerente';
+    /**
+     * Quién ve "cuánto hay en la calle" (el total de la cuenta corriente de toda la empresa).
+     * Mati, 31/08/2026: administración y los socios. Un vendedor sigue viendo sólo lo suyo.
+     * El backend lo chequea igual en /api/cartera — esto es para no mostrar una tarjeta que
+     * va a dar 403.
+     */
+    const veCartera = isAdmin || user?.rol === 'socio';
     const [tab, setTab] = useState<Tab>('hoy');
 
     // Telemetría de uso: avisa qué sección se abrió. Sirve para decidir con datos qué sacar
@@ -639,6 +647,9 @@ export const VendorShell = ({ onLogout }: Props) => {
                         loading={loading && invoices.length === 0}
                         pendingOpenClient={pendingCobClient}
                         onPendingOpenConsumed={() => setPendingCobClient(null)}
+                        viewPeriod={viewPeriod}
+                        codsQs={codsQs}
+                        veCartera={veCartera}
                     />
                 )}
 
@@ -962,7 +973,7 @@ function WidgetTopDeudores({ clients, onOpenClient, onGoToCobranzas }: { clients
 // ═══════════════════════════════════════════════════════════════════════════
 // COBRANZAS VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function CobranzasView({ clients, clientesConCredito, search, setSearch, bucket, setBucket, buckets, totalSaldo, totalClientes, onUploadPago, lastRefresh, loading, pendingOpenClient, onPendingOpenConsumed }:
+function CobranzasView({ clients, clientesConCredito, search, setSearch, bucket, setBucket, buckets, totalSaldo, totalClientes, onUploadPago, lastRefresh, loading, pendingOpenClient, onPendingOpenConsumed, viewPeriod, codsQs, veCartera }:
     {
         clients: ClientAgg[]; clientesConCredito: ClientAgg[]; search: string; setSearch: (s: string) => void;
         bucket: 'todos' | 'reciente' | 'medio' | 'vencido'; setBucket: (b: any) => void;
@@ -973,6 +984,10 @@ function CobranzasView({ clients, clientesConCredito, search, setSearch, bucket,
         loading: boolean;
         pendingOpenClient?: string | null;
         onPendingOpenConsumed?: () => void;
+        viewPeriod: ViewPeriod;
+        codsQs: string;
+        /** "Cuánto hay en calle" es plata de la empresa: solo admin, gerente y socio. */
+        veCartera: boolean;
     }) {
     const [openClient, setOpenClient] = useState<string | null>(null);
     const [showCredito, setShowCredito] = useState(false);
@@ -995,8 +1010,23 @@ function CobranzasView({ clients, clientesConCredito, search, setSearch, bucket,
         <div className="vs-view">
             <div className="vs-view-title">
                 <h1>Mis <em>Cobranzas</em></h1>
-                <p><span className="dot" /> {formatMoney(totalSaldo)} pendientes · {totalClientes} clientes{lastRefresh && ` · ${lastRefresh.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`}</p>
+                {/* 🪤 Este subtítulo NO es la cartera: es "mi lista" con las reglas de
+                    cobranzas (umbral de $2.000, sólo deudores, las cuentas internas adentro).
+                    La tarjeta de abajo usa las reglas de la conciliación. Nunca van a dar
+                    igual, así que se rotulan distinto a propósito. */}
+                <p><span className="dot" /> {formatMoney(totalSaldo)} en mi lista · {totalClientes} clientes{lastRefresh && ` · ${lastRefresh.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`}</p>
             </div>
+
+            {veCartera && <CarteraCard periodo={viewPeriod} cods={codsQs} />}
+
+            {/* 🪤 El período de arriba mueve el TOTAL, no la lista: los clientes salen de
+                /api/data, que siempre trae la foto de hoy. Antes el cartel global decía
+                "Viendo cierre histórico" sobre unos saldos que eran los de hoy, a secas. */}
+            {!isCurrentPeriod(viewPeriod) && (
+                <div className="vs-cobranzas-nota">
+                    El total de arriba es el del período que elegiste. La lista de clientes de acá abajo es siempre la de <b>hoy</b>.
+                </div>
+            )}
 
             <div className="vs-search">
                 <Search size={16} />

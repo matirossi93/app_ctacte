@@ -44,6 +44,7 @@ import {
 import { importMaestroClientes } from './server-lib/sheetImport.js';
 import { descargarReporte } from './server-lib/reportes.js';
 import { getConciliacion, exportConciliacion, listSnapshotsConciliacion, guardarSnapshotConciliacion } from './server-lib/conciliacion.js';
+import { getCartera } from './server-lib/cartera.js';
 import { cruceCarpetaHandler, exportCruceHandler } from './server-lib/cruceCarpeta.js';
 import { listRebotes, listRecargos, syncRebotesNow, syncRebotes } from './server-lib/rebotes.js';
 import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos, hermanosDeFamilia } from './server-lib/productGoals.js';
@@ -630,6 +631,7 @@ for (const prefix of [
     // Auditoría 22-jul: el repartidor no debe leer promesas de pago/alertas del equipo.
     '/api/notificaciones',
     '/api/pedidos',
+    '/api/cartera',
 ]) {
     app.use(prefix, maybeJwt, denyRepartidor);
 }
@@ -715,6 +717,11 @@ const uploadXlsxMem = multer({
     },
 });
 app.get('/api/conciliacion/snapshots', requireJwt, (req: any, res) => listSnapshotsConciliacion(req, res));
+
+// Cartera de cuenta corriente a una fecha, por vendedor y con el total de "cuánto hay en
+// calle". El gate de rol (admin/gerente/socio) va adentro del handler: requireJwt lo pasa
+// cualquier usuario con sesión válida.
+app.get('/api/cartera', requireJwt, (req: any, res) => getCartera(req, res));
 // Wrapper del middleware de multer para responder JSON 400 ante rechazo del
 // fileFilter o archivo demasiado grande (sin esto, el error caía al handler
 // default de Express como HTML 500).
@@ -1635,12 +1642,19 @@ if (hasSupabase()) {
 // Idempotente: upsert por (empresa, fecha) — correrlo dos veces pisa la foto.
 if (hasSupabase()) {
     cron.schedule('50 23 * * *', async () => {
-        try {
-            const r = await guardarSnapshotConciliacion(1);
-            if (r.guardado) console.log(`[cron snapshot conciliacion] ${r.fecha}: ${r.n_rows} filas`);
-            else console.warn(`[cron snapshot conciliacion] ${r.fecha}: IM devolvió 0 filas, snapshot NO guardado`);
-        } catch (err: any) {
-            console.warn(`[cron snapshot conciliacion] fallo: ${err?.message ?? err}`);
+        // 🪤 SECUENCIAL, no Promise.all: cada foto tarda ~6,5 s y pesa ~316 KB, y no hay
+        // limitador global de concurrencia contra IM (ya hubo 429). Tres en paralelo a las
+        // 23:50 es pegarle al pedo. Un fallo de una empresa no cancela las otras.
+        // Emp 2 y 3 se agregaron el 31/08/2026: hasta ese día solo había fotos de Casa
+        // Central, así que BRS y San Juan arrancan su historia desde acá.
+        for (const emp of [1, 2, 3]) {
+            try {
+                const r = await guardarSnapshotConciliacion(emp);
+                if (r.guardado) console.log(`[cron snapshot conciliacion] emp${emp} ${r.fecha}: ${r.n_rows} filas`);
+                else console.warn(`[cron snapshot conciliacion] emp${emp} ${r.fecha}: IM devolvió 0 filas, snapshot NO guardado`);
+            } catch (err: any) {
+                console.warn(`[cron snapshot conciliacion] emp${emp} fallo: ${err?.message ?? err}`);
+            }
         }
     }, { timezone: 'America/Argentina/Buenos_Aires' });
     console.log('Cron snapshot conciliacion: 50 23 * * * (America/Argentina/Buenos_Aires)');

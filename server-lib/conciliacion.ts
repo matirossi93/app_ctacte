@@ -457,8 +457,8 @@ export async function fetchRecibosTransito(codEmpresa: number): Promise<ReciboTr
   return rows;
 }
 
-/** Trae todo y agrupa. Compartido por el endpoint JSON y el export xlsx. */
-async function armarConciliacion(codEmpresa: number, refresh: boolean): Promise<{ resultado: ResultadoConciliacion; fetchedAt: number }> {
+/** Trae todo y agrupa. Compartido por el endpoint JSON, el export xlsx y /api/cartera. */
+export async function armarConciliacion(codEmpresa: number, refresh: boolean): Promise<{ resultado: ResultadoConciliacion; fetchedAt: number }> {
   const [pend, clientes, recibos, vendedores] = await Promise.all([
     fetchPendientesCached(codEmpresa, refresh),
     fetchClientesIMCached(),
