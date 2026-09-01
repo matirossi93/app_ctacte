@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { puedeTocarPedido } from './permisos.js';
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
 import { sucursalDe, type Sucursal } from './sucursales.js';
@@ -627,11 +628,17 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
 export async function editarPedido(req: Request & { user?: JwtPayload }, res: Response) {
   try {
     const user = req.user!;
-    let q = sb().from('pedidos_vendedor').select('*').eq('id', req.params.id).eq('tenant_id', TENANT_ID);
-    if (user.rol === 'vendedor') q = q.eq('cod_vendedor', user.cod_vendedor ?? -1);
-    const { data: pedido, error } = await q.maybeSingle();
+    // 🔑 Se trae el pedido SIN filtrar y después se pregunta si lo puede tocar: así el que no
+    // es dueño recibe un 403 que se entiende, y no un 404 que lo deja pensando que se perdió.
+    // Editar y anular tocan InfoManager de verdad: la regla vive en permisos.ts, con tests.
+    const { data: pedido, error } = await sb().from('pedidos_vendedor').select('*')
+      .eq('id', req.params.id).eq('tenant_id', TENANT_ID).maybeSingle();
     if (error) { res.status(500).json({ error: error.message }); return; }
     if (!pedido) { res.status(404).json({ error: 'Pedido no encontrado' }); return; }
+    if (!puedeTocarPedido(user, pedido)) {
+      res.status(403).json({ error: 'Este pedido lo cargó otra persona. Pedile a administración que lo modifique.' });
+      return;
+    }
 
     if (pedido.estado === 'anulado') { res.status(409).json({ error: 'El pedido está anulado: no se puede editar.' }); return; }
     if (pedido.estado === 'facturado') { res.status(409).json({ error: 'El pedido ya está facturado: no se puede editar.' }); return; }
@@ -997,11 +1004,17 @@ export async function getPedidoById(req: Request & { user?: JwtPayload }, res: R
 export async function anularPedido(req: Request & { user?: JwtPayload }, res: Response) {
   try {
     const user = req.user!;
-    let q = sb().from('pedidos_vendedor').select('*').eq('id', req.params.id).eq('tenant_id', TENANT_ID);
-    if (user.rol === 'vendedor') q = q.eq('cod_vendedor', user.cod_vendedor ?? -1);
-    const { data: pedido, error } = await q.maybeSingle();
+    // 🔑 Se trae el pedido SIN filtrar y después se pregunta si lo puede tocar: así el que no
+    // es dueño recibe un 403 que se entiende, y no un 404 que lo deja pensando que se perdió.
+    // Editar y anular tocan InfoManager de verdad: la regla vive en permisos.ts, con tests.
+    const { data: pedido, error } = await sb().from('pedidos_vendedor').select('*')
+      .eq('id', req.params.id).eq('tenant_id', TENANT_ID).maybeSingle();
     if (error) { res.status(500).json({ error: error.message }); return; }
     if (!pedido) { res.status(404).json({ error: 'Pedido no encontrado' }); return; }
+    if (!puedeTocarPedido(user, pedido)) {
+      res.status(403).json({ error: 'Este pedido lo cargó otra persona. Pedile a administración que lo modifique.' });
+      return;
+    }
     if (pedido.estado === 'anulado') { res.status(409).json({ error: 'El pedido ya está anulado' }); return; }
     if (pedido.estado === 'facturado') { res.status(409).json({ error: 'El pedido ya está facturado: no se puede anular desde acá.' }); return; }
     if (pedido.estado === 'sin_respuesta') {

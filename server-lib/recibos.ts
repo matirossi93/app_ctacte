@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { veCobranzasDeTodos } from './permisos.js';
+import { filaUsuario } from './perfilUsuario.js';
 import { promises as fsp } from 'node:fs';
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
@@ -278,7 +280,12 @@ export async function listRecibos(req: Request & { user?: JwtPayload }, res: Res
   try {
     const user = req.user!;
     let q = sb().from('comprobantes_pago').select(LIST_COLUMNS).eq('tenant_id', TENANT_ID);
-    if (user.rol === 'vendedor') q = q.eq('cod_vendedor', user.cod_vendedor ?? -1);
+    // 🔴 Esto era `if (rol === 'vendedor')`: una lista NEGRA, así que socio, encargado y
+    // administrativo veían las cobranzas de todo el equipo — y desde el detalle, la FOTO del
+    // cheque o de la transferencia. Ahora es lista blanca (permisos.ts, con tests).
+    if (!veCobranzasDeTodos(user.rol, (await filaUsuario(user)).ve_toda_la_empresa)) {
+      q = q.eq('cod_vendedor', user.cod_vendedor ?? -1);
+    }
     if (req.query.status) q = q.eq('status', String(req.query.status));
     if (req.query.cod_cliente) q = q.eq('cod_cliente', Number(req.query.cod_cliente));
     if (req.query.cod_vendedor && user.rol !== 'vendedor') q = q.eq('cod_vendedor', Number(req.query.cod_vendedor));
@@ -321,7 +328,10 @@ export async function getReciboById(req: Request & { user?: JwtPayload }, res: R
     const user = req.user!;
     let q = sb().from('comprobantes_pago').select('*')
       .eq('id', req.params.id).eq('tenant_id', TENANT_ID);
-    if (user.rol === 'vendedor') q = q.eq('cod_vendedor', user.cod_vendedor ?? -1);
+    // Este devuelve la foto firmada del comprobante: mismo candado que la lista.
+    if (!veCobranzasDeTodos(user.rol, (await filaUsuario(user)).ve_toda_la_empresa)) {
+      q = q.eq('cod_vendedor', user.cod_vendedor ?? -1);
+    }
     const { data, error } = await q.maybeSingle();
     if (error) { res.status(500).json({ error: error.message }); return; }
     if (!data) { res.status(404).json({ error: 'Comprobante no encontrado' }); return; }

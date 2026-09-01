@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { puedeTocarActividadAjena } from './permisos.js';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import type { JwtPayload } from './auth.js';
 
@@ -142,7 +143,10 @@ export async function updateActivity(req: Request & { user?: JwtPayload }, res: 
       .eq('tenant_id', TENANT_ID)
       .maybeSingle();
     if (!row) { res.status(404).json({ error: 'No encontrado' }); return; }
-    if (user.rol === 'vendedor' && row.created_by !== user.sub) {
+    // 🪤 El comentario de esta función decía "solo propia o admin" y el código dejaba pasar a
+    // TODO el que no fuera vendedor: socio, encargado y administrativo editarban la promesa de
+    // pago de cualquiera. La regla, ahora en lista blanca, vive en permisos.ts.
+    if (!puedeTocarActividadAjena(user.rol) && row.created_by !== user.sub) {
       res.status(403).json({ error: 'No podés editar actividad de otro usuario' });
       return;
     }
@@ -273,7 +277,10 @@ export async function deleteActivity(req: Request & { user?: JwtPayload }, res: 
     const user = req.user!;
     const { data: row } = await sb().from('vendor_activity').select('created_by').eq('id', req.params.id).eq('tenant_id', TENANT_ID).maybeSingle();
     if (!row) { res.status(404).json({ error: 'No encontrado' }); return; }
-    if (user.rol === 'vendedor' && row.created_by !== user.sub) {
+    // 🪤 El comentario de esta función decía "solo propia o admin" y el código dejaba pasar a
+    // TODO el que no fuera vendedor: socio, encargado y administrativo borrarban la promesa de
+    // pago de cualquiera. La regla, ahora en lista blanca, vive en permisos.ts.
+    if (!puedeTocarActividadAjena(user.rol) && row.created_by !== user.sub) {
       res.status(403).json({ error: 'No podés borrar actividad de otro usuario' });
       return;
     }
