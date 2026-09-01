@@ -1105,7 +1105,12 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                             })}
 
                             {cart.length > 0 && (
-                                <textarea className="ped-obs" placeholder="Observaciones (opcional)" value={obs} onChange={e => setObs(e.target.value)} />
+                                /* 🪤 El tope lo pone la cabecera del presupuesto de IM (500). Sin `maxLength`
+                                   el vendedor escribía de más y la cola se perdía en el server, sin que
+                                   nada se lo dijera — y esto lo lee la oficina al facturar. */
+                                <textarea className="ped-obs" maxLength={500}
+                                    placeholder="Observaciones (las ve la oficina al facturar)"
+                                    value={obs} onChange={e => setObs(e.target.value)} />
                             )}
                         </div>
 

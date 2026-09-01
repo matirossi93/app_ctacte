@@ -387,6 +387,30 @@ async function resolverYControlar(
 }
 
 /** Resuelve cod_vendedor del pedido según rol (vendedor = el suyo; admin/gerente = del body o del cliente). */
+/** Tope de la observación que acepta la cabecera del presupuesto. */
+const OBS_MAX = 500;
+
+/**
+ * La observación que se manda a InfoManager.
+ *
+ * 🔑 Es lo que escribió el VENDEDOR, y nada más. Mati, 01/09/2026: *"habría que dejar libre el
+ * campo observación porque eso lo utilizamos acá a la hora de facturar"*. Antes salía con
+ * `Pedido app · <nombre del vendedor>` pegado adelante: la oficina leía dos datos nuestros
+ * antes del suyo, y el vendedor se quedaba con menos de los 500 caracteres.
+ *
+ * No se pierde de quién es el pedido: `cod_vendedor` viaja en su propio campo de la cabecera y
+ * `cod_compatibilidad` marca que salió de la app.
+ *
+ * 🪤 Lo único que se sigue agregando es "reemplaza al PR N", y va AL FINAL: si al editar
+ * quedan los dos presupuestos vivos, el propio papel dice cuál es el bueno. Eso pasó de verdad
+ * el 28/08, no es decorativo.
+ */
+export function observacionParaIM(texto: unknown, prReemplazado?: number | null): string {
+  const propia = String(texto ?? '').trim();
+  const nota = prReemplazado ? `reemplaza al PR ${prReemplazado}` : '';
+  return [propia, nota].filter(Boolean).join(' · ').slice(0, OBS_MAX);
+}
+
 async function resolverCodVendedor(user: JwtPayload, codCliente: number, bodyCodVend?: any): Promise<number> {
   if (user.rol === 'vendedor') return user.cod_vendedor ?? 0;
   if (bodyCodVend != null && Number.isFinite(Number(bodyCodVend))) return Number(bodyCodVend);
@@ -539,12 +563,7 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
       cod_lista_precios: codLista,
       usuario: usuarioDeIM,
       punto_de_venta: sucursal.punto_de_venta,
-      // 🪤 Era un ternario: si el vendedor escribia CUALQUIER cosa, el marcador desaparecia.
-      // El campo `usuario` de IM es el operador de la oficina (hoy siempre el mismo para todos
-      // los pedidos de la app), asi que esta es la unica linea de la cabecera donde se lee en
-      // criollo quien armo el pedido. Va de PREFIJO, y con el nombre en vez del codigo: el
-      // corte a 500 es por la cola, asi que lo que va primero nunca se pierde.
-      observaciones: `Pedido app · ${user.nombre || `vend ${codVendedor}`}${body.observaciones ? ` · ${String(body.observaciones)}` : ''}`.slice(0, 500),
+      observaciones: observacionParaIM(body.observaciones),
       cod_compatibilidad: pedidoId.slice(0, 8),
       items: itemsConPrecio.map((it) => ({
         cod_articulo: it.cod_articulo,
@@ -738,9 +757,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         cod_lista_precios: Number(pedido.cod_lista_precios) || PEDIDO_LISTA_FALLBACK,
         usuario: await usuarioIM(user),
         punto_de_venta: pedido.im_punto_de_venta ?? PEDIDO_PUNTO_DE_VENTA,
-        // "reemplaza al PR N" es para el que mira el comprobante en IM: si por lo que sea
-        // quedan los dos, el propio papel dice cuál es el bueno.
-        observaciones: `Pedido app · ${user.nombre || `vend ${pedido.cod_vendedor}`}${numViejo ? ` · reemplaza al PR ${numViejo}` : ''}${observaciones ? ` · ${observaciones}` : ''}`.slice(0, 500),
+        observaciones: observacionParaIM(observaciones, numViejo),
         // 🪤 Acá iba `String(pedido.id).slice(0, 8)`: el MISMO código que ya había gastado el
         // presupuesto original. IM exige que cod_compatibilidad sea único INCLUYENDO los
         // anulados (verificado: el 58640964 quedó anulada:"S", con 0 renglones, y retiene su
