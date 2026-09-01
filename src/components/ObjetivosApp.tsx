@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
-import { X, Target, Calendar, Check, Edit3, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+import { X, Target, Calendar, Check, Edit3, Loader2, AlertCircle, RefreshCw, History } from 'lucide-react';
 import { authHeaders, getUser } from '../utils/auth';
+import { mesEnCursoArgentina } from '../utils/hoyArgentina';
+import type { Historico, CeldaMes } from '../utils/cumplimiento';
 import './ObjetivosApp.css';
 
 interface Props { onClose: () => void }
@@ -41,9 +43,12 @@ interface GoalsResponse {
 export const ObjetivosApp = ({ onClose }: Props) => {
     const user = getUser();
     const isAdmin = user?.rol === 'admin' || user?.rol === 'gerente';
-    const today = new Date();
-    const [year] = useState(today.getUTCFullYear());
-    const [month] = useState(today.getUTCMonth() + 1);
+    // 🪤 El mes se toma en hora de Argentina, no en UTC. Con `getUTCMonth()` el último día
+    // del mes, a partir de las 21:00, la pantalla saltaba al mes siguiente (vacío).
+    const enCurso = mesEnCursoArgentina();
+    const [year] = useState(enCurso.year);
+    const [month] = useState(enCurso.month);
+    const [tab, setTab] = useState<'mes' | 'historico'>('mes');
     const [data, setData] = useState<GoalsResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
@@ -136,10 +141,27 @@ export const ObjetivosApp = ({ onClose }: Props) => {
                 </header>
 
                 <div className="obj-body">
-                    {loading && <div className="obj-loading"><Loader2 className="spin" /> Cargando…</div>}
-                    {err && <div className="obj-error"><AlertCircle size={16} /> {err}</div>}
+                    {isAdmin && (
+                        <div className="obj-tabs" role="tablist">
+                            <button role="tab" aria-selected={tab === 'mes'}
+                                className={`obj-tab ${tab === 'mes' ? 'is-active' : ''}`}
+                                onClick={() => setTab('mes')}>
+                                <Target size={14} /> Este mes
+                            </button>
+                            <button role="tab" aria-selected={tab === 'historico'}
+                                className={`obj-tab ${tab === 'historico' ? 'is-active' : ''}`}
+                                onClick={() => setTab('historico')}>
+                                <History size={14} /> Histórico
+                            </button>
+                        </div>
+                    )}
 
-                    {!loading && !err && data && (
+                    {tab === 'historico' && <HistoricoView yearActual={enCurso.year} />}
+
+                    {tab === 'mes' && loading && <div className="obj-loading"><Loader2 className="spin" /> Cargando…</div>}
+                    {tab === 'mes' && err && <div className="obj-error"><AlertCircle size={16} /> {err}</div>}
+
+                    {tab === 'mes' && !loading && !err && data && (
                         <>
                             {/* Días hábiles pill */}
                             <div className="obj-days-bar">
@@ -212,6 +234,161 @@ export const ObjetivosApp = ({ onClose }: Props) => {
         </div>
     );
 };
+
+// ─── Histórico del año (admin) ──────────────────────────────────────────────
+const MES_CORTO = ['E', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+const MES_LARGO = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+/** Celda seleccionada: de quién y de qué mes, para el detalle en pesos de abajo. */
+interface Sel { nombre: string; celda: CeldaMes }
+
+function HistoricoView({ yearActual }: { yearActual: number }) {
+    const [year, setYear] = useState(yearActual);
+    const [data, setData] = useState<Historico | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [err, setErr] = useState<string | null>(null);
+    const [sel, setSel] = useState<Sel | null>(null);
+
+    useEffect(() => {
+        let vivo = true;
+        setLoading(true); setErr(null); setSel(null);
+        fetch(`/api/goals/historico?year=${year}`, { headers: authHeaders() })
+            .then(async r => {
+                const j = await r.json();
+                if (!r.ok || !j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+                return j;
+            })
+            .then(j => { if (vivo) setData(j); })
+            .catch(e => { if (vivo) setErr(e.message); })
+            .finally(() => { if (vivo) setLoading(false); });
+        return () => { vivo = false; };
+    }, [year]);
+
+    if (loading) return <div className="obj-loading"><Loader2 className="spin" /> Cargando…</div>;
+    if (err) return <div className="obj-error"><AlertCircle size={16} /> {err}</div>;
+    if (!data) return null;
+
+    const años = [yearActual, yearActual - 1, yearActual - 2];
+
+    return (
+        <div className="obj-hist">
+            <div className="obj-hist-bar">
+                <select className="obj-hist-year" value={year} onChange={e => setYear(Number(e.target.value))}>
+                    {años.map(a => <option key={a} value={a}>{a}</option>)}
+                </select>
+                <span className="obj-hist-legend">
+                    <i className="dot cumplio" /> cumplió
+                    <i className="dot cerca" /> cerca
+                    <i className="dot lejos" /> lejos
+                </span>
+            </div>
+
+            {data.primerMesConObjetivo == null ? (
+                <div className="obj-empty">
+                    <Target size={32} />
+                    <p>No hay objetivos cargados en {year}.</p>
+                </div>
+            ) : (
+                <>
+                    {/* Si los objetivos arrancaron a mitad de año, decirlo: una grilla con la
+                        primera mitad vacía se lee como "no cumplieron", y no es eso. */}
+                    {data.primerMesConObjetivo > 1 && (
+                        <p className="obj-hist-nota">
+                            Los objetivos de {year} arrancan en {MES_LARGO[data.primerMesConObjetivo - 1]}.
+                            Los meses anteriores están vacíos porque no se cargaron, no porque no se hayan cumplido.
+                        </p>
+                    )}
+
+                    <div className="obj-hist-scroll">
+                        <table className="obj-hist-table">
+                            <thead>
+                                <tr>
+                                    <th className="sticky">Vendedor</th>
+                                    {MES_CORTO.map((m, i) => <th key={i} title={MES_LARGO[i]}>{m}</th>)}
+                                    <th className="obj-hist-resumen">Año</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {data.filas.map(f => (
+                                    <tr key={f.cod_vendedor}>
+                                        <th className="sticky">{f.nombre}</th>
+                                        {f.meses.map(c => (
+                                            <Celda key={c.month} celda={c}
+                                                activa={sel?.nombre === f.nombre && sel?.celda.month === c.month}
+                                                onClick={() => setSel({ nombre: f.nombre, celda: c })} />
+                                        ))}
+                                        <td className="obj-hist-resumen">
+                                            {f.conObjetivo === 0 ? '—' : (
+                                                <>
+                                                    <strong>{Math.round((f.promedio ?? 0) * 100)}%</strong>
+                                                    <small>cumplió {f.cumplidos} de {f.conObjetivo}</small>
+                                                </>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                                <tr className="obj-hist-equipo">
+                                    <th className="sticky">Equipo</th>
+                                    {data.equipo.map(c => (
+                                        <Celda key={c.month} celda={c}
+                                            activa={sel?.nombre === 'Equipo' && sel?.celda.month === c.month}
+                                            onClick={() => setSel({ nombre: 'Equipo', celda: c })} />
+                                    ))}
+                                    <td className="obj-hist-resumen">—</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {sel ? (
+                        <div className="obj-hist-detalle">
+                            <div className="obj-hist-detalle-head">
+                                <strong>{sel.nombre}</strong>
+                                <span>{MES_LARGO[sel.celda.month - 1]} {year}</span>
+                            </div>
+                            {sel.celda.target == null ? (
+                                <p className="obj-hist-detalle-nota">
+                                    {sel.celda.estado === 'futuro'
+                                        ? 'Este mes todavía no llegó.'
+                                        : `Sin objetivo cargado. Vendió ${formatMoney(sel.celda.neto)}.`}
+                                </p>
+                            ) : (
+                                <div className="obj-hist-detalle-figs">
+                                    <div><span className="k">Objetivo</span><span className="v">{formatMoney(sel.celda.target)}</span></div>
+                                    <div><span className="k">Vendido</span><span className="v gold">{formatMoney(sel.celda.neto)}</span></div>
+                                    <div>
+                                        <span className="k">Diferencia</span>
+                                        <span className="v">{formatMoney(sel.celda.neto - sel.celda.target)}</span>
+                                    </div>
+                                    <div>
+                                        <span className="k">Cumplimiento</span>
+                                        <span className="v">{Math.round((sel.celda.pct ?? 0) * 100)}%
+                                            {sel.celda.estado === 'en_curso' && <small> (mes en curso)</small>}
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <p className="obj-hist-hint">Tocá cualquier mes para ver el objetivo y lo vendido en pesos.</p>
+                    )}
+                </>
+            )}
+        </div>
+    );
+}
+
+function Celda({ celda, activa, onClick }: { celda: CeldaMes; activa: boolean; onClick: () => void }) {
+    const vacia = celda.estado === 'futuro' || celda.estado === 'sin_objetivo';
+    return (
+        <td className={`obj-hist-cell is-${celda.estado} ${activa ? 'is-sel' : ''}`}
+            onClick={onClick} role="button" tabIndex={0}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+            title={vacia ? undefined : `${formatMoney(celda.neto)} de ${formatMoney(celda.target)}`}>
+            {vacia ? '' : `${Math.round((celda.pct ?? 0) * 100)}%`}
+        </td>
+    );
+}
 
 // ─── Hero del vendedor ──────────────────────────────────────────────────────
 function HeroGoal({ item }: { item: GoalItem }) {

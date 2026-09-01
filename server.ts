@@ -28,6 +28,7 @@ import {
   reverificarMP, elegirMatchMP, procesarColaMP, caducarRecibosPendientes, mpConfig
 } from './server-lib/recibos.js';
 import { listGoals, setGoal, syncVentasNow, setMonthConfig, listClientesObjetivo, debugClienteAvance, getGoalsSnapshot, botGoals } from './server-lib/goals.js';
+import { listGoalsHistorico } from './server-lib/goalsHistorico.js';
 import { listComisiones, listComisionesSucursal, probeVenta, comisionesSample, topArticulos, facturasVendedor, diagnoseArticulo } from './server-lib/comisiones.js';
 import { listOverrides, addOverride, deleteOverride } from './server-lib/comisionOverrides.js';
 import { listClientesLookup } from './server-lib/clientes.js';
@@ -878,6 +879,7 @@ app.post('/api/month-config', requireJwt, (req: any, res) => setMonthConfig(req,
 app.get('/api/goals/clientes', requireJwt, (req: any, res) => listClientesObjetivo(req, res));
 app.get('/api/goals/debug-cliente/:cod', requireJwt, requireAdmin, (req: any, res) => debugClienteAvance(req, res));
 app.get('/api/goals/snapshot', requireJwt, (req: any, res) => getGoalsSnapshot(req, res));
+app.get('/api/goals/historico', requireJwt, (req: any, res) => listGoalsHistorico(req, res));
 
 // ─── Comisiones por vendedor (calculadas desde /ventas + /ventas/items) ──────
 // Vendedor: ve solo la suya. Admin/gerente: ve todas (whitelist 5 visibles).
