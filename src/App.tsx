@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Dashboard } from './components/Dashboard';
 import { LoginScreen } from './components/LoginScreen';
 import { VendorShell } from './components/VendorShell';
 import { RepartidorShell } from './components/RepartidorShell';
-import { authHeaders, clearToken, getAuthMode, getToken, getUser, setUser } from './utils/auth';
+import { authHeaders, clearToken, getToken, getUser, setUser } from './utils/auth';
 import { sesionRechazada } from './utils/sesionInicial';
 
 type AuthState = 'checking' | 'authenticated' | 'unauthenticated';
@@ -28,52 +27,33 @@ function App() {
         setAuthState(getToken() && getUser() ? 'authenticated' : 'unauthenticated');
     };
 
+    // Ya no hay dos modos de sesión: sólo JWT. El de contraseña compartida se fue junto
+    // con el panel viejo el 01/09/2026 (el server ya lo rechazaba desde antes).
     useEffect(() => {
-        const mode = getAuthMode();
-        if (mode === 'jwt') {
-            fetch('/api/me', { headers: authHeaders() })
-                .then(async res => {
-                    const data = res.ok
-                        ? await res.json().catch(() => null) as { ok: boolean; user: any } | null
-                        : null;
-                    // La regla vive en utils/sesionInicial.ts, con tests: es la que estaba mal.
-                    if (sesionRechazada(res.status, !!(data?.ok && data.user))) {
-                        clearToken();
-                        setAuthState('unauthenticated');
-                        return;
-                    }
-                    if (data?.ok && data.user) {
-                        setUser({
-                            email: data.user.email,
-                            rol: data.user.rol,
-                            cod_vendedor: data.user.cod_vendedor ?? null,
-                            vendedor_key: data.user.vendedor_key ?? null,
-                            nombre: data.user.nombre ?? null,
-                        });
-                        setAuthState('authenticated');
-                        return;
-                    }
-                    // El server no pudo contestar (5xx, proxy): se sigue con lo guardado.
-                    seguirConLaSesionGuardada();
-                })
-                .catch(seguirConLaSesionGuardada);
-            return;
-        }
-        fetch('/api/auth/check', { headers: authHeaders() })
+        fetch('/api/me', { headers: authHeaders() })
             .then(async res => {
-                if (res.ok) {
-                    const data = await res.json() as { valid: boolean; authRequired: boolean };
-                    if (!data.authRequired || data.valid) {
-                        setAuthState('authenticated');
-                    } else {
-                        setAuthState('unauthenticated');
-                    }
-                } else if (sesionRechazada(res.status, false)) {
+                const data = res.ok
+                    ? await res.json().catch(() => null) as { ok: boolean; user: any } | null
+                    : null;
+                // La regla vive en utils/sesionInicial.ts, con tests: es la que estaba mal.
+                if (sesionRechazada(res.status, !!(data?.ok && data.user))) {
                     clearToken();
                     setAuthState('unauthenticated');
-                } else {
-                    seguirConLaSesionGuardada();
+                    return;
                 }
+                if (data?.ok && data.user) {
+                    setUser({
+                        email: data.user.email,
+                        rol: data.user.rol,
+                        cod_vendedor: data.user.cod_vendedor ?? null,
+                        vendedor_key: data.user.vendedor_key ?? null,
+                        nombre: data.user.nombre ?? null,
+                    });
+                    setAuthState('authenticated');
+                    return;
+                }
+                // El server no pudo contestar (5xx, proxy): se sigue con lo guardado.
+                seguirConLaSesionGuardada();
             })
             .catch(seguirConLaSesionGuardada);
     }, []);
@@ -97,23 +77,23 @@ function App() {
         return <LoginScreen onLogin={() => setAuthState('authenticated')} />;
     }
 
-    // Shell mobile-first para todos los roles JWT (admin puede alternar vista con selector).
-    const mode = getAuthMode();
     const user = getUser();
-    if (mode === 'jwt' && user) {
-        // El repartidor solo carga y consulta comprobantes: no ve cobranzas,
-        // objetivos ni comisiones. Tiene su propia pantalla acotada.
-        if (user.rol === 'repartidor') {
-            return <RepartidorShell onLogout={() => { clearToken(); setAuthState('unauthenticated'); }} />;
-        }
-        return <VendorShell onLogout={() => { clearToken(); setAuthState('unauthenticated'); }} />;
+
+    // 🗑️ 01/09/2026: se borró el panel viejo (Dashboard) y con él el modo "contraseña
+    // compartida". Hacía rato que no se podía entrar por ahí: el server ya respondía
+    // "Acceso deshabilitado" porque APP_PASSWORD no está configurado.
+    // Una sesión vieja guardada en ese modo no tiene a dónde ir ⇒ al login.
+    if (!user) {
+        clearToken();
+        return <LoginScreen onLogin={() => setAuthState('authenticated')} />;
     }
 
-    return (
-        <div className="app-container">
-            <Dashboard onUnauthorized={() => { clearToken(); setAuthState('unauthenticated'); }} />
-        </div>
-    );
+    // El repartidor solo carga y consulta comprobantes: no ve cobranzas,
+    // objetivos ni comisiones. Tiene su propia pantalla acotada.
+    if (user.rol === 'repartidor') {
+        return <RepartidorShell onLogout={() => { clearToken(); setAuthState('unauthenticated'); }} />;
+    }
+    return <VendorShell onLogout={() => { clearToken(); setAuthState('unauthenticated'); }} />;
 }
 
 export default App;
