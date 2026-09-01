@@ -50,3 +50,47 @@ export function fechaLegible(iso: string): string {
     const [y, m, d] = iso.split('-');
     return `${d}/${m}/${y}`;
 }
+
+/** El mes en curso, sin día: "hasta hoy". */
+export function mesActual(hoy: string): PeriodoCorte {
+    const [year, month] = hoy.split('-').map(Number);
+    return { year, month, asOfDay: null };
+}
+
+/** ¿El período elegido es "hoy"? (mes en curso, sin un día puntual) */
+export function esPeriodoActual(p: PeriodoCorte, hoy: string): boolean {
+    const a = mesActual(hoy);
+    return p.year === a.year && p.month === a.month && p.asOfDay == null;
+}
+
+/**
+ * Con qué período arranca la pantalla, a partir de lo que quedó guardado.
+ *
+ * 🔴 01/09/2026, reportado por Mati: abrió la app y el filtro decía **31/08** sin que él
+ * tocara nada, así que estaba mirando la cartera de ayer creyendo que era la de hoy.
+ *
+ * El motivo: el período se guarda en sessionStorage y sobrevive al recargar. Ayer estaba en
+ * "agosto, sin día" — que ayer significaba **hoy**. Hoy, con agosto ya cerrado, ese mismo
+ * valor significa **31/08**: el mismo dato cambió de sentido al pasar la medianoche, sin que
+ * nadie eligiera nada.
+ *
+ * 🔑 La distinción es qué quiso decir el usuario. Guardamos también el DÍA en que se guardó:
+ *  · si el período guardado era el mes en curso EN ESE MOMENTO, quería decir "hoy" ⇒ hoy
+ *    también quiere decir hoy, y se recalcula;
+ *  · si eligió un mes pasado a propósito (o un día puntual), esa elección se respeta.
+ *
+ * Un valor viejo sin `guardadoEn` (los que ya estaban en el teléfono) se trata como el primer
+ * caso: es la situación que reportó Mati, y equivocarse hacia "hoy" muestra el dato correcto
+ * del día, mientras que equivocarse hacia el otro lado le esconde la realidad.
+ */
+export function periodoInicial(guardado: unknown, hoy: string): PeriodoCorte {
+    const g = guardado as { year?: unknown; month?: unknown; asOfDay?: unknown; guardadoEn?: unknown } | null;
+    if (!g || typeof g.year !== 'number' || typeof g.month !== 'number') return mesActual(hoy);
+    const p: PeriodoCorte = { year: g.year, month: g.month, asOfDay: typeof g.asOfDay === 'number' ? g.asOfDay : null };
+    if (esPeriodoActual(p, hoy)) return p;               // ya es el mes en curso: nada que hacer
+    if (p.asOfDay != null) return p;                     // eligió un día puntual: se respeta
+    const guardadoEn = typeof g.guardadoEn === 'string' ? g.guardadoEn : null;
+    // Sin fecha de guardado, o guardado cuando ESE era el mes en curso ⇒ quería decir "hoy".
+    if (!guardadoEn || esPeriodoActual(p, guardadoEn)) return mesActual(hoy);
+    return p;                                            // eligió un mes pasado a propósito
+}

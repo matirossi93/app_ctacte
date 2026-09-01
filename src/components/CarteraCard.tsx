@@ -122,10 +122,25 @@ export function CarteraCard({ periodo, cods, onPeriodoChange }: Props) {
         </label>
     );
 
-    const envoltorio = (contenido: React.ReactNode) => (
-        <div className="cartera-inline">
-            {contenido}
-            {selectorFecha}
+    /**
+     * 🪤 TODOS los estados (cargando, error, sin foto, con número) salen por acá, con la
+     * MISMA estructura. No es prolijidad: el calendario tiene que caer siempre en el mismo
+     * lugar del árbol o React lo destruye y lo vuelve a crear en cada cambio de estado.
+     *
+     * 01/09/2026, reportado por Mati ("el calendario no funciona bien"): antes el estado
+     * "Calculando…" devolvía un `<div class="cartera-inline">` suelto y el estado con número
+     * devolvía `<div class="cartera-wrap"><div class="cartera-inline">`. Al elegir una fecha
+     * la tarjeta pasaba por los dos, así que el `<input type="date">` se remontaba — y en el
+     * celular eso **cierra el calendario nativo de un golpe y le saca el foco** justo cuando
+     * lo está usando. Verificado: el nodo del input cambiaba de identidad en cada elección.
+     */
+    const envoltorio = (contenido: React.ReactNode, detalle?: React.ReactNode) => (
+        <div className="cartera-wrap">
+            <div className="cartera-inline">
+                {contenido}
+                {selectorFecha}
+            </div>
+            {detalle}
         </div>
     );
 
@@ -167,11 +182,10 @@ export function CarteraCard({ periodo, cods, onPeriodoChange }: Props) {
     // desplegar para enterarse no es un aviso.
     const repartoDudoso = esFoto && data.maestro_congelado === false;
 
-    return (
-        <div className="cartera-wrap">
-            <div className="cartera-inline">
-                {/* Toda la línea es el botón: en el celular no hay que apuntarle a un link chico. */}
-                <button
+    return envoltorio(
+        <>
+            {/* Toda la línea es el botón: en el celular no hay que apuntarle a un link chico. */}
+            <button
                     className={`cartera-linea ${abierto ? 'is-open' : ''}`}
                     onClick={() => setAbierto(a => !a)}
                     aria-expanded={abierto}
@@ -183,11 +197,9 @@ export function CarteraCard({ periodo, cods, onPeriodoChange }: Props) {
                     <span className="cartera-cli">{total.n_clientes} cli</span>
                     {repartoDudoso && <AlertTriangle size={12} className="cartera-alerta" />}
                     <ChevronDown size={15} className="cartera-chevron" />
-                </button>
-                {selectorFecha}
-            </div>
-
-            {abierto && (
+            </button>
+        </>,
+        abierto && (
                 <div className="cartera-detalle">
                     <div className="cartera-fila cartera-fila--fuerte">
                         <span>Total al {esFoto ? fechaLegible(data.fecha) : 'día de hoy'}</span>
@@ -238,8 +250,7 @@ export function CarteraCard({ periodo, cods, onPeriodoChange }: Props) {
                             Aparte, {money(internas.saldo_im)} en {internas.n_cuentas} cuentas internas (movimientos entre depósitos). <b>No es plata de clientes</b> y no entra en el total de arriba.
                         </div>
                     )}
-                </div>
-            )}
-        </div>
+            </div>
+        ),
     );
 }

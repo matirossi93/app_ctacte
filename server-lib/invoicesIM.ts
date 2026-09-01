@@ -39,10 +39,17 @@ export function normalizarInvoices(
 ): InvoiceIM[] {
   return rows.map(inv => {
     // La app muestra D/M/AAAA, no ISO.
+    //
+    // 🪤 Esto armaba un `new Date(inv.fecha_factura)` y leía `getDate()`. Una fecha ISO suelta
+    // ('2026-07-15') se parsea como MEDIANOCHE UTC, y `getDate()` la lee en hora local: en
+    // Argentina son las 21:00 del día ANTERIOR, así que TODOS los comprobantes se mostraban
+    // corridos un día para atrás (el test de este archivo lo estaba cazando: 14/7 en vez de
+    // 15/7). Se parte el texto y listo — sin Date no hay zona horaria que se meta.
     let fecha = '';
-    if (inv.fecha_factura) {
-      const d = new Date(inv.fecha_factura);
-      if (!isNaN(d.getTime())) fecha = `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+    const iso = String(inv.fecha_factura ?? '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+      const [y, m, d] = iso.split('-');
+      fecha = `${Number(d)}/${Number(m)}/${y}`;
     }
     return {
       COD_CLIENT: String(inv.cod_cliente),

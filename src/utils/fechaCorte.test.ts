@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fechaDeCorte, ultimoDiaDelMes, fechaLegible } from './fechaCorte';
+import { fechaDeCorte, ultimoDiaDelMes, fechaLegible, periodoInicial, esPeriodoActual } from './fechaCorte';
 
 /**
  * De este número depende QUÉ saldo de cuenta corriente se muestra. Si el corte sale corrido
@@ -67,5 +67,64 @@ describe('ultimoDiaDelMes', () => {
 describe('fechaLegible', () => {
     it('da vuelta la fecha para mostrarla', () => {
         expect(fechaLegible('2026-07-31')).toBe('31/07/2026');
+    });
+});
+
+/**
+ * 🔴 01/09/2026 — Mati abrió la app y el filtro decía 31/08 sin que él tocara nada: estaba
+ * mirando la cartera de AYER creyendo que era la de hoy.
+ *
+ * "Agosto sin día" significaba **hoy** cuando se guardó, y **31/08** al día siguiente. El
+ * mismo dato guardado cambió de sentido al pasar la medianoche.
+ */
+describe('periodoInicial — lo guardado ayer no puede mentir hoy', () => {
+    const HOY_SEP = '2026-09-01';
+
+    it('🔴 el caso de Mati: guardado ayer como "el mes en curso" vuelve a ser HOY', () => {
+        const guardado = { year: 2026, month: 8, asOfDay: null, guardadoEn: '2026-08-31' };
+        expect(periodoInicial(guardado, HOY_SEP)).toEqual({ year: 2026, month: 9, asOfDay: null });
+    });
+
+    // Los valores que ya estaban en los teléfonos no tienen `guardadoEn`. Ante la duda, hoy:
+    // mostrar el dato del día es el error barato; esconderle la realidad, no.
+    it('un valor viejo sin fecha de guardado también vuelve a hoy', () => {
+        expect(periodoInicial({ year: 2026, month: 8, asOfDay: null }, HOY_SEP))
+            .toEqual({ year: 2026, month: 9, asOfDay: null });
+    });
+
+    // Lo que el usuario eligió A PROPÓSITO se respeta: no vale "arreglarlo" pisándoselo.
+    it('un mes pasado elegido a propósito se conserva', () => {
+        const guardado = { year: 2026, month: 7, asOfDay: null, guardadoEn: '2026-08-15' };
+        expect(periodoInicial(guardado, HOY_SEP)).toEqual({ year: 2026, month: 7, asOfDay: null });
+    });
+
+    it('un día puntual se conserva siempre', () => {
+        const guardado = { year: 2026, month: 8, asOfDay: 15, guardadoEn: '2026-08-31' };
+        expect(periodoInicial(guardado, HOY_SEP)).toEqual({ year: 2026, month: 8, asOfDay: 15 });
+    });
+
+    it('el mes en curso se deja como está', () => {
+        const guardado = { year: 2026, month: 9, asOfDay: null, guardadoEn: HOY_SEP };
+        expect(periodoInicial(guardado, HOY_SEP)).toEqual({ year: 2026, month: 9, asOfDay: null });
+    });
+
+    it('sin nada guardado, o con basura, arranca en el mes en curso', () => {
+        for (const g of [null, undefined, {}, 'x', { year: 'a', month: 1 }]) {
+            expect(periodoInicial(g, HOY_SEP)).toEqual({ year: 2026, month: 9, asOfDay: null });
+        }
+    });
+
+    // El salto de año es el mismo caso y es el que más caro sale: el 1/1 todos verían el 31/12.
+    it('el 1 de enero no deja a nadie mirando el 31 de diciembre', () => {
+        const guardado = { year: 2025, month: 12, asOfDay: null, guardadoEn: '2025-12-31' };
+        expect(periodoInicial(guardado, '2026-01-01')).toEqual({ year: 2026, month: 1, asOfDay: null });
+    });
+});
+
+describe('esPeriodoActual', () => {
+    it('el mes en curso sin día es "hoy"; con día, no', () => {
+        expect(esPeriodoActual({ year: 2026, month: 9, asOfDay: null }, '2026-09-01')).toBe(true);
+        expect(esPeriodoActual({ year: 2026, month: 9, asOfDay: 1 }, '2026-09-01')).toBe(false);
+        expect(esPeriodoActual({ year: 2026, month: 8, asOfDay: null }, '2026-09-01')).toBe(false);
     });
 });

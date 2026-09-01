@@ -18,7 +18,7 @@ import { ComisionesSucursalModal } from './ComisionesSucursalModal';
 import { PeriodSelector, type ViewPeriod } from './PeriodSelector';
 import { HistoricBanner } from './HistoricBanner';
 import { CarteraCard } from './CarteraCard';
-import { fechaDeCorte, fechaLegible } from '../utils/fechaCorte';
+import { fechaDeCorte, fechaLegible, periodoInicial, esPeriodoActual, mesActual } from '../utils/fechaCorte';
 // 🪤 Import ESTÁTICO de PrintAvanceView arrastraba jsPDF + autotable + pako a la PRIMERA
 // pantalla: 141 kB gzip, el 49% de todo lo que bajaba el vendedor al abrir la app, para un
 // botón de exportar que casi nunca toca. Con lazy se baja recién cuando lo abre.
@@ -33,22 +33,20 @@ import './VendorShell.css';
 
 const VIEW_PERIOD_KEY = 'vs_view_period';
 function loadInitialPeriod(): ViewPeriod {
-    const t = new Date();
-    const fallback: ViewPeriod = { year: t.getUTCFullYear(), month: t.getUTCMonth() + 1, asOfDay: null };
     try {
-        const raw = sessionStorage.getItem(VIEW_PERIOD_KEY);
-        if (!raw) return fallback;
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed.year !== 'number' || typeof parsed.month !== 'number') return fallback;
-        return { year: parsed.year, month: parsed.month, asOfDay: parsed.asOfDay ?? null };
-    } catch { return fallback; }
+        // La regla de qué hacer con lo guardado vive en utils/fechaCorte.ts, con tests: es la
+        // que el 01/09 dejó a Mati mirando el 31/08 sin haber tocado nada.
+        return periodoInicial(JSON.parse(sessionStorage.getItem(VIEW_PERIOD_KEY) ?? 'null'), hoyISOArg());
+    } catch { return mesActual(hoyISOArg()); }
 }
 /** Hoy en Argentina (UTC-3 fijo). Mismo criterio que el backend y que CarteraCard. */
 const hoyISOArg = () => new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
+// 🪤 Antes esto miraba el mes en UTC. Entre las 21:00 y la medianoche de Argentina, UTC ya
+// está en el día (y el último del mes, en el MES) siguiente: el 31/08 a las 21:30 la app se
+// convencía de que estaba en septiembre.
 function isCurrentPeriod(p: ViewPeriod): boolean {
-    const t = new Date();
-    return p.year === t.getUTCFullYear() && p.month === t.getUTCMonth() + 1 && (p.asOfDay == null);
+    return esPeriodoActual(p, hoyISOArg());
 }
 
 type Tab = 'hoy' | 'cobranzas' | 'objetivos' | 'comisiones' | 'rebotes' | 'actividad';
@@ -292,13 +290,14 @@ export const VendorShell = ({ onLogout }: Props) => {
     // Tabs Hoy y Cobranzas siempre operan sobre la fecha real, ignoran este state.
     const [viewPeriod, setViewPeriod] = useState<ViewPeriod>(loadInitialPeriod);
     useEffect(() => {
-        sessionStorage.setItem(VIEW_PERIOD_KEY, JSON.stringify(viewPeriod));
+        // 🔑 Se guarda TAMBIÉN el día en que se guardó. Sin eso no hay forma de distinguir
+        // "agosto porque estamos en agosto" de "agosto porque lo elegí": el mismo valor
+        // significa una cosa hoy y otra mañana. Ver periodoInicial().
+        sessionStorage.setItem(VIEW_PERIOD_KEY, JSON.stringify({ ...viewPeriod, guardadoEn: hoyISOArg() }));
     }, [viewPeriod]);
     const isHistoricView = !isCurrentPeriod(viewPeriod);
-    const resetPeriod = () => {
-        const t = new Date();
-        setViewPeriod({ year: t.getUTCFullYear(), month: t.getUTCMonth() + 1, asOfDay: null });
-    };
+    // Volver a "hoy": el mes en curso EN ARGENTINA, no el de UTC.
+    const resetPeriod = () => setViewPeriod(mesActual(hoyISOArg()));
 
     // Listener global para 'vs-open-activity' — switchea al tab Actividad y pasa el cliente.
     useEffect(() => {
