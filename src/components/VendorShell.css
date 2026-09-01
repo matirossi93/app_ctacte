@@ -2073,3 +2073,22 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
   line-height: 1.4;
 }
 .vs-cobranzas-nota b { color: var(--color-text, #1E120C); }
+
+/* Acceso al histórico del año dentro de Objetivos (solo para quien fija los objetivos). */
+.vs-hist-toggle { margin: 0 0 12px }
+.vs-hist-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 40px;
+    padding: 8px 14px;
+    border: 1px solid #E4DFD2;
+    border-radius: 999px;
+    background: #fff;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    color: #141814;
+    cursor: pointer;
+}
+.vs-hist-btn.is-active { background: #06652F; border-color: #06652F; color: #fff }

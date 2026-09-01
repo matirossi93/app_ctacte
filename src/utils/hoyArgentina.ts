@@ -18,8 +18,14 @@ export function hoyArgentina(): string {
     return new Date(Date.now() - OFFSET_ARGENTINA_MS).toISOString().slice(0, 10);
 }
 
+/** Hoy en Argentina, partido. `month` va de 1 a 12, no de 0 a 11. */
+export function hoyArgentinaPartes(): { year: number; month: number; day: number } {
+    const [year, month, day] = hoyArgentina().split('-').map(Number);
+    return { year, month, day };
+}
+
 /** El mes en curso en Argentina. `month` va de 1 a 12, no de 0 a 11. */
 export function mesEnCursoArgentina(): { year: number; month: number } {
-    const [year, month] = hoyArgentina().split('-').map(Number);
+    const { year, month } = hoyArgentinaPartes();
     return { year, month };
 }

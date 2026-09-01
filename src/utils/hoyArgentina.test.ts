@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { hoyArgentina, mesEnCursoArgentina } from './hoyArgentina';
+import { hoyArgentina, mesEnCursoArgentina, hoyArgentinaPartes } from './hoyArgentina';
 
 /**
  * 🔴 01/09/2026 — `ObjetivosApp` tomaba el mes con `getUTCFullYear()`/`getUTCMonth()`.
@@ -34,6 +34,15 @@ describe('hoyArgentina — la franja de 21:00 a 23:59 es la que rompía', () => 
     it('el mediodía no se mueve', () => {
         congelar('2026-09-01T15:00:00.000Z');
         expect(hoyArgentina()).toBe('2026-09-01');
+    });
+
+    /**
+     * El calendario de feriados de VendorShell marca "hoy" con `getUTCDate()`: después de las
+     * 21:00 pintaba el día siguiente. En el último día del mes ni siquiera existe en la grilla.
+     */
+    it('el día también sale en hora argentina, no en UTC', () => {
+        congelar('2026-09-01T00:30:00.000Z');   // 31/08 21:30 en Argentina
+        expect(hoyArgentinaPartes()).toEqual({ year: 2026, month: 8, day: 31 });
     });
 
     // El caso que además cambia el AÑO: 31/12 a la noche.

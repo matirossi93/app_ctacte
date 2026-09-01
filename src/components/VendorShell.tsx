@@ -3,10 +3,12 @@ import {
     Search, Phone, MessageSquare, FileText, Calendar, Receipt,
     Target, Activity as ActivityIcon, ReceiptText, Plus, RefreshCw, Loader2, AlertCircle,
     DollarSign, Truck, Edit3, Lock, Users, LogOut, FileSpreadsheet, MapPin,
-    Sun, ChevronRight, ChevronDown, AlertTriangle, Download, Trash2, Pencil, Bell, Wallet, Send, Store, Scale, PackageX, ShoppingCart
+    Sun, ChevronRight, ChevronDown, AlertTriangle, Download, Trash2, Pencil, Bell, Wallet, Send, Store, Scale, PackageX, ShoppingCart, History
 } from 'lucide-react';
 import { authHeaders, clearToken, getUser, type AuthUser } from '../utils/auth';
 import { elegirObjetivo, modoObjetivo } from '../utils/vistaObjetivo';
+import { mesEnCursoArgentina, hoyArgentinaPartes } from '../utils/hoyArgentina';
+import { HistoricoObjetivos } from './HistoricoObjetivos';
 import { RecibosApp } from './RecibosApp';
 import { PedidosApp } from './PedidosApp';
 import { ConciliacionApp } from './ConciliacionApp';
@@ -1293,6 +1295,7 @@ function ObjetivosView({ user, selectedVendor, cods, isAdmin, showInactivos, rel
     const [searchClientes, setSearchClientes] = useState('');
     const [openCliObj, setOpenCliObj] = useState<number | null>(null);
     const [showPrint, setShowPrint] = useState(false);
+    const [showHistorico, setShowHistorico] = useState(false);
     const [totales, setTotales] = useState<any>(null);
 
     // Animación de entrada del anillo: arranca en 0 y transiciona al valor real
@@ -1596,8 +1599,10 @@ function ObjetivosView({ user, selectedVendor, cods, isAdmin, showInactivos, rel
     // Ritmo del mes: % de días hábiles transcurridos como "vara". A ritmo lineal
     // deberías tener cumplido ~ese mismo % del objetivo. Solo tiene sentido en el
     // mes en curso (en histórico el mes ya cerró; en futuro todavía no arrancó).
-    const nowD = new Date();
-    const isCurrentMonthView = viewPeriod.year === nowD.getUTCFullYear() && viewPeriod.month === (nowD.getUTCMonth() + 1) && !viewPeriod.asOfDay;
+    // 🪤 En hora de Argentina, no en UTC: con getUTCMonth(), a partir de las 21:00 del último
+    // día del mes el mes en curso pasaba a ser el siguiente y el bloque de ritmo desaparecía.
+    const hoyAR = mesEnCursoArgentina();
+    const isCurrentMonthView = viewPeriod.year === hoyAR.year && viewPeriod.month === hoyAR.month && !viewPeriod.asOfDay;
     const diasPct = g.dias_habiles_total > 0 ? g.dias_habiles_transcurridos / g.dias_habiles_total : 0;
     // Ritmo = proyección/target (a este ritmo, cuánto cerrás el mes). Es EL MISMO
     // número que la "Proyección", así el badge, las barras y la proyección cuentan
@@ -1613,8 +1618,8 @@ function ObjetivosView({ user, selectedVendor, cods, isAdmin, showInactivos, rel
         : { label: 'En ritmo', cls: 'mid' };
     // target 0 no es un target real: sin bloque de ritmo (igual que sin target).
     const showPace = isCurrentMonthView && heroTarget != null && heroTarget > 0;
-    const isFutureView = viewPeriod.year > nowD.getUTCFullYear()
-        || (viewPeriod.year === nowD.getUTCFullYear() && viewPeriod.month > (nowD.getUTCMonth() + 1));
+    const isFutureView = viewPeriod.year > hoyAR.year
+        || (viewPeriod.year === hoyAR.year && viewPeriod.month > hoyAR.month);
 
     return (
         <div className="vs-view">
@@ -1639,6 +1644,18 @@ function ObjetivosView({ user, selectedVendor, cods, isAdmin, showInactivos, rel
                     <FileText size={14} /> Imprimir / PDF
                 </button>
             </div>
+
+            {/* El año completo, para mirar la tendencia al definir el objetivo del mes que
+                viene. Sólo para quien fija los objetivos: al vendedor le alcanza el suyo. */}
+            {modo === 'equipo' && (
+                <div className="vs-hist-toggle">
+                    <button type="button" className={`vs-hist-btn ${showHistorico ? 'is-active' : ''}`}
+                        onClick={() => setShowHistorico(v => !v)}>
+                        <History size={14} /> {showHistorico ? 'Ocultar el año' : 'Ver todo el año'}
+                    </button>
+                </div>
+            )}
+            {modo === 'equipo' && showHistorico && <HistoricoObjetivos yearActual={hoyAR.year} />}
 
             {/* Feriados del mes */}
             <div className={`vs-holidays-bar ${editingHolidays ? 'is-open' : ''}`}>
@@ -2482,9 +2499,11 @@ function HolidayPickerGrid({ year, month, initialHolidays, saving, onSave, onCan
     // Shift para grilla LUN primero: lun=0, mar=1, ..., sab=5, dom=6
     const pad = (firstDow + 6) % 7;
 
-    const now = new Date();
-    const isCurrentMonth = now.getUTCFullYear() === year && (now.getUTCMonth() + 1) === month;
-    const today = isCurrentMonth ? now.getUTCDate() : null;
+    // 🪤 Igual que arriba: en UTC, después de las 21:00 el calendario marcaba como "hoy" el
+    // día siguiente — y el último día del mes ni siquiera existe en esta grilla.
+    const hoy = hoyArgentinaPartes();
+    const isCurrentMonth = hoy.year === year && hoy.month === month;
+    const today = isCurrentMonth ? hoy.day : null;
 
     const toggle = (d: number) => {
         // No permitir marcar domingos (ya excluidos por backend) — pero UX cerrada igual.
