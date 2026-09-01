@@ -46,6 +46,19 @@ export interface Historico {
 /** Umbral de "cerca": el mismo 90% que ya usan las tarjetas del mes en ObjetivosApp. */
 const CERCA = 0.9;
 
+/**
+ * El porcentaje que se muestra en la celda, en entero.
+ *
+ * 🪤 Redondeo hacia ABAJO mientras no se haya llegado al objetivo. Brian cerró agosto con
+ * $64.853.994 sobre $65.000.000: le faltaron $146.006 y la celda decía **100%**. Un mes que
+ * no llegó no puede mostrar el número del que llegó — el color decía "cerca", pero el número
+ * es lo que se lee primero.
+ * Pasado el objetivo sí se redondea normal: ahí ya cumplió y el decimal no cambia nada.
+ */
+export function pctParaMostrar(pct: number): number {
+    return pct < 1 ? Math.floor(pct * 100) : Math.round(pct * 100);
+}
+
 function estadoPara(pct: number): EstadoMes {
     if (pct >= 1) return 'cumplio';
     if (pct >= CERCA) return 'cerca';

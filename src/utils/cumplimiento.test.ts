@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { armarHistorico } from './cumplimiento';
+import { armarHistorico, pctParaMostrar } from './cumplimiento';
 
 /**
  * La grilla del histórico de objetivos (pedido de Mati, 01/09/2026): filas = vendedores,
@@ -124,6 +124,22 @@ describe('armarHistorico', () => {
         });
         // 4000 vendidos sobre 4000 de objetivo = 100%. El promedio de los % daría 133%.
         expect(r.equipo[6]).toMatchObject({ target: 4000, neto: 4000, pct: 1 });
+    });
+
+    /**
+     * 🔴 01/09/2026, visto en la primera captura de Mati: Brian, agosto, objetivo $65.000.000
+     * y vendido $64.853.994 — le faltaron $146.006 — y la celda decía **100%**. Redondear
+     * 0,9977 hacia arriba convierte un mes que no llegó en uno que parece cumplido.
+     * El color lo salvaba (quedaba en "cerca"), pero el número mentía, y el número es lo
+     * que se lee primero.
+     */
+    it('un mes que no llegó nunca muestra 100%', () => {
+        expect(pctParaMostrar(64853994 / 65000000)).toBe(99);
+        expect(pctParaMostrar(0.999999)).toBe(99);
+        expect(pctParaMostrar(1)).toBe(100);
+        expect(pctParaMostrar(1.004)).toBe(100);   // pasó el objetivo: redondear está bien
+        expect(pctParaMostrar(1.2)).toBe(120);
+        expect(pctParaMostrar(0)).toBe(0);
     });
 
     it('ordena los vendedores por cumplimiento del año, mejor primero', () => {

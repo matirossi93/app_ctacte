@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Loader2, AlertCircle, Target } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import { formatCurrency } from '../utils/formatters';
-import type { Historico, CeldaMes } from '../utils/cumplimiento';
+import { pctParaMostrar, type Historico, type CeldaMes } from '../utils/cumplimiento';
 import './HistoricoObjetivos.css';
 
 /**
@@ -103,7 +103,7 @@ export function HistoricoObjetivos({ yearActual }: { yearActual: number }) {
                                         <td className="obj-hist-resumen">
                                             {f.conObjetivo === 0 ? '—' : (
                                                 <>
-                                                    <strong>{Math.round((f.promedio ?? 0) * 100)}%</strong>
+                                                    <strong>{pctParaMostrar(f.promedio ?? 0)}%</strong>
                                                     <small>cumplió {f.cumplidos} de {f.conObjetivo}</small>
                                                 </>
                                             )}
@@ -142,7 +142,7 @@ export function HistoricoObjetivos({ yearActual }: { yearActual: number }) {
                                     <div><span className="k">Diferencia</span><span className="v">{money(sel.celda.neto - sel.celda.target)}</span></div>
                                     <div>
                                         <span className="k">Cumplimiento</span>
-                                        <span className="v">{Math.round((sel.celda.pct ?? 0) * 100)}%
+                                        <span className="v">{pctParaMostrar(sel.celda.pct ?? 0)}%
                                             {sel.celda.estado === 'en_curso' && <small> (mes en curso)</small>}
                                         </span>
                                     </div>
@@ -165,7 +165,7 @@ function Celda({ celda, activa, onClick }: { celda: CeldaMes; activa: boolean; o
             onClick={onClick} role="button" tabIndex={0}
             onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
             title={vacia ? undefined : `${money(celda.neto)} de ${money(celda.target)}`}>
-            {vacia ? '' : `${Math.round((celda.pct ?? 0) * 100)}%`}
+            {vacia ? '' : `${pctParaMostrar(celda.pct ?? 0)}%`}
         </td>
     );
 }
