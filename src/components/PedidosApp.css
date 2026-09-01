@@ -110,6 +110,9 @@
 .ped-secondary { border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); font-weight: 600; padding: 0.8rem 1.2rem; border-radius: var(--radius-md); cursor: pointer; }
 
 .ped-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.7rem 0; border-bottom: 1px solid var(--color-border); }
+/* 🐢 Igual que la lista de cobranzas: la lista de pedidos cargados crece sin límite y se
+   monta entera. Con esto el navegador no calcula ni pinta las filas fuera de pantalla. */
+.ped-row { content-visibility: auto; contain-intrinsic-size: auto 56px; }
 .ped-row-cli { font-weight: 600; font-size: 0.9rem; }
 .ped-row-sub { font-size: 0.78rem; color: var(--color-text-muted); }
 .ped-chip { font-size: 0.72rem; font-weight: 700; padding: 0.2rem 0.55rem; border-radius: 999px; white-space: nowrap; }

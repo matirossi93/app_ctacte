@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useRef } from 'react';
 import { X, Camera, Upload, Check, AlertCircle, ChevronLeft, Loader2, Search, Clock, FileText, RefreshCw, ZoomIn, ZoomOut, Download, ExternalLink, LogOut } from 'lucide-react';
 import { authHeaders, getUser } from '../utils/auth';
 import { buscarClientes } from '../utils/buscarClientes';
+import { formatCurrency, formatCurrency2 } from '../utils/formatters';
 import { MEDIOS_PAGO_UI, DEFAULT_MEDIO_UI, normalizeMedioUI } from '../utils/mediosPago';
 import './RecibosApp.css';
 
@@ -1448,7 +1449,7 @@ function statusLabel(s: string): string {
 }
 function formatMoney(n: number | null | undefined): string {
     if (n == null) return '—';
-    return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n);
+    return formatCurrency(n);
 }
 // Versión con 2 decimales: SOLO para el flujo de imputación de recibos, donde
 // el centavo es "load-bearing" (el saldo real de la factura tiene decimales y
@@ -1456,7 +1457,7 @@ function formatMoney(n: number | null | undefined): string {
 // usando formatMoney (entero) para los displays informativos.
 function formatMoneyExact(n: number | null | undefined): string {
     if (n == null) return '—';
-    return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+    return formatCurrency2(n);
 }
 function timeAgo(iso: string): string {
     const d = new Date(iso);

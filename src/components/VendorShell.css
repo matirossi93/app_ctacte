@@ -359,6 +359,16 @@
     box-shadow: 0 2px 0 rgba(20,24,20,.04), 0 8px 20px -8px rgba(20,24,20,.14);
     transition: box-shadow .2s ease;
 }
+/* 🐢 La lista puede tener 800+ clientes y se montan todos. `content-visibility: auto`
+   le dice al navegador que no calcule ni pinte los que están fuera de pantalla, que es
+   de dónde salía el tirón al deslizar. `auto` en contain-intrinsic-size hace que recuerde
+   el alto real de cada uno una vez medido, así la barra de scroll no salta.
+   Sólo en las tarjetas cerradas: la abierta tiene que renderizarse siempre (el scroll
+   automático desde "Hoy" la busca en el DOM). */
+.vs-client:not(.is-open) {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 92px;
+}
 .vs-client.is-open { box-shadow: 0 1px 0 rgba(20,24,20,.04), 0 14px 40px -12px rgba(20,24,20,.22) }
 
 .vs-client-head { padding: 14px 16px 12px; display: flex; gap: 12px; cursor: pointer }
