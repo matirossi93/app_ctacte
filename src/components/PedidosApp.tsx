@@ -9,6 +9,8 @@ import { borrarBorrador, cuandoSeGuardo, guardarBorrador, leerBorrador } from '.
 import { buscarClientes } from '../utils/buscarClientes';
 import { ultimoArriba } from '../utils/carrito';
 import { hayPedidoEnCurso } from '../utils/pedidoEnCurso';
+import { aplicarPrecioDeLista } from '../utils/precioDeLista';
+import { mensajeSinPrecio } from '../utils/mensajeSinPrecio';
 import './PedidosApp.css';
 
 interface Props {
@@ -41,6 +43,13 @@ interface CartItem {
     uid: string;
     cod_articulo: number; descripcion: string; cantidad: number; precio: number;
     cod_lista: number; descuento: number;
+    /**
+     * El artículo NO tiene precio en la lista que tiene puesta. Se marca en el momento en que
+     * se elige la lista, no al confirmar: antes el renglón se quedaba con el precio de la
+     * lista anterior y el vendedor armaba el pedido entero con un número que no existía
+     * (Brian, 01/09/2026 — ver src/utils/precioDeLista.ts).
+     */
+    sinPrecio?: boolean;
 }
 
 /**
@@ -395,14 +404,14 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         try {
             const r = await fetch(`/api/pedidos/precio?cod_articulo=${cod}&cod_lista=${codLista}`, { headers: authHeaders() });
             const d = await r.json();
-            // El backend devuelve la lista que cotizó. Si el vendedor tocó L2 y después L4, la
-            // respuesta de L2 puede llegar última y dejaba el precio de L2 con la etiqueta L4 —
-            // y ese es justo el número que le canta al cliente por teléfono.
-            if (d?.ok && d.precio?.precio_vta != null && Number(d.cod_lista) === codLista) {
-                const nuevo = Number(d.precio.precio_vta);
-                setCart(c => c.map(i => i.uid === uid ? { ...i, precio: nuevo } : i));
-            }
-        } catch { /* si falla, queda el precio anterior y el backend recalcula al enviar */ }
+            // 🔴 01/09: acá el `if` sólo entraba CON precio, así que un artículo sin precio en
+            // la lista nueva se quedaba con el precio de la anterior y la etiqueta de la nueva.
+            // Brian armó un pedido entero con los $3.780 de L1 rotulados L2 y le rebotó al
+            // confirmar. `aplicarPrecioDeLista` decide los tres casos (hay precio / no hay /
+            // respuesta inutilizable) y conserva el descarte de respuestas que llegan tarde.
+            const cambio = aplicarPrecioDeLista({ precio: 0 }, d, codLista);
+            if (cambio) setCart(c => c.map(i => i.uid === uid ? { ...i, ...cambio } : i));
+        } catch { /* si falla, queda como está: el backend lo frena al enviar */ }
     }
     /** Descuento del renglón, 0 a 100. Se edita como texto (mismo motivo que la cantidad). */
     const [descTexto, setDescTexto] = useState<Record<string, string>>({});
@@ -462,6 +471,12 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     // El backend tiene el flag PEDIDOS_BLOQUEAR_MARGEN para volver a prenderlo; si eso pasa,
     // el 422 llega igual y se muestra en el cartel de abajo.
     const bloqueos: AvisoLista[] = [];
+    /**
+     * Renglones cuyo artículo no tiene precio en la lista que tienen puesta. Frenan el envío
+     * ACÁ, mientras el vendedor arma el pedido, en vez de dejarlo llegar hasta Confirmar para
+     * que el backend lo rechace con todo cargado (Brian, 01/09/2026).
+     */
+    const renglonesSinPrecio = cart.filter(i => i.sinPrecio);
 
     // ── Editar un pedido ya cargado ─────────────────────────────────────────
     const [abriendo, setAbriendo] = useState<string | null>(null);
@@ -672,7 +687,19 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                 // artículo sin precio en la lista elegida — el control en vivo no mira
                 // precios, así que nunca lo marca, y el vendedor quedaba trabado tocando
                 // Confirmar sin que pasara nada. El backend ya redactó el mensaje: usarlo.
-                setMsgBloqueo(d?.error ?? 'No se pudo enviar el pedido. Revisá los renglones marcados.');
+                // El backend manda los códigos porque del lado suyo NO tiene el nombre: la
+                // descripción sale de la consulta de precio, que devuelve vacío justo cuando
+                // no hay precio. Los nombres están acá, en el carrito que el vendedor ve.
+                setMsgBloqueo(mensajeSinPrecio(
+                    d?.sin_precio,
+                    cart,
+                    d?.error ?? 'No se pudo enviar el pedido. Revisá los renglones marcados.',
+                ));
+                // Y se marcan los renglones, para que no tenga que buscarlos a ojo.
+                if (Array.isArray(d?.sin_precio) && d.sin_precio.length) {
+                    const codigos = new Set(d.sin_precio.map((s: any) => Number(s.cod_articulo)));
+                    setCart(c => c.map(i => codigos.has(i.cod_articulo) ? { ...i, sinPrecio: true } : i));
+                }
                 if (Array.isArray(d?.avisos) && d.avisos.length) {
                     setControl(c => ({ bultos: c?.bultos ?? 0, promo_general: c?.promo_general ?? false, avisos: d.avisos, firma: firmaCarrito }));
                 }
@@ -1011,8 +1038,14 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                 const av = avisoDe(idx);
                                 const dsc = descDe(idx);
                                 return (
-                                <div key={i.uid} className="ped-cart-item">
-                                    <div className="ped-cart-desc">{i.descripcion}<span className="ped-cart-precio">{money(i.precio)} c/u</span></div>
+                                <div key={i.uid} className={`ped-cart-item${i.sinPrecio ? ' sin-precio' : ''}`}>
+                                    {/* Sin precio NO se muestra "$0 c/u": cero es un precio y
+                                        acá no hay ninguno. Se dice qué pasa, en el renglón. */}
+                                    <div className="ped-cart-desc">{i.descripcion}<span className="ped-cart-precio">
+                                        {i.sinPrecio
+                                            ? <b className="ped-sin-precio">sin precio en {NOMBRE_LISTA[i.cod_lista] ?? 'esta lista'}</b>
+                                            : <>{money(i.precio)} c/u</>}
+                                    </span></div>
                                     <div className="ped-qty">
                                         <button aria-label="Restar uno" disabled={i.cantidad <= 1}
                                             onClick={() => setQty(i.uid, Math.max(1, Math.round(i.cantidad) - 1))}><Minus size={16} /></button>
@@ -1140,9 +1173,22 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                         : <span>Corregí los <b>{bloqueos.length} renglones</b> marcados en rojo para poder enviar el pedido.</span>}
                                 </div>
                             )}
+                            {/* Se avisa mientras arma el pedido, no al confirmar: el vendedor
+                                tiene que enterarse cuando toca la lista, no con todo cargado. */}
+                            {renglonesSinPrecio.length > 0 && (
+                                <div className="ped-bloqueo">
+                                    <AlertTriangle size={16} />
+                                    <span>
+                                        {renglonesSinPrecio.length === 1
+                                            ? <><b>{renglonesSinPrecio[0].descripcion}</b> no tiene precio en {NOMBRE_LISTA[renglonesSinPrecio[0].cod_lista] ?? 'esa lista'}.</>
+                                            : <>Hay <b>{renglonesSinPrecio.length} renglones</b> sin precio en la lista que tienen puesta.</>}
+                                        {' '}Cambiá la lista o sacá el renglón para poder enviar.
+                                    </span>
+                                </div>
+                            )}
                             <div className="ped-footer-row">
                                 <div className="ped-total">Total <b>{money(total)}</b><span className="ped-total-nota">IM recalcula al facturar</span></div>
-                                <button className="ped-confirm" disabled={!cart.length || enviando || bloqueos.length > 0} onClick={confirmar}>
+                                <button className="ped-confirm" disabled={!cart.length || enviando || bloqueos.length > 0 || renglonesSinPrecio.length > 0} onClick={confirmar}>
                                         {enviando ? <><Loader2 className="spin" size={18} /> Enviando…</> : <><Send size={18} /> {editando ? 'Guardar cambios' : 'Confirmar pedido'}</>}
                                 </button>
                             </div>

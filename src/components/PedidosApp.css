@@ -433,3 +433,15 @@
   padding: 0.25rem 0.5rem; border-radius: var(--radius-sm, 6px);
   cursor: pointer; min-height: 32px;
 }
+
+/* Renglón cuyo artículo NO tiene precio en la lista que tiene puesta.
+   01/09/2026: antes el renglón se quedaba con el precio de la lista anterior y la etiqueta de
+   la nueva, así que el vendedor armaba el pedido entero con un precio que ahí no existe y se
+   enteraba recién al confirmar. Ahora se ve en el renglón, en el momento. */
+.ped-cart-item.sin-precio {
+  background: var(--color-danger-bg);
+  border-radius: var(--radius-sm, 6px);
+  /* El fondo tiene que llegar al borde de la fila, que no tiene padding lateral propio. */
+  box-shadow: 0 0 0 0.35rem var(--color-danger-bg);
+}
+.ped-sin-precio { color: var(--color-danger); font-weight: 700; }
