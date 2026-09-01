@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { X, Upload, Loader2, Check, AlertCircle, FileSpreadsheet } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
+import { mesEnCursoArgentina } from '../utils/hoyArgentina';
 import './ImportarSheet.css';
 
 interface Props { onClose: () => void; onImported?: () => void }
@@ -8,9 +9,12 @@ interface Props { onClose: () => void; onImported?: () => void }
 const MONTH_NAMES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
 export const ImportarSheet = ({ onClose, onImported }: Props) => {
-    const now = new Date();
-    const [year, setYear] = useState(now.getUTCFullYear());
-    const [month, setMonth] = useState(now.getUTCMonth() + 1);
+    // 🪤 En hora argentina. Con UTC, el último día del mes a partir de las 21:00 este
+    // importador venía preseleccionado con el mes SIGUIENTE: los objetivos del Excel se
+    // cargaban en el mes equivocado sin que nadie tocara nada.
+    const hoyAR = mesEnCursoArgentina();
+    const [year, setYear] = useState(hoyAR.year);
+    const [month, setMonth] = useState(hoyAR.month);
     const [file, setFile] = useState<File | null>(null);
     const [saving, setSaving] = useState(false);
     const [err, setErr] = useState<string | null>(null);
@@ -54,7 +58,7 @@ export const ImportarSheet = ({ onClose, onImported }: Props) => {
         finally { setSaving(false); }
     };
 
-    const years = [now.getUTCFullYear(), now.getUTCFullYear() + 1, now.getUTCFullYear() - 1];
+    const years = [hoyAR.year, hoyAR.year + 1, hoyAR.year - 1];
 
     return (
         <div className="is-backdrop" onClick={onClose}>
