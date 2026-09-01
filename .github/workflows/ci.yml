@@ -47,6 +47,33 @@ jobs:
       - name: Tests (vitest run)
         run: npm test
 
+  # Dispara el rebuild en EasyPanel, pero SOLO si el build y los tests pasaron.
+  # Antes el Rebuild se apretaba a mano en el panel sin saber cómo había salido el CI:
+  # se podía publicar un commit roto. Acá el gate viene de arriba (needs: build-and-test).
+  #
+  # El secreto EASYPANEL_DEPLOY_URL es la URL del *deploy webhook del servicio* — sirve
+  # para una sola cosa (redeployar cta_cte) y no da acceso al panel. Se saca del propio
+  # servicio en EasyPanel y se rota desde ahí si hace falta.
+  deploy:
+    name: Deploy (EasyPanel)
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Disparar rebuild
+        env:
+          DEPLOY_URL: ${{ secrets.EASYPANEL_DEPLOY_URL }}
+        run: |
+          # Sin el secreto cargado el paso avisa y sale bien: el workflow queda inerte
+          # en vez de pintar de rojo todos los push hasta que alguien lo configure.
+          if [ -z "$DEPLOY_URL" ]; then
+            echo "::warning::EASYPANEL_DEPLOY_URL no está configurado — no se disparó el deploy."
+            exit 0
+          fi
+          # -f: un 4xx/5xx del panel tiene que romper el job, no pasar de largo.
+          curl -fsS --max-time 60 -X POST "$DEPLOY_URL" && echo "rebuild disparado"
+
   # Job informativo: NO bloquea el merge (hoy hay ~500 errores de eslint, casi todo
   # no-explicit-any). Da visibilidad para ir limpiándolo. NO marcar como required.
   lint:
