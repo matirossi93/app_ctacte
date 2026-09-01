@@ -8,6 +8,7 @@ import { authHeaders, getUser } from '../utils/auth';
 import { borrarBorrador, cuandoSeGuardo, guardarBorrador, leerBorrador } from '../utils/borradorPedido';
 import { buscarClientes } from '../utils/buscarClientes';
 import { ultimoArriba } from '../utils/carrito';
+import { hayPedidoEnCurso } from '../utils/pedidoEnCurso';
 import './PedidosApp.css';
 
 interface Props {
@@ -468,7 +469,10 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         // 🪤 Abrir un pedido para editar PISA el carrito en curso, y desde que el pedido se
         // guarda en el teléfono también pisa el borrador: sin esta pregunta, mirar «Mis
         // pedidos» y tocar Editar se lleva puesto el pedido que estaba armando.
-        if (cart.length && !confirm(
+        // 🔑 `hayPedidoEnCurso` y no `cart.length`: un pedido ya enviado deja sus renglones en
+        // el carrito y no es trabajo pendiente. Preguntar ahí traba al vendedor (caso Brian,
+        // 31/08). El carrito ahora se limpia al enviar, y esto lo sostiene igual.
+        if (hayPedidoEnCurso(cart, resultado) && !confirm(
             `Tenés un pedido a medio cargar (${cart.length} ${cart.length === 1 ? 'producto' : 'productos'}). Si abrís este otro, ese se pierde.\n\n¿Seguir igual?`
         )) return;
         setAbriendo(p.id);
@@ -634,6 +638,14 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                 // El pedido ya está guardado del otro lado: el borrador dejó de ser una red y
                 // pasaría a ser una trampa (volvería a aparecer y se cargaría dos veces).
                 borrarBorrador(emailUsuario);
+                // 🔴 31/08: el carrito en memoria tenía exactamente el mismo problema y se
+                // había quedado sin limpiar acá. Brian mandó un pedido de 4 productos y al
+                // tocar «Editar» en otro le saltó "Tenés un pedido a medio cargar (4
+                // productos)": eran los del que acababa de enviar. Si le daba Cancelar —lo
+                // prudente cuando te avisan que vas a perder algo— no podía editar nada.
+                // 🪤 Sólo en el camino de ÉXITO. Con 202/sin_respuesta el carrito se conserva
+                // a propósito, porque puede haber que reintentar.
+                setCart([]);
                 setResultado({
                     ok: true,
                     warn: !!d.aviso,
