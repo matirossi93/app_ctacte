@@ -286,6 +286,31 @@ describe('editarPedido — recrear el presupuesto en IM', () => {
     expect(body.ok).toBe(true);
     expect(body.solo_cantidades).toBe(true);
   });
+
+  it('🔴 LA FECHA DE JORGELINA: el reemplazo conserva la fecha que el comprobante tiene en IM', async () => {
+    // Jorgelina mueve la fecha del comprobante en IM para reordenar según cuándo se despacha.
+    // Si después el vendedor edita el pedido y hay que RECREAR, el presupuesto nuevo nacía con
+    // la fecha de HOY (crearPresupuesto: `input.fecha || fechaArgentina()`) y ese ajuste se
+    // perdía junto con el comprobante que se anula. La edición del vendedor no puede pisar la
+    // de la oficina. La fecha vigente ya la tenemos en la mano: la trae `cabeceraComprobante`,
+    // que este camino llama igual, así que no cuesta un GET extra. La fuente de verdad es IM,
+    // no nuestro created_at.
+    im.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-10', anulada: false, existe: true });
+
+    await editar(SURTIDO_NUEVO);
+
+    expect(im.crearPresupuesto.mock.calls[0][0].fecha).toBe('2026-09-10');
+  });
+
+  it('si IM no dice con qué fecha quedó el comprobante, el reemplazo sale con la de hoy', async () => {
+    // `fecha: null` es "no sé": IM no contestó la cabecera. Inventar una fecha es peor que
+    // dejar la de hoy, que es el comportamiento de siempre.
+    im.cabeceraComprobante.mockResolvedValue({ fecha: null, anulada: null, existe: null });
+
+    await editar(SURTIDO_NUEVO);
+
+    expect(im.crearPresupuesto.mock.calls[0][0].fecha).toBeUndefined();
+  });
 });
 
 /**

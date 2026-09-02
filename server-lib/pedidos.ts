@@ -764,6 +764,22 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         cod_lista_precios: Number(pedido.cod_lista_precios) || PEDIDO_LISTA_FALLBACK,
         usuario: await usuarioIM(user),
         punto_de_venta: pedido.im_punto_de_venta ?? PEDIDO_PUNTO_DE_VENTA,
+        // 🔑 La fecha del comprobante NO se recalcula: se hereda la que IM tiene AHORA. La
+        // oficina la mueve para reordenar los despachos, y sin esto el presupuesto de
+        // reemplazo nacía con la de hoy (`input.fecha || fechaArgentina()`) — o sea que
+        // cualquier edición del vendedor le pisaba el ajuste a Jorgelina, en silencio.
+        // `cab.fecha` sale del GET que este camino ya hace, así que no cuesta una llamada más.
+        // null = IM no la dijo (o el pedido nunca llegó a IM): ahí sí, la de hoy.
+        //
+        // Verificado contra IM el 02/09/2026 con dos presupuestos reales, anulados: el 58052
+        // con fecha FUTURA (10/09) y el 58057 con fecha PASADA (28/08). Los dos entraron y
+        // quedaron guardados con la fecha pedida — IM no valida período ni la reescribe. El
+        // caso de la fecha pasada es el que había que probar: un pedido del viernes editado
+        // el lunes hereda una fecha anterior a hoy, y si IM la rechazara el vendedor no
+        // podría editar. `fecha_entrega` acompaña a `fecha` (IM las guardó iguales), y
+        // `usuario_fecha` NO se hereda: IM la pisa con la del día real, así que la marca de
+        // cuándo se cargó sigue siendo correcta sin tocar nada.
+        fecha: cab.fecha ?? undefined,
         observaciones: observacionParaIM(observaciones, numViejo),
         // 🪤 Acá iba `String(pedido.id).slice(0, 8)`: el MISMO código que ya había gastado el
         // presupuesto original. IM exige que cod_compatibilidad sea único INCLUYENDO los
