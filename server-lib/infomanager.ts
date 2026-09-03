@@ -623,6 +623,14 @@ export async function crearPresupuesto(input: CrearPresupuestoInput): Promise<Pr
     usuario_fecha: fecha,
     usuario_hora: horaArgentina(),
     fac_electronica: 0,              // NO AFIP
+    // 🪤 03/09/2026. Sin este campo IM deja `anulada` en NULL, y NULL no es igual a nada:
+    // el listado de presupuestos con el que la oficina arma lo que va a fraccionado filtra
+    // los anulados, y con NULL los nuestros NO pasaban ese filtro. Resultado: al sector no
+    // le llegaba NINGÚN pedido cargado desde la app, sólo los de la app vieja de IM — que
+    // manda "N" siempre. Verificado comparando 12 presupuestos nuestros (todos null) contra
+    // 17 de la app vieja (todos "N"). Un presupuesto nuevo NUNCA nace anulado, así que el
+    // valor es constante; anularlo después es un PUT aparte (anularComprobante).
+    anulada: 'N',
     total: 0, neto: 0, iva_importe: 0, importe_iva_10_5: 0, importe_iva_27: 0, // IM calcula
     observaciones: input.observaciones || '',
     tag: 'S',

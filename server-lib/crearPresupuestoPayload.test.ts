@@ -87,4 +87,14 @@ describe('crearPresupuesto — el payload que ve InfoManager', () => {
     const { body } = await postDe([{ cod_articulo: 400, cantidad: 5, precio: 1303.16 }]);
     expect(body.items[0].cod_cuenta).toBe(4100002);
   });
+  it('🔴 el presupuesto nace con anulada:"N", no con el campo vacío', async () => {
+    // 🪤 03/09/2026. No mandábamos este campo, así que IM lo dejaba en NULL. La app vieja de
+    // IM manda "N" siempre. En una base NULL no es igual a nada: el listado con el que
+    // Jorgelina arma el pedido para fraccionado filtra los anulados, y con NULL nuestros
+    // presupuestos NO pasaban ese filtro ⇒ el sector no recibía NINGÚN pedido cargado desde
+    // la app, sólo los de la app vieja. Verificado comparando 12 presupuestos nuestros
+    // (todos anulada=null) contra 17 de la app vieja (todos anulada="N").
+    const { body } = await postDe([{ cod_articulo: 400, cantidad: 5, precio: 1303.16, cod_lista_precios: 14 }]);
+    expect(body.anulada).toBe('N');
+  });
 });
