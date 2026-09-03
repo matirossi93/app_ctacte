@@ -825,6 +825,47 @@ export async function cabeceraComprobante(
   }
 }
 
+/**
+ * ¿Existe en IM un presupuesto creado con este `cod_compatibilidad`?
+ *
+ * Es la pregunta que hay que poder hacer después de un TIMEOUT: IM tardó más de 25 s, la app
+ * cortó y no sabe si el presupuesto entró. El código lo generamos nosotros, es único por
+ * intento (IM lo rechaza repetido, incluso contra comprobantes anulados) e IM lo devuelve en
+ * el listado `/ventas` — verificado el 03/09/2026 sobre el PR 58015, que trae
+ * `cod_compatibilidad: "263d6efa"`.
+ *
+ * 🪤 Devuelve `null` en DOS casos que NO son lo mismo, y por eso también informa `busquedaOk`:
+ * "lo busqué y no está" vs "no pude buscar". Quien llama no puede tratarlos igual: dar por
+ * no-creado un presupuesto que sí existe termina en dos presupuestos vivos, que es
+ * exactamente el problema que esto viene a resolver.
+ */
+export async function buscarPresupuestoPorCompatibilidad(
+  codCompatibilidad: string,
+  desde: string,
+  hasta: string,
+): Promise<{ busquedaOk: boolean; encontrado: { id: string; numero: number | null; fecha: string | null } | null }> {
+  const buscado = String(codCompatibilidad ?? '').trim();
+  if (!buscado) return { busquedaOk: false, encontrado: null };
+  try {
+    const ventas = await fetchVentas(desde, hasta);
+    const hit = ventas.find((v: any) =>
+      String(v.cod_compatibilidad ?? '').trim() === buscado &&
+      String(v.tipo_comprobante ?? '').trim() === 'PR');
+    if (!hit) return { busquedaOk: true, encontrado: null };
+    return {
+      busquedaOk: true,
+      encontrado: {
+        id: String((hit as any).id),
+        numero: (hit as any).numero ?? null,
+        fecha: typeof (hit as any).fecha === 'string' ? (hit as any).fecha.slice(0, 10) : null,
+      },
+    };
+  } catch (e: any) {
+    console.warn('[buscarPresupuestoPorCompatibilidad] no pude consultar IM:', e?.message);
+    return { busquedaOk: false, encontrado: null };
+  }
+}
+
 /** Sólo la fecha. La usa anularPedido, que no necesita el resto. */
 export async function fechaComprobante(idComprobante: string | number): Promise<string | null> {
   return (await cabeceraComprobante(idComprobante)).fecha;

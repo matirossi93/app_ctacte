@@ -9,6 +9,7 @@ import {
   fetchClientesIMCached, fetchArticulosCatalogo, fetchArticulosDeDeposito,
   getItemsComprobante, presupuestoFacturado, actualizarPresupuestoCantidades, desconfirmarPresupuesto,
   fechaComprobante, cabeceraComprobante, fechaArgentina, fetchVendedores, fetchPreciosDeLista,
+  buscarPresupuestoPorCompatibilidad,
 } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
 import {
@@ -557,6 +558,16 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
       return;
     }
 
+    // 🔑 Con qué código se va a crear el presupuesto, guardado ANTES de llamar a IM: es lo
+    // único que después permite preguntarle "¿lo creaste?" si se cuelga (reconciliarSinRespuesta).
+    // 🪤 Va en un update APARTE y no en el insert de arriba a propósito: si la migración 031
+    // todavía no corrió, una columna inexistente hace fallar el insert ENTERO y no se puede
+    // cargar ni un pedido. Así, lo peor que pasa es que no se pueda reconciliar.
+    const codCompatCrear = pedidoId.slice(0, 8);
+    const { error: errCompatCrear } = await sb().from('pedidos_vendedor')
+      .update({ im_cod_compatibilidad: codCompatCrear }).eq('id', pedidoId);
+    if (errCompatCrear) console.warn('[crearPedido] no pude guardar el cod_compatibilidad (¿falta la migración 031?):', errCompatCrear.message);
+
     const imRes = await crearPresupuesto({
       cod_empresa: codEmpresa,
       cod_cliente: codCliente,
@@ -565,7 +576,7 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
       usuario: usuarioDeIM,
       punto_de_venta: sucursal.punto_de_venta,
       observaciones: observacionParaIM(body.observaciones),
-      cod_compatibilidad: pedidoId.slice(0, 8),
+      cod_compatibilidad: codCompatCrear,
       items: itemsConPrecio.map((it) => ({
         cod_articulo: it.cod_articulo,
         cantidad: it.cantidad,
@@ -755,6 +766,14 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
       // reconstruirlo de memoria.
       // null cuando el pedido nunca llegó a IM: no hay nada vigente de qué hablar.
       const numViejo = sinPresupuesto ? null : (pedido.im_numero ?? pedido.im_presupuesto_id);
+      // 🔑 El código se genera ACÁ y se guarda ANTES de llamar a IM. Si IM se cuelga, es lo
+      // único que después permite preguntarle "¿creaste este presupuesto?" en vez de quedarse
+      // sin saber (ver reconciliarSinRespuesta). Si el update falla no se corta: perder la
+      // reconciliación es peor que no editar, pero mucho menos grave que no crear el pedido.
+      const codCompat = randomUUID().slice(0, 8);
+      const { error: errCompat } = await sb().from('pedidos_vendedor')
+        .update({ im_cod_compatibilidad: codCompat }).eq('id', pedido.id);
+      if (errCompat) console.warn('[editarPedido] no pude guardar el cod_compatibilidad, la reconciliación por timeout no va a poder buscarlo:', errCompat.message);
       const imRes = await crearPresupuesto({
         // Del PEDIDO, no del usuario que edita: si lo abre alguien de otra unidad, el
         // presupuesto de reemplazo tiene que seguir siendo de la unidad original.
@@ -789,7 +808,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         // puede ser cualquier cosa de 8 chars. Va aleatorio y NO derivado del pedido a
         // propósito: un código determinista vuelve a colisionar en cada reintento y deja el
         // pedido ineditable para siempre, que es exactamente el bug que estamos arreglando.
-        cod_compatibilidad: randomUUID().slice(0, 8),
+        cod_compatibilidad: codCompat,
         items: nuevos.map((it) => ({
           cod_articulo: it.cod_articulo, cantidad: it.cantidad,
           precio: it.precio > 0 ? String(it.precio) : undefined, iva_por: it.iva,
@@ -975,6 +994,102 @@ export async function marcarFacturados(pedidos: any[]): Promise<void> {
   }
 }
 
+/**
+ * Resuelve los pedidos que quedaron colgados en `sin_respuesta` por un TIMEOUT de IM.
+ *
+ * 🪤 EL PROBLEMA QUE RESUELVE (pasó de verdad el 02/09/2026). Al editar, la app crea el
+ * presupuesto nuevo y DESPUÉS anula el viejo. Si IM tarda más de 25 s, la app corta sin saber
+ * si el nuevo entró: no anula nada (si no entró, anular dejaría al cliente sin pedido) y
+ * congela el pedido. Cuando el nuevo SÍ había entrado quedaban DOS presupuestos vivos del
+ * mismo cliente, los dos facturables, y nadie se enteraba: PARRILLA (58067/58068) y DIAZ
+ * (58071/58072) hubo que reconciliarlos a mano.
+ *
+ * 🔑 CÓMO. El `cod_compatibilidad` lo generamos nosotros, es único por intento y se guarda
+ * ANTES de llamar a IM. Así se le puede preguntar a IM si ese presupuesto existe.
+ *
+ * 🔴 SÓLO ACTÚA SOBRE EL "SÍ ENTRÓ", que es el único hecho seguro:
+ *   · lo encuentra  -> adopta el presupuesto nuevo, anula el viejo y reescribe los renglones
+ *     con los que IM tiene de verdad (el camino del timeout corta antes de guardarlos, así
+ *     que en la app quedaron los de ANTES de editar).
+ *   · NO lo encuentra pero el presupuesto VIEJO sigue vivo -> la edición no se aplicó y el
+ *     pedido original está intacto: se lo devuelve a `enviado` para que se pueda volver a
+ *     tocar, sin inventar nada en IM.
+ *   · no pudo buscar, o no hay con qué (pedidos anteriores a la migración 031) -> NO SE TOCA.
+ * Un falso "no entró" recrearía el presupuesto y duplicaría: ante la duda, no se hace nada.
+ */
+export async function reconciliarSinRespuesta(pedidos: any[]): Promise<void> {
+  const candidatos = pedidos.filter((p) => p.estado === 'sin_respuesta' && p.im_cod_compatibilidad);
+  if (!candidatos.length) return;
+
+  for (const p of candidatos) {
+    try {
+      // Ventana de búsqueda: desde el día anterior al intento (por si IM lo fechó en su propio
+      // día) hasta una semana adelante, porque la oficina mueve la fecha del comprobante para
+      // reordenar los despachos y el presupuesto puede haber quedado fechado a futuro.
+      const base = new Date(p.updated_at ?? p.created_at ?? Date.now()).getTime();
+      const desde = fechaArgentina(base - 864e5);
+      const hasta = fechaArgentina(base + 7 * 864e5);
+      const r = await buscarPresupuestoPorCompatibilidad(p.im_cod_compatibilidad, desde, hasta);
+      if (!r.busquedaOk) continue;                    // no pude preguntar: no se asume nada
+
+      if (!r.encontrado) {
+        // No entró. Si el viejo sigue vivo, el pedido quedó como estaba y se puede destrabar.
+        if (!p.im_presupuesto_id) continue;           // nunca hubo presupuesto: queda a revisar
+        const cab = await cabeceraComprobante(p.im_presupuesto_id);
+        if (cab.anulada !== false) continue;          // anulado, borrado o "no sé": no se toca
+        const aviso = `Revisado ${fechaArgentina()}: InfoManager no había creado el presupuesto de reemplazo, así que el ${p.im_numero ?? p.im_presupuesto_id} sigue siendo el bueno. El pedido se puede editar de nuevo.`;
+        const { error } = await sb().from('pedidos_vendedor')
+          .update({ estado: 'enviado', im_error: aviso }).eq('id', p.id);
+        if (error) { console.warn('[reconciliar] no pude destrabar el pedido', p.id, error.message); continue; }
+        p.estado = 'enviado'; p.im_error = aviso;
+        continue;
+      }
+
+      // Entró. El pedido pasa a ser el nuevo, y el viejo —si es otro— se anula.
+      const nuevo = r.encontrado;
+      if (String(nuevo.id) === String(p.im_presupuesto_id)) continue;   // ya apuntaba ahí
+      let avisoAnular = '';
+      if (p.im_presupuesto_id) {
+        const cab = await cabeceraComprobante(p.im_presupuesto_id);
+        if (cab.anulada === false) {
+          const anul = await anularComprobante({
+            id: p.im_presupuesto_id, numero: p.im_numero, punto_de_venta: p.im_punto_de_venta ?? PEDIDO_PUNTO_DE_VENTA,
+            fecha: cab.fecha ?? fechaArgentina(p.created_at),
+            observaciones: `Reemplazado por edición · ver PR ${nuevo.numero ?? nuevo.id}`,
+          });
+          if (anul.ok) await desconfirmarPresupuesto(p.im_presupuesto_id);
+          // 🔴 Si no se pudo anular quedan los dos vivos igual, pero ahora al menos está
+          // escrito y a la vista, que es la diferencia con el silencio de antes.
+          else avisoAnular = ` OJO: no se pudo anular el ${p.im_numero}: (${anul.error}) — anulalo a mano o se le factura dos veces al cliente.`;
+        }
+      }
+
+      // Los renglones de la app son los de ANTES de editar: se traen los que IM tiene.
+      const itemsIM = await getItemsComprobante(nuevo.id).catch(() => null);
+      if (itemsIM?.length) {
+        const { error: delErr } = await sb().from('pedidos_vendedor_items').delete().eq('pedido_id', p.id);
+        if (!delErr) {
+          await sb().from('pedidos_vendedor_items').insert(itemsIM.map((it: any, i: number) => ({
+            pedido_id: p.id, cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad),
+            cod_lista_precios: it.cod_lista_precios != null ? Number(it.cod_lista_precios) : null,
+            precio_unit: 0, subtotal: 0, orden: i,
+          })));
+        }
+      }
+
+      const aviso = `Reconciliado ${fechaArgentina()}: InfoManager sí había creado el presupuesto ${nuevo.numero ?? nuevo.id} pero no contestó a tiempo.${avisoAnular}`;
+      const { error } = await sb().from('pedidos_vendedor').update({
+        estado: 'enviado', im_presupuesto_id: String(nuevo.id), im_numero: nuevo.numero, im_error: aviso,
+      }).eq('id', p.id);
+      if (error) { console.warn('[reconciliar] no pude guardar el pedido reconciliado', p.id, error.message); continue; }
+      Object.assign(p, { estado: 'enviado', im_presupuesto_id: String(nuevo.id), im_numero: nuevo.numero, im_error: aviso });
+      console.log(`[reconciliar] pedido ${p.id} adoptó el PR ${nuevo.numero ?? nuevo.id}`);
+    } catch (e: any) {
+      console.warn('[reconciliar] falló el pedido', p.id, e?.message);
+    }
+  }
+}
+
 /** GET /api/pedidos — lista (vendedor ve los suyos; admin/gerente todos). Query: estado?, dias?=30, limit?=200 */
 export async function listPedidos(req: Request & { user?: JwtPayload }, res: Response) {
   try {
@@ -994,6 +1109,10 @@ export async function listPedidos(req: Request & { user?: JwtPayload }, res: Res
     // sin botones. Nunca tira — si IM está caído, la lista sale igual con los estados viejos.
     try { await marcarFacturados(pedidos); }
     catch (e: any) { console.warn('[listPedidos] no se pudo chequear facturados:', e?.message); }
+    // Y los que quedaron colgados por un timeout de IM se resuelven solos acá. Es raro que
+    // haya alguno, así que no le agrega llamadas al caso normal: sale por el filtro y listo.
+    try { await reconciliarSinRespuesta(pedidos); }
+    catch (e: any) { console.warn('[listPedidos] no se pudo reconciliar:', e?.message); }
     res.json({ ok: true, pedidos });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'error' });
