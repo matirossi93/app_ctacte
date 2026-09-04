@@ -146,14 +146,10 @@ button {
 }
 
 .login-logo {
-  height: 80px;
+  height: 88px;
+  width: 88px;
   object-fit: contain;
-}
-
-[data-theme="dark"] .login-logo {
-  background: rgba(255,255,255,0.92);
-  padding: 0.5rem 1rem;
-  border-radius: var(--radius-md);
+  display: block;
 }
 
 .login-title-group {
