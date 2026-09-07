@@ -31,6 +31,9 @@ interface Pendiente {
     avisos: string[];
     /** Para qué lado está el error de lista. Es lo que decide si urge mirarlo. */
     gravedad: { pierde_margen: number; cobra_de_mas: number };
+    fecha: string | null;
+    /** Vigente de un día anterior: se quedó sin salir y hay que mirarlo. */
+    de_otro_dia: boolean;
     hoja_id: string | null;
 }
 
@@ -71,6 +74,8 @@ export function HojasRutaView() {
     const [sel, setSel] = useState<Set<string>>(new Set());
     const [trabajando, setTrabajando] = useState(false);
     const [aviso, setAviso] = useState<string | null>(null);
+    /** Qué pedido tiene los avisos desplegados. En tablet no hay hover: hay que poder tocarlo. */
+    const [detalle, setDetalle] = useState<string | null>(null);
 
     const cargar = useCallback(async () => {
         setCargando(true); setError(null);
@@ -133,8 +138,16 @@ export function HojasRutaView() {
         });
     }
 
-    async function nuevaHoja(codZona: number | null = null) {
+    /**
+     * Crea una hoja. Con `conSeleccion`, le mete los pedidos elegidos en el mismo paso.
+     *
+     * 🪤 Antes el botón "Nueva hoja con estos" sólo creaba la hoja VACÍA, y como `cargar()`
+     * limpia la selección, había que volver a marcar los pedidos uno por uno. El botón decía
+     * una cosa y hacía otra.
+     */
+    async function nuevaHoja(codZona: number | null = null, conSeleccion = false) {
         setTrabajando(true); setAviso(null);
+        const paraMeter = conSeleccion ? seleccionados : [];
         try {
             const r = await fetch('/api/hojas-ruta', {
                 method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
@@ -142,51 +155,88 @@ export function HojasRutaView() {
             });
             const d = await r.json().catch(() => null);
             if (!r.ok) { setAviso(d?.error ?? 'No se pudo crear la hoja'); return; }
-            await cargar();
-        } finally { setTrabajando(false); }
-    }
-
-    async function asignar(hojaId: string, mover = false) {
-        if (!seleccionados.length) return;
-        setTrabajando(true); setAviso(null);
-        try {
-            const r = await fetch(`/api/hojas-ruta/${hojaId}/pedidos`, {
-                method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({ pedidos: seleccionados, mover }),
-            });
-            const d = await r.json().catch(() => null);
-            if (!r.ok) { setAviso(d?.error ?? 'No se pudieron asignar'); return; }
-            if (d?.sin_saldo > 0) {
-                setAviso(`Se agregaron ${d.agregados}, pero de ${d.sin_saldo} no se pudo traer el saldo del cliente: van en blanco en la hoja impresa.`);
+            if (paraMeter.length && d?.hoja?.id) {
+                const ok = await mandarAHoja(d.hoja.id, paraMeter);
+                if (!ok) return;   // el error ya se mostró; la hoja queda creada y vacía
             }
             await cargar();
         } finally { setTrabajando(false); }
     }
 
-    async function quitar(comprobanteId: string) {
-        setTrabajando(true);
+    /**
+     * El POST de asignar, separado para que lo usen el botón de la hoja y el de "nueva hoja
+     * con estos". Devuelve si salió bien.
+     */
+    async function mandarAHoja(hojaId: string, pedidos: Pendiente[], mover = false): Promise<boolean> {
+        const r = await fetch(`/api/hojas-ruta/${hojaId}/pedidos`, {
+            method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pedidos, mover }),
+        });
+        const d = await r.json().catch(() => null);
+        if (!r.ok) {
+            // 🔑 El backend avisa cuándo se puede forzar. Sin esto, un pedido que ya está en
+            // otra hoja obliga a ir a buscarlo y sacarlo a mano — y mover pedidos entre hojas
+            // es la operación MÁS COMÚN cuando una zona se pasa de kilos.
+            if (d?.mover_disponible && confirm(`${d.error}\n\n¿Los paso igual a esta hoja?`)) {
+                return await mandarAHoja(hojaId, pedidos, true);
+            }
+            setAviso(d?.error ?? 'No se pudieron asignar');
+            return false;
+        }
+        const partes: string[] = [];
+        if (d?.sin_saldo > 0) partes.push(`de ${d.sin_saldo} no se pudo traer el saldo del cliente (van en blanco en la hoja impresa)`);
+        if (d?.peso_recalculado === false) partes.push('los kilos son los que mostraba la pantalla, no se pudieron recalcular contra InfoManager');
+        if (partes.length) setAviso(`Se agregaron ${d.agregados}, pero ${partes.join('; ')}.`);
+        return true;
+    }
+
+    async function asignar(hojaId: string) {
+        if (!seleccionados.length) return;
+        setTrabajando(true); setAviso(null);
         try {
-            await fetch(`/api/hojas-ruta/pedidos/${comprobanteId}`, { method: 'DELETE', headers: authHeaders() });
+            await mandarAHoja(hojaId, seleccionados);
             await cargar();
         } finally { setTrabajando(false); }
     }
 
-    async function cambiarCamion(hojaId: string, camionId: string) {
-        setTrabajando(true);
+    /**
+     * 🪤 Estas tres se comían el error: hacían `await fetch(...)` sin mirar la respuesta y
+     * recargaban igual. Si el server rechazaba, la pantalla se refrescaba como si hubiera
+     * funcionado y el usuario se quedaba pensando que el pedido salió de la hoja.
+     */
+    async function pedir(url: string, init: RequestInit, siFalla: string): Promise<boolean> {
+        const r = await fetch(url, { ...init, headers: { ...authHeaders(), ...(init.headers ?? {}) } });
+        if (!r.ok) {
+            const d = await r.json().catch(() => null);
+            setAviso(d?.error ?? siFalla);
+            return false;
+        }
+        return true;
+    }
+
+    async function quitar(comprobanteId: string) {
+        setTrabajando(true); setAviso(null);
         try {
-            await fetch(`/api/hojas-ruta/${hojaId}`, {
-                method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({ camion_id: camionId || null }),
-            });
+            await pedir(`/api/hojas-ruta/pedidos/${comprobanteId}`, { method: 'DELETE' }, 'No se pudo sacar el pedido de la hoja');
+            await cargar();
+        } finally { setTrabajando(false); }
+    }
+
+    async function editarHoja(hojaId: string, cambios: Record<string, unknown>, siFalla: string) {
+        setTrabajando(true); setAviso(null);
+        try {
+            await pedir(`/api/hojas-ruta/${hojaId}`, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cambios),
+            }, siFalla);
             await cargar();
         } finally { setTrabajando(false); }
     }
 
     async function borrarHoja(hojaId: string, numero: number) {
         if (!confirm(`¿Borrar la hoja ${numero}? Los pedidos vuelven a la lista de pendientes.`)) return;
-        setTrabajando(true);
+        setTrabajando(true); setAviso(null);
         try {
-            await fetch(`/api/hojas-ruta/${hojaId}`, { method: 'DELETE', headers: authHeaders() });
+            await pedir(`/api/hojas-ruta/${hojaId}`, { method: 'DELETE' }, 'No se pudo borrar la hoja');
             await cargar();
         } finally { setTrabajando(false); }
     }
@@ -242,13 +292,20 @@ export function HojasRutaView() {
                                     <div className="hr-ped-info">
                                         <div className="hr-ped-cli">
                                             {p.cliente_nombre}
-                                            {p.gravedad?.pierde_margen > 0 && (
-                                                <span className="hr-badge grave" title={p.avisos.join(' · ')}>
-                                                    <AlertTriangle size={11} /> por debajo de lista
+                                            {p.de_otro_dia && (
+                                                <span className="hr-badge tenue" title="Es de otro día y sigue sin salir">
+                                                    {String(p.fecha ?? '').slice(8, 10)}/{String(p.fecha ?? '').slice(5, 7)}
                                                 </span>
                                             )}
-                                            {p.gravedad?.pierde_margen === 0 && p.avisos.length > 0 && (
-                                                <span className="hr-badge aviso" title={p.avisos.join(' · ')}>revisar</span>
+                                            {p.avisos.length > 0 && (
+                                                <button
+                                                    type="button"
+                                                    className={`hr-badge ${p.gravedad?.pierde_margen > 0 ? 'grave' : 'aviso'}`}
+                                                    onClick={e => { e.preventDefault(); e.stopPropagation(); setDetalle(d => d === p.im_comprobante_id ? null : p.im_comprobante_id); }}
+                                                >
+                                                    <AlertTriangle size={11} />
+                                                    {p.gravedad?.pierde_margen > 0 ? 'por debajo de lista' : 'revisar'}
+                                                </button>
                                             )}
                                             {p.zona_origen === 'nombre' && <span className="hr-badge tenue" title="La zona se dedujo del nombre del cliente, no está cargada en InfoManager">zona estimada</span>}
                                         </div>
@@ -263,6 +320,11 @@ export function HojasRutaView() {
                                     </div>
                                     <div className="hr-ped-kg">{kilos(p.kg)}</div>
                                 </label>
+                            ))}
+                            {g.filas.filter(p => detalle === p.im_comprobante_id).map(p => (
+                                <div className="hr-detalle" key={p.im_comprobante_id + '-det'}>
+                                    {p.avisos.map((a, i) => <div key={i}>· {a}</div>)}
+                                </div>
                             ))}
                         </div>
                     ))}
@@ -285,13 +347,28 @@ export function HojasRutaView() {
                         <div className={`hr-hoja${h.carga.excedido ? ' excedida' : ''}`} key={h.id}>
                             <div className="hr-hoja-head">
                                 <span className="hr-hoja-num">Hoja {h.numero}</span>
-                                <select value={h.camion_id ?? ''} onChange={e => void cambiarCamion(h.id, e.target.value)} disabled={trabajando}>
+                                <select value={h.camion_id ?? ''} onChange={e => void editarHoja(h.id, { camion_id: e.target.value || null }, 'No se pudo cambiar el camión')} disabled={trabajando}>
                                     <option value="">Sin camión</option>
                                     {camiones.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                                 </select>
                                 <button className="hr-icono" title="Borrar la hoja" onClick={() => void borrarHoja(h.id, h.numero)} disabled={trabajando}>
                                     <Trash2 size={14} />
                                 </button>
+                            </div>
+
+                            {/* Turno y transporte van impresos en la cabecera de la hoja de ruta
+                                ("Turno: Mañana · Transporte: Niño"), así que se cargan acá. */}
+                            <div className="hr-hoja-datos">
+                                <select value={h.turno ?? ''} onChange={e => void editarHoja(h.id, { turno: e.target.value || null }, 'No se pudo cambiar el turno')} disabled={trabajando}>
+                                    <option value="">Turno…</option>
+                                    <option value="Mañana">Mañana</option>
+                                    <option value="Tarde">Tarde</option>
+                                </select>
+                                <input
+                                    type="text" placeholder="Transporte" defaultValue={h.transporte ?? ''}
+                                    onBlur={e => { if (e.target.value !== (h.transporte ?? '')) void editarHoja(h.id, { transporte: e.target.value || null }, 'No se pudo cambiar el transporte'); }}
+                                    disabled={trabajando}
+                                />
                             </div>
 
                             {/* La barra es el dato que evita que se arme una hoja que no entra en el camión. */}
@@ -340,7 +417,7 @@ export function HojasRutaView() {
                 <div className="hr-barra-sel">
                     <span><b>{seleccionados.length}</b> pedidos · {kilos(kgSel)}</span>
                     <button className="hr-btn ghost" onClick={() => setSel(new Set())}>Deseleccionar</button>
-                    <button className="hr-btn" onClick={() => void nuevaHoja(seleccionados[0]?.cod_zona ?? null)} disabled={trabajando}>
+                    <button className="hr-btn" onClick={() => void nuevaHoja(seleccionados[0]?.cod_zona ?? null, true)} disabled={trabajando}>
                         <Wand2 size={15} /> Nueva hoja con estos
                     </button>
                 </div>

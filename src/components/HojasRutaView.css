@@ -132,3 +132,25 @@
     .hr-cols { grid-template-columns: 1fr; }
     .hr-resumen { width: 100%; margin-left: 0; }
 }
+
+/* Detalle de los avisos, desplegable al tocar. En tablet y celular no hay hover, así que un
+   `title` deja el dato invisible justo donde más se usa. */
+.hr-detalle {
+    padding: 0.5rem 0.7rem;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-bg);
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+    display: flex; flex-direction: column; gap: 0.2rem;
+}
+
+/* Turno y transporte: van impresos en la cabecera de la hoja de ruta. */
+.hr-hoja-datos { display: flex; gap: 0.4rem; }
+.hr-hoja-datos select, .hr-hoja-datos input {
+    flex: 1; min-width: 0;
+    border: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-text);
+    font-family: inherit; font-size: 0.78rem; padding: 0.3rem 0.5rem; border-radius: var(--radius-sm);
+}
+
+/* El badge de aviso ahora es un botón (se toca para ver el detalle). */
+button.hr-badge { cursor: pointer; font-family: inherit; }

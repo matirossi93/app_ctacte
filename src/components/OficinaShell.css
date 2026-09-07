@@ -2,13 +2,18 @@
    quede igual que el resto de los paneles del semillero: verde #06652F, dorado #EEC045,
    crema y Poppins. */
 
+/* 🪤 `html, body { height: 100%; overflow: hidden }` en index.css: la app se comporta como
+   nativa y el scroll lo maneja CADA vista. Con `min-height: 100vh` y sin overflow propio, el
+   panel quedaba cortado y en el celular no se podía bajar a ver los pedidos (Mati, 07/09/2026).
+   La altura va al 100% del contenedor y el scroll vive en `.of-body`. */
 .of-root {
-    min-height: 100vh;
+    height: 100%;
     background: var(--color-bg);
     color: var(--color-text);
     font-family: 'Poppins', system-ui, sans-serif;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 
 .of-header {
@@ -19,8 +24,7 @@
     background: linear-gradient(135deg, #06652F 0%, #03481F 100%);
     color: #F9EFE3;
     box-shadow: var(--shadow-md);
-    position: sticky;
-    top: 0;
+    flex: none;
     z-index: 50;
 }
 
@@ -100,7 +104,14 @@
 }
 .of-user-menu button:hover { background: var(--color-surface-hover); }
 
-.of-body { flex: 1; padding: 1rem 1.1rem 2.5rem; }
+.of-body {
+    flex: 1;
+    min-height: 0;                      /* sin esto el hijo flex no deja scrollear */
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;  /* inercia en iOS */
+    overscroll-behavior: contain;
+    padding: 1rem 1.1rem 2.5rem;
+}
 
 .of-vacio {
     display: flex;

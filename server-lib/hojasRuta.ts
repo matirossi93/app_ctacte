@@ -32,6 +32,12 @@ function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): bo
   return false;
 }
 
+/**
+ * Cuántos días para atrás se miran además de la fecha elegida. Un presupuesto vigente de la
+ * semana pasada sigue esperando el camión: si no aparece, no entra en ninguna hoja.
+ */
+const VENTANA_DIAS = 15;
+
 /** `?fecha=YYYY-MM-DD`, y si no viene, hoy. */
 function fechaPedida(req: Request): string {
   const f = String(req.query.fecha ?? '').trim();
@@ -63,9 +69,17 @@ export async function pendientesDelDia(req: Request & { user?: JwtPayload }, res
 /** Lo que se muestra del día. Separado del handler para que el sugeridor lo reuse. */
 async function armarVistaDelDia(fecha: string) {
   {
+    // 🪤 Esto miraba SÓLO la fecha exacta y se perdía la mayoría de los pedidos. Medido el
+    // 07/09/2026: había 225 presupuestos vigentes y el panel mostraba 59. Los otros 166 eran
+    // de días anteriores sin facturar y de días futuros — porque la oficina MUEVE la fecha del
+    // comprobante para reordenar los despachos, así que un pedido fechado para el 10 existe
+    // desde antes. Un pedido que no aparece en la pantalla no entra en ninguna hoja y nadie
+    // se entera hasta que llama el cliente.
+    // Se mira una ventana: desde 15 días atrás (lo viejo vigente) hasta la fecha elegida.
+    const desde = fechaArgentina(new Date(fecha + 'T12:00:00Z').getTime() - VENTANA_DIAS * 864e5);
     const [ventas, items, cat, clientes] = await Promise.all([
-      fetchVentas(fecha, fecha),
-      fetchVentasItems(fecha, fecha),
+      fetchVentas(desde, fecha),
+      fetchVentasItems(desde, fecha),
       fetchArticulosCatalogo(),
       fetchClientesIMCached().catch(() => []),
     ]);
@@ -134,6 +148,9 @@ async function armarVistaDelDia(fecha: string) {
         im_comprobante_id: String(p.id),
         im_numero: p.numero ?? null,
         fecha: p.fecha ?? null,
+        // Un pedido de un día anterior que sigue vigente es arrastre: se quedó sin salir.
+        // Se marca para que salte a la vista y no se mezcle con los del día.
+        de_otro_dia: String(p.fecha ?? '').slice(0, 10) !== fecha,
         cod_cliente: Number(p.cod_cliente),
         cliente_nombre: c?.razon_social ?? c?.nombre ?? `Cliente ${p.cod_cliente}`,
         cod_zona: z.cod_zona,
@@ -165,6 +182,7 @@ async function armarVistaDelDia(fecha: string) {
       pierde_margen: filas.filter(f => f.gravedad.pierde_margen > 0).length,
       cobra_de_mas: filas.filter(f => f.gravedad.cobra_de_mas > 0).length,
       sin_zona: filas.filter(f => f.cod_zona == null).length,
+      de_otros_dias: filas.filter(f => f.de_otro_dia && !f.hoja_id).length,
     };
   }
 }
@@ -324,21 +342,55 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
       .select('orden').eq('hoja_id', hojaId).order('orden', { ascending: false }).limit(1).maybeSingle();
     let orden = Number(ultimo?.orden ?? -1);
 
-    const filas = entrada.map((p) => ({
-      hoja_id: hojaId,
-      im_comprobante_id: String(p.im_comprobante_id),
-      im_numero: p.im_numero != null ? Number(p.im_numero) : null,
-      cod_cliente: Number(p.cod_cliente),
-      cliente_nombre: p.cliente_nombre ? String(p.cliente_nombre) : null,
-      pedido_id: p.pedido_id ? String(p.pedido_id) : null,
-      orden: ++orden,
-      saldo_anterior: saldos.get(Number(p.cod_cliente)) ?? null,
-      bultos: Number(p.bultos) || 0,
-      kg: Number(p.kg) || 0,
-    }));
+    // 🔑 El peso se RECALCULA acá contra IM; no se guarda el que mandó el navegador. Los kilos
+    // deciden en qué camión entra la mercadería: si la pantalla quedó abierta desde ayer, o
+    // alguien editó el pedido mientras tanto, guardar el número viejo arma una hoja que no
+    // entra y eso se descubre en el galpón, cargando.
+    const pesos = new Map<string, { bultos: number; kg: number }>();
+    try {
+      const cat = await fetchArticulosCatalogo();
+      const porComprobante = new Map<string, any[]>();
+      const desde = fechaArgentina(new Date(String(hoja.fecha) + 'T12:00:00Z').getTime() - VENTANA_DIAS * 864e5);
+      for (const it of await fetchVentasItems(desde, String(hoja.fecha))) {
+        const k = String((it as any).id_comprobante);
+        if (!porComprobante.has(k)) porComprobante.set(k, []);
+        porComprobante.get(k)!.push({
+          cantidad: (it as any).cantidad,
+          equivalencia_um: cat.get(Number((it as any).cod_articulo))?.equivalencia_um,
+        });
+      }
+      for (const p of entrada) {
+        const rs = porComprobante.get(String(p.im_comprobante_id));
+        if (rs) pesos.set(String(p.im_comprobante_id), pesoDeRenglones(rs));
+      }
+    } catch (e: any) {
+      // Si IM no contesta se usa lo que mandó la pantalla, que es mejor que no poder armar la
+      // hoja; queda dicho en la respuesta para que no se confíe en el total.
+      console.warn('[asignarPedidos] no pude recalcular el peso, uso el de la pantalla:', e?.message);
+    }
+
+    const filas = entrada.map((p) => {
+      const peso = pesos.get(String(p.im_comprobante_id));
+      return {
+        hoja_id: hojaId,
+        im_comprobante_id: String(p.im_comprobante_id),
+        im_numero: p.im_numero != null ? Number(p.im_numero) : null,
+        cod_cliente: Number(p.cod_cliente),
+        cliente_nombre: p.cliente_nombre ? String(p.cliente_nombre) : null,
+        pedido_id: p.pedido_id ? String(p.pedido_id) : null,
+        orden: ++orden,
+        saldo_anterior: saldos.get(Number(p.cod_cliente)) ?? null,
+        bultos: peso ? peso.bultos : (Number(p.bultos) || 0),
+        kg: peso ? peso.kg : (Number(p.kg) || 0),
+      };
+    });
     const { error } = await sb().from('hojas_ruta_pedidos').upsert(filas, { onConflict: 'im_comprobante_id' });
     if (error) { res.status(500).json({ error: error.message }); return; }
-    res.json({ ok: true, agregados: filas.length, sin_saldo: filas.filter(f => f.saldo_anterior == null).length });
+    res.json({
+      ok: true, agregados: filas.length,
+      sin_saldo: filas.filter(f => f.saldo_anterior == null).length,
+      peso_recalculado: pesos.size === entrada.length,
+    });
   } catch (err: any) {
     console.error('[asignarPedidos]', err?.message);
     res.status(500).json({ error: err?.message ?? 'error' });
