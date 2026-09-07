@@ -89,6 +89,17 @@ describe('sugerirRepartos', () => {
     expect(conElGrande.camion!.capacidad_kg).toBeGreaterThanOrEqual(6500);
   });
 
+  it('🔴 a cada reparto le queda el camión MÁS CHICO que lo aguante', () => {
+    // Con los pedidos reales del 04/09, el camión de 12.000 salía con 3.624 kg (30%) lleno de
+    // pedidos chicos porque lo había elegido el primer pedido, el más pesado. Mandar el camión
+    // grande a medio llenar es plata.
+    const s = sugerirRepartos([ped(4500, 4), ped(200, 4), ped(100, 4)], FLOTA);
+    expect(s.repartos).toHaveLength(1);
+    expect(s.repartos[0].kg).toBe(4800);
+    expect(s.repartos[0].camion!.capacidad_kg).toBe(5000);   // no el de 7.000 ni el de 12.000
+    expect(s.repartos[0].ocupacion).toBe(96);
+  });
+
   it('🔴 no mezcla zonas en un mismo reparto', () => {
     // Un camión que va a Lules no pasa por Yerba Buena de paso.
     const s = sugerirRepartos([ped(1000, 9), ped(1000, 13), ped(1000, 9)], FLOTA);

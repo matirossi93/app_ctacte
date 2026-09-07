@@ -131,6 +131,16 @@ export function sugerirRepartos(
     }
   }
 
+  // Ajuste final: a cada reparto se le deja el camión MÁS CHICO que lo aguante.
+  // 🪤 Durante el armado el camión se elige por el primer pedido, que es el más pesado; los
+  // chicos que caen después no cambian esa elección. Con los pedidos reales del 04/09 eso
+  // dejaba al camión de 12.000 haciendo un viaje con 3.624 kg (30%) lleno de pedidos chicos,
+  // mientras el de 5.000 hacía cinco. Mandar el camión grande a medio llenar es plata.
+  for (const r of repartos) {
+    const mejor = flota.find(c => c.capacidad_kg >= r.kg);
+    if (mejor) r.camion = mejor;
+  }
+
   for (const r of repartos) {
     r.ocupacion = r.camion ? dos((r.kg / r.camion.capacidad_kg) * 100) : null;
     // Un solo cliente ocupando casi todo el camión: es un envío especial, no un reparto.
