@@ -21,6 +21,7 @@ import {
 } from './infomanager.js';
 import { pesoDeRenglones, cargaDelCamion } from './pesoComprobante.js';
 import { zonaDeCliente } from './zonaCliente.js';
+import { sugerirRepartos } from './sugerirRepartos.js';
 
 /** Sólo la oficina. Devuelve true si ya contestó el 403. */
 function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
@@ -51,6 +52,17 @@ export async function pendientesDelDia(req: Request & { user?: JwtPayload }, res
   if (frenaSiNoPuede(req, res)) return;
   try {
     const fecha = fechaPedida(req);
+    const armado = await armarVistaDelDia(fecha);
+    res.json({ ok: true, fecha, ...armado });
+  } catch (err: any) {
+    console.error('[pendientesDelDia]', err?.message);
+    res.status(502).json({ error: `No se pudieron traer los pedidos del día: ${err?.message ?? 'sin respuesta de IM'}` });
+  }
+}
+
+/** Lo que se muestra del día. Separado del handler para que el sugeridor lo reuse. */
+async function armarVistaDelDia(fecha: string) {
+  {
     const [ventas, items, cat, clientes] = await Promise.all([
       fetchVentas(fecha, fecha),
       fetchVentasItems(fecha, fecha),
@@ -125,17 +137,37 @@ export async function pendientesDelDia(req: Request & { user?: JwtPayload }, res
       };
     });
 
-    res.json({
-      ok: true, fecha,
+    return {
       pendientes: filas.filter(f => !f.hoja_id),
       asignados: filas.filter(f => f.hoja_id),
       // Para que la pantalla pueda mostrar "3 pedidos para revisar" sin recorrer todo.
       con_avisos: filas.filter(f => f.avisos.length > 0).length,
       sin_zona: filas.filter(f => f.cod_zona == null).length,
-    });
+    };
+  }
+}
+
+/**
+ * GET /api/hojas-ruta/sugerencia?fecha= — cómo repartir el día en hojas que entren en los
+ * camiones. Es el trabajo que hoy hace Jorgelina a mano cuando una zona da más kilos que un
+ * camión. Sugiere: no crea nada.
+ */
+export async function sugerenciaDelDia(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  try {
+    const fecha = fechaPedida(req);
+    const [{ pendientes }, { data: camiones }] = await Promise.all([
+      armarVistaDelDia(fecha),
+      sb().from('hojas_ruta_camiones').select('id, nombre, capacidad_kg')
+        .eq('tenant_id', TENANT_ID).eq('activo', true),
+    ]);
+    const flota = (camiones ?? []).map((c: any) => ({
+      id: String(c.id), nombre: String(c.nombre), capacidad_kg: Number(c.capacidad_kg),
+    }));
+    res.json({ ok: true, fecha, ...sugerirRepartos(pendientes as any, flota) });
   } catch (err: any) {
-    console.error('[pendientesDelDia]', err?.message);
-    res.status(502).json({ error: `No se pudieron traer los pedidos del día: ${err?.message ?? 'sin respuesta de IM'}` });
+    console.error('[sugerenciaDelDia]', err?.message);
+    res.status(502).json({ error: `No se pudo armar la sugerencia: ${err?.message ?? 'sin respuesta de IM'}` });
   }
 }
 
