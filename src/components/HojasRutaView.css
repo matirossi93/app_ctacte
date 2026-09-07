@@ -55,11 +55,22 @@
 
 /* ─── Pendientes por zona ─────────────────────────────────────────────────── */
 .hr-zona { border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; background: var(--color-surface); }
+/* Cabecera de zona: checkbox para elegirla entera + botón que la despliega. */
 .hr-zona-head {
-    display: flex; align-items: center; width: 100%;
-    border: none; background: var(--color-surface-hover); color: var(--color-text);
-    font-family: inherit; padding: 0.5rem 0.7rem; cursor: pointer; text-align: left;
+    display: flex; align-items: center; gap: 0.5rem;
+    background: var(--color-surface-hover); color: var(--color-text);
+    padding: 0.5rem 0.7rem;
 }
+.hr-zona-head > input { width: 17px; height: 17px; accent-color: #06652F; flex: none; cursor: pointer; }
+.hr-zona-abrir {
+    display: flex; align-items: center; gap: 0.4rem; flex: 1; min-width: 0;
+    border: none; background: transparent; color: inherit;
+    font-family: inherit; padding: 0; cursor: pointer; text-align: left;
+}
+.hr-chevron { flex: none; transition: transform 0.15s; color: var(--color-text-muted); }
+.hr-zona.abierta .hr-chevron { transform: rotate(90deg); }
+.hr-zona-alerta { color: #a33b26; font-weight: 700; }
+.hr-zona-elegidos { color: var(--color-primary); font-weight: 700; }
 .hr-zona-nombre { font-weight: 700; font-size: 0.86rem; color: var(--color-primary); }
 /* Los sin zona van marcados: son los que hay que mirar antes de armar la hoja. */
 .hr-zona-nombre.sin { color: #8a5a00; }
@@ -162,4 +173,27 @@ button.hr-badge { cursor: pointer; font-family: inherit; }
     /* Los badges no compiten con el nombre: van abajo, en su propia línea. */
     .hr-ped-cli { flex-direction: column; align-items: flex-start; gap: 0.2rem; }
     .hr-badge { max-width: 100%; }
+}
+
+/* ── Cambio de panel en pantallas chicas ─────────────────────────────────── */
+/* En el escritorio no hace falta: las dos columnas entran juntas. */
+.hr-panel-tabs { display: none; }
+
+@media (max-width: 900px) {
+    .hr-panel-tabs {
+        display: flex; gap: 0.25rem; position: sticky; top: 0; z-index: 15;
+        background: var(--color-bg); padding: 0.4rem 0; margin: -0.2rem 0 0.2rem;
+    }
+    .hr-panel-tabs button {
+        flex: 1; display: flex; align-items: center; justify-content: center; gap: 0.35rem;
+        border: 1px solid var(--color-border); background: var(--color-surface);
+        color: var(--color-text-muted); font-family: inherit; font-weight: 600; font-size: 0.85rem;
+        padding: 0.5rem; border-radius: var(--radius-md); cursor: pointer;
+    }
+    .hr-panel-tabs button.on { background: var(--color-primary); color: #EEC045; border-color: var(--color-primary); }
+    .hr-panel-tabs b { font-size: 0.78rem; opacity: 0.85; }
+
+    /* Se muestra una columna por vez. */
+    .hr-cols[data-panel="pedidos"] .hr-col-hojas { display: none; }
+    .hr-cols[data-panel="hojas"] .hr-col-pedidos { display: none; }
 }

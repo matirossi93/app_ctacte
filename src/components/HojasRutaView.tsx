@@ -81,6 +81,14 @@ export function HojasRutaView() {
     const [dias, setDias] = useState(0);
     /** Cuántos pedidos vigentes quedaron de días anteriores. null = todavía no se sabe. */
     const [arrastre, setArrastre] = useState<number | null>(null);
+    /**
+     * Qué zonas están desplegadas. Arrancan CERRADAS: con 59 pedidos en 6 zonas había que
+     * scrollear media pantalla para llegar a las hojas de ruta (Mati, 07/09/2026, desde el
+     * celular). Cerradas, todo el día entra de una y se abre lo que se va a trabajar.
+     */
+    const [zonasAbiertas, setZonasAbiertas] = useState<Set<string>>(new Set());
+    /** En el celular las dos columnas quedan una abajo de la otra: se muestra una por vez. */
+    const [panel, setPanel] = useState<'pedidos' | 'hojas'>('pedidos');
     /** Qué hoja se está imprimiendo. */
     const [imprimiendo, setImprimiendo] = useState<string | null>(null);
 
@@ -151,6 +159,9 @@ export function HojasRutaView() {
 
     function toggle(id: string) {
         setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+    }
+    function abrirCerrarZona(k: string) {
+        setZonasAbiertas(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
     }
     function toggleZona(filas: Pendiente[]) {
         const ids = filas.map(f => f.im_comprobante_id);
@@ -307,9 +318,20 @@ export function HojasRutaView() {
             {aviso && <div className="hr-aviso"><AlertTriangle size={15} /><span>{aviso}</span><button onClick={() => setAviso(null)}><X size={14} /></button></div>}
             {error && <div className="hr-aviso error"><AlertTriangle size={15} /><span>{error}</span></div>}
 
-            <div className="hr-cols">
+            {/* En el celular las dos columnas quedan una abajo de la otra y hay que scrollear
+                toda la lista de pedidos para llegar a las hojas. Se muestra una por vez. */}
+            <div className="hr-panel-tabs">
+                <button className={panel === 'pedidos' ? 'on' : ''} onClick={() => setPanel('pedidos')}>
+                    Pedidos {pendientes.length > 0 && <b>{pendientes.length}</b>}
+                </button>
+                <button className={panel === 'hojas' ? 'on' : ''} onClick={() => setPanel('hojas')}>
+                    Hojas de ruta {hojas.length > 0 && <b>{hojas.length}</b>}
+                </button>
+            </div>
+
+            <div className="hr-cols" data-panel={panel}>
                 {/* ─── Pendientes, agrupados por zona ─────────────────────────── */}
-                <section className="hr-col">
+                <section className="hr-col hr-col-pedidos">
                     <h2 className="hr-col-title"><MapPin size={16} /> Pedidos sin asignar</h2>
 
                     {cargando && <div className="hr-cargando"><Loader2 className="spin" size={20} /> Trayendo los pedidos…</div>}
@@ -317,13 +339,32 @@ export function HojasRutaView() {
                         <div className="hr-vacio"><Package size={26} /><span>No quedan pedidos sin asignar.</span></div>
                     )}
 
-                    {porZona.map(g => (
-                        <div className="hr-zona" key={String(g.cod_zona ?? 'sin')}>
-                            <button className="hr-zona-head" onClick={() => toggleZona(g.filas)}>
-                                <span className={`hr-zona-nombre${g.cod_zona == null ? ' sin' : ''}`}>{g.zona}</span>
-                                <span className="hr-zona-meta">{g.filas.length} ped · {kilos(g.kg)}</span>
-                            </button>
-                            {g.filas.map(p => (
+                    {porZona.map(g => {
+                        const k = String(g.cod_zona ?? 'sin');
+                        const abierta = zonasAbiertas.has(k);
+                        const elegidos = g.filas.filter(f => sel.has(f.im_comprobante_id)).length;
+                        const conAviso = g.filas.filter(f => f.gravedad?.pierde_margen > 0).length;
+                        return (
+                        <div className={`hr-zona${abierta ? ' abierta' : ''}`} key={k}>
+                            <div className="hr-zona-head">
+                                {/* El checkbox elige la zona entera sin tener que desplegarla. */}
+                                <input
+                                    type="checkbox" title="Elegir toda la zona"
+                                    checked={elegidos === g.filas.length && !!g.filas.length}
+                                    ref={el => { if (el) el.indeterminate = elegidos > 0 && elegidos < g.filas.length; }}
+                                    onChange={() => toggleZona(g.filas)}
+                                />
+                                <button className="hr-zona-abrir" onClick={() => abrirCerrarZona(k)}>
+                                    <ChevronRight size={15} className="hr-chevron" />
+                                    <span className={`hr-zona-nombre${g.cod_zona == null ? ' sin' : ''}`}>{g.zona}</span>
+                                    <span className="hr-zona-meta">
+                                        {g.filas.length} ped · {kilos(g.kg)}
+                                        {conAviso > 0 && <span className="hr-zona-alerta" title="Pedidos por debajo de la lista que corresponde"> · {conAviso} ⚠</span>}
+                                        {elegidos > 0 && <span className="hr-zona-elegidos"> · {elegidos} elegidos</span>}
+                                    </span>
+                                </button>
+                            </div>
+                            {abierta && g.filas.map(p => (
                                 <label className={`hr-ped${sel.has(p.im_comprobante_id) ? ' sel' : ''}`} key={p.im_comprobante_id}>
                                     <input type="checkbox" checked={sel.has(p.im_comprobante_id)} onChange={() => toggle(p.im_comprobante_id)} />
                                     <div className="hr-ped-info">
@@ -358,17 +399,18 @@ export function HojasRutaView() {
                                     <div className="hr-ped-kg">{kilos(p.kg)}</div>
                                 </label>
                             ))}
-                            {g.filas.filter(p => detalle === p.im_comprobante_id).map(p => (
+                            {abierta && g.filas.filter(p => detalle === p.im_comprobante_id).map(p => (
                                 <div className="hr-detalle" key={p.im_comprobante_id + '-det'}>
                                     {p.avisos.map((a, i) => <div key={i}>· {a}</div>)}
                                 </div>
                             ))}
                         </div>
-                    ))}
+                        );
+                    })}
                 </section>
 
                 {/* ─── Hojas del día ──────────────────────────────────────────── */}
-                <section className="hr-col">
+                <section className="hr-col hr-col-hojas">
                     <h2 className="hr-col-title">
                         <Truck size={16} /> Hojas de ruta
                         <button className="hr-btn chico" onClick={() => void nuevaHoja()} disabled={trabajando}>
