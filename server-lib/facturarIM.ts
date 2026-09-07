@@ -77,6 +77,20 @@ const ID_DESTINO = Number(process.env.IM_ID_DESTINO_FACTURA || 1);
 const CUENTA_VENTA = process.env.IM_CUENTA_VENTA_PEDIDOS || '4100002';
 
 /**
+ * Unidad de negocio del renglón.
+ *
+ * 🪤 La cuenta de ventas de IM (4100002, "Ventas de Bienes de Cambio") tiene
+ * `cod_unidad_negocio: 0` en el plan de cuentas, o sea SIN ASIGNAR. Al facturar por API eso
+ * hace que IM rechace: *"La cuenta de venta [4100002] del artículo [661] no tiene unidad de
+ * negocio"*. Mandándola en el renglón, pasa.
+ *
+ * ⚠️ El 1 es el valor con el que se comprobó que IM acepta, NO una decisión contable
+ * verificada: la unidad de negocio define cómo se imputa la venta. Está en una variable de
+ * entorno para poder cambiarlo sin tocar código en cuanto la oficina confirme cuál va.
+ */
+const UNIDAD_NEGOCIO = Number(process.env.IM_UNIDAD_NEGOCIO || 1);
+
+/**
  * El próximo número de factura de un talonario.
  *
  * 🪤 IM **no asigna el correlativo de las facturas**. Probado el 07/09/2026: mandar `numero: 0`
@@ -157,9 +171,9 @@ function renglones(items: ItemAFacturar[]) {
     precio: it.precio,
     iva_por: it.iva_por ?? 0,
     cod_cuenta: Number(CUENTA_VENTA),
-    // 🪤 Sin `cod_unidad_negocio` IM rechaza: "La cuenta de venta [4100002] del artículo [N]
-    // no tiene unidad de negocio".
-    cod_unidad_negocio: 0,
+    // 🪤 Sin esto IM rechaza: "La cuenta de venta [4100002] del artículo [N] no tiene unidad
+    // de negocio" — la cuenta la tiene en 0 en el plan de cuentas.
+    cod_unidad_negocio: UNIDAD_NEGOCIO,
     ...(it.cod_lista_precios != null ? { cod_lista_precios: it.cod_lista_precios } : {}),
     ...(it.descuento_porc ? { descuento_porc: it.descuento_porc } : {}),
   }));

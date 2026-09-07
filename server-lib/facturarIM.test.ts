@@ -154,7 +154,7 @@ describe('emitirRemito', () => {
         // Sin esto: "La cuenta de venta [4100002] del artículo [661] no tiene unidad de negocio".
         const post = mockIM({ isCreated: true, venta: { id: 1, numero: 2 } });
         await emitirRemito(DATOS as any);
-        expect((post.mock.calls[0] as any[])[1].items[0].cod_unidad_negocio).toBe(0);
+        expect((post.mock.calls[0] as any[])[1].items[0].cod_unidad_negocio).toBe(1);
         expect((post.mock.calls[0] as any[])[1].items[0].cod_cuenta).toBe(4100002);
     });
 
