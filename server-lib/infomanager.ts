@@ -210,27 +210,42 @@ export async function fetchArticulosCatalogo(force = false): Promise<Map<number,
   }
   const cli = await imClient();
   const map = new Map<number, ArticuloMini>();
-  // /articulos/stock devuelve consolidado de las 3 sucursales, 1 fila por
-  // (artículo, depósito). Solo necesitamos cod_articulo → cod_rubro, los
-  // duplicados se sobrescriben sin problema (todos comparten rubro).
-  const { data } = await imGetRetry(() => cli.get('/articulos/stock'), 'articulos/stock');
-  const rows: any[] = data?.results ?? data?.articulos ?? (Array.isArray(data) ? data : []);
-  for (const r of rows) {
-    const cod = Number(r.cod_articulo ?? r.cod ?? r.codigo);
-    if (!Number.isFinite(cod)) continue;
-    const codRubroRaw = r.cod_rubro ?? r.codRubro ?? r.rubro_cod;
-    const codRubro = codRubroRaw != null ? Number(codRubroRaw) : null;
-    const precioRaw = r.precio_venta ?? r.precioVenta ?? r.precio ?? 0;
-    const precio = Number(precioRaw);
-    const eq = Number(r.equivalencia_um);
-    map.set(cod, {
-      cod_rubro: Number.isFinite(codRubro as number) ? codRubro : null,
-      descripcion: String(r.descripcion ?? r.nombre ?? '').trim(),
-      precio_venta: Number.isFinite(precio) ? precio : 0,
-      subrubro: String(r.subrubro ?? '').trim(),
-      unidad_de_medida: r.unidad_de_medida != null ? String(r.unidad_de_medida) : null,
-      equivalencia_um: Number.isFinite(eq) ? eq : null,
-    });
+  // 🪤 04/09/2026. Esto salía de `/articulos/stock`, que sólo devuelve los artículos con FICHA
+  // DE STOCK: el que nunca tuvo movimiento no aparece ahí y para la app no existía — ni
+  // siquiera como "sin stock". Así MANI SABORIZADO PANCETA (775) seguía sin poder cargarse
+  // después de arreglar el filtro por depósito, porque el problema era anterior: no estaba en
+  // el catálogo. Medido ese día: `/articulos/stock` traía 1.422 y `/articulos` trae 1.991
+  // (1.856 habilitados); de los 569 que faltaban, 80 estaban habilitados y con precio en
+  // Lista 1 — COMINO PURO entre ellos.
+  // `/articulos` pagina, así que son 2 llamadas en vez de 1. Se paga una vez por hora (cache).
+  let page = 1;
+  const TOPE_PAGINAS = 20;   // 20.000 artículos; si algún día se pasa, avisa en el log.
+  while (page <= TOPE_PAGINAS) {
+    const { data } = await imGetRetry(
+      () => cli.get('/articulos', { params: { page, limit: 1000 } }), `articulos p${page}`);
+    const rows: any[] = data?.results ?? data?.articulos ?? (Array.isArray(data) ? data : []);
+    for (const r of rows) {
+      const cod = Number(r.cod_articulo ?? r.cod ?? r.codigo);
+      if (!Number.isFinite(cod)) continue;
+      // Un artículo dado de baja no se vende. Por el camino viejo se colaban 7.
+      if (r.habilitado != null && Number(r.habilitado) !== 1) continue;
+      const codRubroRaw = r.cod_rubro ?? r.codRubro ?? r.rubro_cod;
+      const codRubro = codRubroRaw != null ? Number(codRubroRaw) : null;
+      const precioRaw = r.precio_venta ?? r.precioVenta ?? r.precio ?? 0;
+      const precio = Number(precioRaw);
+      const eq = Number(r.equivalencia_um);
+      map.set(cod, {
+        cod_rubro: Number.isFinite(codRubro as number) ? codRubro : null,
+        descripcion: String(r.descripcion ?? r.nombre ?? '').trim(),
+        precio_venta: Number.isFinite(precio) ? precio : 0,
+        subrubro: String(r.subrubro ?? '').trim(),
+        unidad_de_medida: r.unidad_de_medida != null ? String(r.unidad_de_medida) : null,
+        equivalencia_um: Number.isFinite(eq) ? eq : null,
+      });
+    }
+    if (rows.length < 1000) break;
+    page += 1;
+    if (page > TOPE_PAGINAS) console.warn(`[fetchArticulosCatalogo] corte de seguridad en la página ${TOPE_PAGINAS}, total=${map.size}`);
   }
   _articulosCache = { map, fetchedAt: Date.now() };
   return map;
