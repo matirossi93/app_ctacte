@@ -26,6 +26,9 @@ function mockIM(respuesta: any, fallar?: any) {
 const DATOS = {
     cod_empresa: 1, cod_cliente: 1093, cod_vendedor: 2, categoria_iva: 'CF',
     cod_lista_precios: 12, usuario: 'susana', total: 29771.58, origen_id: '58757247',
+    // Con el número ya calculado, que es como lo llama el panel: al facturar una hoja se
+    // consulta UNA vez y se va incrementando. Sin él, `emitirFactura` sale a preguntarle a IM.
+    numero: 50360,
     items: [{ cod_articulo: 661, cantidad: 1, precio: 29771.58, cod_lista_precios: 13 }],
 };
 
@@ -86,6 +89,42 @@ describe('emitirFactura', () => {
         const r = await emitirFactura(DATOS as any);
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.sinRespuesta).toBe(true);
+    });
+
+    it('🔴 IM NO asigna el número de factura: se manda calculado', async () => {
+        // Probado el 07/09/2026: con `numero: 0` —que es lo que funciona en presupuestos y
+        // remitos— IM contesta "Ya existe una factura ... numero: [0]".
+        const post = mockIM({ isCreated: true, venta: { id: 1, numero: 50360 } });
+        await emitirFactura({ ...DATOS, numero: 50360 } as any);
+        expect((post.mock.calls[0] as any[])[1].numero).toBe(50360);
+    });
+
+    it('🔴 si el número ya estaba usado, reintenta con el siguiente', async () => {
+        // La oficina puede estar facturando desde IM al mismo tiempo y quedarse con el
+        // correlativo. IM valida la unicidad, así que un choque se resuelve subiendo el
+        // número — nunca duplicando.
+        let n = 0;
+        const post = vi.fn(async (_url: string, body: any) => {
+            n++;
+            if (body.numero < 50362) return { data: { mensaje: 'Ya existe una factura con los siguientes datos: numero: [' + body.numero + ']' } };
+            return { data: { isCreated: true, venta: { id: 9, numero: body.numero } } };
+        });
+        vi.mocked(axios.create).mockReturnValue({ post, get: vi.fn(), put: vi.fn(), interceptors: { request: { use: vi.fn() } } } as any);
+        vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+
+        const r = await emitirFactura({ ...DATOS, numero: 50360 } as any);
+        expect(r.ok).toBe(true);
+        if (r.ok) expect(r.numero).toBe(50362);
+        expect(n).toBe(3);
+    });
+
+    it('🔴 después de tres choques se rinde en vez de seguir probando', async () => {
+        const post = vi.fn(async () => ({ data: { mensaje: 'Ya existe una factura con los siguientes datos' } }));
+        vi.mocked(axios.create).mockReturnValue({ post, get: vi.fn(), put: vi.fn(), interceptors: { request: { use: vi.fn() } } } as any);
+        vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+        const r = await emitirFactura({ ...DATOS, numero: 50360 } as any);
+        expect(r.ok).toBe(false);
+        expect(post).toHaveBeenCalledTimes(3);
     });
 
     it('lleva el presupuesto de origen en cod_compatibilidad', async () => {

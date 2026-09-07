@@ -21,7 +21,7 @@ import {
 } from './infomanager.js';
 import { pesoDeRenglones, cargaDelCamion } from './pesoComprobante.js';
 import { zonaDeCliente } from './zonaCliente.js';
-import { emitirFactura, emitirRemito, letraDeFactura } from './facturarIM.js';
+import { emitirFactura, emitirRemito, letraDeFactura, proximoNumeroFactura } from './facturarIM.js';
 import { usuarioIM } from './pedidos.js';
 import { sugerirRepartos } from './sugerirRepartos.js';
 
@@ -491,6 +491,15 @@ export async function facturarHoja(req: Request & { user?: JwtPayload }, res: Re
     const fallados: any[] = [];
     let cortado: string | null = null;
 
+    // 🔑 El número de factura se calcula UNA vez por hoja y después se incrementa: IM no lo
+    // asigna, y averiguarlo cuesta ~6 s de consulta a IM cada vez. Si otro lo tomó mientras
+    // tanto, `emitirFactura` reintenta con el siguiente.
+    const numeros: Record<string, number | null> = { A: null, B: null };
+    for (const letra of ['A', 'B'] as const) {
+      const loNecesita = pendientes.some((p: any) => letraDeFactura(porCliente.get(Number(p.cod_cliente))?.categoria_iva) === letra);
+      if (loNecesita) numeros[letra] = await proximoNumeroFactura(letra, Number(process.env.IM_PTO_VENTA_FACTURA || 777));
+    }
+
     for (const p of pendientes) {
       if (cortado) break;
       const cliente = porCliente.get(Number(p.cod_cliente));
@@ -523,7 +532,10 @@ export async function facturarHoja(req: Request & { user?: JwtPayload }, res: Re
       };
 
       // 1) FACTURA
-      const fa = await emitirFactura(datos as any);
+      const letra = letraDeFactura(cliente?.categoria_iva)!;
+      const fa = await emitirFactura({ ...datos, numero: numeros[letra] } as any);
+      // El siguiente de este talonario, para no volver a consultarlo.
+      if (fa.ok && fa.numero != null) numeros[letra] = Number(fa.numero) + 1;
       if (!fa.ok) {
         fallados.push({ ...p, motivo: `${quien}: ${fa.error}` });
         // 🔴 Sin respuesta = NO se sabe si la factura salió. Se corta acá: seguir sería
