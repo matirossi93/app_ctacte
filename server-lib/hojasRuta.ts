@@ -38,6 +38,12 @@ function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): bo
  */
 const VENTANA_DIAS = 15;
 
+/**
+ * Tope de días para los que se piden renglones. Cada día son ~1,2 s contra IM, así que sin
+ * tope una ventana larga vuelve a colgar la pantalla. Se toman los más recientes.
+ */
+const MAX_DIAS_ITEMS = 12;
+
 /** `?fecha=YYYY-MM-DD`, y si no viene, hoy. */
 function fechaPedida(req: Request): string {
   const f = String(req.query.fecha ?? '').trim();
@@ -75,30 +81,48 @@ async function armarVistaDelDia(fecha: string) {
     // comprobante para reordenar los despachos, así que un pedido fechado para el 10 existe
     // desde antes. Un pedido que no aparece en la pantalla no entra en ninguna hoja y nadie
     // se entera hasta que llama el cliente.
-    // Se mira una ventana: desde 15 días atrás (lo viejo vigente) hasta la fecha elegida.
     const desde = fechaArgentina(new Date(fecha + 'T12:00:00Z').getTime() - VENTANA_DIAS * 864e5);
-    const [ventas, items, cat, clientes] = await Promise.all([
+    const [ventas, cat, clientes] = await Promise.all([
       fetchVentas(desde, fecha),
-      fetchVentasItems(desde, fecha),
       fetchArticulosCatalogo(),
       fetchClientesIMCached().catch(() => []),
     ]);
 
     const porCliente = new Map(clientes.map((c: any) => [Number(c.cod_cliente), c]));
-    // Renglones agrupados por comprobante, para pesar sin más llamadas.
-    const renglones = new Map<string, Array<{ cantidad: any; equivalencia_um: number | null | undefined }>>();
-    for (const it of items) {
-      const k = String((it as any).id_comprobante);
-      if (!renglones.has(k)) renglones.set(k, []);
-      renglones.get(k)!.push({
-        cantidad: (it as any).cantidad,
-        equivalencia_um: cat.get(Number((it as any).cod_articulo))?.equivalencia_um,
-      });
-    }
 
     const presupuestos = ventas.filter((v: any) =>
       String(v.tipo_comprobante ?? '').trim() === 'PR' &&
       String(v.anulada ?? '').trim().toUpperCase() !== 'S');
+
+    // 🪤 Los renglones NO se piden por toda la ventana. Medido contra IM el 07/09/2026:
+    //   `/ventas/items` de 15 días -> 57.385 items en 23,7 s
+    //   `/ventas/items` de 1 día   ->  4.132 items en  1,2 s
+    // Con 23,7 s la request se pasa del timeout del proxy y el panel abría VACÍO. Se piden
+    // sólo los días que de verdad tienen presupuestos vigentes (suelen ser un puñado), y de
+    // a cuatro en paralelo para no golpear a IM.
+    const fechasConPedidos = [...new Set(presupuestos
+      .map((p: any) => String(p.fecha ?? '').slice(0, 10))
+      .filter(Boolean))].sort().slice(-MAX_DIAS_ITEMS);
+    const renglones = new Map<string, Array<{ cantidad: any; equivalencia_um: number | null | undefined }>>();
+    for (let i = 0; i < fechasConPedidos.length; i += 4) {
+      const tanda = fechasConPedidos.slice(i, i + 4);
+      const resultados = await Promise.all(tanda.map(f =>
+        fetchVentasItems(f, f).catch((e: any) => {
+          // Sin los renglones de un día, esos pedidos salen con 0 kg. Es mejor que no abrir.
+          console.warn(`[hojasRuta] sin items del ${f}:`, e?.message);
+          return [] as any[];
+        })));
+      for (const items of resultados) {
+        for (const it of items) {
+          const k = String((it as any).id_comprobante);
+          if (!renglones.has(k)) renglones.set(k, []);
+          renglones.get(k)!.push({
+            cantidad: (it as any).cantidad,
+            equivalencia_um: cat.get(Number((it as any).cod_articulo))?.equivalencia_um,
+          });
+        }
+      }
+    }
 
     // Lo que aporta la app sobre los pedidos que salieron de ella: los avisos del control de
     // listas, que es lo que le dice a la oficina DÓNDE mirar en vez de revisar todo.
@@ -350,8 +374,11 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
     try {
       const cat = await fetchArticulosCatalogo();
       const porComprobante = new Map<string, any[]>();
-      const desde = fechaArgentina(new Date(String(hoja.fecha) + 'T12:00:00Z').getTime() - VENTANA_DIAS * 864e5);
-      for (const it of await fetchVentasItems(desde, String(hoja.fecha))) {
+      // Sólo los días de los comprobantes que se están asignando: pedir la ventana entera
+      // tarda 23 s y esto corre con el usuario esperando.
+      const dias = [...new Set(entrada.map((p: any) => String(p.fecha ?? hoja.fecha).slice(0, 10)).filter(Boolean))];
+      const tandas = await Promise.all(dias.slice(0, 6).map(f => fetchVentasItems(f, f).catch(() => [] as any[])));
+      for (const it of tandas.flat()) {
         const k = String((it as any).id_comprobante);
         if (!porComprobante.has(k)) porComprobante.set(k, []);
         porComprobante.get(k)!.push({
