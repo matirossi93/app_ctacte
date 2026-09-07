@@ -48,10 +48,16 @@ export interface RepartoSugerido {
 export interface Sugerencia {
   repartos: RepartoSugerido[];
   /**
-   * Los que no entraron en ningún camión disponible. NO se descartan ni se meten a la fuerza:
-   * quedan a la vista para que alguien decida (otro viaje, un flete, partir el pedido).
+   * Los que **no entran ni en el camión más grande**. NO se descartan ni se parten solos:
+   * quedan a la vista para que alguien decida (partir el pedido, contratar un flete).
    */
   sin_camion: PedidoAReparto[];
+  /**
+   * Cuántos viajes le tocan a cada camión si se siguiera la sugerencia tal cual. Es el dato
+   * que dice si el día entra o hay que mover pedidos a mañana: 3 viajes del de 12.000 en un
+   * turno no pasan.
+   */
+  viajes_por_camion: Array<{ camion: string; viajes: number; kg: number }>;
   total_kg: number;
   capacidad_total_kg: number;
 }
@@ -69,7 +75,6 @@ export function sugerirRepartos(
 ): Sugerencia {
   const flota = [...camiones].sort((a, b) => a.capacidad_kg - b.capacidad_kg);
   const maxCap = flota.length ? flota[flota.length - 1].capacidad_kg : 0;
-  const libres = [...flota];
   const repartos: RepartoSugerido[] = [];
   const sinCamion: PedidoAReparto[] = [];
 
@@ -86,6 +91,13 @@ export function sugerirRepartos(
     .sort((a, b) => b.kg - a.kg);
 
   for (const { l } of zonas) {
+    // 🪤 La flota se REINICIA en cada zona, no se va gastando. Probando con los pedidos reales
+    // del 04/09 la primera versión consumía los 4 camiones en la zona 10 y dejaba 18 pedidos
+    // de las otras zonas sin nada. El error de fondo era asumir que la flota se reparte una
+    // sola vez para todo el día: un camión hace varios viajes y no todo sale el mismo día
+    // (37.131 kg pedidos contra 31.000 de capacidad total). Lo que esto responde es "cómo
+    // parto ESTA zona en viajes que entren", que es la pregunta que se hace la oficina.
+    const libres = [...flota];
     const ordenados = [...l].sort((a, b) => b.kg - a.kg);
     for (const p of ordenados) {
       // Un pedido que no entra en el camión más grande necesita otra solución (partirlo,
@@ -105,9 +117,13 @@ export function sugerirRepartos(
 
       // Si no, se abre uno nuevo con el camión MÁS CHICO donde entre: guardar el grande para
       // una zona pesada es lo que hace que la flota alcance.
-      const i = libres.findIndex(c => c.capacidad_kg >= p.kg);
-      if (i === -1) { sinCamion.push(p); continue; }
-      const camion = libres.splice(i, 1)[0];
+      let i = libres.findIndex(c => c.capacidad_kg >= p.kg);
+      // Sin camiones libres en esta zona, se propone OTRO VIAJE del más chico que lo aguante:
+      // la flota se reutiliza, y decir "no entra" cuando en realidad hay que hacer dos viajes
+      // sería falso. Sólo queda sin camión lo que no entra en el más grande, ya filtrado arriba.
+      const camion = i === -1
+        ? flota.find(c => c.capacidad_kg >= p.kg)!
+        : libres.splice(i, 1)[0];
       repartos.push({
         camion, cod_zona: p.cod_zona, zona: p.zona,
         pedidos: [p], kg: dos(p.kg), ocupacion: null, envio_especial: false,
@@ -123,9 +139,18 @@ export function sugerirRepartos(
     r.pedidos.sort((a, b) => b.kg - a.kg);
   }
 
+  const porCamion = new Map<string, { camion: string; viajes: number; kg: number }>();
+  for (const r of repartos) {
+    if (!r.camion) continue;
+    const v = porCamion.get(r.camion.id) ?? { camion: r.camion.nombre, viajes: 0, kg: 0 };
+    v.viajes += 1; v.kg = dos(v.kg + r.kg);
+    porCamion.set(r.camion.id, v);
+  }
+
   return {
     repartos,
     sin_camion: sinCamion,
+    viajes_por_camion: [...porCamion.values()].sort((a, b) => b.viajes - a.viajes),
     total_kg: dos(pedidos.reduce((s, p) => s + p.kg, 0)),
     capacidad_total_kg: dos(flota.reduce((s, c) => s + c.capacidad_kg, 0)),
   };

@@ -29,16 +29,16 @@ describe('sugerirRepartos', () => {
     for (const r of s.repartos) expect(r.kg).toBeLessThanOrEqual(r.camion!.capacidad_kg);
   });
 
-  it('🔴 dos pedidos de 8.000 kg NO entran aunque la flota sume 31.000', () => {
-    // 🪤 El límite no es la capacidad total sino la de CADA camión: un pedido no se parte al
-    // medio. Con 5.000, 7.000, 7.000 y 12.000, sólo UNO de los dos de 8.000 tiene dónde ir.
-    // El otro sale en `sin_camion` para que alguien decida, en vez de aparecer repartido en
-    // dos camiones distintos como si nada.
+  it('🔴 dos pedidos de 8.000 kg = DOS VIAJES del mismo camión, no "no entra"', () => {
+    // 🪤 Sólo el de 12.000 aguanta 8.000 kg, así que hacen falta dos viajes. La primera
+    // versión de esto marcaba el segundo como `sin_camion` porque iba gastando la flota: con
+    // los pedidos reales del 04/09 consumía los 4 camiones en la zona 10 y dejaba 18 pedidos
+    // de las otras zonas afuera. Un camión hace varios viajes.
     const s = sugerirRepartos([ped(8000, 10), ped(8000, 10)], FLOTA);
-    expect(s.repartos).toHaveLength(1);
-    expect(s.sin_camion).toHaveLength(1);
-    expect(s.total_kg).toBe(16000);
-    expect(s.capacidad_total_kg).toBe(31000);   // sobra capacidad y aun así no entra
+    expect(s.sin_camion).toHaveLength(0);
+    expect(s.repartos).toHaveLength(2);
+    for (const r of s.repartos) expect(r.camion!.capacidad_kg).toBe(12000);
+    expect(s.viajes_por_camion).toEqual([{ camion: 'Camión 12.000', viajes: 2, kg: 16000 }]);
   });
 
   it('🔴 ningún reparto se pasa de la capacidad de su camión', () => {
@@ -65,16 +65,18 @@ describe('sugerirRepartos', () => {
     expect(s.repartos.every(r => r.pedidos.every(p => p.kg <= 12000))).toBe(true);
   });
 
-  it('🔴 cuando la flota entera no alcanza, lo que sobra queda A LA VISTA', () => {
-    // "hay veces que la totalidad de la flota no da los kilos". Si se descartaran en silencio,
-    // un cliente se quedaría sin su mercadería y nadie se enteraría hasta que llame.
+  it('🔴 más kilos que la flota: se dice cuántos VIAJES hacen falta, y no se pierde nadie', () => {
+    // "hay veces que la totalidad de la flota no da los kilos" (49.000 contra 31.000). Eso no
+    // significa que no entren: significa que hay que hacer más viajes o pasar pedidos a otro
+    // día. El dato que decide eso es `viajes_por_camion`, no un "no entra".
     const muchos = Array.from({ length: 10 }, () => ped(4900, 4));
     const s = sugerirRepartos(muchos, FLOTA);
     const repartidos = s.repartos.reduce((acc, r) => acc + r.pedidos.length, 0);
-    expect(repartidos + s.sin_camion.length).toBe(10);   // no se pierde ninguno
-    expect(s.sin_camion.length).toBeGreaterThan(0);
+    expect(repartidos).toBe(10);          // no se pierde ninguno
+    expect(s.sin_camion).toHaveLength(0); // todos entran en ALGÚN camión
     expect(s.total_kg).toBe(49000);
-    expect(s.capacidad_total_kg).toBe(31000);
+    const viajes = s.viajes_por_camion.reduce((acc, v) => acc + v.viajes, 0);
+    expect(viajes).toBeGreaterThan(4);    // más viajes que camiones: no entra en un turno
   });
 
   it('🔴 los pedidos pesados entran primero: si no, uno grande se queda afuera al pedo', () => {
