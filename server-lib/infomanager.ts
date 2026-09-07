@@ -844,37 +844,47 @@ export async function cabeceraComprobante(
  * ¿Existe en IM un presupuesto creado con este `cod_compatibilidad`?
  *
  * Es la pregunta que hay que poder hacer después de un TIMEOUT: IM tardó más de 25 s, la app
- * cortó y no sabe si el presupuesto entró. El código lo generamos nosotros, es único por
- * intento (IM lo rechaza repetido, incluso contra comprobantes anulados) e IM lo devuelve en
- * el listado `/ventas` — verificado el 03/09/2026 sobre el PR 58015, que trae
- * `cod_compatibilidad: "263d6efa"`.
+ * cortó y no sabe si el presupuesto entró. El código lo generamos nosotros y es único por
+ * intento (IM lo rechaza repetido, incluso contra comprobantes anulados).
+ *
+ * Va por `GET /ventas/cod_compatibilidad`, el endpoint dedicado. Antes esto barría todas las
+ * ventas del rango de fechas —miles de filas para encontrar una— y encima podía errarle si la
+ * oficina le movía la fecha al comprobante. Verificado el 07/09/2026 contra IM:
+ *   · lo encuentra              -> 200 con `{"id": 58698612}`
+ *   · no existe                 -> 200 con `null`
+ *   · sin cod_compatibilidad    -> 400
+ *
+ * 🪤 `cod_empresa` NO es opcional y NO es un detalle: con la empresa equivocada IM contesta
+ * `null`, exactamente igual que si no existiera. Un falso "no entró" hace que la
+ * reconciliación dé por perdido un presupuesto que está vivo. Va siempre el del pedido.
  *
  * 🪤 Devuelve `null` en DOS casos que NO son lo mismo, y por eso también informa `busquedaOk`:
- * "lo busqué y no está" vs "no pude buscar". Quien llama no puede tratarlos igual: dar por
- * no-creado un presupuesto que sí existe termina en dos presupuestos vivos, que es
- * exactamente el problema que esto viene a resolver.
+ * "lo busqué y no está" vs "no pude buscar". Quien llama no puede tratarlos igual.
  */
 export async function buscarPresupuestoPorCompatibilidad(
   codCompatibilidad: string,
-  desde: string,
-  hasta: string,
+  codEmpresa: number,
 ): Promise<{ busquedaOk: boolean; encontrado: { id: string; numero: number | null; fecha: string | null } | null }> {
   const buscado = String(codCompatibilidad ?? '').trim();
   if (!buscado) return { busquedaOk: false, encontrado: null };
   try {
-    const ventas = await fetchVentas(desde, hasta);
-    const hit = ventas.find((v: any) =>
-      String(v.cod_compatibilidad ?? '').trim() === buscado &&
-      String(v.tipo_comprobante ?? '').trim() === 'PR');
-    if (!hit) return { busquedaOk: true, encontrado: null };
-    return {
-      busquedaOk: true,
-      encontrado: {
-        id: String((hit as any).id),
-        numero: (hit as any).numero ?? null,
-        fecha: typeof (hit as any).fecha === 'string' ? (hit as any).fecha.slice(0, 10) : null,
-      },
-    };
+    const cli = await imClient();
+    const { data } = await imGetRetry(
+      () => cli.get('/ventas/cod_compatibilidad', { params: { cod_compatibilidad: buscado, cod_empresa: codEmpresa } }),
+      `ventas/cod_compatibilidad ${buscado}`);
+    const id = data?.id ?? data?.results?.id ?? data?.venta?.id;
+    if (id == null) return { busquedaOk: true, encontrado: null };   // 200 con null = no está
+    // El endpoint sólo devuelve el id; el número y la fecha salen de la cabecera, que hace
+    // falta para poder anular el viejo y para mostrarle el número al vendedor.
+    const cab = await cabeceraComprobante(id);
+    let numero: number | null = null;
+    try {
+      const cli2 = await imClient();
+      const { data: v } = await imGetRetry(() => cli2.get(`/ventas/${id}`), `ventas/${id} numero`);
+      const c = v?.results ?? v?.venta ?? v;
+      numero = c?.numero != null ? Number(c.numero) : null;
+    } catch { /* sin número: el id alcanza para adoptarlo */ }
+    return { busquedaOk: true, encontrado: { id: String(id), numero, fecha: cab.fecha } };
   } catch (e: any) {
     console.warn('[buscarPresupuestoPorCompatibilidad] no pude consultar IM:', e?.message);
     return { busquedaOk: false, encontrado: null };

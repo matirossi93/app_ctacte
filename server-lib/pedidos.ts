@@ -1023,13 +1023,10 @@ export async function reconciliarSinRespuesta(pedidos: any[]): Promise<void> {
 
   for (const p of candidatos) {
     try {
-      // Ventana de búsqueda: desde el día anterior al intento (por si IM lo fechó en su propio
-      // día) hasta una semana adelante, porque la oficina mueve la fecha del comprobante para
-      // reordenar los despachos y el presupuesto puede haber quedado fechado a futuro.
-      const base = new Date(p.updated_at ?? p.created_at ?? Date.now()).getTime();
-      const desde = fechaArgentina(base - 864e5);
-      const hasta = fechaArgentina(base + 7 * 864e5);
-      const r = await buscarPresupuestoPorCompatibilidad(p.im_cod_compatibilidad, desde, hasta);
+      // 🪤 La empresa va SIEMPRE la del pedido: con otra, IM contesta lo mismo que si el
+      // presupuesto no existiera, y un falso "no entró" da por perdido uno que está vivo.
+      const r = await buscarPresupuestoPorCompatibilidad(
+        p.im_cod_compatibilidad, Number(p.cod_empresa) || PEDIDO_EMPRESA_DEFAULT);
       if (!r.busquedaOk) continue;                    // no pude preguntar: no se asume nada
 
       if (!r.encontrado) {
