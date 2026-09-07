@@ -1,0 +1,85 @@
+/* Los dos impresos: hoja de ruta y listado de fraccionado.
+   En pantalla se ven sobre fondo blanco (como el papel); al imprimir, el @media print de
+   abajo deja SOLO esto. */
+
+.imp-overlay {
+    position: fixed; inset: 0; z-index: 2000;
+    background: #fff; color: #1a1208;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    font-family: 'Poppins', system-ui, sans-serif;
+}
+
+.imp-toolbar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 0.6rem;
+    padding: 0.6rem 1rem;
+    background: linear-gradient(135deg, #06652F 0%, #03481F 100%);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+.imp-tabs { display: flex; gap: 0.25rem; background: rgba(0, 0, 0, 0.18); border-radius: 0.75rem; padding: 0.2rem; }
+.imp-tabs button {
+    border: none; background: transparent; color: rgba(249, 239, 227, 0.75);
+    font-family: inherit; font-weight: 600; font-size: 0.85rem;
+    padding: 0.35rem 0.8rem; border-radius: 0.5rem; cursor: pointer;
+}
+.imp-tabs button.on { background: #EEC045; color: #06652F; }
+.imp-btn {
+    display: inline-flex; align-items: center; gap: 0.35rem; margin-left: auto;
+    border: none; background: #EEC045; color: #06652F;
+    font-family: inherit; font-weight: 700; font-size: 0.85rem;
+    padding: 0.45rem 1rem; border-radius: 25px; cursor: pointer;
+}
+.imp-btn:disabled { opacity: 0.5; cursor: default; }
+.imp-cerrar { border: none; background: transparent; color: #F9EFE3; cursor: pointer; padding: 0.3rem; }
+
+.imp-cargando, .imp-error {
+    display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+    padding: 3rem 1rem; color: #6b5a45;
+}
+.imp-error { color: #a33b26; }
+
+.imp-hoja { padding: 1.2rem 1.4rem 3rem; max-width: 1100px; margin: 0 auto; }
+
+/* ── Cabecera, como la hoja real ─────────────────────────────────────────── */
+.imp-head {
+    display: grid; grid-template-columns: 1fr auto 1fr;
+    align-items: start; gap: 1rem; margin-bottom: 0.9rem; font-size: 0.82rem;
+}
+.imp-head-c { text-align: center; }
+.imp-head-r { text-align: right; }
+.imp-nro { font-weight: 700; font-size: 0.95rem; }
+
+/* ── Tabla ───────────────────────────────────────────────────────────────── */
+.imp-tabla { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.imp-tabla th, .imp-tabla td { border: 1px solid #c9b9a3; padding: 0.28rem 0.4rem; text-align: left; }
+.imp-tabla th { background: #F0DFCB; font-weight: 700; font-size: 0.74rem; }
+.imp-tabla .n { text-align: right; white-space: nowrap; }
+.imp-total-cli td { background: #faf4ec; font-weight: 600; }
+/* Las dos columnas que se completan a mano en la calle: quedan vacías y con aire para
+   escribir encima. */
+.imp-tabla .escribir { min-width: 90px; }
+/* El saldo anterior SÍ va impreso: es lo que hoy escriben a mano antes de que salga el camión. */
+.imp-tabla .saldo { font-weight: 700; }
+.imp-tabla tfoot td { background: #F0DFCB; font-weight: 700; }
+.imp-tabla.frac .cants { font-family: 'Courier New', monospace; font-size: 0.82rem; letter-spacing: 0.02em; }
+
+.imp-nota { font-size: 0.78rem; color: #8a5a00; margin-top: 0.7rem; }
+
+.spin { animation: impSpin 1s linear infinite; }
+@keyframes impSpin { to { transform: rotate(360deg); } }
+
+/* ── Impresión ───────────────────────────────────────────────────────────── */
+@media print {
+    /* Con .imp-print-active en el body, todo lo que no sea este overlay desaparece: si no,
+       el navegador imprime también el panel de atrás. */
+    body.imp-print-active > *:not(.imp-overlay) { display: none !important; }
+    .imp-overlay { position: static !important; overflow: visible !important; }
+    .imp-no-print, .imp-toolbar { display: none !important; }
+    .imp-hoja { padding: 0 !important; max-width: none !important; }
+    .imp-tabla { font-size: 9pt; }
+    .imp-tabla th { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .imp-total-cli td, .imp-tabla tfoot td { background: #f6f6f6 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    /* Que un cliente no quede partido entre dos hojas. */
+    .imp-tabla tr { page-break-inside: avoid; }
+    @page { margin: 12mm 10mm; }
+}

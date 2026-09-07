@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle, Truck, Plus, Loader2, X, Wand2, MapPin, Package,
-    ChevronRight, RefreshCw, Trash2,
+    ChevronRight, RefreshCw, Trash2, Printer,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
+import { ImprimirHoja } from './ImprimirHoja';
 import './HojasRutaView.css';
 
 /**
@@ -80,6 +81,8 @@ export function HojasRutaView() {
     const [dias, setDias] = useState(0);
     /** Cuántos pedidos vigentes quedaron de días anteriores. null = todavía no se sabe. */
     const [arrastre, setArrastre] = useState<number | null>(null);
+    /** Qué hoja se está imprimiendo. */
+    const [imprimiendo, setImprimiendo] = useState<string | null>(null);
 
     const cargar = useCallback(async () => {
         setCargando(true); setError(null);
@@ -385,6 +388,9 @@ export function HojasRutaView() {
                                     <option value="">Sin camión</option>
                                     {camiones.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                                 </select>
+                                <button className="hr-icono" title="Imprimir la hoja y el listado de fraccionado" onClick={() => setImprimiendo(h.id)} disabled={!h.pedidos.length}>
+                                    <Printer size={14} />
+                                </button>
                                 <button className="hr-icono" title="Borrar la hoja" onClick={() => void borrarHoja(h.id, h.numero)} disabled={trabajando}>
                                     <Trash2 size={14} />
                                 </button>
@@ -445,6 +451,8 @@ export function HojasRutaView() {
                     ))}
                 </section>
             </div>
+
+            {imprimiendo && <ImprimirHoja hojaId={imprimiendo} onClose={() => setImprimiendo(null)} />}
 
             {/* Barra de selección: siempre a la vista mientras haya algo elegido. */}
             {!!seleccionados.length && (

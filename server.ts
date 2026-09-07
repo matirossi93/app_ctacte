@@ -51,7 +51,7 @@ import { cruceCarpetaHandler, exportCruceHandler } from './server-lib/cruceCarpe
 import { listRebotes, listRecargos, syncRebotesNow, syncRebotes } from './server-lib/rebotes.js';
 import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos, hermanosDeFamilia } from './server-lib/productGoals.js';
 import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, precioArticulo, catalogoPedido, validarListasPedido, editarPedido } from './server-lib/pedidos.js';
-import { pendientesDelDia, arrastreDelDia, sugerenciaDelDia, listarHojas, listarCamiones, crearHoja, editarHoja, borrarHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
+import { pendientesDelDia, arrastreDelDia, impresionHoja, sugerenciaDelDia, listarHojas, listarCamiones, crearHoja, editarHoja, borrarHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -662,6 +662,7 @@ app.delete('/api/hojas-ruta/pedidos/:comprobanteId', requireJwt, (req: any, res)
 app.get('/api/hojas-ruta', requireJwt, (req: any, res) => listarHojas(req, res));
 app.post('/api/hojas-ruta', requireJwt, (req: any, res) => crearHoja(req, res));
 app.post('/api/hojas-ruta/:id/pedidos', requireJwt, (req: any, res) => asignarPedidos(req, res));
+app.get('/api/hojas-ruta/:id/impresion', requireJwt, (req: any, res) => impresionHoja(req, res));
 app.put('/api/hojas-ruta/:id', requireJwt, (req: any, res) => editarHoja(req, res));
 app.delete('/api/hojas-ruta/:id', requireJwt, (req: any, res) => borrarHoja(req, res));
 

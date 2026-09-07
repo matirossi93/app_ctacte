@@ -311,6 +311,125 @@ export async function listarHojas(req: Request & { user?: JwtPayload }, res: Res
   }
 }
 
+/**
+ * GET /api/hojas-ruta/:id/impresion — todo lo que hace falta para imprimir una hoja.
+ *
+ * Devuelve las dos cosas que hoy Jorgelina arma a mano:
+ *  1. **La hoja de ruta**: cabecera y los comprobantes agrupados POR CLIENTE con su total, tal
+ *     como la hoja real nº 3394. Un cliente puede llevar varios comprobantes.
+ *  2. **El listado de fraccionado**: sólo lo que se vende por kilo, agrupado por producto y con
+ *     **cada cantidad separada** — cada una es un paquete a preparar. Mati fue explícito: *"no
+ *     hace falta aclarar por cliente, sólo el producto y la cantidad"* y *"no se puede
+ *     globalizar cantidades"*.
+ *
+ * 🔑 Los importes, saldos, bultos y kilos salen del SNAPSHOT guardado al armar la hoja, no se
+ * recalculan. Los renglones del fraccionado sí se piden a IM: son el detalle de qué preparar y
+ * tienen que reflejar el pedido como está ahora.
+ */
+export async function impresionHoja(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  try {
+    const { data: hoja, error } = await sb().from('hojas_ruta')
+      .select('*, hojas_ruta_camiones(nombre, capacidad_kg), hojas_ruta_pedidos(*)')
+      .eq('id', String(req.params.id)).eq('tenant_id', TENANT_ID).maybeSingle();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    if (!hoja) { res.status(404).json({ error: 'Hoja de ruta no encontrada' }); return; }
+
+    const pedidos = [...((hoja as any).hojas_ruta_pedidos ?? [])].sort((a: any, b: any) => a.orden - b.orden);
+
+    // Agrupado por cliente, como la hoja impresa: un cliente puede tener varios comprobantes
+    // y abajo el "Total por cliente".
+    const porCliente = new Map<number, any>();
+    for (const p of pedidos) {
+      const k = Number(p.cod_cliente);
+      if (!porCliente.has(k)) {
+        porCliente.set(k, {
+          cod_cliente: k, cliente_nombre: p.cliente_nombre, saldo_anterior: p.saldo_anterior,
+          comprobantes: [], total: 0, bultos: 0, kg: 0,
+        });
+      }
+      const c = porCliente.get(k);
+      c.comprobantes.push({
+        im_comprobante_id: p.im_comprobante_id, im_numero: p.im_numero,
+        bultos: Number(p.bultos ?? 0), kg: Number(p.kg ?? 0), total: Number(p.total ?? 0),
+        im_remito_numero: p.im_remito_numero ?? null,
+        facturado: !!p.facturado_at,
+      });
+      c.total += Number(p.total ?? 0);
+      c.bultos += Number(p.bultos ?? 0);
+      c.kg += Number(p.kg ?? 0);
+      // 🪤 El saldo es del CLIENTE, no del comprobante: si tiene dos pedidos no se suma dos
+      // veces. Se queda con el primero que tenga uno cargado.
+      if (c.saldo_anterior == null && p.saldo_anterior != null) c.saldo_anterior = p.saldo_anterior;
+    }
+
+    // ── Fraccionado: lo que se vende por kilo, producto por producto ──────────
+    const esKilo = (u: unknown) => /^(kg|kilo|kilos|kilogramo|kilogramos)$/i.test(String(u ?? '').trim());
+    const fraccionado: Array<{ descripcion: string; cantidades: number[]; paquetes: number; kg: number }> = [];
+    try {
+      const cat = await fetchArticulosCatalogo();
+      const ids = new Set(pedidos.map((p: any) => String(p.im_comprobante_id)));
+      const dias = [...new Set(pedidos.map((p: any) => String((hoja as any).fecha).slice(0, 10)))];
+      const porProducto = new Map<string, number[]>();
+      for (const f of dias.slice(0, 6)) {
+        for (const it of await fetchVentasItems(f, f).catch(() => [] as any[])) {
+          if (!ids.has(String((it as any).id_comprobante))) continue;
+          const a = cat.get(Number((it as any).cod_articulo));
+          const cant = Number((it as any).cantidad);
+          if (!a || !esKilo(a.unidad_de_medida) || !(cant > 0)) continue;
+          if (!porProducto.has(a.descripcion)) porProducto.set(a.descripcion, []);
+          porProducto.get(a.descripcion)!.push(cant);
+        }
+      }
+      for (const [descripcion, cantidades] of [...porProducto.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+        const l = cantidades.slice().sort((a, b) => b - a);
+        fraccionado.push({
+          descripcion, cantidades: l, paquetes: l.length,
+          kg: Math.round(l.reduce((s, x) => s + x, 0) * 100) / 100,
+        });
+      }
+    } catch (e: any) {
+      // Sin el detalle no se puede imprimir el listado de fraccionado, pero la hoja de ruta sí:
+      // se devuelve vacío y la pantalla avisa, en vez de fallar entera.
+      console.warn('[impresionHoja] no pude armar el fraccionado:', e?.message);
+    }
+
+    const totales = pedidos.reduce((acc: any, p: any) => ({
+      bultos: acc.bultos + Number(p.bultos ?? 0),
+      kg: acc.kg + Number(p.kg ?? 0),
+      total: acc.total + Number(p.total ?? 0),
+    }), { bultos: 0, kg: 0, total: 0 });
+
+    res.json({
+      ok: true,
+      hoja: {
+        id: (hoja as any).id, numero: (hoja as any).numero, fecha: (hoja as any).fecha,
+        turno: (hoja as any).turno, transporte: (hoja as any).transporte,
+        camion: (hoja as any).hojas_ruta_camiones?.nombre ?? null,
+        capacidad_kg: (hoja as any).hojas_ruta_camiones?.capacidad_kg ?? null,
+        estado: (hoja as any).estado,
+      },
+      clientes: [...porCliente.values()],
+      totales: {
+        clientes: porCliente.size, comprobantes: pedidos.length,
+        bultos: Math.round(totales.bultos * 100) / 100,
+        kg: Math.round(totales.kg * 100) / 100,
+        total: Math.round(totales.total * 100) / 100,
+      },
+      fraccionado,
+      fraccionado_totales: {
+        productos: fraccionado.length,
+        paquetes: fraccionado.reduce((s, f) => s + f.paquetes, 0),
+        kg: Math.round(fraccionado.reduce((s, f) => s + f.kg, 0) * 100) / 100,
+      },
+      sin_saldo: [...porCliente.values()].filter((c: any) => c.saldo_anterior == null).length,
+    });
+  } catch (err: any) {
+    console.error('[impresionHoja]', err?.message);
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
 /** GET /api/hojas-ruta/camiones — la flota, para elegir al crear la hoja. */
 export async function listarCamiones(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
@@ -456,9 +575,19 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
         saldo_anterior: saldos.get(Number(p.cod_cliente)) ?? null,
         bultos: peso ? peso.bultos : (Number(p.bultos) || 0),
         kg: peso ? peso.kg : (Number(p.kg) || 0),
+        // El importe sale impreso en la hoja ("Imp. Total" y "Total por cliente").
+        total: Number(p.total) || 0,
       };
     });
-    const { error } = await sb().from('hojas_ruta_pedidos').upsert(filas, { onConflict: 'im_comprobante_id' });
+    let { error } = await sb().from('hojas_ruta_pedidos').upsert(filas, { onConflict: 'im_comprobante_id' });
+    // 🪤 `total` lo agrega la migración 033. Si todavía no corrió, un insert con una columna
+    // inexistente falla ENTERO y no se puede armar ninguna hoja. Se reintenta sin el importe:
+    // lo único que se pierde es que salga impreso, y eso se nota; quedarse sin panel, no.
+    if (error && /total/i.test(error.message) && /column|schema/i.test(error.message)) {
+      console.warn('[asignarPedidos] sin columna `total` (¿falta la migración 033?), guardo sin el importe');
+      const sinTotal = filas.map(({ total, ...resto }) => resto);
+      ({ error } = await sb().from('hojas_ruta_pedidos').upsert(sinTotal, { onConflict: 'im_comprobante_id' }));
+    }
     if (error) { res.status(500).json({ error: error.message }); return; }
     res.json({
       ok: true, agregados: filas.length,
