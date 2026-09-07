@@ -143,6 +143,15 @@ describe('crear hoja', () => {
     expect(fila.turno).toBe('Mañana');
   });
 
+  it('🔴 la PRIMERA hoja no arranca en 1: sigue la numeración de IM', async () => {
+    // Con la tabla vacía, un `0 + 1` arrancaría una numeración paralela a la de InfoManager y
+    // la oficina tendría que llevar dos. La última que se imprimió fue la 3394.
+    tablas['hojas_ruta'] = { data: null, error: null };
+    await llamar(crearHoja, { body: { fecha: '2026-09-08' } });
+    const fila = insertados.find(([t]) => t === 'hojas_ruta')![1];
+    expect(fila.numero).toBe(3395);
+  });
+
   it('🔴 número repetido: 409 que se entiende, no un 500', async () => {
     tablas['hojas_ruta'] = { data: null, error: { code: '23505', message: 'duplicate key' } };
     const r = await llamar(crearHoja, { body: { numero: 3394 } });
