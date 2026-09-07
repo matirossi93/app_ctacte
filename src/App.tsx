@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { LoginScreen } from './components/LoginScreen';
 import { VendorShell } from './components/VendorShell';
 import { RepartidorShell } from './components/RepartidorShell';
+import { OficinaShell } from './components/OficinaShell';
+import { puedeVerPanelOficina, pidePanelOficina } from './utils/panelOficina';
 import { authHeaders, clearToken, getToken, getUser, setUser } from './utils/auth';
 import { sesionRechazada } from './utils/sesionInicial';
 
@@ -86,6 +88,20 @@ function App() {
     if (!user) {
         clearToken();
         return <LoginScreen onLogin={() => setAuthState('authenticated')} />;
+    }
+
+    // El panel de la oficina (armado de hojas de ruta y fraccionado) vive en /reparto, dentro
+    // de esta misma app: comparte login, usuarios, clientes y cartera. Si mañana tiene dominio
+    // propio, ese dominio apunta acá. El permiso de verdad lo aplica el backend en cada
+    // endpoint; esto sólo elige qué dibujar.
+    if (pidePanelOficina(location.pathname)) {
+        if (puedeVerPanelOficina(user.rol)) return <OficinaShell />;
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: '0.8rem', padding: '1rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                <p>Este panel es de administración.</p>
+                <a href="/" style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Ir a la app</a>
+            </div>
+        );
     }
 
     // El repartidor solo carga y consulta comprobantes: no ve cobranzas,

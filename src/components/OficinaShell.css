@@ -1,0 +1,130 @@
+/* Panel de la oficina. Usa las CSS vars del tema (index.css) para que herede light/dark y
+   quede igual que el resto de los paneles del semillero: verde #06652F, dorado #EEC045,
+   crema y Poppins. */
+
+.of-root {
+    min-height: 100vh;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: 'Poppins', system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+}
+
+.of-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.7rem 1.1rem;
+    background: linear-gradient(135deg, #06652F 0%, #03481F 100%);
+    color: #F9EFE3;
+    box-shadow: var(--shadow-md);
+    position: sticky;
+    top: 0;
+    z-index: 50;
+}
+
+.of-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    color: #EEC045;
+}
+
+.of-tabs {
+    display: flex;
+    gap: 0.25rem;
+    background: rgba(0, 0, 0, 0.18);
+    border-radius: var(--radius-md);
+    padding: 0.2rem;
+}
+.of-tabs button {
+    border: none;
+    background: transparent;
+    color: rgba(249, 239, 227, 0.75);
+    font-family: inherit;
+    font-weight: 600;
+    font-size: 0.85rem;
+    padding: 0.4rem 0.85rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+.of-tabs button:hover { color: #F9EFE3; }
+.of-tabs button.on { background: #EEC045; color: #06652F; }
+
+.of-user { margin-left: auto; position: relative; }
+.of-user-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    border: 1px solid rgba(249, 239, 227, 0.25);
+    background: transparent;
+    color: #F9EFE3;
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.4rem 0.7rem;
+    border-radius: 25px;
+    cursor: pointer;
+    max-width: 220px;
+}
+.of-user-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.of-user-btn:hover { background: rgba(0, 0, 0, 0.15); }
+
+.of-user-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 0.4rem);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    padding: 0.3rem;
+    min-width: 180px;
+}
+.of-user-menu button {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: var(--color-text);
+    font-family: inherit;
+    font-size: 0.88rem;
+    padding: 0.55rem 0.6rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+.of-user-menu button:hover { background: var(--color-surface-hover); }
+
+.of-body { flex: 1; padding: 1rem 1.1rem 2.5rem; }
+
+.of-vacio {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 4rem 1rem;
+    color: var(--color-text-muted);
+    text-align: center;
+}
+.of-vacio button {
+    border: none;
+    background: linear-gradient(135deg, #06652F 0%, #03481F 100%);
+    color: #EEC045;
+    font-family: inherit;
+    font-weight: 600;
+    padding: 0.55rem 1.1rem;
+    border-radius: 25px;
+    cursor: pointer;
+}
+
+@media (max-width: 640px) {
+    .of-header { flex-wrap: wrap; gap: 0.6rem; }
+    .of-tabs { order: 3; width: 100%; }
+    .of-tabs button { flex: 1; }
+    .of-body { padding: 0.8rem 0.7rem 2rem; }
+}

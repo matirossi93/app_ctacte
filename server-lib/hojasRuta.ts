@@ -277,9 +277,15 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
     const { data: yaAsignados } = await sb().from('hojas_ruta_pedidos')
       .select('im_comprobante_id, hoja_id, im_numero').in('im_comprobante_id', ids);
     const enOtra = (yaAsignados ?? []).filter((a: any) => String(a.hoja_id) !== hojaId);
-    if (enOtra.length) {
+    // 🔑 Con `mover: true` se reasignan a esta hoja. Es una operación NORMAL de la oficina:
+    // cuando una zona se pasa de kilos, Jorgelina va moviendo pedidos entre hojas hasta que
+    // entren (Mati, 07/09/2026: "permitir que podamos mover los pedidos y manejar las hojas").
+    // Sin el flag se avisa, para que un clic distraído no le saque un pedido a otro camión.
+    if (enOtra.length && req.body?.mover !== true) {
       res.status(409).json({
         error: `Estos pedidos ya están en otra hoja de ruta: ${enOtra.map((a: any) => a.im_numero ?? a.im_comprobante_id).join(', ')}. Sacalos de ahí primero.`,
+        mover_disponible: true,
+        en_otra_hoja: enOtra.map((a: any) => String(a.im_comprobante_id)),
       });
       return;
     }
@@ -315,6 +321,52 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
     console.error('[asignarPedidos]', err?.message);
     res.status(500).json({ error: err?.message ?? 'error' });
   }
+}
+
+/**
+ * PUT /api/hojas-ruta/:id — cambia camión, transporte, turno, zona, estado u observaciones.
+ *
+ * 🔑 La decisión de qué camión va a cada reparto es de la oficina, no del algoritmo (Mati,
+ * 07/09/2026: *"el criterio de cómo asignar los camiones tiene que seguir siendo una decisión
+ * nuestra... por ahí quizás sí una sugerencia tuya"*). El sugeridor propone; acá se decide.
+ */
+export async function editarHoja(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  try {
+    const b = req.body ?? {};
+    const cambios: Record<string, any> = {};
+    if ('turno' in b) cambios.turno = b.turno ? String(b.turno) : null;
+    if ('transporte' in b) cambios.transporte = b.transporte ? String(b.transporte) : null;
+    if ('camion_id' in b) cambios.camion_id = b.camion_id ? String(b.camion_id) : null;
+    if ('observaciones' in b) cambios.observaciones = b.observaciones ? String(b.observaciones) : null;
+    if ('cod_zona' in b) cambios.cod_zona = Number(b.cod_zona) > 0 ? Number(b.cod_zona) : null;
+    if ('estado' in b) {
+      const e = String(b.estado);
+      if (!['abierta', 'cerrada', 'anulada'].includes(e)) { res.status(400).json({ error: 'Estado inválido' }); return; }
+      cambios.estado = e;
+    }
+    if (!Object.keys(cambios).length) { res.status(400).json({ error: 'No mandaste nada para cambiar' }); return; }
+    const { data, error } = await sb().from('hojas_ruta').update(cambios)
+      .eq('id', String(req.params.id)).eq('tenant_id', TENANT_ID).select().maybeSingle();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    if (!data) { res.status(404).json({ error: 'Hoja de ruta no encontrada' }); return; }
+    res.json({ ok: true, hoja: data });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/** DELETE /api/hojas-ruta/:id — borra una hoja vacía. Los pedidos vuelven a pendientes. */
+export async function borrarHoja(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  const id = String(req.params.id);
+  // Los pedidos se sueltan primero: si se borrara la hoja con pedidos adentro, el cascade se
+  // los llevaría y nadie sabría que esos comprobantes quedaron sin repartir.
+  const { error: e1 } = await sb().from('hojas_ruta_pedidos').delete().eq('hoja_id', id);
+  if (e1) { res.status(500).json({ error: e1.message }); return; }
+  const { error } = await sb().from('hojas_ruta').delete().eq('id', id).eq('tenant_id', TENANT_ID);
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ ok: true });
 }
 
 /** DELETE /api/hojas-ruta/pedidos/:comprobanteId — lo saca de la hoja y vuelve a pendientes. */
