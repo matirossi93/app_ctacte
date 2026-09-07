@@ -94,14 +94,30 @@ async function armarVistaDelDia(fecha: string) {
       .eq('tenant_id', TENANT_ID).in('im_presupuesto_id', ids);
     const mio = new Map((nuestros ?? []).map((p: any) => [String(p.im_presupuesto_id), p]));
     const { data: avisos } = await sb().from('pedidos_vendedor_items')
-      .select('pedido_id, aviso_lista')
+      .select('pedido_id, aviso_lista, lista_sugerida, cod_lista_precios')
       .in('pedido_id', (nuestros ?? []).map((p: any) => p.id))
       .not('aviso_lista', 'is', null);
     const avisosPorPedido = new Map<string, string[]>();
+    // 🔑 Los avisos NO son todos iguales y mezclarlos hace que no se mire ninguno: el 07/09
+    // había 36 pedidos marcados sobre 59, y así "revisar" deja de querer decir algo.
+    // Las listas de IM van de más cara a más barata según el número (12=L1 … 15=L4), así que
+    // comparando la lista puesta contra la sugerida se sabe para qué lado está el error:
+    //   puesta > sugerida  -> más barata de lo que corresponde  -> PIERDE MARGEN la empresa
+    //   puesta < sugerida  -> más cara                          -> le cobran de más al cliente
+    // Se clasifica con los CÓDIGOS y no leyendo el texto del aviso, que puede cambiar.
+    const gravedadPorPedido = new Map<string, { pierde_margen: number; cobra_de_mas: number }>();
     for (const a of avisos ?? []) {
       const k = String((a as any).pedido_id);
       if (!avisosPorPedido.has(k)) avisosPorPedido.set(k, []);
       avisosPorPedido.get(k)!.push(String((a as any).aviso_lista));
+      const g = gravedadPorPedido.get(k) ?? { pierde_margen: 0, cobra_de_mas: 0 };
+      const puesta = Number((a as any).cod_lista_precios);
+      const sugerida = Number((a as any).lista_sugerida);
+      if (Number.isFinite(puesta) && Number.isFinite(sugerida) && sugerida > 0) {
+        if (puesta > sugerida) g.pierde_margen += 1;
+        else if (puesta < sugerida) g.cobra_de_mas += 1;
+      }
+      gravedadPorPedido.set(k, g);
     }
 
     // Dónde está ya asignado cada comprobante.
@@ -132,6 +148,8 @@ async function armarVistaDelDia(fecha: string) {
         pedido_id: propio?.id ?? null,
         cod_vendedor: propio?.cod_vendedor ?? p.cod_vendedor ?? null,
         avisos: propio ? (avisosPorPedido.get(String(propio.id)) ?? []) : [],
+        // Para qué lado está el error de lista, que es lo que decide si urge mirarlo.
+        gravedad: propio ? (gravedadPorPedido.get(String(propio.id)) ?? { pierde_margen: 0, cobra_de_mas: 0 }) : { pierde_margen: 0, cobra_de_mas: 0 },
         im_error: propio?.im_error ?? null,
         hoja_id: enHoja.get(String(p.id)) ?? null,
       };
@@ -142,6 +160,10 @@ async function armarVistaDelDia(fecha: string) {
       asignados: filas.filter(f => f.hoja_id),
       // Para que la pantalla pueda mostrar "3 pedidos para revisar" sin recorrer todo.
       con_avisos: filas.filter(f => f.avisos.length > 0).length,
+      // Los dos números que de verdad importan, separados: uno es plata que se pierde, el
+      // otro es un cliente al que le están cobrando de más.
+      pierde_margen: filas.filter(f => f.gravedad.pierde_margen > 0).length,
+      cobra_de_mas: filas.filter(f => f.gravedad.cobra_de_mas > 0).length,
       sin_zona: filas.filter(f => f.cod_zona == null).length,
     };
   }

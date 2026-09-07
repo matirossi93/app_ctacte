@@ -83,6 +83,10 @@
     padding: 0.05rem 0.4rem; border-radius: 999px; font-size: 0.68rem; font-weight: 600;
 }
 .hr-badge.aviso { background: #fdf0d5; color: #8a5a00; border: 1px solid #EEC045; }
+/* Vender por debajo de la lista que corresponde es plata que se pierde: va en rojo, aparte
+   del ámbar de "revisar". Si todo fuera del mismo color, no se miraría ninguno. */
+.hr-badge.grave { background: #fbe9e7; color: #a33b26; border: 1px solid #d98b7a; }
+.hr-chip-aviso.grave { background: #fbe9e7; color: #a33b26; border-color: #d98b7a; }
 .hr-badge.tenue { background: var(--color-bg); color: var(--color-text-muted); border: 1px solid var(--color-border); }
 
 /* ─── Hojas ───────────────────────────────────────────────────────────────── */

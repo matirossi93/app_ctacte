@@ -29,6 +29,8 @@ interface Pendiente {
     renglones_sin_peso: number;
     de_la_app: boolean;
     avisos: string[];
+    /** Para qué lado está el error de lista. Es lo que decide si urge mirarlo. */
+    gravedad: { pierde_margen: number; cobra_de_mas: number };
     hoja_id: string | null;
 }
 
@@ -113,7 +115,10 @@ export function HojasRutaView() {
 
     const seleccionados = useMemo(() => pendientes.filter(p => sel.has(p.im_comprobante_id)), [pendientes, sel]);
     const kgSel = seleccionados.reduce((s, p) => s + p.kg, 0);
-    const conAvisos = pendientes.filter(p => p.avisos.length > 0).length;
+    // 🔑 Separados a propósito: "36 para revisar" sobre 59 no dice nada y se deja de mirar.
+    // Uno es plata que la empresa pierde, el otro es un cliente al que le cobran de más.
+    const pierdeMargen = pendientes.filter(p => p.gravedad?.pierde_margen > 0).length;
+    const cobraDeMas = pendientes.filter(p => p.gravedad?.cobra_de_mas > 0).length;
 
     function toggle(id: string) {
         setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -199,9 +204,14 @@ export function HojasRutaView() {
                 <div className="hr-resumen">
                     <span><b>{pendientes.length}</b> sin asignar</span>
                     <span><b>{kilos(pendientes.reduce((s, p) => s + p.kg, 0))}</b></span>
-                    {conAvisos > 0 && (
-                        <span className="hr-chip-aviso">
-                            <AlertTriangle size={13} /> {conAvisos} para revisar
+                    {pierdeMargen > 0 && (
+                        <span className="hr-chip-aviso grave" title="El vendedor usó una lista más barata de la que corresponde por la cantidad: la empresa pierde margen">
+                            <AlertTriangle size={13} /> {pierdeMargen} por debajo de lista
+                        </span>
+                    )}
+                    {cobraDeMas > 0 && (
+                        <span className="hr-chip-aviso" title="Al cliente le están cobrando más caro de lo que le corresponde por la cantidad">
+                            {cobraDeMas} le cobran de más
                         </span>
                     )}
                 </div>
@@ -232,10 +242,13 @@ export function HojasRutaView() {
                                     <div className="hr-ped-info">
                                         <div className="hr-ped-cli">
                                             {p.cliente_nombre}
-                                            {p.avisos.length > 0 && (
-                                                <span className="hr-badge aviso" title={p.avisos.join(' · ')}>
-                                                    <AlertTriangle size={11} /> revisar
+                                            {p.gravedad?.pierde_margen > 0 && (
+                                                <span className="hr-badge grave" title={p.avisos.join(' · ')}>
+                                                    <AlertTriangle size={11} /> por debajo de lista
                                                 </span>
+                                            )}
+                                            {p.gravedad?.pierde_margen === 0 && p.avisos.length > 0 && (
+                                                <span className="hr-badge aviso" title={p.avisos.join(' · ')}>revisar</span>
                                             )}
                                             {p.zona_origen === 'nombre' && <span className="hr-badge tenue" title="La zona se dedujo del nombre del cliente, no está cargada en InfoManager">zona estimada</span>}
                                         </div>
