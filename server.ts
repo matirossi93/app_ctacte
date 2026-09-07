@@ -51,6 +51,7 @@ import { cruceCarpetaHandler, exportCruceHandler } from './server-lib/cruceCarpe
 import { listRebotes, listRecargos, syncRebotesNow, syncRebotes } from './server-lib/rebotes.js';
 import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos, hermanosDeFamilia } from './server-lib/productGoals.js';
 import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, precioArticulo, catalogoPedido, validarListasPedido, editarPedido } from './server-lib/pedidos.js';
+import { pendientesDelDia, listarHojas, listarCamiones, crearHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -588,6 +589,7 @@ for (const prefix of [
     '/api/notificaciones',
     '/api/pedidos',
     '/api/cartera',
+    '/api/hojas-ruta',
 ]) {
     app.use(prefix, maybeJwt, denyRepartidor);
 }
@@ -647,6 +649,17 @@ app.post('/api/pedidos', requireJwt, (req: any, res) => crearPedido(req, res));
 app.get('/api/pedidos/:id', requireJwt, (req: any, res) => getPedidoById(req, res));
 app.put('/api/pedidos/:id', requireJwt, (req: any, res) => editarPedido(req, res));
 app.post('/api/pedidos/:id/anular', requireJwt, (req: any, res) => anularPedido(req, res));
+
+// ─── Hojas de ruta (panel de la oficina) ──────────────────────────────────────
+// Reemplaza el panel de InfoManager, que no expone hojas de ruta por API. Quién puede entrar
+// lo decide `puedeArmarHojasDeRuta` (admin, gerente y administrativo), dentro de cada handler.
+// 🪤 Las rutas fijas van ANTES que las que llevan :id, o Express toma "camiones" como un id.
+app.get('/api/hojas-ruta/camiones', requireJwt, (req: any, res) => listarCamiones(req, res));
+app.get('/api/hojas-ruta/pendientes', requireJwt, (req: any, res) => pendientesDelDia(req, res));
+app.delete('/api/hojas-ruta/pedidos/:comprobanteId', requireJwt, (req: any, res) => quitarPedido(req, res));
+app.get('/api/hojas-ruta', requireJwt, (req: any, res) => listarHojas(req, res));
+app.post('/api/hojas-ruta', requireJwt, (req: any, res) => crearHoja(req, res));
+app.post('/api/hojas-ruta/:id/pedidos', requireJwt, (req: any, res) => asignarPedidos(req, res));
 
 // Reportes admin-only (xlsx)
 app.get('/api/reportes/:tipo', requireJwt, (req: any, res) => descargarReporte(req, res));

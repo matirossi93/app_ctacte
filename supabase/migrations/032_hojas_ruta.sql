@@ -48,11 +48,21 @@ create table if not exists hojas_ruta (
 create unique index if not exists hojas_ruta_numero_uidx on hojas_ruta (tenant_id, numero);
 create index if not exists hojas_ruta_fecha_idx on hojas_ruta (tenant_id, fecha desc);
 
--- Qué pedidos van en cada hoja. Un pedido está en UNA hoja o en ninguna.
+-- Qué comprobantes van en cada hoja. Uno está en UNA hoja o en ninguna.
+--
+-- 🔑 La identidad es el COMPROBANTE DE IM, no nuestro pedido. Hoy conviven pedidos cargados
+-- desde la app y otros cargados directo en InfoManager: si la hoja sólo pudiera llevar los
+-- nuestros, no reemplazaría al panel de IM y Jorgelina tendría que usar los dos. `pedido_id`
+-- queda al lado, opcional, para los que sí vienen de la app (ahí tenemos los avisos del
+-- control de listas y quién lo cargó).
 create table if not exists hojas_ruta_pedidos (
   id uuid primary key default gen_random_uuid(),
   hoja_id uuid not null references hojas_ruta(id) on delete cascade,
-  pedido_id uuid not null references pedidos_vendedor(id) on delete cascade,
+  im_comprobante_id text not null,
+  im_numero int,
+  cod_cliente int not null,
+  cliente_nombre text,
+  pedido_id uuid references pedidos_vendedor(id) on delete set null,
   orden int not null default 0,
   -- 📌 Snapshot al momento de armar la hoja, NO se recalcula al imprimir. El saldo del cliente
   -- cambia solo (entra un recibo, se factura otra cosa) y el papel que se llevó el repartidor
@@ -64,8 +74,10 @@ create table if not exists hojas_ruta_pedidos (
   created_at timestamptz not null default now()
 );
 
-create unique index if not exists hojas_ruta_pedidos_uidx on hojas_ruta_pedidos (pedido_id);
+-- Un comprobante no puede estar en dos hojas: se cargaría dos veces en dos camiones.
+create unique index if not exists hojas_ruta_pedidos_comp_uidx on hojas_ruta_pedidos (im_comprobante_id);
 create index if not exists hojas_ruta_pedidos_hoja_idx on hojas_ruta_pedidos (hoja_id, orden);
+create index if not exists hojas_ruta_pedidos_pedido_idx on hojas_ruta_pedidos (pedido_id) where pedido_id is not null;
 
 -- RLS: sólo service_role, igual que el resto de la app (el scoping lo hace el server con el JWT).
 alter table hojas_ruta_camiones enable row level security;

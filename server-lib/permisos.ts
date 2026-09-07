@@ -53,6 +53,18 @@ export function puedeTocarPedido(user: QuienPregunta, pedido: PedidoDeQuien): bo
 }
 
 /**
+ * ¿Puede armar hojas de ruta y trabajar el panel de facturación?
+ *
+ * Es el trabajo de la oficina: revisar los pedidos que cargan los vendedores, corregirlos,
+ * agruparlos por zona y mandarlos al camión. `administrativo` está adentro porque es el rol de
+ * Jorgelina y Susana — de hecho el panel se está construyendo para sacarle carga a ella.
+ * Un vendedor NO entra: vería y podría mover los pedidos de todo el equipo.
+ */
+export function puedeArmarHojasDeRuta(rol: string): boolean {
+    return MANDO.has(rol) || rol === 'administrativo';
+}
+
+/**
  * ¿Puede editar o borrar una actividad (visita, nota, PROMESA DE PAGO) que cargó otro?
  *
  * 🪤 El comentario de `deleteActivity` decía "solo propia o admin" y el código dejaba borrar
