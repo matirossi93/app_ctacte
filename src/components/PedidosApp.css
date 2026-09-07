@@ -448,3 +448,21 @@
   box-shadow: 0 0 0 0.35rem var(--color-danger-bg);
 }
 .ped-sin-precio { color: var(--color-danger); font-weight: 700; }
+
+/* Producto que hoy no hay en el depósito. Se puede pedir igual —se repone o se trae a
+   pedido—, así que NO se deshabilita: se atenúa y se etiqueta, y el carrito avisa que hay
+   que confirmarlo con Casa Central. Antes estos productos ni siquiera se mostraban. */
+.ped-cat-opt.sin-stock .ped-cat-desc { color: #8a7f6f; }
+.ped-cat-badge {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.5;
+    color: #8a5a00;
+    background: #fdf0d5;
+    border: 1px solid #eec045;
+    vertical-align: middle;
+}

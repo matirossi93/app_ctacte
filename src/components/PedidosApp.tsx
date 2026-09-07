@@ -29,7 +29,16 @@ interface Credito { saldo: number; disponible: number; control_margen_venta: str
  * lista del cliente: null y 0 NO son lo mismo, y mostrar $0 fue justo el problema que reportó
  * Mati el 27/08 (el catálogo de IM trae ese campo en cero para el 31% de los artículos).
  */
-interface CatItem { cod_articulo: number; descripcion: string; precio_venta: number | null }
+interface CatItem {
+    cod_articulo: number; descripcion: string; precio_venta: number | null;
+    /**
+     * ¿Hay stock en el depósito de esta unidad? `null` es "no pude preguntarle a IM", que NO
+     * es lo mismo que "no hay": con null no se muestra ninguna marca. Antes el buscador
+     * directamente escondía lo que estaba en cero y el vendedor no se enteraba (los maníes
+     * saborizados de Mati, 04/09/2026).
+     */
+    hay_stock?: boolean | null;
+}
 /**
  * Un renglón del pedido.
  *
@@ -50,6 +59,8 @@ interface CartItem {
      * (Brian, 01/09/2026 — ver src/utils/precioDeLista.ts).
      */
     sinPrecio?: boolean;
+    /** Entró sin stock en el depósito: hay que confirmarlo con Casa Central antes de prometerlo. */
+    sinStock?: boolean;
 }
 
 /**
@@ -291,12 +302,11 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     const [catError, setCatError] = useState<string | null>(null);
     /** false = no se pudo consultar la lista de precios, no que los artículos no tengan. */
     const [hayPrecios, setHayPrecios] = useState(true);
-    // El buscador muestra sólo lo que hay en el depósito de casa central. Si una búsqueda
-    // no encuentra nada, se ofrece ampliar a todo el catálogo: hay un puñado de artículos
-    // que se facturan desde acá sin figurar en el depósito, y no poder cargarlos frenaría
-    // una venta.
-    const [catTodos, setCatTodos] = useState(false);
-    useEffect(() => { setCatTodos(false); }, [catQuery]);
+    // El buscador muestra el catálogo ENTERO y marca lo que no hay en el depósito. Antes
+    // filtraba por stock y ofrecía "buscar en todo el catálogo" sólo cuando la búsqueda no
+    // devolvía NADA — con resultados parciales, el vendedor no tenía cómo enterarse de que
+    // faltaban productos (los maníes saborizados de Mati, 04/09/2026).
+
     useEffect(() => {
         if (step !== 'productos') return;
         const t = catQuery.trim();
@@ -305,7 +315,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         const ctrl = new AbortController();
         const timer = setTimeout(async () => {
             try {
-                const r = await fetch(`/api/pedidos/catalogo?q=${encodeURIComponent(t)}&cod_lista=${listaCliente}${catTodos ? '&todos=1' : ''}`, { headers: authHeaders(), signal: ctrl.signal });
+                const r = await fetch(`/api/pedidos/catalogo?q=${encodeURIComponent(t)}&cod_lista=${listaCliente}`, { headers: authHeaders(), signal: ctrl.signal });
                 const d = await r.json().catch(() => null);
                 if (r.ok && d?.ok) { setCatResults(d.articulos ?? []); setCatError(null); setHayPrecios(d.hay_precios !== false); }
                 else { setCatResults([]); setCatError(d?.error ?? 'No se pudo consultar el catálogo de InfoManager.'); }
@@ -316,7 +326,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
             setCatLoading(false);
         }, 300);
         return () => { clearTimeout(timer); ctrl.abort(); };
-    }, [catQuery, step, catTodos, listaCliente]);
+    }, [catQuery, step, listaCliente]);
 
     /** El buscador de productos, para devolverle el foco cuando el vendedor cierra una cantidad. */
     const buscadorRef = useRef<HTMLInputElement>(null);
@@ -347,6 +357,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
             uid,
             cod_articulo: a.cod_articulo, descripcion: a.descripcion, cantidad: 1,
             precio: a.precio_venta ?? 0, cod_lista: listaInicial, descuento: 0,
+            sinStock: a.hay_stock === false,
         }]);
         // El cursor va derecho a la cantidad: el vendedor teclea el número y sigue, sin
         // apuntarle al casillero. El input hace `select()` al enfocarse, así que lo que
@@ -466,6 +477,8 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     const avisoDe = (idx: number) => { const a = controlVigente?.avisos?.[idx]; return a?.mensaje ? a : undefined; };
     const descDe = (idx: number) => controlVigente?.avisos?.[idx];
     const faltanBultos = control ? Math.max(0, 10 - control.bultos) : 0;
+    /** ¿El pedido lleva algo que hoy no hay en el depósito? Avisa, no frena. */
+    const hayRenglonesSinStock = cart.some(i => i.sinStock);
     // El control AVISA, no frena (Mati lo dio de baja el 27/08 mientras la parametrización
     // se sigue afinando: un falso positivo le bloquea una venta legítima al vendedor).
     // El backend tiene el flag PEDIDOS_BLOQUEAR_MARGEN para volver a prenderlo; si eso pasa,
@@ -974,12 +987,22 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                 // se pudo, el artículo puede tener precio y se deja intentar — al agregarlo
                                 // se recotiza contra IM.
                                 const sinPrecio = hayPrecios && a.precio_venta == null;
+                                // 🔑 Sin stock NO deshabilita: el producto se repone o se trae a pedido,
+                                // así que se puede cargar. Sólo se avisa, para que lo confirme con Casa
+                                // Central. Es distinto de sinPrecio, que sí frena: ahí el renglón entraría
+                                // en $0 y el total mentiría.
+                                const sinStock = a.hay_stock === false;
                                 return (
-                                <button key={a.cod_articulo} className="ped-cat-opt" disabled={agregando != null || sinPrecio}
-                                    title={sinPrecio ? 'No tiene precio en la lista de este cliente' : undefined}
+                                <button key={a.cod_articulo} className={`ped-cat-opt${sinStock ? ' sin-stock' : ''}`}
+                                    disabled={agregando != null || sinPrecio}
+                                    title={sinPrecio ? 'No tiene precio en la lista de este cliente'
+                                        : sinStock ? 'No hay stock en el depósito: confirmalo con Casa Central' : undefined}
                                     onClick={() => agregarArticulo(a)}>
                                     {agregando === a.cod_articulo ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
-                                    <div className="ped-cat-desc">{a.descripcion}</div>
+                                    <div className="ped-cat-desc">
+                                        {a.descripcion}
+                                        {sinStock && <span className="ped-cat-badge">sin stock</span>}
+                                    </div>
                                     <div className="ped-cat-precio">
                                         {a.precio_venta != null
                                             ? money(a.precio_venta)
@@ -997,20 +1020,21 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                             )}
                             {!catError && catQuery.trim().length >= 2 && !catLoading && !catResults.length && (
                                 <div className="ped-sin-resultados">
-                                    {catTodos
-                                        ? <span>No hay ningún producto que coincida con «{catQuery.trim()}».</span>
-                                        : <>
-                                            <span>No hay productos de casa central que coincidan.</span>
-                                            <button onClick={() => setCatTodos(true)}>Buscar en todo el catálogo</button>
-                                        </>}
+                                    <span>No hay ningún producto que coincida con «{catQuery.trim()}».</span>
                                 </div>
-                            )}
-                            {catTodos && catResults.length > 0 && (
-                                <div className="ped-sin-resultados"><span>Mostrando también productos de las sucursales.</span></div>
                             )}
 
                             {/* Carrito */}
                             {cart.length > 0 && <div className="ped-cart-title">Pedido ({cart.length})</div>}
+
+                            {/* 🔑 El pedido lleva algo que hoy no hay en el depósito. No lo frena: le dice
+                                al vendedor que lo confirme antes de prometerle la entrega al cliente. */}
+                            {hayRenglonesSinStock && (
+                                <div className="ped-promo aviso">
+                                    <AlertTriangle size={15} />
+                                    <span>Hay productos <b>sin stock</b> en el pedido. Consultá con Casa Central antes de confirmarle la entrega al cliente.</span>
+                                </div>
+                            )}
 
                             {/* Cuántos bultos lleva y cuánto le falta para la promo general.
                                 Le sirve al vendedor para cerrar la venta, no solo para no equivocarse. */}

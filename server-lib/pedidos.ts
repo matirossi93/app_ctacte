@@ -1271,29 +1271,41 @@ export async function precioArticulo(req: Request & { user?: JwtPayload }, res: 
 export async function catalogoPedido(req: Request & { user?: JwtPayload }, res: Response) {
   try {
     const term = String(req.query.q ?? '').trim().toLowerCase();
-    const todos = req.query.todos === '1' || req.query.todos === 'true';
     const map = await fetchArticulosCatalogo();
 
+    // 🪤 04/09/2026. Esto FILTRABA por el stock del depósito y descartaba el resto: un
+    // producto en cero simplemente no existía para el vendedor. Mati lo vio con los maníes
+    // saborizados — JAMÓN, QUESO y SALAME se podían cargar y PIZZA y PANCETA no, y la única
+    // diferencia era el stock. Medido ese día: de 1.423 artículos se mostraban 563, y de los
+    // 862 que quedaban afuera 100 tenían precio, o sea que eran vendibles.
+    // Ahora se muestran TODOS y el stock viaja como un dato del artículo. Que un producto
+    // esté en cero no significa que no se pueda pedir: se repone, o se trae a pedido. Lo que
+    // corresponde es que el vendedor lo vea marcado y lo confirme con Casa Central, no que
+    // la venta se pierda en silencio.
     let deDeposito: Set<number> | null = null;
-    if (!todos) {
-      try {
-        // El depósito de la unidad del usuario: BRS ve los 798 de BRS, no los 590 de CC.
-        const suc = await sucursalDelUsuario(req.user);
-        deDeposito = await fetchArticulosDeDeposito(suc.cod_deposito);
-      } catch (e: any) {
-        // Si IM no responde el stock por depósito, se muestra el catálogo entero: es
-        // preferible que sobren productos a que el vendedor no pueda cargar el pedido.
-        console.warn('[catalogoPedido] no se pudo filtrar por depósito, muestro todo:', e?.message);
-      }
+    try {
+      // El depósito de la unidad del usuario: al de BRS le importa el stock de BRS.
+      const suc = await sucursalDelUsuario(req.user);
+      deDeposito = await fetchArticulosDeDeposito(suc.cod_deposito);
+    } catch (e: any) {
+      // 🔑 Si IM no contesta queda en null, que es "no sé", y NO en "no hay": marcar todo
+      // como sin stock por un hipo de red llenaría la pantalla de advertencias falsas y el
+      // vendedor dejaría de creerles.
+      console.warn('[catalogoPedido] no pude consultar el stock por depósito:', e?.message);
     }
 
     const all = Array.from(map.entries())
-      .filter(([cod]) => !deDeposito || deDeposito.has(cod))
-      .map(([cod, a]) => ({ cod_articulo: cod, descripcion: a.descripcion, cod_rubro: a.cod_rubro }));
+      .map(([cod, a]) => ({
+        cod_articulo: cod, descripcion: a.descripcion, cod_rubro: a.cod_rubro,
+        hay_stock: deDeposito ? deDeposito.has(cod) : null,
+      }));
     const filtered = term
       ? all.filter((a) => a.descripcion.toLowerCase().includes(term) || String(a.cod_articulo).includes(term))
       : all;
-    const pagina = filtered.slice(0, 80);
+    // Los que hay primero. No es cosmético: la respuesta se corta en 80 y sin esto los que
+    // no hay pueden empujar fuera de la página a los que sí.
+    const ordenado = filtered.sort((a, b) => Number(b.hay_stock === true) - Number(a.hay_stock === true));
+    const pagina = ordenado.slice(0, 80);
 
     // 🪤 Acá se devolvía `precio_venta` del catálogo de /articulos/stock. Ese campo está
     // muerto en IM: 31% de los artículos lo tienen en 0 (justo las bolsas del mayorista) y
@@ -1313,7 +1325,8 @@ export async function catalogoPedido(req: Request & { user?: JwtPayload }, res: 
       hay_precios: precios.size > 0,
       // null y no 0: el front tiene que poder distinguir "no sé el precio" de "vale cero".
       articulos: pagina.map((a) => ({ ...a, precio_venta: precios.get(a.cod_articulo) ?? null })),
-      solo_casa_central: !todos && !!deDeposito,
+      // Si no se pudo consultar el stock, el front no muestra ninguna marca (ver hay_stock).
+      hay_stock_conocido: !!deDeposito,
     });
   } catch (err: any) {
     res.status(502).json({ error: `No se pudo cargar el catálogo desde IM: ${err?.message ?? 'sin respuesta'}` });
