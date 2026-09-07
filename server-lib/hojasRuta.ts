@@ -64,16 +64,29 @@ export async function pendientesDelDia(req: Request & { user?: JwtPayload }, res
   if (frenaSiNoPuede(req, res)) return;
   try {
     const fecha = fechaPedida(req);
-    const armado = await armarVistaDelDia(fecha);
-    res.json({ ok: true, fecha, ...armado });
+    // `?dias=N` para incluir los vigentes de días anteriores. El default es 0 porque la
+    // pantalla tiene que abrir rápido; el aviso de que hay pedidos viejos lo da /arrastre.
+    const dias = Math.min(Math.max(Number(req.query.dias) || 0, 0), VENTANA_DIAS);
+    const armado = await armarVistaDelDia(fecha, dias);
+    res.json({ ok: true, fecha, dias, ...armado });
   } catch (err: any) {
     console.error('[pendientesDelDia]', err?.message);
     res.status(502).json({ error: `No se pudieron traer los pedidos del día: ${err?.message ?? 'sin respuesta de IM'}` });
   }
 }
 
-/** Lo que se muestra del día. Separado del handler para que el sugeridor lo reuse. */
-async function armarVistaDelDia(fecha: string) {
+/**
+ * Lo que se muestra del día. Separado del handler para que el sugeridor lo reuse.
+ *
+ * `dias` es cuántos días para atrás se miran ADEMÁS del elegido. Por defecto 0 — sólo el día.
+ *
+ * 🪤 Al principio esto miraba siempre 15 días para no perderse los pedidos viejos vigentes.
+ * Medido el 07/09/2026 contra IM: **24,4 s y 476 pedidos en pantalla**, de los cuales 417 eran
+ * de otros días. Ni abría a tiempo ni servía para trabajar. La versión anterior era peor
+ * (miraba sólo la fecha exacta y se perdía 166 pedidos en silencio), así que la salida no es
+ * elegir entre las dos: el día abre rápido y los anteriores se piden cuando hacen falta.
+ */
+async function armarVistaDelDia(fecha: string, dias = 0) {
   {
     // 🪤 Esto miraba SÓLO la fecha exacta y se perdía la mayoría de los pedidos. Medido el
     // 07/09/2026: había 225 presupuestos vigentes y el panel mostraba 59. Los otros 166 eran
@@ -81,7 +94,9 @@ async function armarVistaDelDia(fecha: string) {
     // comprobante para reordenar los despachos, así que un pedido fechado para el 10 existe
     // desde antes. Un pedido que no aparece en la pantalla no entra en ninguna hoja y nadie
     // se entera hasta que llama el cliente.
-    const desde = fechaArgentina(new Date(fecha + 'T12:00:00Z').getTime() - VENTANA_DIAS * 864e5);
+    const desde = dias > 0
+      ? fechaArgentina(new Date(fecha + 'T12:00:00Z').getTime() - dias * 864e5)
+      : fecha;
     const [ventas, cat, clientes] = await Promise.all([
       fetchVentas(desde, fecha),
       fetchArticulosCatalogo(),
@@ -221,7 +236,7 @@ export async function sugerenciaDelDia(req: Request & { user?: JwtPayload }, res
   try {
     const fecha = fechaPedida(req);
     const [{ pendientes }, { data: camiones }] = await Promise.all([
-      armarVistaDelDia(fecha),
+      armarVistaDelDia(fecha, Math.min(Math.max(Number(req.query.dias) || 0, 0), VENTANA_DIAS)),
       sb().from('hojas_ruta_camiones').select('id, nombre, capacidad_kg')
         .eq('tenant_id', TENANT_ID).eq('activo', true),
     ]);
@@ -232,6 +247,38 @@ export async function sugerenciaDelDia(req: Request & { user?: JwtPayload }, res
   } catch (err: any) {
     console.error('[sugerenciaDelDia]', err?.message);
     res.status(502).json({ error: `No se pudo armar la sugerencia: ${err?.message ?? 'sin respuesta de IM'}` });
+  }
+}
+
+/**
+ * GET /api/hojas-ruta/arrastre?fecha= — cuántos presupuestos vigentes quedaron de días
+ * anteriores, sin traer sus renglones.
+ *
+ * Va aparte y lo pide la pantalla DESPUÉS de dibujar el día, para que el aviso no retrase la
+ * apertura. Sin renglones tarda ~6 s en vez de 24; con ellos no entra en el timeout del proxy.
+ */
+export async function arrastreDelDia(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  try {
+    const fecha = fechaPedida(req);
+    const desde = fechaArgentina(new Date(fecha + 'T12:00:00Z').getTime() - VENTANA_DIAS * 864e5);
+    const ventas = await fetchVentas(desde, fecha);
+    const previos = ventas.filter((v: any) =>
+      String(v.tipo_comprobante ?? '').trim() === 'PR' &&
+      String(v.anulada ?? '').trim().toUpperCase() !== 'S' &&
+      String(v.fecha ?? '').slice(0, 10) !== fecha);
+    const ids = previos.map((p: any) => String(p.id));
+    // Los que ya están en una hoja no son arrastre: alguien se ocupó.
+    const { data: asignados } = ids.length
+      ? await sb().from('hojas_ruta_pedidos').select('im_comprobante_id').in('im_comprobante_id', ids.slice(0, 400))
+      : { data: [] as any[] };
+    const yaEn = new Set((asignados ?? []).map((a: any) => String(a.im_comprobante_id)));
+    const sueltos = previos.filter((p: any) => !yaEn.has(String(p.id)));
+    const porFecha: Record<string, number> = {};
+    for (const p of sueltos) porFecha[String(p.fecha).slice(0, 10)] = (porFecha[String(p.fecha).slice(0, 10)] ?? 0) + 1;
+    res.json({ ok: true, fecha, cantidad: sueltos.length, desde, por_fecha: porFecha });
+  } catch (err: any) {
+    res.status(502).json({ error: err?.message ?? 'no se pudo consultar' });
   }
 }
 

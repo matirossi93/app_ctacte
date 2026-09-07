@@ -76,12 +76,16 @@ export function HojasRutaView() {
     const [aviso, setAviso] = useState<string | null>(null);
     /** Qué pedido tiene los avisos desplegados. En tablet no hay hover: hay que poder tocarlo. */
     const [detalle, setDetalle] = useState<string | null>(null);
+    /** Días hacia atrás que se están mirando. 0 = sólo el día elegido, que es lo rápido. */
+    const [dias, setDias] = useState(0);
+    /** Cuántos pedidos vigentes quedaron de días anteriores. null = todavía no se sabe. */
+    const [arrastre, setArrastre] = useState<number | null>(null);
 
     const cargar = useCallback(async () => {
         setCargando(true); setError(null);
         try {
             const [p, h, c] = await Promise.all([
-                fetch(`/api/hojas-ruta/pendientes?fecha=${fecha}`, { headers: authHeaders() }),
+                fetch(`/api/hojas-ruta/pendientes?fecha=${fecha}&dias=${dias}`, { headers: authHeaders() }),
                 fetch(`/api/hojas-ruta?fecha=${fecha}`, { headers: authHeaders() }),
                 fetch('/api/hojas-ruta/camiones', { headers: authHeaders() }),
             ]);
@@ -98,9 +102,26 @@ export function HojasRutaView() {
         } finally {
             setCargando(false);
         }
-    }, [fecha]);
+    }, [fecha, dias]);
 
     useEffect(() => { void cargar(); }, [cargar]);
+
+    /**
+     * Cuántos pedidos vigentes quedaron de días anteriores.
+     *
+     * Va en una llamada APARTE y después de dibujar el día: contarlos cuesta ~6 s contra IM y
+     * no puede demorar la apertura de la pantalla. El 07/09/2026 había 417 — pedidos viejos
+     * que nunca se facturaron y que, mostrados todos juntos, hacían la lista inusable.
+     */
+    useEffect(() => {
+        let vivo = true;
+        setArrastre(null);
+        fetch(`/api/hojas-ruta/arrastre?fecha=${fecha}`, { headers: authHeaders() })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (vivo && d?.ok) setArrastre(d.cantidad ?? 0); })
+            .catch(() => { /* el aviso es opcional: si no se puede contar, no se muestra */ });
+        return () => { vivo = false; };
+    }, [fecha]);
 
     /** Agrupados por zona: es como se arma la hoja y como los mira la oficina. */
     const porZona = useMemo(() => {
@@ -267,6 +288,19 @@ export function HojasRutaView() {
                 </div>
             </div>
 
+            {dias === 0 && !!arrastre && (
+                <div className="hr-aviso">
+                    <AlertTriangle size={15} />
+                    <span>Hay <b>{arrastre}</b> pedidos de días anteriores que siguen sin salir.</span>
+                    <button className="hr-btn chico" onClick={() => setDias(15)} disabled={cargando}>Traerlos</button>
+                </div>
+            )}
+            {dias > 0 && (
+                <div className="hr-aviso">
+                    <span>Mostrando también los pedidos de los últimos {dias} días.</span>
+                    <button className="hr-btn chico" onClick={() => setDias(0)} disabled={cargando}>Ver sólo el día</button>
+                </div>
+            )}
             {aviso && <div className="hr-aviso"><AlertTriangle size={15} /><span>{aviso}</span><button onClick={() => setAviso(null)}><X size={14} /></button></div>}
             {error && <div className="hr-aviso error"><AlertTriangle size={15} /><span>{error}</span></div>}
 

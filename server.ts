@@ -51,7 +51,7 @@ import { cruceCarpetaHandler, exportCruceHandler } from './server-lib/cruceCarpe
 import { listRebotes, listRecargos, syncRebotesNow, syncRebotes } from './server-lib/rebotes.js';
 import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos, hermanosDeFamilia } from './server-lib/productGoals.js';
 import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, precioArticulo, catalogoPedido, validarListasPedido, editarPedido } from './server-lib/pedidos.js';
-import { pendientesDelDia, sugerenciaDelDia, listarHojas, listarCamiones, crearHoja, editarHoja, borrarHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
+import { pendientesDelDia, arrastreDelDia, sugerenciaDelDia, listarHojas, listarCamiones, crearHoja, editarHoja, borrarHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -657,6 +657,7 @@ app.post('/api/pedidos/:id/anular', requireJwt, (req: any, res) => anularPedido(
 app.get('/api/hojas-ruta/camiones', requireJwt, (req: any, res) => listarCamiones(req, res));
 app.get('/api/hojas-ruta/pendientes', requireJwt, (req: any, res) => pendientesDelDia(req, res));
 app.get('/api/hojas-ruta/sugerencia', requireJwt, (req: any, res) => sugerenciaDelDia(req, res));
+app.get('/api/hojas-ruta/arrastre', requireJwt, (req: any, res) => arrastreDelDia(req, res));
 app.delete('/api/hojas-ruta/pedidos/:comprobanteId', requireJwt, (req: any, res) => quitarPedido(req, res));
 app.get('/api/hojas-ruta', requireJwt, (req: any, res) => listarHojas(req, res));
 app.post('/api/hojas-ruta', requireJwt, (req: any, res) => crearHoja(req, res));
