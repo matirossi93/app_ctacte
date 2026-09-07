@@ -73,7 +73,10 @@
 .hr-ped.sel { background: rgba(6, 101, 47, 0.08); }
 .hr-ped input { width: 17px; height: 17px; accent-color: #06652F; flex: none; }
 .hr-ped-info { min-width: 0; flex: 1; }
-.hr-ped-cli { display: flex; align-items: center; gap: 0.35rem; font-weight: 600; font-size: 0.86rem; }
+/* 🪤 En el celular el badge iba al lado del nombre y lo partía en dos líneas, empujando todo.
+   El nombre manda: ocupa su renglón entero y el badge baja al siguiente. */
+.hr-ped-cli { display: flex; align-items: center; gap: 0.35rem; font-weight: 600; font-size: 0.86rem; flex-wrap: wrap; }
+.hr-ped-cli > span:first-child { flex: 1 1 100%; }
 .hr-ped-meta { font-size: 0.75rem; color: var(--color-text-muted); }
 .hr-ped-kg { font-weight: 700; font-size: 0.86rem; white-space: nowrap; }
 .hr-sinpeso { color: #8a5a00; }
@@ -154,3 +157,9 @@
 
 /* El badge de aviso ahora es un botón (se toca para ver el detalle). */
 button.hr-badge { cursor: pointer; font-family: inherit; }
+
+@media (max-width: 640px) {
+    /* Los badges no compiten con el nombre: van abajo, en su propia línea. */
+    .hr-ped-cli { flex-direction: column; align-items: flex-start; gap: 0.2rem; }
+    .hr-badge { max-width: 100%; }
+}

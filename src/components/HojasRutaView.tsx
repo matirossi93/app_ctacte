@@ -325,7 +325,7 @@ export function HojasRutaView() {
                                     <input type="checkbox" checked={sel.has(p.im_comprobante_id)} onChange={() => toggle(p.im_comprobante_id)} />
                                     <div className="hr-ped-info">
                                         <div className="hr-ped-cli">
-                                            {p.cliente_nombre}
+                                            <span>{p.cliente_nombre}</span>
                                             {p.de_otro_dia && (
                                                 <span className="hr-badge tenue" title="Es de otro día y sigue sin salir">
                                                     {String(p.fecha ?? '').slice(8, 10)}/{String(p.fecha ?? '').slice(5, 7)}
