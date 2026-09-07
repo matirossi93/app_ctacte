@@ -17,10 +17,12 @@ import type { JwtPayload } from './auth.js';
 import { puedeArmarHojasDeRuta } from './permisos.js';
 import {
   fetchVentas, fetchVentasItems, fetchArticulosCatalogo, fetchClientesIMCached,
-  fechaArgentina, getDisponibleCliente,
+  fechaArgentina, getDisponibleCliente, desconfirmarPresupuesto,
 } from './infomanager.js';
 import { pesoDeRenglones, cargaDelCamion } from './pesoComprobante.js';
 import { zonaDeCliente } from './zonaCliente.js';
+import { emitirFactura, emitirRemito, letraDeFactura } from './facturarIM.js';
+import { usuarioIM } from './pedidos.js';
 import { sugerirRepartos } from './sugerirRepartos.js';
 
 /** Sólo la oficina. Devuelve true si ya contestó el 403. */
@@ -43,6 +45,10 @@ const VENTANA_DIAS = 15;
  * tope una ventana larga vuelve a colgar la pantalla. Se toman los más recientes.
  */
 const MAX_DIAS_ITEMS = 12;
+
+/** Mismos defaults que el módulo de pedidos: 1 = Casa Central, 12 = Lista 1. */
+const PEDIDO_EMPRESA_DEFAULT = Number(process.env.PEDIDO_EMPRESA_DEFAULT || 1);
+const PEDIDO_LISTA_FALLBACK = Number(process.env.PEDIDO_LISTA_FALLBACK || 12);
 
 /** `?fecha=YYYY-MM-DD`, y si no viene, hoy. */
 function fechaPedida(req: Request): string {
@@ -426,6 +432,147 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
     });
   } catch (err: any) {
     console.error('[impresionHoja]', err?.message);
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/**
+ * POST /api/hojas-ruta/:id/facturar — emite factura y remito de los pedidos de la hoja.
+ *
+ * 🔴 ES LO ÚNICO IRREVERSIBLE DEL CIRCUITO. Una factura consume numeración fiscal y toca la
+ * cuenta corriente; el remito descuenta stock. Todo acá está escrito para fallar del lado
+ * seguro:
+ *
+ *  · **De a un pedido por vez, nunca en paralelo.** Si algo se rompe a la mitad, quedan
+ *    emitidos los que ya salieron y ni uno más — no diez comprobantes huérfanos.
+ *  · **El id se guarda APENAS se emite**, antes de seguir. Un comprobante emitido que no
+ *    quedó registrado es un comprobante que alguien va a volver a emitir.
+ *  · **`sinRespuesta` FRENA TODO.** Si IM no contestó, no se sabe si la factura salió:
+ *    reintentar es facturarle dos veces al mismo cliente. Se corta y lo revisa una persona.
+ *  · **Lo ya facturado se saltea**, aunque venga en el pedido.
+ *
+ * 🪤 Facturar por API NO vincula el comprobante con el presupuesto (probado el 07/09/2026):
+ * la relación la guardamos nosotros, y al final se **desconfirma el presupuesto** para que no
+ * quede en la ventana de facturación de la oficina y alguien lo facture de nuevo.
+ */
+export async function facturarHoja(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  try {
+    const hojaId = String(req.params.id);
+    const { data: hoja } = await sb().from('hojas_ruta')
+      .select('*, hojas_ruta_pedidos(*)').eq('id', hojaId).eq('tenant_id', TENANT_ID).maybeSingle();
+    if (!hoja) { res.status(404).json({ error: 'Hoja de ruta no encontrada' }); return; }
+
+    const todos = (hoja as any).hojas_ruta_pedidos ?? [];
+    // Se puede facturar la hoja entera o sólo algunos comprobantes.
+    const pedidos = Array.isArray(req.body?.im_comprobante_ids) && req.body.im_comprobante_ids.length
+      ? todos.filter((p: any) => req.body.im_comprobante_ids.includes(String(p.im_comprobante_id)))
+      : todos;
+    const pendientes = pedidos.filter((p: any) => !p.facturado_at);
+    if (!pendientes.length) { res.status(409).json({ error: 'No hay pedidos sin facturar en esta hoja.' }); return; }
+
+    const [cat, clientes] = await Promise.all([
+      fetchArticulosCatalogo(),
+      fetchClientesIMCached().catch(() => [] as any[]),
+    ]);
+    const porCliente = new Map(clientes.map((c: any) => [Number(c.cod_cliente), c]));
+    const usuario = await usuarioIM(req.user);
+
+    // Los renglones de cada comprobante, para poder facturarlos.
+    const dia = String((hoja as any).fecha).slice(0, 10);
+    const renglonesPorComp = new Map<string, any[]>();
+    for (const it of await fetchVentasItems(dia, dia).catch(() => [] as any[])) {
+      const k = String((it as any).id_comprobante);
+      if (!renglonesPorComp.has(k)) renglonesPorComp.set(k, []);
+      renglonesPorComp.get(k)!.push(it);
+    }
+
+    const hechos: any[] = [];
+    const fallados: any[] = [];
+    let cortado: string | null = null;
+
+    for (const p of pendientes) {
+      if (cortado) break;
+      const cliente = porCliente.get(Number(p.cod_cliente));
+      const items = renglonesPorComp.get(String(p.im_comprobante_id)) ?? [];
+      const quien = `${p.cliente_nombre ?? 'cliente ' + p.cod_cliente} (PR ${p.im_numero ?? p.im_comprobante_id})`;
+
+      if (!items.length) { fallados.push({ ...p, motivo: `No pude traer los renglones del ${quien}.` }); continue; }
+      if (!letraDeFactura(cliente?.categoria_iva)) {
+        fallados.push({ ...p, motivo: `${quien}: no se sabe qué letra de factura le corresponde (condición de IVA: ${cliente?.categoria_iva ?? 'sin cargar'}). Facturalo a mano.` });
+        continue;
+      }
+
+      const datos = {
+        cod_empresa: Number((hoja as any).cod_empresa) || PEDIDO_EMPRESA_DEFAULT,
+        cod_cliente: Number(p.cod_cliente),
+        cod_vendedor: Number(items[0]?.cod_vendedor ?? 0) || 1,
+        categoria_iva: cliente?.categoria_iva,
+        cod_lista_precios: Number(items[0]?.cod_lista_precios) || PEDIDO_LISTA_FALLBACK,
+        usuario,
+        observaciones: `Pedido ${p.im_numero ?? ''} · hoja ${(hoja as any).numero}`,
+        origen_id: p.im_comprobante_id,
+        total: Number(p.total ?? 0),
+        cod_deposito: 1,
+        items: items.map((it: any) => ({
+          cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad),
+          precio: Number(it.precio ?? 0), iva_por: Number(it.iva_por ?? 0),
+          cod_lista_precios: it.cod_lista_precios != null ? Number(it.cod_lista_precios) : null,
+          descuento_porc: it.descuento_porc ? Number(it.descuento_porc) : null,
+        })),
+      };
+
+      // 1) FACTURA
+      const fa = await emitirFactura(datos as any);
+      if (!fa.ok) {
+        fallados.push({ ...p, motivo: `${quien}: ${fa.error}` });
+        // 🔴 Sin respuesta = NO se sabe si la factura salió. Se corta acá: seguir sería
+        // arriesgarse a facturar dos veces al resto si IM está a medio camino.
+        if (fa.sinRespuesta) cortado = `InfoManager no contestó al facturar ${quien}. NO se sabe si la factura se emitió: verificalo en IM antes de volver a intentar. Se frenó el resto de la hoja.`;
+        continue;
+      }
+      // Se guarda ANTES de seguir: un comprobante emitido sin registrar se vuelve a emitir.
+      await sb().from('hojas_ruta_pedidos')
+        .update({ im_factura_id: fa.id, im_factura_numero: fa.numero }).eq('id', p.id);
+
+      // 2) REMITO
+      const re = await emitirRemito(datos as any);
+      if (!re.ok) {
+        fallados.push({ ...p, motivo: `${quien}: la FACTURA ${fa.numero} se emitió, pero el remito falló (${re.error}). Hacé el remito a mano.` });
+        if (re.sinRespuesta) cortado = `InfoManager no contestó al emitir el remito de ${quien}. La factura ${fa.numero} SÍ se emitió. Revisalo en IM. Se frenó el resto.`;
+        continue;
+      }
+      await sb().from('hojas_ruta_pedidos').update({
+        im_remito_id: re.id, im_remito_numero: re.numero, facturado_at: new Date().toISOString(),
+      }).eq('id', p.id);
+
+      // 3) El presupuesto sale de la ventana de facturación de la oficina.
+      const desc = await desconfirmarPresupuesto(p.im_comprobante_id);
+      if (!desc.ok) console.warn(`[facturarHoja] no pude desconfirmar el PR ${p.im_numero}:`, desc.error);
+
+      // 4) Si el pedido vino de la app, queda marcado también ahí.
+      if (p.pedido_id) {
+        await sb().from('pedidos_vendedor').update({ estado: 'facturado' }).eq('id', p.pedido_id);
+      }
+      hechos.push({ cliente: p.cliente_nombre, factura: fa.numero, remito: re.numero, tipo: fa.tipo });
+    }
+
+    // La hoja queda marcada cuando no le falta ninguno.
+    const { data: quedan } = await sb().from('hojas_ruta_pedidos')
+      .select('id').eq('hoja_id', hojaId).is('facturado_at', null);
+    if (!(quedan ?? []).length) {
+      await sb().from('hojas_ruta').update({ facturada_at: new Date().toISOString() }).eq('id', hojaId);
+    }
+
+    res.json({
+      ok: !fallados.length && !cortado,
+      facturados: hechos.length, hechos,
+      fallados: fallados.map((f: any) => f.motivo),
+      cortado,
+      quedan_sin_facturar: (quedan ?? []).length,
+    });
+  } catch (err: any) {
+    console.error('[facturarHoja]', err?.message);
     res.status(500).json({ error: err?.message ?? 'error' });
   }
 }
