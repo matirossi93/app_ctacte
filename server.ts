@@ -55,6 +55,7 @@ import { pendientesDelDia, arrastreDelDia, impresionHoja, sugerenciaDelDia, list
 import { tableroFacturacion, previsualizarFacturacion, facturarSeleccion, liberarReclamo } from './server-lib/facturarPresupuestos.js';
 import { marcarRetiro, quitarRetiro, marcarRetirado, listarRetiros, resumenRetiros } from './server-lib/retirosSucursal.js';
 import { listarChoferes, liquidacionMensual } from './server-lib/liquidacionChoferes.js';
+import { listarAjustes, crearAjuste, borrarAjuste } from './server-lib/ajustesEntrega.js';
 import { listarPresupuestos, revisarPresupuesto, borrarRevision, detallePresupuesto, corregirCantidades, fraccionadoDelRango } from './server-lib/panelPresupuestos.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -692,10 +693,14 @@ app.get('/api/hojas-ruta/pendientes', requireJwt, (req: any, res) => pendientesD
 app.get('/api/hojas-ruta/sugerencia', requireJwt, (req: any, res) => sugerenciaDelDia(req, res));
 app.get('/api/hojas-ruta/arrastre', requireJwt, (req: any, res) => arrastreDelDia(req, res));
 app.delete('/api/hojas-ruta/pedidos/:comprobanteId', requireJwt, (req: any, res) => quitarPedido(req, res));
+app.delete('/api/hojas-ruta/ajustes/:id', requireJwt, (req: any, res) => borrarAjuste(req, res));
 app.get('/api/hojas-ruta', requireJwt, (req: any, res) => listarHojas(req, res));
 app.post('/api/hojas-ruta', requireJwt, (req: any, res) => crearHoja(req, res));
 app.post('/api/hojas-ruta/:id/pedidos', requireJwt, (req: any, res) => asignarPedidos(req, res));
 app.get('/api/hojas-ruta/:id/impresion', requireJwt, (req: any, res) => impresionHoja(req, res));
+// Lo que se ajusta cuando vuelve el repartidor: emite notas de crédito REALES en InfoManager.
+app.get('/api/hojas-ruta/:id/ajustes', requireJwt, (req: any, res) => listarAjustes(req, res));
+app.post('/api/hojas-ruta/:id/ajustes', requireJwt, (req: any, res) => crearAjuste(req, res));
 app.put('/api/hojas-ruta/:id', requireJwt, (req: any, res) => editarHoja(req, res));
 app.delete('/api/hojas-ruta/:id', requireJwt, (req: any, res) => borrarHoja(req, res));
 

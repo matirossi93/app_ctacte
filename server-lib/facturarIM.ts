@@ -103,14 +103,14 @@ const UNIDAD_NEGOCIO = Number(process.env.IM_UNIDAD_NEGOCIO || 1);
  * numeración por las nuestras es peor que no facturar.
  */
 export async function proximoNumeroFactura(
-  letra: 'A' | 'B', puntoDeVenta: number, dias = 30,
+  letra: 'A' | 'B', puntoDeVenta: number, dias = 30, tipo: 'FA' | 'NC' | 'ND' = 'FA',
 ): Promise<number | null> {
   const hasta = fechaArgentina();
   const desde = fechaArgentina(Date.now() - dias * 864e5);
   const ventas = await fetchVentas(desde, hasta);
   const nums = ventas
     .filter((v: any) =>
-      String(v.tipo_comprobante ?? '').trim() === 'FA' &&
+      String(v.tipo_comprobante ?? '').trim() === tipo &&
       String(v.tipo_factura ?? '').trim() === letra &&
       Number(v.punto_de_venta) === puntoDeVenta)
     .map((v: any) => Number(v.numero))
@@ -260,4 +260,72 @@ export async function emitirRemito(d: DatosComprobante): Promise<ResultadoEmisio
   } catch (err: any) {
     return comoError(err);
   }
+}
+
+/**
+ * POST /ventas — emite una NOTA DE CRÉDITO por lo que no se entregó.
+ *
+ * Es lo que hace la oficina cuando vuelve el repartidor: el cliente no estaba, no quiso la
+ * mercadería, faltó stock. Mati (08/09/2026): *"una vez que vuelve el repartidor se hacen NC o
+ * facturas por dif de mercadería y eso impacta en el num final de la hoja"*.
+ *
+ * 🔴 ES IRREVERSIBLE, igual que la factura: consume numeración fiscal del talonario de NC y
+ * descuenta de la cuenta corriente del cliente.
+ *
+ * 📌 Los campos salen de una NC REAL de Casa Central (leída de IM el 08/09/2026, punto de venta
+ * 777): `condicion_venta_tipo: 2`, `talonario_manual: 'S'`, `tag: 'S'`, `genero_re_auto: 'S'`,
+ * `cod_unidad_negocio_cab: 0` y, en el renglón, `cod_cuenta: 4100002`.
+ *
+ * ⚠️ `mueve_stock: 'N'` es lo que usa la oficina en sus NC, así que se copia tal cual: la
+ * mercadería que vuelve NO reingresa al stock por este camino. Es su criterio actual, no una
+ * decisión nuestra — si algún día quieren que reingrese, es cambiar esta letra.
+ *
+ * 🪤 La API de IM **no tiene ningún campo** para relacionar la NC con su factura (verificado por
+ * tres caminos el 08/09/2026). Lo que sí hace la oficina es escribirlo en las observaciones:
+ * de 724 NC en 90 días, 287 dicen "SEGUN HR 3210". Se respeta esa convención —así se lee igual
+ * desde IM— y además el vínculo exacto se guarda de nuestro lado.
+ */
+export async function emitirNotaCredito(
+  d: DatosComprobante & { numero?: number | null; observaciones?: string },
+): Promise<ResultadoEmision> {
+  const letra = letraDeFactura(d.categoria_iva);
+  if (!letra) {
+    return { ok: false, error: `No se puede saber qué letra de nota de crédito le corresponde al cliente ${d.cod_cliente} (condición de IVA: ${d.categoria_iva ?? 'sin cargar'}). Hacela a mano.` };
+  }
+  let numero = d.numero ?? await proximoNumeroFactura(letra, PTO_VENTA_FACTURA, 30, 'NC');
+  if (numero == null) {
+    return { ok: false, error: `No pude averiguar el próximo número de nota de crédito ${letra} del punto ${PTO_VENTA_FACTURA}: no hay ninguna emitida en los últimos 30 días. Hacela a mano.` };
+  }
+
+  const fecha = fechaArgentina();
+  const cli = await imClient();
+  // Mismo criterio que la factura: si otro tomó el número mientras tanto, se sube al siguiente.
+  for (let intento = 0; intento < 3; intento++) {
+    const payload = {
+      ...cabecera(d, fecha),
+      tipo_comprobante: 'NC',
+      tipo_factura: letra,
+      numero,
+      punto_de_venta: PTO_VENTA_FACTURA,
+      condicion_venta_tipo: 2,
+      talonario_manual: 'S',
+      mueve_stock: 'N',
+      no_grabado: 0,
+      cod_deposito: d.cod_deposito ?? 1,
+      cod_unidad_negocio_cab: 0,
+      genero_re_auto: 'S',
+      items: renglones(d.items),
+    };
+    try {
+      const { data } = await cli.post('/ventas', payload);
+      const r = interpretar(data, `NC ${letra}`);
+      if (!r.ok && /ya existe/i.test(r.error) && intento < 2) { numero += 1; continue; }
+      return r.ok ? { ...r, numero: r.numero ?? numero } : r;
+    } catch (err: any) {
+      const e = comoError(err);
+      if (!e.ok && /ya existe/i.test(e.error) && intento < 2) { numero += 1; continue; }
+      return e;
+    }
+  }
+  return { ok: false, error: `No se pudo emitir la nota de crédito ${letra}: el número ${numero} y los dos siguientes ya estaban usados.` };
 }

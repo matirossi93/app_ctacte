@@ -13,12 +13,13 @@
  *  · Los importes salen del snapshot guardado en cada hoja, que es lo que efectivamente se
  *    llevó el camión.
  *
- * ⏳ FALTA lo que descuentan las notas de crédito y las facturas por diferencia de mercadería
- * (*"una vez que vuelve el repartidor se hacen NC o facturas por dif de mercadería y eso impacta
- * en el num final"*). No está todavía porque la API de InfoManager **no expone la relación entre
- * una NC y su factura** — verificado el 08/09/2026: el detalle de la NC no trae ningún campo de
- * referencia, y los endpoints de comprobantes relacionados dan 404. Hasta que se defina de dónde
- * sale ese vínculo, el reporte muestra lo despachado y lo dice explícitamente.
+ * 🔑 El importe descuenta las NOTAS DE CRÉDITO por lo que no se entregó (*"una vez que vuelve el
+ * repartidor se hacen NC o facturas por dif de mercadería y eso impacta en el num final"*). Como
+ * la API de IM no relaciona una NC con su factura, esas notas se emiten desde el panel y el
+ * vínculo lo guarda `hojas_ruta_ajustes` (migración 036).
+ *
+ * 🪤 Sólo cuentan los ajustes EMITIDOS. Uno cargado y no emitido no bajó ninguna cuenta
+ * corriente: descontarlo sería pagarle de menos al chofer por algo que no pasó.
  */
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
@@ -65,7 +66,7 @@ export async function liquidacionMensual(req: Request & { user?: JwtPayload }, r
     const { desde, hasta } = limitesDelMes(mes);
 
     const { data: hojas, error } = await sb().from('hojas_ruta')
-      .select('id, numero, fecha, estado, chofer_id, transporte, cerrada_at, choferes(nombre), hojas_ruta_pedidos(cod_cliente, total, bultos, kg)')
+      .select('id, numero, fecha, estado, chofer_id, transporte, cerrada_at, choferes(nombre), hojas_ruta_pedidos(cod_cliente, total, bultos, kg), hojas_ruta_ajustes(tipo, importe, emitido_at)')
       .eq('tenant_id', TENANT_ID).gte('fecha', desde).lte('fecha', hasta).order('fecha');
     if (error) { res.status(500).json({ error: error.message }); return; }
 
@@ -75,7 +76,12 @@ export async function liquidacionMensual(req: Request & { user?: JwtPayload }, r
 
     for (const h of (hojas ?? []) as any[]) {
       const pedidos = h.hojas_ruta_pedidos ?? [];
-      const importe = pedidos.reduce((s: number, p: any) => s + Number(p.total ?? 0), 0);
+      const despachado = pedidos.reduce((s: number, p: any) => s + Number(p.total ?? 0), 0);
+      // Lo que volvió: sólo los ajustes ya emitidos en InfoManager.
+      const emitidos = (h.hojas_ruta_ajustes ?? []).filter((a: any) => a.emitido_at);
+      const nc = emitidos.filter((a: any) => a.tipo === 'nc').reduce((s: number, a: any) => s + Number(a.importe ?? 0), 0);
+      const nd = emitidos.filter((a: any) => a.tipo === 'nd').reduce((s: number, a: any) => s + Number(a.importe ?? 0), 0);
+      const importe = despachado - nc + nd;
       const kg = pedidos.reduce((s: number, p: any) => s + Number(p.kg ?? 0), 0);
       const bultos = pedidos.reduce((s: number, p: any) => s + Number(p.bultos ?? 0), 0);
 
@@ -93,6 +99,8 @@ export async function liquidacionMensual(req: Request & { user?: JwtPayload }, r
           chofer_id: h.chofer_id ?? null,
           chofer: h.choferes?.nombre ?? (h.chofer_id ? 'Chofer dado de baja' : 'Sin chofer asignado'),
           hojas: 0, pedidos: 0, clientes: new Set<number>(), bultos: 0, kg: 0, importe: 0,
+          // Se muestran aparte: es lo que el chofer llevó y volvió sin entregar.
+          despachado: 0, notas_credito: 0,
           numeros: [] as number[],
         });
       }
@@ -103,6 +111,8 @@ export async function liquidacionMensual(req: Request & { user?: JwtPayload }, r
       c.bultos += bultos;
       c.kg += kg;
       c.importe += importe;
+      c.despachado += despachado;
+      c.notas_credito += nc;
       c.numeros.push(h.numero);
     }
 
@@ -111,6 +121,7 @@ export async function liquidacionMensual(req: Request & { user?: JwtPayload }, r
         ...c,
         clientes: c.clientes.size,
         bultos: redondear(c.bultos), kg: redondear(c.kg), importe: redondear(c.importe),
+        despachado: redondear(c.despachado), notas_credito: redondear(c.notas_credito),
       }))
       .sort((a, b) => b.importe - a.importe);
 
@@ -125,9 +136,9 @@ export async function liquidacionMensual(req: Request & { user?: JwtPayload }, r
       },
       // Lo que todavía no se puede liquidar, para que se vea antes de pagar.
       sin_cerrar: { hojas: abiertas, importe: redondear(importeAbierto) },
-      // ⏳ El importe es lo DESPACHADO: todavía no descuenta notas de crédito ni facturas por
-      // diferencia (la API de IM no expone qué NC corresponde a qué factura).
-      incluye_ajustes: false,
+      // El importe ya descuenta las notas de crédito emitidas desde el panel.
+      incluye_ajustes: true,
+      notas_credito: redondear(choferes.reduce((s, c) => s + c.notas_credito, 0)),
     });
   } catch (err: any) {
     console.error('[liquidacionMensual]', err?.message);

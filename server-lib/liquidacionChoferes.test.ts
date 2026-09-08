@@ -89,12 +89,24 @@ describe('liquidación mensual', () => {
     expect(r.body.choferes.find((c: any) => c.chofer === 'NIÑO').importe).toBe(150000);
   });
 
-  it('🔴 avisa que el importe todavía no descuenta las notas de crédito', async () => {
-    // La API de IM no expone qué NC corresponde a qué factura: mientras eso no se resuelva, el
-    // número es lo DESPACHADO y la pantalla no puede hacerlo pasar por lo cobrado.
-    tablas['hojas_ruta'] = { data: [hoja()], error: null };
+  it('🔴 el importe DESCUENTA las notas de crédito emitidas', async () => {
+    // Es lo que se le paga: lo que entregó, no lo que se llevó.
+    tablas['hojas_ruta'] = {
+      data: [hoja({ hojas_ruta_ajustes: [{ tipo: 'nc', importe: 30000, emitido_at: 'x' }] })],
+      error: null,
+    };
     const r = await llamar(liquidacionMensual, { query: { mes: '2026-09' } });
-    expect(r.body.incluye_ajustes).toBe(false);
+    expect(r.body.choferes[0]).toMatchObject({ despachado: 150000, notas_credito: 30000, importe: 120000 });
+    expect(r.body.incluye_ajustes).toBe(true);
+  });
+
+  it('🔴 una NC cargada pero NO emitida no descuenta: no bajó ninguna cuenta corriente', async () => {
+    tablas['hojas_ruta'] = {
+      data: [hoja({ hojas_ruta_ajustes: [{ tipo: 'nc', importe: 30000, emitido_at: null }] })],
+      error: null,
+    };
+    const r = await llamar(liquidacionMensual, { query: { mes: '2026-09' } });
+    expect(r.body.choferes[0].importe).toBe(150000);
   });
 
   it('🔴 un vendedor no ve la liquidación', async () => {

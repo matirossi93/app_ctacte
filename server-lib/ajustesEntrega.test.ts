@@ -1,0 +1,235 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+/**
+ * Las notas de crédito por lo que no se entregó. Emitir una es IRREVERSIBLE —consume numeración
+ * fiscal y baja la cuenta corriente del cliente— y además define el número final de la hoja, que
+ * es la base del pago al chofer. Se prueba que no se acredite de más y que no se emita dos veces.
+ */
+
+vi.hoisted(() => { process.env.INFOMANAGER_CLIENT_SECRET = 'test-secret'; });
+
+const m = vi.hoisted(() => ({
+  sbMock: vi.fn(),
+  emitirNotaCredito: vi.fn(),
+  fetchVentasItems: vi.fn(),
+  fetchClientesIMCached: vi.fn(),
+  cabeceraComprobante: vi.fn(),
+}));
+
+vi.mock('./infomanager.js', () => ({
+  fetchClientesIMCached: m.fetchClientesIMCached,
+  fetchVentasItems: m.fetchVentasItems,
+  cabeceraComprobante: m.cabeceraComprobante,
+  fechaArgentina: () => '2026-09-08',
+}));
+vi.mock('./facturarIM.js', () => ({ emitirNotaCredito: m.emitirNotaCredito }));
+vi.mock('./pedidos.js', () => ({ usuarioIM: vi.fn(async () => 'jorgelina') }));
+vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
+
+const { crearAjuste, listarAjustes, borrarAjuste, totalesConAjustes } = await import('./ajustesEntrega.js');
+
+let tablas: Record<string, any> = {};
+let escrituras: Array<{ tabla: string; op: string; valor: any }> = [];
+
+function fakeSb() {
+  m.sbMock.mockImplementation(() => ({
+    from: (t: string) => {
+      const res = tablas[t] ?? { data: null, error: null };
+      const q: any = {
+        then: (r: any, j: any) => Promise.resolve(res).then(r, j),
+        maybeSingle: () => Promise.resolve(res),
+        insert: (v: any) => { escrituras.push({ tabla: t, op: 'insert', valor: v }); return { ...q, maybeSingle: () => Promise.resolve({ data: { id: 'aj1', ...v }, error: null }) }; },
+        update: (v: any) => { escrituras.push({ tabla: t, op: 'update', valor: v }); return q; },
+        delete: () => { escrituras.push({ tabla: t, op: 'delete', valor: null }); return q; },
+      };
+      for (const k of ['select', 'eq', 'in', 'is', 'order', 'limit']) q[k] = () => q;
+      return q;
+    },
+  }));
+}
+
+function llamar(fn: any, { rol = 'administrativo', params = {}, body = {} } = {}) {
+  let status = 200; let out: any;
+  const req: any = { user: { rol, sub: 'u1' }, params, body, query: {} };
+  const res: any = { status: (s: number) => { status = s; return res; }, json: (b: any) => { out = b; } };
+  return fn(req, res).then(() => ({ status, body: out }));
+}
+
+const HOJA = {
+  id: 'h1', numero: 3395, fecha: '2026-09-08', estado: 'abierta', cod_empresa: 1,
+  hojas_ruta_pedidos: [
+    { im_comprobante_id: '10', cod_cliente: 1093, cliente_nombre: 'ARON, Jorge', total: 100000 },
+    { im_comprobante_id: '20', cod_cliente: 500, cliente_nombre: 'MORELLI', total: 50000 },
+  ],
+};
+const RENGLONES = [
+  { id_comprobante: '10', cod_articulo: 661, cantidad: 10, precio: 5000, iva_por: 0, cod_vendedor: 2, cod_lista_precios: 13 },
+];
+
+beforeEach(() => {
+  tablas = {}; escrituras = [];
+  vi.clearAllMocks();
+  fakeSb();
+  tablas['hojas_ruta'] = { data: HOJA, error: null };
+  tablas['hojas_ruta_ajustes'] = { data: [], error: null };
+  m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-08', anulada: false, existe: true });
+  m.fetchVentasItems.mockResolvedValue(RENGLONES);
+  m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 1093, categoria_iva: 'CF' }]);
+  m.emitirNotaCredito.mockResolvedValue({ ok: true, id: 'nc1', numero: 29800, tipo: 'NC B' });
+});
+
+describe('cargar una diferencia', () => {
+  it('🔴 emite la NC y la deja registrada con su número', async () => {
+    const r = await llamar(crearAjuste, {
+      params: { id: 'h1' },
+      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 4 }] },
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.ajuste).toMatchObject({ importe: 20000, numero: 29800 });
+    const upd = escrituras.find(e => e.op === 'update')!.valor;
+    expect(upd).toMatchObject({ im_ajuste_numero: 29800, im_ajuste_id: 'nc1' });
+    expect(upd.emitido_at).toBeTruthy();
+  });
+
+  it('🔴 la fila se escribe ANTES de emitir: dos personas no emiten la misma NC', async () => {
+    await llamar(crearAjuste, {
+      params: { id: 'h1' },
+      body: { im_comprobante_id: '10', motivo: 'SIN STOCK', items: [{ cod_articulo: 661, cantidad: 1 }] },
+    });
+    expect(escrituras[0].op).toBe('insert');
+    expect(m.emitirNotaCredito).toHaveBeenCalled();
+  });
+
+  it('🔴 NO se puede acreditar más de lo que se entregó', async () => {
+    // Un error de tipeo dejaría al cliente con saldo a favor de la nada.
+    const r = await llamar(crearAjuste, {
+      params: { id: 'h1' },
+      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 11 }] },
+    });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/se entregaron 10/);
+    expect(m.emitirNotaCredito).not.toHaveBeenCalled();
+  });
+
+  it('🔴 tampoco un artículo que no estaba en el pedido', async () => {
+    const r = await llamar(crearAjuste, {
+      params: { id: 'h1' },
+      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 999, cantidad: 1 }] },
+    });
+    expect(r.status).toBe(409);
+    expect(m.emitirNotaCredito).not.toHaveBeenCalled();
+  });
+
+  it('🔴 el precio sale del comprobante original, no de lo que mande la pantalla', async () => {
+    // La NC devuelve lo que se COBRÓ. Si el precio viniera del body, se podría acreditar de más.
+    await llamar(crearAjuste, {
+      params: { id: 'h1' },
+      body: { im_comprobante_id: '10', motivo: 'CERRADO', items: [{ cod_articulo: 661, cantidad: 2, precio: 999999 }] },
+    });
+    const enviado = m.emitirNotaCredito.mock.calls[0][0];
+    expect(enviado.items[0].precio).toBe(5000);
+    expect(enviado.total).toBe(10000);
+  });
+
+  it('🔴 la observación lleva la referencia a la hoja, como la escribe la oficina', async () => {
+    // De 724 NC en 90 días, 287 dicen "SEGUN HR ####". Se respeta esa convención.
+    await llamar(crearAjuste, {
+      params: { id: 'h1' },
+      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
+    });
+    expect(m.emitirNotaCredito.mock.calls[0][0].observaciones).toBe('NO PIDIO SEGUN HR 3395');
+  });
+
+  it('🔴 si IM no contesta, la fila NO se borra: puede que la NC haya salido', async () => {
+    m.emitirNotaCredito.mockResolvedValue({ ok: false, error: 'timeout', sinRespuesta: true });
+    const r = await llamar(crearAjuste, {
+      params: { id: 'h1' },
+      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
+    });
+    expect(r.status).toBe(502);
+    expect(r.body.error).toMatch(/no contestó|verificalo/i);
+    expect(escrituras.some(e => e.op === 'delete')).toBe(false);
+  });
+
+  it('si IM RECHAZA, se suelta la fila para poder corregir y reintentar', async () => {
+    m.emitirNotaCredito.mockResolvedValue({ ok: false, error: 'Talonario cerrado' });
+    const r = await llamar(crearAjuste, {
+      params: { id: 'h1' },
+      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
+    });
+    expect(r.status).toBe(502);
+    expect(escrituras.some(e => e.op === 'delete')).toBe(true);
+  });
+
+  it('🔴 un ajuste a medias de ese pedido frena otro nuevo', async () => {
+    tablas['hojas_ruta_ajustes'] = { data: [{ id: 'viejo', emitido_at: null, reclamado_at: new Date().toISOString() }], error: null };
+    const r = await llamar(crearAjuste, {
+      params: { id: 'h1' },
+      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
+    });
+    expect(r.status).toBe(409);
+    expect(m.emitirNotaCredito).not.toHaveBeenCalled();
+  });
+
+  it('un pedido que no está en la hoja se rechaza', async () => {
+    const r = await llamar(crearAjuste, {
+      params: { id: 'h1' },
+      body: { im_comprobante_id: '999', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
+    });
+    expect(r.status).toBe(409);
+  });
+
+  it('sin motivo no se emite: es lo que se lee después en IM', async () => {
+    const r = await llamar(crearAjuste, {
+      params: { id: 'h1' }, body: { im_comprobante_id: '10', items: [{ cod_articulo: 661, cantidad: 1 }] },
+    });
+    expect(r.status).toBe(400);
+  });
+
+  it('🔴 un vendedor no emite notas de crédito', async () => {
+    expect((await llamar(crearAjuste, { rol: 'vendedor', params: { id: 'h1' } })).status).toBe(403);
+  });
+});
+
+describe('el número final de la hoja', () => {
+  it('🔴 descuenta las NC emitidas y suma las ND', async () => {
+    const t = totalesConAjustes(HOJA, [
+      { tipo: 'nc', importe: 20000, emitido_at: 'x' },
+      { tipo: 'nd', importe: 5000, emitido_at: 'x' },
+    ]);
+    expect(t).toMatchObject({ despachado: 150000, notas_credito: 20000, notas_debito: 5000, final: 135000 });
+  });
+
+  it('🔴 un ajuste SIN emitir no descuenta: no bajó ninguna cuenta corriente', async () => {
+    // Si descontara, al chofer se le pagaría de menos por algo que no pasó.
+    const t = totalesConAjustes(HOJA, [{ tipo: 'nc', importe: 20000, emitido_at: null }]);
+    expect(t.final).toBe(150000);
+    expect(t.pendientes_de_emitir).toBe(1);
+  });
+
+  it('sin ajustes, el final es lo despachado', async () => {
+    expect(totalesConAjustes(HOJA, []).final).toBe(150000);
+  });
+});
+
+describe('borrar un ajuste', () => {
+  it('🔴 lo YA EMITIDO no se borra: existe en InfoManager', async () => {
+    tablas['hojas_ruta_ajustes'] = { data: [], error: null };   // el filtro `is emitido_at null` no devolvió nada
+    const r = await llamar(borrarAjuste, { params: { id: 'aj1' } });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/anular/i);
+  });
+
+  it('uno que no llegó a emitirse sí', async () => {
+    tablas['hojas_ruta_ajustes'] = { data: [{ id: 'aj1' }], error: null };
+    expect((await llamar(borrarAjuste, { params: { id: 'aj1' } })).status).toBe(200);
+  });
+});
+
+describe('listar', () => {
+  it('devuelve los ajustes con el desglose del número final', async () => {
+    tablas['hojas_ruta_ajustes'] = { data: [{ tipo: 'nc', importe: 10000, emitido_at: 'x' }], error: null };
+    const r = await llamar(listarAjustes, { params: { id: 'h1' } });
+    expect(r.body).toMatchObject({ despachado: 150000, notas_credito: 10000, final: 140000 });
+  });
+});
