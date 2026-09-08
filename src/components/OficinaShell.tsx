@@ -1,28 +1,48 @@
 import { useState } from 'react';
-import { Truck, LogOut, Package, ChevronDown } from 'lucide-react';
+import { Truck, LogOut, ChevronDown, ClipboardCheck, Scissors } from 'lucide-react';
 import { clearToken, getUser } from '../utils/auth';
 import { HojasRutaView } from './HojasRutaView';
+import { PresupuestosView } from './PresupuestosView';
+import { FraccionadoView } from './FraccionadoView';
 import './OficinaShell.css';
 
 /**
- * El panel de la oficina: acá se revisan los pedidos que cargan los vendedores, se arman las
- * hojas de ruta y sale lo que va a fraccionado.
+ * El panel de la oficina, ordenado como el circuito real (Mati, 08/09/2026):
  *
- * 🔑 Vive DENTRO de esta misma app a propósito, aunque se vea como un panel aparte: comparte
- * el login, los usuarios, los clientes, la cartera y el catálogo. Dos apps separadas
- * significarían dos deploys, dos sesiones y dos lugares donde arreglar el mismo bug. Si más
- * adelante quieren un dominio propio, ese dominio apunta acá y entra directo a esta pantalla.
+ *   1. PRESUPUESTOS — el primer filtrado de Jorgelina: listas, cantidades, stock.
+ *   2. FRACCIONADO  — lo que el sector prepara, y se hace ANTES de armar la hoja.
+ *   3. HOJAS DE RUTA — el último paso, con la mercadería ya facturada.
  *
- * La estética es la misma que el resto (variables de index.css): verde #06652F, dorado
- * #EEC045, crema, Poppins.
+ * (La facturación va entre 1 y 3; hoy todavía cuelga de la hoja y se mueve a su lugar en la
+ * etapa siguiente del rediseño.)
+ *
+ * 🔑 Vive DENTRO de esta misma app a propósito: comparte login, usuarios, clientes, cartera y
+ * catálogo. Dos apps separadas serían dos deploys, dos sesiones y dos lugares donde arreglar el
+ * mismo bug. Si mañana quieren dominio propio, ese dominio apunta acá.
  */
 
-type Tab = 'hojas' | 'fraccionado';
+type Tab = 'presupuestos' | 'fraccionado' | 'hojas';
+
+const hoyISO = () => {
+    const d = new Date(Date.now() - 3 * 60 * 60 * 1000);   // Argentina es UTC-3 fija
+    return d.toISOString().slice(0, 10);
+};
 
 export function OficinaShell() {
     const user = getUser();
-    const [tab, setTab] = useState<Tab>('hojas');
+    const [tab, setTab] = useState<Tab>('presupuestos');
     const [menuAbierto, setMenuAbierto] = useState(false);
+    /**
+     * El rango de días, compartido por Presupuestos y Fraccionado.
+     *
+     * 🔑 Mati: *"el filtro de fecha tiene que ser por rangos, ya que Jorgelina ve franjas de
+     * varios días para el armado de los pedidos"*. Arranca en el día de hoy: el rango largo se
+     * paga en segundos contra InfoManager, así que se amplía cuando hace falta.
+     */
+    const [desde, setDesde] = useState(hoyISO());
+    const [hasta, setHasta] = useState(hoyISO());
+
+    const conRango = tab === 'presupuestos' || tab === 'fraccionado';
 
     return (
         <div className="of-root">
@@ -33,11 +53,14 @@ export function OficinaShell() {
                 </div>
 
                 <nav className="of-tabs">
-                    <button className={tab === 'hojas' ? 'on' : ''} onClick={() => setTab('hojas')}>
-                        Hojas de ruta
+                    <button className={tab === 'presupuestos' ? 'on' : ''} onClick={() => setTab('presupuestos')}>
+                        <ClipboardCheck size={15} /> Presupuestos
                     </button>
                     <button className={tab === 'fraccionado' ? 'on' : ''} onClick={() => setTab('fraccionado')}>
-                        Fraccionado
+                        <Scissors size={15} /> Fraccionado
+                    </button>
+                    <button className={tab === 'hojas' ? 'on' : ''} onClick={() => setTab('hojas')}>
+                        <Truck size={15} /> Hojas de ruta
                     </button>
                 </nav>
 
@@ -56,15 +79,31 @@ export function OficinaShell() {
                 </div>
             </header>
 
-            <main className="of-body">
-                {tab === 'hojas' && <HojasRutaView />}
-                {tab === 'fraccionado' && (
-                    <div className="of-vacio">
-                        <Package size={34} />
-                        <p>El listado para fraccionado se arma junto con las hojas de ruta.</p>
-                        <button onClick={() => setTab('hojas')}>Ir a hojas de ruta</button>
+            {/* El rango vale para las dos primeras etapas: lo que se revisa es lo que se fracciona. */}
+            {conRango && (
+                <div className="of-rango">
+                    <label>
+                        Desde
+                        <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} />
+                    </label>
+                    <label>
+                        Hasta
+                        <input type="date" value={hasta} min={desde} onChange={e => setHasta(e.target.value)} />
+                    </label>
+                    <div className="of-rango-atajos">
+                        <button onClick={() => { setDesde(hoyISO()); setHasta(hoyISO()); }}>Hoy</button>
+                        <button onClick={() => {
+                            const d = new Date(Date.now() - 3 * 60 * 60 * 1000 - 6 * 864e5);
+                            setDesde(d.toISOString().slice(0, 10)); setHasta(hoyISO());
+                        }}>Últimos 7 días</button>
                     </div>
-                )}
+                </div>
+            )}
+
+            <main className="of-body">
+                {tab === 'presupuestos' && <PresupuestosView desde={desde} hasta={hasta} />}
+                {tab === 'fraccionado' && <FraccionadoView desde={desde} hasta={hasta} />}
+                {tab === 'hojas' && <HojasRutaView />}
             </main>
         </div>
     );

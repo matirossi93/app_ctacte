@@ -52,6 +52,7 @@ import { listRebotes, listRecargos, syncRebotesNow, syncRebotes } from './server
 import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos, hermanosDeFamilia } from './server-lib/productGoals.js';
 import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, precioArticulo, catalogoPedido, validarListasPedido, editarPedido } from './server-lib/pedidos.js';
 import { pendientesDelDia, arrastreDelDia, impresionHoja, facturarHoja, previsualizarFacturacion, sugerenciaDelDia, listarHojas, listarCamiones, crearHoja, editarHoja, borrarHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
+import { listarPresupuestos, revisarPresupuesto, borrarRevision, detallePresupuesto, corregirCantidades, fraccionadoDelRango } from './server-lib/panelPresupuestos.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -654,6 +655,15 @@ app.post('/api/pedidos/:id/anular', requireJwt, (req: any, res) => anularPedido(
 // Reemplaza el panel de InfoManager, que no expone hojas de ruta por API. Quién puede entrar
 // lo decide `puedeArmarHojasDeRuta` (admin, gerente y administrativo), dentro de cada handler.
 // 🪤 Las rutas fijas van ANTES que las que llevan :id, o Express toma "camiones" como un id.
+// ── Etapa 1: revisión de presupuestos ────────────────────────────────────────
+// 🪤 `/fraccionado` va ANTES de `/:comprobanteId`: si no, Express lo toma como un id.
+app.get('/api/presupuestos/fraccionado', requireJwt, (req: any, res) => fraccionadoDelRango(req, res));
+app.get('/api/presupuestos', requireJwt, (req: any, res) => listarPresupuestos(req, res));
+app.get('/api/presupuestos/:comprobanteId', requireJwt, (req: any, res) => detallePresupuesto(req, res));
+app.post('/api/presupuestos/:comprobanteId/revision', requireJwt, (req: any, res) => revisarPresupuesto(req, res));
+app.delete('/api/presupuestos/:comprobanteId/revision', requireJwt, (req: any, res) => borrarRevision(req, res));
+app.put('/api/presupuestos/:comprobanteId/cantidades', requireJwt, (req: any, res) => corregirCantidades(req, res));
+
 app.get('/api/hojas-ruta/camiones', requireJwt, (req: any, res) => listarCamiones(req, res));
 app.get('/api/hojas-ruta/pendientes', requireJwt, (req: any, res) => pendientesDelDia(req, res));
 app.get('/api/hojas-ruta/sugerencia', requireJwt, (req: any, res) => sugerenciaDelDia(req, res));

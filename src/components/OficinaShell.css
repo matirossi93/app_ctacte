@@ -45,6 +45,9 @@
     padding: 0.2rem;
 }
 .of-tabs button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
     border: none;
     background: transparent;
     color: rgba(249, 239, 227, 0.75);
@@ -138,4 +141,33 @@
     .of-tabs { order: 3; width: 100%; }
     .of-tabs button { flex: 1; }
     .of-body { padding: 0.8rem 0.7rem 2rem; }
+}
+
+/* ── El rango de días (etapas 1 y 2) ──────────────────────────────────────── */
+/* Jorgelina trabaja franjas de varios días, no un día suelto: el rango manda sobre lo que se
+   revisa y sobre lo que se fracciona, así las dos pantallas hablan de lo mismo. */
+.of-rango {
+    display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap;
+    padding: 0.55rem 1rem; border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface);
+}
+.of-rango label {
+    display: flex; align-items: center; gap: 0.4rem;
+    font-size: 0.8rem; font-weight: 600; color: var(--color-text-muted);
+}
+.of-rango input {
+    border: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-text);
+    font-family: inherit; font-size: 0.85rem; padding: 0.35rem 0.55rem; border-radius: var(--radius-sm);
+}
+.of-rango-atajos { display: flex; gap: 0.3rem; }
+.of-rango-atajos button {
+    border: 1px solid var(--color-border); background: transparent; color: var(--color-text-muted);
+    font-family: inherit; font-size: 0.78rem; font-weight: 600;
+    padding: 0.3rem 0.7rem; border-radius: 999px; cursor: pointer;
+}
+.of-rango-atajos button:hover { background: var(--color-surface-hover); color: var(--color-text); }
+
+@media (max-width: 640px) {
+    .of-rango { padding: 0.5rem 0.7rem; gap: 0.5rem; }
+    .of-tabs button span { display: none; }
 }

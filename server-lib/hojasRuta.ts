@@ -20,7 +20,8 @@ import {
   fechaArgentina, getDisponibleCliente, desconfirmarPresupuesto, cabeceraComprobante,
 } from './infomanager.js';
 import { pesoDeRenglones, cargaDelCamion } from './pesoComprobante.js';
-import { zonaDeCliente } from './zonaCliente.js';
+import { vistaDeRango, invalidarVista } from './vistaPresupuestos.js';
+import { armarFraccionado, totalesFraccionado } from './fraccionado.js';
 import { emitirFactura, emitirRemito, letraDeFactura, proximoNumeroFactura } from './facturarIM.js';
 import type { DatosComprobante } from './facturarIM.js';
 import { usuarioIM } from './pedidos.js';
@@ -94,165 +95,17 @@ export async function pendientesDelDia(req: Request & { user?: JwtPayload }, res
  * elegir entre las dos: el día abre rápido y los anteriores se piden cuando hacen falta.
  */
 /**
- * La vista del día, cacheada un rato corto.
- *
- * Armarla cuesta varios segundos contra IM (ventas del día + renglones + catálogo + clientes) y
- * la oficina entra y sale de la pantalla todo el tiempo. 90 segundos alcanzan para que moverse
- * por el panel sea instantáneo sin que se note el retraso: un pedido que entra aparece en el
- * refresco siguiente, y el botón Actualizar saltea el cache.
+ * La vista del día sale de `vistaPresupuestos.ts`: la misma consulta la usan esta pantalla y la
+ * de revisión de presupuestos (etapa 1), que trabaja por rango de fechas.
  */
-const VISTA_TTL_MS = 90_000;
-const _vistaCache = new Map<string, { at: number; datos: any }>();
-
-/** El cache se tira cuando algo lo deja viejo: se asignó o se sacó un pedido. */
-function invalidarVista(fecha?: string) {
-  if (!fecha) { _vistaCache.clear(); return; }
-  for (const k of [..._vistaCache.keys()]) if (k.startsWith(fecha + '|')) _vistaCache.delete(k);
-}
-
 async function armarVistaDelDia(fecha: string, dias = 0, forzar = false) {
-  const clave = `${fecha}|${dias}`;
-  const hit = _vistaCache.get(clave);
-  if (!forzar && hit && Date.now() - hit.at < VISTA_TTL_MS) return hit.datos;
-  {
-    // 🪤 Esto miraba SÓLO la fecha exacta y se perdía la mayoría de los pedidos. Medido el
-    // 07/09/2026: había 225 presupuestos vigentes y el panel mostraba 59. Los otros 166 eran
-    // de días anteriores sin facturar y de días futuros — porque la oficina MUEVE la fecha del
-    // comprobante para reordenar los despachos, así que un pedido fechado para el 10 existe
-    // desde antes. Un pedido que no aparece en la pantalla no entra en ninguna hoja y nadie
-    // se entera hasta que llama el cliente.
-    const desde = dias > 0
-      ? fechaArgentina(new Date(fecha + 'T12:00:00Z').getTime() - dias * 864e5)
-      : fecha;
-    const [ventas, cat, clientes] = await Promise.all([
-      fetchVentas(desde, fecha),
-      fetchArticulosCatalogo(),
-      fetchClientesIMCached().catch(() => []),
-    ]);
-
-    const porCliente = new Map(clientes.map((c: any) => [Number(c.cod_cliente), c]));
-
-    const presupuestos = ventas.filter((v: any) =>
-      String(v.tipo_comprobante ?? '').trim() === 'PR' &&
-      String(v.anulada ?? '').trim().toUpperCase() !== 'S');
-
-    // 🪤 Los renglones NO se piden por toda la ventana. Medido contra IM el 07/09/2026:
-    //   `/ventas/items` de 15 días -> 57.385 items en 23,7 s
-    //   `/ventas/items` de 1 día   ->  4.132 items en  1,2 s
-    // Con 23,7 s la request se pasa del timeout del proxy y el panel abría VACÍO. Se piden
-    // sólo los días que de verdad tienen presupuestos vigentes (suelen ser un puñado), y de
-    // a cuatro en paralelo para no golpear a IM.
-    const fechasConPedidos = [...new Set(presupuestos
-      .map((p: any) => String(p.fecha ?? '').slice(0, 10))
-      .filter(Boolean))].sort().slice(-MAX_DIAS_ITEMS);
-    const renglones = new Map<string, Array<{ cantidad: any; equivalencia_um: number | null | undefined }>>();
-    for (let i = 0; i < fechasConPedidos.length; i += 4) {
-      const tanda = fechasConPedidos.slice(i, i + 4);
-      const resultados = await Promise.all(tanda.map(f =>
-        fetchVentasItems(f, f).catch((e: any) => {
-          // Sin los renglones de un día, esos pedidos salen con 0 kg. Es mejor que no abrir.
-          console.warn(`[hojasRuta] sin items del ${f}:`, e?.message);
-          return [] as any[];
-        })));
-      for (const items of resultados) {
-        for (const it of items) {
-          const k = String((it as any).id_comprobante);
-          if (!renglones.has(k)) renglones.set(k, []);
-          renglones.get(k)!.push({
-            cantidad: (it as any).cantidad,
-            equivalencia_um: cat.get(Number((it as any).cod_articulo))?.equivalencia_um,
-          });
-        }
-      }
-    }
-
-    // Lo que aporta la app sobre los pedidos que salieron de ella: los avisos del control de
-    // listas, que es lo que le dice a la oficina DÓNDE mirar en vez de revisar todo.
-    const ids = presupuestos.map((p: any) => String(p.id));
-    const { data: nuestros } = await sb().from('pedidos_vendedor')
-      .select('id, im_presupuesto_id, cod_vendedor, estado, im_error')
-      .eq('tenant_id', TENANT_ID).in('im_presupuesto_id', ids);
-    const mio = new Map((nuestros ?? []).map((p: any) => [String(p.im_presupuesto_id), p]));
-    const { data: avisos } = await sb().from('pedidos_vendedor_items')
-      .select('pedido_id, aviso_lista, lista_sugerida, cod_lista_precios')
-      .in('pedido_id', (nuestros ?? []).map((p: any) => p.id))
-      .not('aviso_lista', 'is', null);
-    const avisosPorPedido = new Map<string, string[]>();
-    // 🔑 Los avisos NO son todos iguales y mezclarlos hace que no se mire ninguno: el 07/09
-    // había 36 pedidos marcados sobre 59, y así "revisar" deja de querer decir algo.
-    // Las listas de IM van de más cara a más barata según el número (12=L1 … 15=L4), así que
-    // comparando la lista puesta contra la sugerida se sabe para qué lado está el error:
-    //   puesta > sugerida  -> más barata de lo que corresponde  -> PIERDE MARGEN la empresa
-    //   puesta < sugerida  -> más cara                          -> le cobran de más al cliente
-    // Se clasifica con los CÓDIGOS y no leyendo el texto del aviso, que puede cambiar.
-    const gravedadPorPedido = new Map<string, { pierde_margen: number; cobra_de_mas: number }>();
-    for (const a of avisos ?? []) {
-      const k = String((a as any).pedido_id);
-      if (!avisosPorPedido.has(k)) avisosPorPedido.set(k, []);
-      avisosPorPedido.get(k)!.push(String((a as any).aviso_lista));
-      const g = gravedadPorPedido.get(k) ?? { pierde_margen: 0, cobra_de_mas: 0 };
-      const puesta = Number((a as any).cod_lista_precios);
-      const sugerida = Number((a as any).lista_sugerida);
-      if (Number.isFinite(puesta) && Number.isFinite(sugerida) && sugerida > 0) {
-        if (puesta > sugerida) g.pierde_margen += 1;
-        else if (puesta < sugerida) g.cobra_de_mas += 1;
-      }
-      gravedadPorPedido.set(k, g);
-    }
-
-    // Dónde está ya asignado cada comprobante.
-    const { data: asignados } = await sb().from('hojas_ruta_pedidos')
-      .select('im_comprobante_id, hoja_id').in('im_comprobante_id', ids);
-    const enHoja = new Map((asignados ?? []).map((a: any) => [String(a.im_comprobante_id), String(a.hoja_id)]));
-
-    const filas = presupuestos.map((p: any) => {
-      const c = porCliente.get(Number(p.cod_cliente));
-      const z = zonaDeCliente(c);
-      const peso = pesoDeRenglones(renglones.get(String(p.id)) ?? []);
-      const propio = mio.get(String(p.id));
-      return {
-        im_comprobante_id: String(p.id),
-        im_numero: p.numero ?? null,
-        fecha: p.fecha ?? null,
-        // Un pedido de un día anterior que sigue vigente es arrastre: se quedó sin salir.
-        // Se marca para que salte a la vista y no se mezcle con los del día.
-        de_otro_dia: String(p.fecha ?? '').slice(0, 10) !== fecha,
-        cod_cliente: Number(p.cod_cliente),
-        cliente_nombre: c?.razon_social ?? c?.nombre ?? `Cliente ${p.cod_cliente}`,
-        cod_zona: z.cod_zona,
-        zona: z.nombre,
-        zona_origen: z.origen,
-        total: Number(p.total ?? 0),
-        bultos: peso.bultos,
-        kg: peso.kg,
-        // Si son muchos, el total de kilos miente POR ABAJO y la hoja puede sobrecargar.
-        renglones_sin_peso: peso.renglones_sin_peso,
-        de_la_app: !!propio,
-        pedido_id: propio?.id ?? null,
-        cod_vendedor: propio?.cod_vendedor ?? p.cod_vendedor ?? null,
-        avisos: propio ? (avisosPorPedido.get(String(propio.id)) ?? []) : [],
-        // Para qué lado está el error de lista, que es lo que decide si urge mirarlo.
-        gravedad: propio ? (gravedadPorPedido.get(String(propio.id)) ?? { pierde_margen: 0, cobra_de_mas: 0 }) : { pierde_margen: 0, cobra_de_mas: 0 },
-        im_error: propio?.im_error ?? null,
-        hoja_id: enHoja.get(String(p.id)) ?? null,
-      };
-    });
-
-    const datos = {
-      pendientes: filas.filter(f => !f.hoja_id),
-      asignados: filas.filter(f => f.hoja_id),
-      // Para que la pantalla pueda mostrar "3 pedidos para revisar" sin recorrer todo.
-      con_avisos: filas.filter(f => f.avisos.length > 0).length,
-      // Los dos números que de verdad importan, separados: uno es plata que se pierde, el
-      // otro es un cliente al que le están cobrando de más.
-      pierde_margen: filas.filter(f => f.gravedad.pierde_margen > 0).length,
-      cobra_de_mas: filas.filter(f => f.gravedad.cobra_de_mas > 0).length,
-      sin_zona: filas.filter(f => f.cod_zona == null).length,
-      de_otros_dias: filas.filter(f => f.de_otro_dia && !f.hoja_id).length,
-    };
-    _vistaCache.set(clave, { at: Date.now(), datos });
-    return datos;
-  }
+  // 🪤 Mirar SÓLO la fecha exacta se perdía la mayoría de los pedidos: el 07/09/2026 había 225
+  // presupuestos vigentes y el panel mostraba 59. La oficina MUEVE la fecha del comprobante
+  // para reordenar despachos, así que un pedido fechado para el 10 existe desde antes.
+  const desde = dias > 0
+    ? fechaArgentina(new Date(fecha + 'T12:00:00Z').getTime() - dias * 864e5)
+    : fecha;
+  return vistaDeRango(desde, fecha, forzar);
 }
 
 /**
@@ -393,30 +246,21 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
     }
 
     // ── Fraccionado: lo que se vende por kilo, producto por producto ──────────
-    const esKilo = (u: unknown) => /^(kg|kilo|kilos|kilogramo|kilogramos)$/i.test(String(u ?? '').trim());
-    const fraccionado: Array<{ descripcion: string; cantidades: number[]; paquetes: number; kg: number }> = [];
+    // 🔑 El armado vive en `fraccionado.ts` y lo comparte con la etapa de presupuestos, que es
+    // donde la oficina lo prepara ahora (antes del armado de la hoja).
+    let fraccionado: ReturnType<typeof armarFraccionado> = [];
     try {
       const cat = await fetchArticulosCatalogo();
       const ids = new Set(pedidos.map((p: any) => String(p.im_comprobante_id)));
       const dias = [...new Set(pedidos.map((p: any) => String((hoja as any).fecha).slice(0, 10)))];
-      const porProducto = new Map<string, number[]>();
+      const renglones: Array<{ cod_articulo: number; cantidad: number }> = [];
       for (const f of dias.slice(0, 6)) {
         for (const it of await fetchVentasItems(f, f).catch(() => [] as any[])) {
           if (!ids.has(String((it as any).id_comprobante))) continue;
-          const a = cat.get(Number((it as any).cod_articulo));
-          const cant = Number((it as any).cantidad);
-          if (!a || !esKilo(a.unidad_de_medida) || !(cant > 0)) continue;
-          if (!porProducto.has(a.descripcion)) porProducto.set(a.descripcion, []);
-          porProducto.get(a.descripcion)!.push(cant);
+          renglones.push({ cod_articulo: Number((it as any).cod_articulo), cantidad: Number((it as any).cantidad) });
         }
       }
-      for (const [descripcion, cantidades] of [...porProducto.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-        const l = cantidades.slice().sort((a, b) => b - a);
-        fraccionado.push({
-          descripcion, cantidades: l, paquetes: l.length,
-          kg: Math.round(l.reduce((s, x) => s + x, 0) * 100) / 100,
-        });
-      }
+      fraccionado = armarFraccionado(renglones, cat);
     } catch (e: any) {
       // Sin el detalle no se puede imprimir el listado de fraccionado, pero la hoja de ruta sí:
       // se devuelve vacío y la pantalla avisa, en vez de fallar entera.
@@ -446,11 +290,7 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
         total: Math.round(totales.total * 100) / 100,
       },
       fraccionado,
-      fraccionado_totales: {
-        productos: fraccionado.length,
-        paquetes: fraccionado.reduce((s, f) => s + f.paquetes, 0),
-        kg: Math.round(fraccionado.reduce((s, f) => s + f.kg, 0) * 100) / 100,
-      },
+      fraccionado_totales: totalesFraccionado(fraccionado),
       sin_saldo: [...porCliente.values()].filter((c: any) => c.saldo_anterior == null).length,
     });
   } catch (err: any) {
@@ -924,7 +764,7 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
       ({ error } = await sb().from('hojas_ruta_pedidos').upsert(sinTotal, { onConflict: 'im_comprobante_id' }));
     }
     if (error) { res.status(500).json({ error: error.message }); return; }
-    invalidarVista(String(hoja.fecha).slice(0, 10));
+    invalidarVista();
     res.json({
       ok: true, agregados: filas.length,
       sin_saldo: filas.filter(f => f.saldo_anterior == null).length,
