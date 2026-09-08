@@ -316,34 +316,68 @@ export async function previsualizarFacturacion(req: Request & { user?: JwtPayloa
 }
 
 /**
- * Un reclamo sin factura vence a los 5 minutos: es un intento que se cortó a la mitad y hay que
- * poder retomarlo. Ninguna emisión de UN comprobante tarda tanto.
+ * Cuánto puede tardar una emisión antes de que su reclamo se considere abandonado.
+ *
+ * Referencia real: IM corta a los 25 s y se reintenta hasta 3 veces (75 s en el peor caso).
  */
 const RECLAMO_VENCE_MS = 5 * 60_000;
 
-/** Marca el presupuesto como "lo estoy facturando yo", antes de tocar InfoManager. */
+/**
+ * Marca el presupuesto como "lo estoy facturando yo", ANTES de tocar InfoManager.
+ *
+ * 🔴 Es el único freno cuando dos personas aprietan Facturar sobre la misma selección: el rol
+ * administrativo lo tienen dos. El `insert` choca contra el índice único y la segunda no emite.
+ *
+ * 🪤 Una fila que ya existe SIN factura no se pisa nunca, ni siquiera vencida. Antes se
+ * "retomaba" con un `update`, y un update no choca con ningún índice: dos personas con el
+ * reclamo vencido lo tomaban las dos y emitían las dos (verificación adversarial del
+ * 08/09/2026). Y hay un caso peor: que la factura SÍ se haya emitido y lo que falló haya sido el
+ * registro. Desde afuera esas dos situaciones son idénticas, así que **la reanudación la
+ * autoriza una persona** —después de mirar InfoManager— con "Liberar" en la pantalla.
+ */
 async function reclamar(f: PresupuestoAFacturar, base: Record<string, any>): Promise<{ ok: boolean; error?: string }> {
-  const ahora = new Date().toISOString();
   if (f.tiene_fila) {
-    // Ya hay fila sin factura: o alguien está facturándolo ahora, o quedó de un intento cortado.
     const edad = Date.now() - new Date(f.reclamado_at ?? 0).getTime();
     if (Number.isFinite(edad) && edad < RECLAMO_VENCE_MS) {
       return { ok: false, error: 'lo está facturando alguien más en este momento. Actualizá la pantalla antes de reintentar.' };
     }
-    const { error } = await sb().from('presupuestos_facturados')
-      .update({ ...base, reclamado_at: ahora }).eq('im_comprobante_id', String(f.im_comprobante_id));
-    return error ? { ok: false, error: `no pude registrar el intento (${error.message})` } : { ok: true };
+    return {
+      ok: false,
+      error: 'quedó un intento anterior sin terminar. **Puede que la factura se haya emitido igual**: buscala en InfoManager por el cliente y la fecha. Si no está, usá "Liberar" para poder reintentar.',
+    };
   }
-  const { error } = await sb().from('presupuestos_facturados').insert({ ...base, reclamado_at: ahora });
+  const { error } = await sb().from('presupuestos_facturados')
+    .insert({ ...base, reclamado_at: new Date().toISOString() });
   // El índice único es el que frena a la segunda persona.
   if (error) return { ok: false, error: 'otro usuario lo tomó primero. Actualizá la pantalla antes de reintentar.' };
   return { ok: true };
 }
 
+/**
+ * DELETE /api/facturacion/reclamo/:comprobanteId — libera un intento que quedó a medias.
+ *
+ * 🔴 Lo aprieta una persona DESPUÉS de verificar en InfoManager que la factura no salió. Por eso
+ * sólo borra filas sin factura registrada: lo que ya se emitió no se toca desde acá.
+ */
+export async function liberarReclamo(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  const id = String(req.params.comprobanteId);
+  const { data, error } = await sb().from('presupuestos_facturados')
+    .delete().eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id)
+    .is('im_factura_id', null).is('facturado_at', null).select();
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (!(data ?? []).length) {
+    res.status(409).json({ error: 'Ese pedido ya tiene comprobantes registrados: no es un intento a medias.' });
+    return;
+  }
+  res.json({ ok: true, liberado: id });
+}
+
 /** Suelta el reclamo cuando la emisión falló, para poder reintentar sin esperar los 5 minutos. */
 async function soltarReclamo(f: PresupuestoAFacturar): Promise<void> {
   const { error } = await sb().from('presupuestos_facturados')
-    .delete().eq('im_comprobante_id', String(f.im_comprobante_id)).is('im_factura_id', null);
+    .delete().eq('tenant_id', TENANT_ID).eq('im_comprobante_id', String(f.im_comprobante_id))
+    .is('im_factura_id', null);
   if (error) console.warn(`[facturarSeleccion] no pude soltar el reclamo del ${f.im_comprobante_id}:`, error.message);
 }
 
@@ -459,6 +493,20 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
       }
 
       // 2) REMITO
+      // 🪤 Cuando la factura ya estaba emitida no se pasó por el reclamo de arriba, así que dos
+      // reintentos superpuestos emitían DOS remitos — y el remito descuenta stock. Se reclama
+      // acá con el mismo criterio.
+      if (f.im_factura_id) {
+        const edad = Date.now() - new Date(f.reclamado_at ?? 0).getTime();
+        if (Number.isFinite(edad) && edad < RECLAMO_VENCE_MS) {
+          fallados.push(`${quien}: le está haciendo el remito alguien más en este momento.`);
+          continue;
+        }
+        const { error: errMarca } = await sb().from('presupuestos_facturados')
+          .update({ reclamado_at: new Date().toISOString() })
+          .eq('tenant_id', TENANT_ID).eq('im_comprobante_id', String(f.im_comprobante_id));
+        if (errMarca) { fallados.push(`${quien}: no pude marcar el intento del remito (${errMarca.message}).`); continue; }
+      }
       const re = await emitirRemito(p.datos as any);
       if (!re.ok) {
         fallados.push(`${quien}: la FACTURA ${facturaNumero} se emitió, pero el remito falló (${re.error}). Hacé el remito a mano.`);

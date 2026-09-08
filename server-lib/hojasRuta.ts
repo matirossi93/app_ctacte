@@ -394,9 +394,23 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
     // ¿Alguno ya está en otra hoja? Se avisa antes de tocar nada: un comprobante en dos hojas
     // se carga en dos camiones.
     const ids = entrada.map(p => String(p.im_comprobante_id));
-    const { data: yaAsignados } = await sb().from('hojas_ruta_pedidos')
-      .select('im_comprobante_id, hoja_id, im_numero').in('im_comprobante_id', ids);
+    const { data: yaAsignados, error: errAsig } = await sb().from('hojas_ruta_pedidos')
+      .select('im_comprobante_id, hoja_id, im_numero, hojas_ruta(numero, estado)').in('im_comprobante_id', ids);
+    // Si no se puede consultar, no se asigna: el aviso de "ya está en otra hoja" es lo único que
+    // evita que la misma mercadería salga en dos camiones.
+    if (errAsig) { res.status(502).json({ error: `No pude verificar si esos pedidos ya están en otra hoja: ${errAsig.message}` }); return; }
     const enOtra = (yaAsignados ?? []).filter((a: any) => String(a.hoja_id) !== hojaId);
+
+    // 🪤 `mover: true` reasigna la fila existente, así que se podía sacar un pedido de una hoja
+    // CERRADA sin pasar por `quitarPedido`, que es donde vivía el guard. Una hoja cerrada ya se
+    // liquidó: cambiarle la carga cambia el pago del chofer.
+    const desdeCerrada = enOtra.filter((a: any) => estaCerrada(a.hojas_ruta));
+    if (desdeCerrada.length) {
+      res.status(409).json({
+        error: `Estos pedidos están en hojas CERRADAS (${[...new Set(desdeCerrada.map((a: any) => a.hojas_ruta?.numero))].join(', ')}): ya se liquidaron. Reabrí la hoja si de verdad hay que moverlos.`,
+      });
+      return;
+    }
     // 🔑 Con `mover: true` se reasignan a esta hoja. Es una operación NORMAL de la oficina:
     // cuando una zona se pasa de kilos, Jorgelina va moviendo pedidos entre hojas hasta que
     // entren (Mati, 07/09/2026: "permitir que podamos mover los pedidos y manejar las hojas").
@@ -596,9 +610,12 @@ export async function quitarPedido(req: Request & { user?: JwtPayload }, res: Re
   const comprobanteId = String(req.params.comprobanteId);
   // Sólo se frena si la hoja está cerrada: sacar un pedido de una hoja abierta es normal, y el
   // registro de lo facturado vive en otra tabla que no se toca.
-  const { data: fila } = await sb().from('hojas_ruta_pedidos')
+  const { data: fila, error: errFila } = await sb().from('hojas_ruta_pedidos')
     .select('hoja_id, im_numero, hojas_ruta(numero, estado)')
     .eq('im_comprobante_id', comprobanteId).maybeSingle();
+  // 🪤 Sin esto el guard fallaba ABIERTO: si la consulta se caía, `fila` venía null, la hoja
+  // parecía abierta y se borraba el pedido de una hoja ya liquidada.
+  if (errFila) { res.status(502).json({ error: `No pude verificar el estado de la hoja: ${errFila.message}` }); return; }
   if (estaCerrada((fila as any)?.hojas_ruta)) {
     res.status(409).json({
       error: `La hoja ${(fila as any)?.hojas_ruta?.numero ?? ''} está cerrada: ya se liquidó. Reabrila antes de sacarle pedidos.`,

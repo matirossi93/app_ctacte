@@ -52,7 +52,7 @@ import { listRebotes, listRecargos, syncRebotesNow, syncRebotes } from './server
 import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos, hermanosDeFamilia } from './server-lib/productGoals.js';
 import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, precioArticulo, catalogoPedido, validarListasPedido, editarPedido } from './server-lib/pedidos.js';
 import { pendientesDelDia, arrastreDelDia, impresionHoja, sugerenciaDelDia, listarHojas, listarCamiones, crearHoja, editarHoja, borrarHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
-import { tableroFacturacion, previsualizarFacturacion, facturarSeleccion } from './server-lib/facturarPresupuestos.js';
+import { tableroFacturacion, previsualizarFacturacion, facturarSeleccion, liberarReclamo } from './server-lib/facturarPresupuestos.js';
 import { marcarRetiro, quitarRetiro, marcarRetirado, listarRetiros, resumenRetiros } from './server-lib/retirosSucursal.js';
 import { listarChoferes, liquidacionMensual } from './server-lib/liquidacionChoferes.js';
 import { listarPresupuestos, revisarPresupuesto, borrarRevision, detallePresupuesto, corregirCantidades, fraccionadoDelRango } from './server-lib/panelPresupuestos.js';
@@ -677,6 +677,8 @@ app.delete('/api/retiros/:comprobanteId', requireJwt, (req: any, res) => quitarR
 app.get('/api/facturacion/previa', requireJwt, (req: any, res) => previsualizarFacturacion(req, res));
 app.get('/api/facturacion', requireJwt, (req: any, res) => tableroFacturacion(req, res));
 app.post('/api/facturacion', requireJwt, (req: any, res) => facturarSeleccion(req, res));
+// Libera un intento que quedó a medias, DESPUÉS de que una persona verificó en IM.
+app.delete('/api/facturacion/reclamo/:comprobanteId', requireJwt, (req: any, res) => liberarReclamo(req, res));
 
 app.get('/api/presupuestos/fraccionado', requireJwt, (req: any, res) => fraccionadoDelRango(req, res));
 app.get('/api/presupuestos', requireJwt, (req: any, res) => listarPresupuestos(req, res));

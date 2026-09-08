@@ -40,11 +40,15 @@ export async function marcarRetiro(req: Request & { user?: JwtPayload }, res: Re
   try {
     const entrada: any[] = Array.isArray(req.body?.pedidos) ? req.body.pedidos : [];
     if (!entrada.length) { res.status(400).json({ error: 'No mandaste ningún pedido.' }); return; }
+    // Tope explícito: truncar la consulta de abajo dejaría pasar un pedido que ya está en una hoja.
+    if (entrada.length > 300) { res.status(400).json({ error: 'Máximo 300 pedidos por vez.' }); return; }
     const ids = entrada.map(p => String(p.im_comprobante_id));
 
-    // 🪤 Si ya está en una hoja, no puede además retirarlo el cliente.
-    const { data: enHoja } = await sb().from('hojas_ruta_pedidos')
-      .select('im_comprobante_id, im_numero, hoja_id').in('im_comprobante_id', ids.slice(0, 400));
+    // 🪤 Si ya está en una hoja, no puede además retirarlo el cliente. Y si la consulta falla,
+    // no se marca nada: quedaría en la hoja Y en retiros, o sea cargado en el camión y retirado.
+    const { data: enHoja, error: errHoja } = await sb().from('hojas_ruta_pedidos')
+      .select('im_comprobante_id, im_numero, hoja_id').in('im_comprobante_id', ids);
+    if (errHoja) { res.status(502).json({ error: `No pude verificar si ya están en una hoja: ${errHoja.message}` }); return; }
     if ((enHoja ?? []).length) {
       res.status(409).json({
         error: `Estos pedidos ya están en una hoja de ruta: ${(enHoja ?? []).map((h: any) => h.im_numero ?? h.im_comprobante_id).join(', ')}. Sacalos de la hoja primero.`,
@@ -55,7 +59,7 @@ export async function marcarRetiro(req: Request & { user?: JwtPayload }, res: Re
     // Lo emitido viaja con el pedido: es el comprobante que se lleva el cliente.
     const { data: emitidos } = await sb().from('presupuestos_facturados')
       .select('im_comprobante_id, im_factura_id, im_factura_numero, im_remito_id, im_remito_numero')
-      .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids.slice(0, 400));
+      .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
     const facturado = new Map((emitidos ?? []).map((e: any) => [String(e.im_comprobante_id), e]));
 
     const filas = entrada.map((p) => {

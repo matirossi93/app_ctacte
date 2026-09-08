@@ -43,7 +43,7 @@ vi.mock('./pedidos.js', () => ({ usuarioIM: vi.fn(async () => 'jorgelina') }));
 vi.mock('./vistaPresupuestos.js', () => ({ vistaDeRango: m.vistaDeRango, invalidarVista: vi.fn() }));
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
 
-const { facturarSeleccion, previsualizarFacturacion, tableroFacturacion } = await import('./facturarPresupuestos.js');
+const { facturarSeleccion, previsualizarFacturacion, tableroFacturacion, liberarReclamo } = await import('./facturarPresupuestos.js');
 
 let tablas: Record<string, any> = {};
 let escrituras: Array<{ tabla: string; op: string; valor: any }> = [];
@@ -365,5 +365,71 @@ describe('dos personas facturando a la vez', () => {
     const orden = escrituras.map(e => e.op);
     expect(orden[0]).toBe('insert');                       // primero se reclama
     expect(m.emitirFactura).toHaveBeenCalled();            // y recién después se emite
+  });
+});
+
+/**
+ * Verificación adversarial del 08/09/2026: el reclamo tenía dos agujeros. Un `update` no choca
+ * contra ningún índice único, así que "retomar" un reclamo vencido dejaba pasar a dos personas
+ * a la vez; y el reintento de sólo-remito no reclamaba nada.
+ */
+describe('reclamos que quedaron a medias', () => {
+  const RECLAMO_VIEJO = { im_comprobante_id: '10', im_factura_id: null, im_factura_numero: null, facturado_at: null, reclamado_at: '2026-09-08T00:00:00Z' };
+
+  it('🔴 un reclamo vencido NO se retoma solo: puede que la factura haya salido igual', async () => {
+    // Desde afuera, "se cortó antes de emitir" y "se emitió y no se pudo registrar" son
+    // idénticos. Reanudar automáticamente es apostar a que fue el primero.
+    tablas['presupuestos_facturados'] = { data: [RECLAMO_VIEJO], error: null };
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(m.emitirFactura).not.toHaveBeenCalled();
+    expect(r.body.fallados[0]).toMatch(/intento anterior|InfoManager/i);
+  });
+
+  it('🔴 y uno FRESCO tampoco: lo está facturando otro en este momento', async () => {
+    tablas['presupuestos_facturados'] = { data: [{ ...RECLAMO_VIEJO, reclamado_at: new Date().toISOString() }], error: null };
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(m.emitirFactura).not.toHaveBeenCalled();
+    expect(r.body.fallados[0]).toMatch(/alguien más/i);
+  });
+
+  it('🔴 el reintento de SÓLO REMITO también reclama: dos remitos descuentan stock dos veces', async () => {
+    tablas['presupuestos_facturados'] = {
+      data: [{ im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null, reclamado_at: new Date().toISOString() }],
+      error: null,
+    };
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(m.emitirRemito).not.toHaveBeenCalled();
+    expect(r.body.fallados[0]).toMatch(/remito.*alguien más/i);
+  });
+
+  it('con el reclamo del remito ya vencido, se hace el remito', async () => {
+    tablas['presupuestos_facturados'] = {
+      data: [{ im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null, reclamado_at: '2026-09-08T00:00:00Z' }],
+      error: null,
+    };
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(m.emitirFactura).not.toHaveBeenCalled();     // la factura ya estaba
+    expect(m.emitirRemito).toHaveBeenCalledTimes(1);
+    expect(r.body.facturados).toBe(1);
+  });
+});
+
+describe('liberar un intento a medias', () => {
+  it('🔴 sólo libera lo que NO tiene comprobantes registrados', async () => {
+    tablas['presupuestos_facturados'] = { data: [], error: null };   // el filtro no devolvió nada
+    const r = await llamar(liberarReclamo, { body: {} });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/ya tiene comprobantes/i);
+  });
+
+  it('libera el reclamo huérfano', async () => {
+    tablas['presupuestos_facturados'] = { data: [{ im_comprobante_id: '10' }], error: null };
+    const r = await llamar(liberarReclamo, { body: {} });
+    expect(r.status).toBe(200);
+    expect(escrituras.some(e => e.op === 'delete')).toBe(true);
+  });
+
+  it('🔴 un vendedor no libera nada', async () => {
+    expect((await llamar(liberarReclamo, { rol: 'vendedor' })).status).toBe(403);
   });
 });

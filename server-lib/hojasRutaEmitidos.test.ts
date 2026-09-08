@@ -42,7 +42,7 @@ vi.mock('./facturarIM.js', async (original) => ({
 vi.mock('./pedidos.js', () => ({ usuarioIM: vi.fn(async () => 'jorgelina') }));
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
 
-const { quitarPedido, borrarHoja } = await import('./hojasRuta.js');
+const { quitarPedido, borrarHoja, asignarPedidos } = await import('./hojasRuta.js');
 
 let tablas: Record<string, any> = {};
 let escrituras: Array<{ tabla: string; op: string; valor: any }> = [];
@@ -165,5 +165,45 @@ describe('una hoja cerrada no se toca', () => {
   it('una hoja que no existe da 404', async () => {
     tablas['hojas_ruta'] = { data: null, error: null };
     expect((await llamar(borrarHoja, { params: { id: 'nope' } })).status).toBe(404);
+  });
+});
+
+/** Agujeros que encontró la verificación adversarial: los guards fallaban abiertos. */
+describe('los guards no pueden fallar abiertos', () => {
+  it('🔴 si no se puede consultar el estado de la hoja, NO se saca el pedido', async () => {
+    // Antes, un error de consulta dejaba `fila` en null, la hoja parecía abierta y se borraba
+    // el pedido de una hoja ya liquidada.
+    tablas['hojas_ruta_pedidos'] = { data: null, error: { message: 'timeout' } };
+    const r = await llamar(quitarPedido, { params: { comprobanteId: '58700637' } });
+    expect(r.status).toBe(502);
+    expect(escrituras.some(e => e.op === 'delete')).toBe(false);
+  });
+
+  it('🔴 mover un pedido tampoco lo saca de una hoja CERRADA', async () => {
+    // `mover: true` reasigna la fila sin pasar por quitarPedido, que era donde estaba el guard.
+    tablas['hojas_ruta'] = { data: { id: 'h2', numero: 3396, estado: 'abierta' }, error: null };
+    tablas['hojas_ruta_pedidos'] = {
+      data: [{ im_comprobante_id: '58700637', hoja_id: 'h1', im_numero: 58050, hojas_ruta: { numero: 3395, estado: 'cerrada' } }],
+      error: null,
+    };
+
+    const r = await llamar(asignarPedidos, {
+      params: { id: 'h2' },
+      body: { pedidos: [{ im_comprobante_id: '58700637', cod_cliente: 1 }], mover: true },
+    });
+
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/cerrada/i);
+    expect(escrituras.some(e => e.op === 'upsert')).toBe(false);
+  });
+
+  it('🔴 y si no se puede consultar dónde están, no se asigna nada', async () => {
+    tablas['hojas_ruta'] = { data: { id: 'h2', numero: 3396, estado: 'abierta' }, error: null };
+    tablas['hojas_ruta_pedidos'] = { data: null, error: { message: 'timeout' } };
+    const r = await llamar(asignarPedidos, {
+      params: { id: 'h2' }, body: { pedidos: [{ im_comprobante_id: '1', cod_cliente: 1 }] },
+    });
+    expect(r.status).toBe(502);
+    expect(escrituras.some(e => e.op === 'upsert')).toBe(false);
   });
 });
