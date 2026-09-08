@@ -119,6 +119,10 @@
 }
 .hr-icono { border: none; background: transparent; color: var(--color-text-muted); cursor: pointer; padding: 0.25rem; border-radius: var(--radius-sm); }
 .hr-icono:hover { background: var(--color-surface-hover); color: var(--color-text); }
+/* Un ícono que no se puede tocar tiene que verse así: el de sacar de la hoja queda
+   bloqueado en los pedidos ya facturados. */
+.hr-icono:disabled { opacity: 0.3; cursor: default; }
+.hr-icono:disabled:hover { background: transparent; color: var(--color-text-muted); }
 
 .hr-carga { display: flex; align-items: center; gap: 0.5rem; }
 .hr-barra { flex: 1; height: 7px; background: var(--color-bg); border-radius: 999px; overflow: hidden; }
@@ -197,3 +201,12 @@ button.hr-badge { cursor: pointer; font-family: inherit; }
     .hr-cols[data-panel="pedidos"] .hr-col-hojas { display: none; }
     .hr-cols[data-panel="hojas"] .hr-col-pedidos { display: none; }
 }
+
+/* ── Facturación ──────────────────────────────────────────────────────────── */
+/* Verde de la marca: es lo que ya se emitió, no un aviso. */
+.hr-badge.facturada {
+    background: rgba(6, 101, 47, 0.1); color: #06652F; border: 1px solid rgba(6, 101, 47, 0.35);
+}
+/* El botón que emite comprobantes reales: ancho completo y abajo de todo, para que no se
+   confunda con los de armar la hoja. La confirmación con el detalle está en el modal. */
+.hr-btn.facturar { width: 100%; margin-top: 0.4rem; }

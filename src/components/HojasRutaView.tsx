@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle, Truck, Plus, Loader2, X, Wand2, MapPin, Package,
-    ChevronRight, RefreshCw, Trash2, Printer,
+    ChevronRight, RefreshCw, Trash2, Printer, Receipt, CheckCircle2,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import { ImprimirHoja } from './ImprimirHoja';
+import { FacturarHoja } from './FacturarHoja';
 import './HojasRutaView.css';
 
 /**
@@ -45,12 +46,16 @@ interface HojaPedido {
     saldo_anterior: number | null;
     bultos: number | null;
     kg: number | null;
+    /** Comprobantes emitidos en IM. Null = todavía no se facturó. */
+    im_factura_numero: number | null;
+    im_remito_numero: number | null;
+    facturado_at: string | null;
 }
 
 interface Hoja {
     id: string; numero: number; turno: string | null; transporte: string | null;
     camion: string | null; camion_id: string | null; capacidad_kg: number | null;
-    cod_zona: number | null; estado: string;
+    cod_zona: number | null; estado: string; facturada_at: string | null;
     pedidos: HojaPedido[];
     totales: { pedidos: number; bultos: number; kg: number };
     carga: { porcentaje: number | null; excedido: boolean; sobra_kg: number | null };
@@ -91,6 +96,8 @@ export function HojasRutaView() {
     const [panel, setPanel] = useState<'pedidos' | 'hojas'>('pedidos');
     /** Qué hoja se está imprimiendo. */
     const [imprimiendo, setImprimiendo] = useState<string | null>(null);
+    /** Qué hoja se está facturando. Es lo único irreversible del panel: va con su confirmación. */
+    const [facturando, setFacturando] = useState<Hoja | null>(null);
 
     /**
      * Las hojas solas. Sale de Supabase: es instantáneo.
@@ -462,6 +469,11 @@ export function HojasRutaView() {
                         <div className={`hr-hoja${h.carga.excedido ? ' excedida' : ''}`} key={h.id}>
                             <div className="hr-hoja-head">
                                 <span className="hr-hoja-num">Hoja {h.numero}</span>
+                                {h.facturada_at && (
+                                    <span className="hr-badge facturada" title={`Facturada el ${h.facturada_at.slice(8, 10)}/${h.facturada_at.slice(5, 7)}`}>
+                                        <CheckCircle2 size={11} /> facturada
+                                    </span>
+                                )}
                                 <select value={h.camion_id ?? ''} onChange={e => void editarHoja(h.id, { camion_id: e.target.value || null }, 'No se pudo cambiar el camión')} disabled={trabajando}>
                                     <option value="">Sin camión</option>
                                     {camiones.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
@@ -503,10 +515,22 @@ export function HojasRutaView() {
                                 <div className="hr-excede"><AlertTriangle size={13} /> Se pasa {kilos(Math.abs(h.carga.sobra_kg ?? 0))} de la capacidad</div>
                             )}
 
-                            {h.pedidos.map(p => (
+                            {h.pedidos.map(p => {
+                              const emitido = p.im_factura_numero != null || !!p.facturado_at;
+                              return (
                                 <div className="hr-hoja-ped" key={p.im_comprobante_id}>
                                     <div>
-                                        <div className="hr-ped-cli">{p.cliente_nombre ?? `Cliente`}</div>
+                                        <div className="hr-ped-cli">
+                                            <span>{p.cliente_nombre ?? `Cliente`}</span>
+                                            {/* Lo que se emitió queda a la vista: es el registro de qué salió de
+                                                este presupuesto, y en IM ese vínculo no existe. */}
+                                            {emitido && (
+                                                <span className="hr-badge facturada" title="Comprobantes emitidos en InfoManager">
+                                                    <CheckCircle2 size={11} /> FA {p.im_factura_numero ?? '—'}
+                                                    {p.im_remito_numero != null && ` · RE ${p.im_remito_numero}`}
+                                                </span>
+                                            )}
+                                        </div>
                                         <div className="hr-ped-meta">
                                             PR {p.im_numero ?? '—'} · {kilos(Number(p.kg ?? 0))}
                                             {p.saldo_anterior != null
@@ -514,11 +538,27 @@ export function HojasRutaView() {
                                                 : <span className="hr-sinpeso" title="No se pudo traer el saldo: va en blanco en la hoja impresa"> · sin saldo</span>}
                                         </div>
                                     </div>
-                                    <button className="hr-icono" title="Sacar de la hoja" onClick={() => void quitar(p.im_comprobante_id)} disabled={trabajando}>
+                                    <button
+                                        className="hr-icono"
+                                        title={emitido
+                                            ? 'Ya se facturó: no se puede sacar de la hoja sin perder el registro de qué comprobante salió'
+                                            : 'Sacar de la hoja'}
+                                        onClick={() => void quitar(p.im_comprobante_id)}
+                                        disabled={trabajando || emitido}
+                                    >
                                         <X size={14} />
                                     </button>
                                 </div>
-                            ))}
+                              );
+                            })}
+
+                            {/* 🔴 El único botón del panel que emite algo irreversible. Aparece sólo
+                                cuando queda algo por facturar, y abre la confirmación con el detalle. */}
+                            {!!h.pedidos.length && h.pedidos.some(p => !p.facturado_at) && (
+                                <button className="hr-btn facturar" onClick={() => setFacturando(h)} disabled={trabajando}>
+                                    <Receipt size={15} /> Facturar {h.pedidos.filter(p => !p.facturado_at).length} pedidos
+                                </button>
+                            )}
 
                             {!!seleccionados.length && (
                                 <button className="hr-btn asignar" onClick={() => void asignar(h.id)} disabled={trabajando}>
@@ -531,6 +571,18 @@ export function HojasRutaView() {
             </div>
 
             {imprimiendo && <ImprimirHoja hojaId={imprimiendo} onClose={() => setImprimiendo(null)} />}
+
+            {facturando && (
+                <FacturarHoja
+                    hojaId={facturando.id}
+                    numero={facturando.numero}
+                    onClose={huboCambios => {
+                        setFacturando(null);
+                        // Se emitió algo: las hojas se releen para mostrar los comprobantes que salieron.
+                        if (huboCambios) void cargarHojas();
+                    }}
+                />
+            )}
 
             {/* Barra de selección: siempre a la vista mientras haya algo elegido. */}
             {!!seleccionados.length && (

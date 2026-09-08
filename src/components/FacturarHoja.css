@@ -1,0 +1,81 @@
+/* Confirmación de facturación. Misma paleta que el resto (vars de index.css), pero con el rojo
+   bien presente: es la única pantalla del panel que emite algo irreversible. */
+
+.fac-overlay {
+    position: fixed; inset: 0; z-index: 2100;
+    background: rgba(26, 18, 8, 0.55);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 1.2rem 0.8rem; overflow-y: auto; -webkit-overflow-scrolling: touch;
+}
+
+.fac-modal {
+    width: 100%; max-width: 720px; margin: auto;
+    background: var(--color-surface); color: var(--color-text);
+    border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
+    padding: 0.9rem 1rem 1.1rem;
+    display: flex; flex-direction: column; gap: 0.7rem;
+}
+
+.fac-head { display: flex; align-items: center; gap: 0.5rem; color: var(--color-primary); }
+.fac-head h2 { font-size: 1rem; font-weight: 700; margin: 0; }
+.fac-cerrar { margin-left: auto; border: none; background: transparent; color: var(--color-text-muted); cursor: pointer; padding: 0.25rem; }
+.fac-cerrar:disabled { opacity: 0.4; cursor: default; }
+
+.fac-cargando { display: flex; align-items: center; gap: 0.5rem; padding: 1.6rem 0.5rem; color: var(--color-text-muted); font-size: 0.88rem; }
+
+/* Avisos: ámbar el informativo, rojo el que dice que esto no se deshace. */
+.fac-alerta {
+    display: flex; align-items: flex-start; gap: 0.5rem;
+    background: #fdf0d5; color: #8a5a00; border: 1px solid #EEC045;
+    padding: 0.6rem 0.8rem; border-radius: var(--radius-md); font-size: 0.85rem; line-height: 1.35;
+}
+.fac-alerta.grave, .fac-alerta.error { background: #fbe9e7; color: #8a2a1a; border-color: #d98b7a; }
+.fac-alerta svg { flex: none; margin-top: 0.1rem; }
+.fac-alerta ul { margin: 0.3rem 0 0; padding-left: 1.1rem; }
+.fac-alerta li { margin-bottom: 0.15rem; }
+
+.fac-resumen {
+    display: flex; flex-wrap: wrap; gap: 0.4rem 1.4rem;
+    padding: 0.6rem 0.8rem; background: var(--color-bg);
+    border: 1px solid var(--color-border); border-radius: var(--radius-md);
+    font-size: 0.84rem; color: var(--color-text-muted);
+}
+.fac-num { font-weight: 700; font-size: 1.05rem; color: var(--color-primary); margin-right: 0.25rem; }
+.fac-resumen small { color: var(--color-text-muted); }
+
+.fac-tabla { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.fac-tabla th {
+    text-align: left; font-weight: 600; font-size: 0.75rem; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--color-text-muted);
+    border-bottom: 1px solid var(--color-border); padding: 0.3rem 0.4rem;
+}
+.fac-tabla td { padding: 0.35rem 0.4rem; border-bottom: 1px solid var(--color-border); vertical-align: middle; }
+.fac-tabla .n { text-align: right; white-space: nowrap; }
+.fac-pr { color: var(--color-text-muted); white-space: nowrap; }
+
+/* Los que no se facturan se ven apagados: la fila dice sola que ahí no pasa nada. */
+.fac-fila.no_se_puede { opacity: 0.55; }
+.fac-sale { font-weight: 600; color: var(--color-primary); }
+.fac-sale.parcial { color: #8a5a00; }
+.fac-no { color: #8a2a1a; font-weight: 600; }
+.fac-hecho { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--color-primary); font-weight: 600; }
+
+.fac-nota { font-size: 0.78rem; color: var(--color-text-muted); line-height: 1.4; margin: 0; }
+
+.fac-acciones { display: flex; gap: 0.5rem; justify-content: flex-end; flex-wrap: wrap; }
+.fac-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem;
+    border: none; font-family: inherit; font-weight: 600; font-size: 0.86rem;
+    padding: 0.5rem 1rem; border-radius: 25px; cursor: pointer;
+}
+.fac-btn.ghost { background: transparent; color: var(--color-text-muted); border: 1px solid var(--color-border); }
+/* Verde de la marca, como el resto de los botones que confirman. El rojo está en el aviso: si
+   el botón también fuera rojo, la advertencia dejaría de destacarse. */
+.fac-btn.emitir { background: linear-gradient(135deg, #06652F 0%, #03481F 100%); color: #EEC045; }
+.fac-btn:disabled { opacity: 0.55; cursor: default; }
+
+@media (max-width: 640px) {
+    .fac-modal { padding: 0.8rem 0.7rem 1rem; }
+    .fac-tabla { font-size: 0.78rem; }
+    .fac-acciones .fac-btn { flex: 1; }
+}
