@@ -73,7 +73,7 @@ export async function pendientesDelDia(req: Request & { user?: JwtPayload }, res
     // `?dias=N` para incluir los vigentes de días anteriores. El default es 0 porque la
     // pantalla tiene que abrir rápido; el aviso de que hay pedidos viejos lo da /arrastre.
     const dias = Math.min(Math.max(Number(req.query.dias) || 0, 0), VENTANA_DIAS);
-    const armado = await armarVistaDelDia(fecha, dias);
+    const armado = await armarVistaDelDia(fecha, dias, req.query.refrescar === '1');
     res.json({ ok: true, fecha, dias, ...armado });
   } catch (err: any) {
     console.error('[pendientesDelDia]', err?.message);
@@ -92,7 +92,27 @@ export async function pendientesDelDia(req: Request & { user?: JwtPayload }, res
  * (miraba sólo la fecha exacta y se perdía 166 pedidos en silencio), así que la salida no es
  * elegir entre las dos: el día abre rápido y los anteriores se piden cuando hacen falta.
  */
-async function armarVistaDelDia(fecha: string, dias = 0) {
+/**
+ * La vista del día, cacheada un rato corto.
+ *
+ * Armarla cuesta varios segundos contra IM (ventas del día + renglones + catálogo + clientes) y
+ * la oficina entra y sale de la pantalla todo el tiempo. 90 segundos alcanzan para que moverse
+ * por el panel sea instantáneo sin que se note el retraso: un pedido que entra aparece en el
+ * refresco siguiente, y el botón Actualizar saltea el cache.
+ */
+const VISTA_TTL_MS = 90_000;
+const _vistaCache = new Map<string, { at: number; datos: any }>();
+
+/** El cache se tira cuando algo lo deja viejo: se asignó o se sacó un pedido. */
+function invalidarVista(fecha?: string) {
+  if (!fecha) { _vistaCache.clear(); return; }
+  for (const k of [..._vistaCache.keys()]) if (k.startsWith(fecha + '|')) _vistaCache.delete(k);
+}
+
+async function armarVistaDelDia(fecha: string, dias = 0, forzar = false) {
+  const clave = `${fecha}|${dias}`;
+  const hit = _vistaCache.get(clave);
+  if (!forzar && hit && Date.now() - hit.at < VISTA_TTL_MS) return hit.datos;
   {
     // 🪤 Esto miraba SÓLO la fecha exacta y se perdía la mayoría de los pedidos. Medido el
     // 07/09/2026: había 225 presupuestos vigentes y el panel mostraba 59. Los otros 166 eran
@@ -217,7 +237,7 @@ async function armarVistaDelDia(fecha: string, dias = 0) {
       };
     });
 
-    return {
+    const datos = {
       pendientes: filas.filter(f => !f.hoja_id),
       asignados: filas.filter(f => f.hoja_id),
       // Para que la pantalla pueda mostrar "3 pedidos para revisar" sin recorrer todo.
@@ -229,6 +249,8 @@ async function armarVistaDelDia(fecha: string, dias = 0) {
       sin_zona: filas.filter(f => f.cod_zona == null).length,
       de_otros_dias: filas.filter(f => f.de_otro_dia && !f.hoja_id).length,
     };
+    _vistaCache.set(clave, { at: Date.now(), datos });
+    return datos;
   }
 }
 
@@ -748,6 +770,7 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
       ({ error } = await sb().from('hojas_ruta_pedidos').upsert(sinTotal, { onConflict: 'im_comprobante_id' }));
     }
     if (error) { res.status(500).json({ error: error.message }); return; }
+    invalidarVista(String(hoja.fecha).slice(0, 10));
     res.json({
       ok: true, agregados: filas.length,
       sin_saldo: filas.filter(f => f.saldo_anterior == null).length,
@@ -811,5 +834,6 @@ export async function quitarPedido(req: Request & { user?: JwtPayload }, res: Re
   const { error } = await sb().from('hojas_ruta_pedidos')
     .delete().eq('im_comprobante_id', String(req.params.comprobanteId));
   if (error) { res.status(500).json({ error: error.message }); return; }
+  invalidarVista();   // el pedido volvió a estar libre y la lista quedó vieja
   res.json({ ok: true });
 }

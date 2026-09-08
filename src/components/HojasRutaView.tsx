@@ -106,29 +106,35 @@ export function HojasRutaView() {
         if (h.ok) setHojas(d?.hojas ?? []);
     }, [fecha]);
 
-    /** Los pendientes. Esto sí va a IM y tarda: se pide sólo cuando cambia el día. */
-    const cargar = useCallback(async () => {
+    /**
+     * Los pendientes: esto sí va a IM y tarda unos segundos.
+     *
+     * 🔑 Las hojas y los camiones se piden APARTE y se pintan apenas llegan, sin esperar a IM.
+     * Antes la pantalla quedaba en blanco hasta que volvía todo junto, y lo primero que la
+     * oficina quiere ver —las hojas que ya armó— sale de nuestra base en milisegundos.
+     */
+    const cargar = useCallback(async (refrescar = false) => {
         setCargando(true); setError(null);
+        // Lo rápido primero, sin await: la pantalla se dibuja mientras IM contesta.
+        void cargarHojas();
+        void fetch('/api/hojas-ruta/camiones', { headers: authHeaders() })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d?.camiones) setCamiones(d.camiones); })
+            .catch(() => { /* sin la flota igual se puede armar la hoja */ });
         try {
-            const [p, h, c] = await Promise.all([
-                fetch(`/api/hojas-ruta/pendientes?fecha=${fecha}&dias=${dias}`, { headers: authHeaders() }),
-                fetch(`/api/hojas-ruta?fecha=${fecha}`, { headers: authHeaders() }),
-                fetch('/api/hojas-ruta/camiones', { headers: authHeaders() }),
-            ]);
+            const p = await fetch(
+                `/api/hojas-ruta/pendientes?fecha=${fecha}&dias=${dias}${refrescar ? '&refrescar=1' : ''}`,
+                { headers: authHeaders() });
             const dp = await p.json().catch(() => null);
             if (!p.ok) throw new Error(dp?.error ?? 'No se pudieron traer los pedidos');
-            const dh = await h.json().catch(() => null);
-            const dc = await c.json().catch(() => null);
             setPendientes(dp.pendientes ?? []);
-            setHojas(dh?.hojas ?? []);
-            setCamiones(dc?.camiones ?? []);
             setSel(new Set());
         } catch (e: any) {
             setError(e?.message ?? 'Error de conexión');
         } finally {
             setCargando(false);
         }
-    }, [fecha, dias]);
+    }, [fecha, dias, cargarHojas]);
 
     useEffect(() => { void cargar(); }, [cargar]);
 
@@ -313,7 +319,7 @@ export function HojasRutaView() {
                     Fecha
                     <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} />
                 </label>
-                <button className="hr-btn ghost" onClick={() => void cargar()} disabled={cargando}>
+                <button className="hr-btn ghost" onClick={() => void cargar(true)} disabled={cargando}>
                     <RefreshCw size={15} className={cargando ? 'spin' : ''} /> Actualizar
                 </button>
                 <div className="hr-resumen">
