@@ -132,3 +132,10 @@
 .pr-avisos.grave { background: #fbe9e7; color: #a33b26; border-color: #d98b7a; }
 /* Stock que no alcanza para lo que se pide. */
 .pr-tabla .pr-falta { color: #a33b26; font-weight: 700; }
+
+/* 🔑 "Más caro que la lista" es un COMENTARIO, no una alerta (Mati, 08/09/2026): vender más
+   caro de lo que habilita la cantidad es decisión del vendedor. Lo único que la empresa mide
+   es que no se venda por debajo de su precio, y eso ya va en rojo. Mismo criterio que la app
+   de vendedores (`.ped-aviso.cliente`), para que las dos pantallas digan lo mismo. */
+.pr-chip.nota { background: var(--color-bg); color: var(--color-text-muted); border-color: var(--color-border); }
+.pr-badge.nota { background: var(--color-bg); color: var(--color-text-muted); border: 1px solid var(--color-border); }

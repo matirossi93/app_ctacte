@@ -217,9 +217,14 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                             <AlertTriangle size={13} /> {resumen.pierde_margen} por debajo de lista
                         </span>
                     )}
+                    {/* 🔑 Mati (08/09/2026): vender MÁS CARO de lo que corresponde **no es un
+                        incumplimiento**, es decisión del vendedor — *"dejáselo solo como
+                        comentario"*. Lo único que la empresa mide es que no se venda por debajo
+                        del precio que pone. Por eso va en gris: el color fuerte queda para lo
+                        que sí hay que corregir. Mismo criterio que la app de vendedores. */}
                     {(resumen?.cobra_de_mas ?? 0) > 0 && (
-                        <span className="pr-chip" title="Al cliente le están cobrando más caro de lo que le corresponde">
-                            {resumen.cobra_de_mas} le cobran de más
+                        <span className="pr-chip nota" title="El vendedor cobró más caro de lo que habilita la cantidad. No es un error: es su decisión. Se muestra por si conviene revisarlo con el cliente.">
+                            {resumen.cobra_de_mas} más caro que la lista
                         </span>
                     )}
                     {(resumen?.con_cantidad_rara ?? 0) > 0 && (
@@ -271,7 +276,13 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                         {p.gravedad?.pierde_margen > 0 && (
                                             <span className="pr-badge grave"><AlertTriangle size={11} /> por debajo de lista</span>
                                         )}
-                                        {p.gravedad?.pierde_margen === 0 && p.avisos.length > 0 && (
+                                        {/* Más caro que la lista: comentario, no alerta (ver el chip de arriba). */}
+                                        {p.gravedad?.pierde_margen === 0 && p.gravedad?.cobra_de_mas > 0 && (
+                                            <span className="pr-badge nota" title="Se le cobró más caro de lo que habilita la cantidad. Es decisión del vendedor.">más caro</span>
+                                        )}
+                                        {/* Y lo que queda sin clasificar sigue siendo "mirá esto": son los
+                                            descuentos fuera de tope, que sí son un problema. */}
+                                        {p.gravedad?.pierde_margen === 0 && p.gravedad?.cobra_de_mas === 0 && p.avisos.length > 0 && (
                                             <span className="pr-badge aviso">revisar</span>
                                         )}
                                         {p.avisos_cantidad?.length > 0 && (

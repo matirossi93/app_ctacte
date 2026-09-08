@@ -225,3 +225,6 @@ button.hr-badge { cursor: pointer; font-family: inherit; }
 /* `.hr-btn.chico` lleva margin-left:auto para el botón "Nueva" del encabezado; acá los dos
    botones van juntos a la izquierda. */
 .hr-hoja-pie .hr-btn.chico { margin-left: 0; flex: 1; }
+
+/* Comentario, no alerta: ver PresupuestosView.css. */
+.hr-chip-aviso.nota { background: var(--color-bg); color: var(--color-text-muted); border-color: var(--color-border); }

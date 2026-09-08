@@ -420,9 +420,11 @@ export function HojasRutaView() {
                             <AlertTriangle size={13} /> {pierdeMargen} por debajo de lista
                         </span>
                     )}
+                    {/* Comentario, no alerta: vender más caro es decisión del vendedor
+                        (Mati, 08/09/2026). Mismo criterio que Presupuestos y la app de vendedores. */}
                     {cobraDeMas > 0 && (
-                        <span className="hr-chip-aviso" title="Al cliente le están cobrando más caro de lo que le corresponde por la cantidad">
-                            {cobraDeMas} le cobran de más
+                        <span className="hr-chip-aviso nota" title="Se les cobró más caro de lo que habilita la cantidad. No es un error: es decisión del vendedor.">
+                            {cobraDeMas} más caro que la lista
                         </span>
                     )}
                 </div>
