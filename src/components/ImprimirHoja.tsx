@@ -17,7 +17,7 @@ import './ImprimirHoja.css';
  *     cada cantidad separada: cada una es un paquete a preparar.
  */
 
-interface Comprobante { im_numero: number | null; bultos: number; kg: number; total: number; facturado: boolean }
+interface Comprobante { im_numero: number | null; im_remito_numero?: number | null; bultos: number; kg: number; total: number; facturado: boolean }
 interface ClienteFila {
     cod_cliente: number; cliente_nombre: string | null; saldo_anterior: number | null;
     comprobantes: Comprobante[]; total: number; bultos: number; kg: number;
@@ -78,58 +78,71 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
             {datos && que === 'ruta' && (
                 <div className="imp-hoja">
                     <div className="imp-head">
-                        <div className="imp-head-l">
-                            <div><b>Transporte:</b> {datos.hoja.transporte || '—'}</div>
-                            <div><b>Detalle:</b></div>
+                        <div className="imp-head-marca">
+                            <img src="/logo.svg" alt="" onError={e => { (e.target as HTMLImageElement).src = '/logo.png'; }} />
+                            <div>
+                                <div className="imp-empresa">Semillero El Manantial</div>
+                                <div className="imp-doc">Hoja de ruta</div>
+                            </div>
                         </div>
-                        <div className="imp-head-c">
-                            <div className="imp-nro">Nro Hoja: {datos.hoja.numero}</div>
-                            <div>Turno: {datos.hoja.turno || '—'}</div>
+                        <div className="imp-head-nro">
+                            <div className="imp-nro">N° {datos.hoja.numero}</div>
+                            <div className="imp-fecha">{fechaCorta(datos.hoja.fecha)}</div>
                         </div>
-                        <div className="imp-head-r">Fecha: {fechaCorta(datos.hoja.fecha)}</div>
+                    </div>
+
+                    <div className="imp-datos">
+                        <span><b>Transporte</b> {datos.hoja.transporte || '—'}</span>
+                        <span><b>Turno</b> {datos.hoja.turno || '—'}</span>
+                        {datos.hoja.camion && <span><b>Camión</b> {datos.hoja.camion}</span>}
+                        <span><b>Clientes</b> {datos.totales.clientes}</span>
+                        <span><b>Bultos</b> {num(datos.totales.bultos)}</span>
+                        <span><b>Kilos</b> {num(datos.totales.kg)}</span>
                     </div>
 
                     <table className="imp-tabla">
                         <thead>
                             <tr>
-                                <th>Fecha</th><th>Nro. Comp.</th><th className="n">Cantidad</th>
-                                <th className="n">Cantidad UME</th><th className="n">Imp. Total</th>
-                                <th>Cliente</th><th className="n">Imp. cobrado</th><th className="n">Saldo</th>
+                                <th>Cliente</th><th className="c">Comprob.</th><th className="n">Bultos</th>
+                                <th className="n">Kilos</th><th className="n">Importe</th>
+                                <th className="n">Cobrado</th><th className="n">Saldo anterior</th>
                             </tr>
                         </thead>
-                        <tbody>
-                            {datos.clientes.map(c => (
-                                <>
-                                    {c.comprobantes.map((x, i) => (
-                                        <tr key={c.cod_cliente + '-' + i}>
-                                            <td>{fechaCorta(datos.hoja.fecha)}</td>
-                                            <td>{x.im_numero ?? '—'}</td>
-                                            <td className="n">{num(x.bultos)}</td>
-                                            <td className="n">{num(x.kg)}</td>
-                                            <td className="n">{money(x.total)}</td>
-                                            <td>{i === 0 ? c.cliente_nombre : ''}</td>
-                                            <td className="n escribir"></td>
-                                            <td className="n escribir"></td>
-                                        </tr>
-                                    ))}
-                                    <tr className="imp-total-cli" key={c.cod_cliente + '-tot'}>
-                                        <td colSpan={4}>Total por cliente:</td>
-                                        <td className="n">{money(c.total)}</td>
-                                        <td></td>
+                        {/* 🪤 Cada cliente es su propio <tbody>: así el navegador NO parte un
+                            cliente entre dos páginas al imprimir, y las filas no se cruzan.
+                            Antes iban todas en un <tbody> con fragments sin key. */}
+                        {datos.clientes.map(c => (
+                            <tbody className="imp-grupo" key={c.cod_cliente}>
+                                {c.comprobantes.map((x, i) => (
+                                    <tr key={c.cod_cliente + '-' + (x.im_numero ?? i)}>
+                                        <td>{i === 0 ? <b>{c.cliente_nombre}</b> : ''}</td>
+                                        <td className="c">{x.im_remito_numero ?? x.im_numero ?? '—'}</td>
+                                        <td className="n">{num(x.bultos)}</td>
+                                        <td className="n">{num(x.kg)}</td>
+                                        <td className="n">{money(x.total)}</td>
                                         <td className="n escribir"></td>
-                                        {/* El saldo anterior YA IMPRESO: es lo que hoy escriben a mano. */}
-                                        <td className="n saldo">{c.saldo_anterior != null ? money(c.saldo_anterior) : ''}</td>
+                                        <td className="n escribir"></td>
                                     </tr>
-                                </>
-                            ))}
-                        </tbody>
+                                ))}
+                                <tr className="imp-total-cli">
+                                    <td colSpan={2}>{c.comprobantes.length > 1 ? `Total (${c.comprobantes.length} comprobantes)` : 'Total'}</td>
+                                    <td className="n">{num(c.bultos)}</td>
+                                    <td className="n">{num(c.kg)}</td>
+                                    <td className="n">{money(c.total)}</td>
+                                    <td className="n escribir"></td>
+                                    {/* El saldo anterior YA IMPRESO: es lo que hoy escriben a mano. */}
+                                    <td className="n saldo">{c.saldo_anterior != null ? money(c.saldo_anterior) : '—'}</td>
+                                </tr>
+                            </tbody>
+                        ))}
                         <tfoot>
                             <tr>
-                                <td colSpan={2}>{datos.totales.clientes} clientes · {datos.totales.comprobantes} comp.</td>
+                                <td colSpan={2}>TOTAL · {datos.totales.clientes} clientes</td>
                                 <td className="n">{num(datos.totales.bultos)}</td>
                                 <td className="n">{num(datos.totales.kg)}</td>
                                 <td className="n">{money(datos.totales.total)}</td>
-                                <td colSpan={3}>{datos.hoja.camion ?? ''}</td>
+                                <td className="n escribir"></td>
+                                <td className="n escribir"></td>
                             </tr>
                         </tfoot>
                     </table>
@@ -145,9 +158,24 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
             {datos && que === 'fraccionado' && (
                 <div className="imp-hoja">
                     <div className="imp-head">
-                        <div className="imp-head-l"><b>A FRACCIONAR</b></div>
-                        <div className="imp-head-c"><div className="imp-nro">Hoja {datos.hoja.numero}</div></div>
-                        <div className="imp-head-r">Fecha: {fechaCorta(datos.hoja.fecha)}</div>
+                        <div className="imp-head-marca">
+                            <img src="/logo.svg" alt="" onError={e => { (e.target as HTMLImageElement).src = '/logo.png'; }} />
+                            <div>
+                                <div className="imp-empresa">Semillero El Manantial</div>
+                                <div className="imp-doc">A fraccionar</div>
+                            </div>
+                        </div>
+                        <div className="imp-head-nro">
+                            <div className="imp-nro">N° {datos.hoja.numero}</div>
+                            <div className="imp-fecha">{fechaCorta(datos.hoja.fecha)}</div>
+                        </div>
+                    </div>
+
+                    <div className="imp-datos">
+                        <span><b>Productos</b> {datos.fraccionado_totales.productos}</span>
+                        <span><b>Paquetes</b> {datos.fraccionado_totales.paquetes}</span>
+                        <span><b>Kilos</b> {num(datos.fraccionado_totales.kg)}</span>
+                        {datos.hoja.transporte && <span><b>Transporte</b> {datos.hoja.transporte}</span>}
                     </div>
 
                     {!datos.fraccionado.length && <p className="imp-nota">Esta hoja no lleva nada para fraccionar.</p>}
@@ -159,9 +187,12 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
                         <tbody>
                             {datos.fraccionado.map(f => (
                                 <tr key={f.descripcion}>
-                                    <td>{f.descripcion}</td>
-                                    {/* Cada cantidad es UN paquete: no se suman entre sí. */}
-                                    <td className="cants">{f.cantidades.map(c => num(c)).join('   ·   ')}</td>
+                                    <td className="prod">{f.descripcion}</td>
+                                    {/* Cada cantidad es UN paquete: van separadas y en cajas,
+                                        para que el que prepara pueda tildarlas una por una. */}
+                                    <td className="cants">
+                                        {f.cantidades.map((c, i) => <span className="paq" key={i}>{num(c)}</span>)}
+                                    </td>
                                     <td className="n">{f.paquetes}</td>
                                     <td className="n">{num(f.kg)}</td>
                                 </tr>

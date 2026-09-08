@@ -92,6 +92,21 @@ export function HojasRutaView() {
     /** Qué hoja se está imprimiendo. */
     const [imprimiendo, setImprimiendo] = useState<string | null>(null);
 
+    /**
+     * Las hojas solas. Sale de Supabase: es instantáneo.
+     *
+     * 🔑 Va SEPARADA de los pendientes a propósito. Antes cada acción —cambiar un camión,
+     * sacar un pedido— llamaba a una recarga que incluía la consulta a InfoManager, y la
+     * pantalla se quedaba ~7 segundos dura para guardar un dato que vive en nuestra base
+     * (Mati, 07/09/2026: "revisar y pulir la velocidad al interactuar con la página").
+     */
+    const cargarHojas = useCallback(async () => {
+        const h = await fetch(`/api/hojas-ruta?fecha=${fecha}`, { headers: authHeaders() });
+        const d = await h.json().catch(() => null);
+        if (h.ok) setHojas(d?.hojas ?? []);
+    }, [fecha]);
+
+    /** Los pendientes. Esto sí va a IM y tarda: se pide sólo cuando cambia el día. */
     const cargar = useCallback(async () => {
         setCargando(true); setError(null);
         try {
@@ -192,9 +207,12 @@ export function HojasRutaView() {
             if (!r.ok) { setAviso(d?.error ?? 'No se pudo crear la hoja'); return; }
             if (paraMeter.length && d?.hoja?.id) {
                 const ok = await mandarAHoja(d.hoja.id, paraMeter);
-                if (!ok) return;   // el error ya se mostró; la hoja queda creada y vacía
+                if (!ok) { await cargarHojas(); return; }   // el error ya se mostró
+                const ids = new Set(paraMeter.map(p => p.im_comprobante_id));
+                setPendientes(ps => ps.filter(p => !ids.has(p.im_comprobante_id)));
+                setSel(new Set());
             }
-            await cargar();
+            await cargarHojas();
         } finally { setTrabajando(false); }
     }
 
@@ -229,8 +247,13 @@ export function HojasRutaView() {
         if (!seleccionados.length) return;
         setTrabajando(true); setAviso(null);
         try {
-            await mandarAHoja(hojaId, seleccionados);
-            await cargar();
+            const ids = new Set(seleccionados.map(p => p.im_comprobante_id));
+            if (await mandarAHoja(hojaId, seleccionados)) {
+                // Se sacan de la lista acá mismo en vez de volver a pedírselos a IM.
+                setPendientes(ps => ps.filter(p => !ids.has(p.im_comprobante_id)));
+                setSel(new Set());
+            }
+            await cargarHojas();
         } finally { setTrabajando(false); }
     }
 
@@ -252,8 +275,13 @@ export function HojasRutaView() {
     async function quitar(comprobanteId: string) {
         setTrabajando(true); setAviso(null);
         try {
-            await pedir(`/api/hojas-ruta/pedidos/${comprobanteId}`, { method: 'DELETE' }, 'No se pudo sacar el pedido de la hoja');
-            await cargar();
+            if (await pedir(`/api/hojas-ruta/pedidos/${comprobanteId}`, { method: 'DELETE' }, 'No se pudo sacar el pedido de la hoja')) {
+                await cargarHojas();
+                // 🪤 El pedido vuelve a estar libre, pero sus datos (zona, avisos, peso) los
+                // arma el backend con IM. Se recarga la lista en segundo plano: la hoja ya se
+                // actualizó y la pantalla no espera.
+                void cargar();
+            }
         } finally { setTrabajando(false); }
     }
 
@@ -263,7 +291,7 @@ export function HojasRutaView() {
             await pedir(`/api/hojas-ruta/${hojaId}`, {
                 method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cambios),
             }, siFalla);
-            await cargar();
+            await cargarHojas();   // el camión o el turno viven en nuestra base: no hace falta ir a IM
         } finally { setTrabajando(false); }
     }
 
@@ -271,8 +299,10 @@ export function HojasRutaView() {
         if (!confirm(`¿Borrar la hoja ${numero}? Los pedidos vuelven a la lista de pendientes.`)) return;
         setTrabajando(true); setAviso(null);
         try {
-            await pedir(`/api/hojas-ruta/${hojaId}`, { method: 'DELETE' }, 'No se pudo borrar la hoja');
-            await cargar();
+            if (await pedir(`/api/hojas-ruta/${hojaId}`, { method: 'DELETE' }, 'No se pudo borrar la hoja')) {
+                await cargarHojas();
+                void cargar();     // los pedidos vuelven a pendientes, sin bloquear la pantalla
+            }
         } finally { setTrabajando(false); }
     }
 
