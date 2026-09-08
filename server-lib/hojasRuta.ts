@@ -227,7 +227,7 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
   if (frenaSiNoPuede(req, res)) return;
   try {
     const { data: hoja, error } = await sb().from('hojas_ruta')
-      .select('*, hojas_ruta_camiones(nombre, capacidad_kg), hojas_ruta_pedidos(*)')
+      .select('*, hojas_ruta_camiones(nombre, capacidad_kg), choferes(nombre), hojas_ruta_pedidos(*)')
       .eq('id', String(req.params.id)).eq('tenant_id', TENANT_ID).maybeSingle();
     if (error) { res.status(500).json({ error: error.message }); return; }
     if (!hoja) { res.status(404).json({ error: 'Hoja de ruta no encontrada' }); return; }
@@ -292,7 +292,12 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
       ok: true,
       hoja: {
         id: (hoja as any).id, numero: (hoja as any).numero, fecha: (hoja as any).fecha,
-        turno: (hoja as any).turno, transporte: (hoja as any).transporte,
+        turno: (hoja as any).turno,
+        // 🔑 Mati (08/09/2026): *"es el mismo dato: chofer y transportista"*. El chofer asignado
+        // manda, porque es el que se liquida; `transporte` queda como texto libre para las hojas
+        // viejas y para un flete de una sola vez que no está en la lista.
+        transporte: (hoja as any).choferes?.nombre ?? (hoja as any).transporte,
+        chofer: (hoja as any).choferes?.nombre ?? null,
         camion: (hoja as any).hojas_ruta_camiones?.nombre ?? null,
         capacidad_kg: (hoja as any).hojas_ruta_camiones?.capacidad_kg ?? null,
         estado: (hoja as any).estado,

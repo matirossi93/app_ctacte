@@ -207,3 +207,21 @@ button.hr-badge { cursor: pointer; font-family: inherit; }
 .hr-badge.facturada {
     background: rgba(6, 101, 47, 0.1); color: #06652F; border: 1px solid rgba(6, 101, 47, 0.35);
 }
+
+/* ─── Cierre del circuito: chofer, diferencias y archivado (08/09/2026) ────── */
+
+/* Una hoja cerrada ya volvió del reparto y entró en la liquidación: se apaga para que a
+   simple vista se distinga de las que todavía se están armando. */
+.hr-hoja.cerrada { opacity: 0.82; border-style: dashed; }
+.hr-badge.cerrada { background: var(--color-bg); color: var(--color-text-muted); border: 1px solid var(--color-border); }
+
+/* Sin chofer no se puede cerrar (no habría a quién liquidarle): se marca en ámbar. */
+.hr-hoja-datos select.sin-chofer { border-color: #EEC045; background: #fdf6e6; color: #8a5a00; }
+
+.hr-transporte-viejo { font-size: 0.72rem; color: var(--color-text-muted); }
+.hr-transporte-viejo b { color: var(--color-text); }
+
+.hr-hoja-pie { display: flex; gap: 0.4rem; margin-top: 0.15rem; }
+/* `.hr-btn.chico` lleva margin-left:auto para el botón "Nueva" del encabezado; acá los dos
+   botones van juntos a la izquierda. */
+.hr-hoja-pie .hr-btn.chico { margin-left: 0; flex: 1; }

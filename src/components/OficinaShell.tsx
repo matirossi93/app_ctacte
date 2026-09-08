@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Truck, LogOut, ChevronDown, ClipboardCheck, Scissors, Receipt } from 'lucide-react';
 import { clearToken, getUser } from '../utils/auth';
-import { HojasRutaView } from './HojasRutaView';
+import { EntregasView } from './EntregasView';
 import { PresupuestosView } from './PresupuestosView';
 import { FraccionadoView } from './FraccionadoView';
 import { FacturacionView } from './FacturacionView';
@@ -107,7 +107,7 @@ export function OficinaShell() {
                 {tab === 'presupuestos' && <PresupuestosView desde={desde} hasta={hasta} />}
                 {tab === 'fraccionado' && <FraccionadoView desde={desde} hasta={hasta} />}
                 {tab === 'facturacion' && <FacturacionView desde={desde} hasta={hasta} />}
-                {tab === 'hojas' && <HojasRutaView />}
+                {tab === 'hojas' && <EntregasView />}
             </main>
         </div>
     );

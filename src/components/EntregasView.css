@@ -1,0 +1,23 @@
+/* Sub-secciones de Entregas. Van abajo del header para que entren en el celular. */
+
+.en-root { display: flex; flex-direction: column; gap: 0.85rem; }
+
+.en-subtabs {
+    display: flex; gap: 0.3rem; flex-wrap: wrap;
+    border-bottom: 1px solid var(--color-border); padding-bottom: 0.45rem;
+}
+.en-subtabs button {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    border: 1px solid transparent; background: transparent; color: var(--color-text-muted);
+    font-family: inherit; font-weight: 600; font-size: 0.82rem;
+    padding: 0.35rem 0.75rem; border-radius: 25px; cursor: pointer;
+}
+.en-subtabs button:hover { background: var(--color-surface-hover); }
+.en-subtabs button.on {
+    background: var(--color-surface); border-color: var(--color-border); color: var(--color-primary);
+}
+
+/* En pantallas chicas las etiquetas se van y quedan los íconos: tres botones siempre entran. */
+@media (max-width: 480px) {
+    .en-subtabs button { padding: 0.35rem 0.6rem; font-size: 0.76rem; }
+}

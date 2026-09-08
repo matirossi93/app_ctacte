@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle, Truck, Plus, Loader2, X, Wand2, MapPin, Package,
-    ChevronRight, RefreshCw, Trash2, Printer, CheckCircle2,
+    ChevronRight, RefreshCw, Trash2, Printer, CheckCircle2, Store, Lock, Unlock, FileMinus,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import { ImprimirHoja } from './ImprimirHoja';
+import { AjustesHojaModal } from './AjustesHojaModal';
 import './HojasRutaView.css';
 
 /**
@@ -46,6 +47,9 @@ interface HojaPedido {
     im_comprobante_id: string;
     im_numero: number | null;
     cliente_nombre: string | null;
+    /** Hace falta para atar una nota de crédito: sólo se vincula a un pedido del MISMO cliente. */
+    cod_cliente: number;
+    total: number | null;
     saldo_anterior: number | null;
     bultos: number | null;
     kg: number | null;
@@ -62,12 +66,17 @@ interface Hoja {
     /** Derivado en el server: todos los pedidos de la hoja tienen sus comprobantes emitidos. */
     facturada: boolean;
     chofer: string | null;
+    /** El chofer al que se le va a liquidar esta hoja. */
+    chofer_id: string | null;
+    /** Cuándo se cerró. Una hoja cerrada ya volvió del reparto y entra en la liquidación. */
+    cerrada_at: string | null;
     pedidos: HojaPedido[];
     totales: { pedidos: number; bultos: number; kg: number };
     carga: { porcentaje: number | null; excedido: boolean; sobra_kg: number | null };
 }
 
 interface Camion { id: string; nombre: string; capacidad_kg: number }
+interface Chofer { id: string; nombre: string }
 
 const hoyISO = () => {
     const d = new Date(Date.now() - 3 * 60 * 60 * 1000);   // Argentina es UTC-3 fija
@@ -81,6 +90,8 @@ export function HojasRutaView() {
     const [pendientes, setPendientes] = useState<Pendiente[]>([]);
     const [hojas, setHojas] = useState<Hoja[]>([]);
     const [camiones, setCamiones] = useState<Camion[]>([]);
+    /** Los choferes activos (Mati: NIÑO, VICTOR, DANIEL, MARIO, ELVIO, EDUARDO). */
+    const [choferes, setChoferes] = useState<Chofer[]>([]);
     const [cargando, setCargando] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [sel, setSel] = useState<Set<string>>(new Set());
@@ -102,6 +113,8 @@ export function HojasRutaView() {
     const [panel, setPanel] = useState<'pedidos' | 'hojas'>('pedidos');
     /** Qué hoja se está imprimiendo. */
     const [imprimiendo, setImprimiendo] = useState<string | null>(null);
+    /** Qué hoja tiene abierto el panel de diferencias de entrega (notas de crédito). */
+    const [ajustandoId, setAjustandoId] = useState<string | null>(null);
 
     /**
      * Las hojas solas. Sale de Supabase: es instantáneo.
@@ -148,6 +161,17 @@ export function HojasRutaView() {
     }, [fecha, dias, cargarHojas]);
 
     useEffect(() => { void cargar(); }, [cargar]);
+
+    /**
+     * Los choferes. Se piden UNA sola vez: son seis y no cambian de un día para el otro, así que
+     * no tiene sentido volver a pedirlos cada vez que se cambia la fecha.
+     */
+    useEffect(() => {
+        fetch('/api/choferes', { headers: authHeaders() })
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d?.choferes) setChoferes(d.choferes); })
+            .catch(() => { /* sin la lista se puede armar la hoja igual, sólo no se asigna chofer */ });
+    }, []);
 
     /**
      * Cuántos pedidos vigentes quedaron de días anteriores.
@@ -312,6 +336,55 @@ export function HojasRutaView() {
         } finally { setTrabajando(false); }
     }
 
+    /**
+     * Cerrar la hoja: "esto ya se entregó".
+     *
+     * 🔴 Mati (08/09/2026): *"debería haber algún botón para guardar o cerrar la HR una vez que
+     * ya terminó el circuito de ella, para que se vaya archivando"*. No es sólo archivar: a
+     * partir de acá la hoja **entra en la liquidación del chofer**, y deja de poder tocarse.
+     */
+    async function cerrarHoja(h: Hoja) {
+        const cerrando = h.estado !== 'cerrada';
+        if (cerrando) {
+            if (!h.chofer_id) { setAviso(`Asignale un chofer a la hoja ${h.numero} antes de cerrarla: es a quien se le liquida.`); return; }
+            if (!confirm(`¿Cerrar la hoja ${h.numero}?\n\nEntra en la liquidación de ${h.chofer ?? 'el chofer'} y ya no se le pueden agregar ni sacar pedidos.`)) return;
+        } else if (!confirm(`¿Reabrir la hoja ${h.numero}?\n\nSale de la liquidación del mes hasta que se vuelva a cerrar.`)) {
+            return;
+        }
+        await editarHoja(h.id, { estado: cerrando ? 'cerrada' : 'abierta' },
+            cerrando ? 'No se pudo cerrar la hoja' : 'No se pudo reabrir la hoja');
+    }
+
+    /**
+     * Los pedidos que el cliente pasa a buscar: no salen en el camión.
+     *
+     * Mati (08/09/2026): *"hay algunos de esos pedidos que no van por hoja de ruta sino que los
+     * clientes pasan a retirar (son pocos)"*. Van a su propia lista, que se acumula por mes.
+     */
+    async function marcarRetiro() {
+        if (!seleccionados.length) return;
+        if (!confirm(`¿Marcar ${seleccionados.length} pedido(s) como retiro en sucursal?\n\nNo salen en ninguna hoja de ruta: quedan en la lista de retiros del mes.`)) return;
+        setTrabajando(true); setAviso(null);
+        try {
+            const ok = await pedir('/api/retiros', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    pedidos: seleccionados.map(p => ({
+                        im_comprobante_id: p.im_comprobante_id, im_numero: p.im_numero,
+                        cod_cliente: p.cod_cliente, cliente_nombre: p.cliente_nombre,
+                        fecha: p.fecha, total: p.total, bultos: p.bultos, kg: p.kg,
+                    })),
+                }),
+            }, 'No se pudieron marcar como retiro');
+            if (ok) {
+                setSel(new Set());
+                // Salen de pendientes: la lista se rehace contra IM, sin bloquear la pantalla.
+                void cargar();
+            }
+        } finally { setTrabajando(false); }
+    }
+
     async function borrarHoja(hojaId: string, numero: number) {
         if (!confirm(`¿Borrar la hoja ${numero}? Los pedidos vuelven a la lista de pendientes.`)) return;
         setTrabajando(true); setAviso(null);
@@ -469,41 +542,59 @@ export function HojasRutaView() {
                         <div className="hr-vacio"><Truck size={26} /><span>Todavía no hay hojas para este día.</span></div>
                     )}
 
-                    {hojas.map(h => (
-                        <div className={`hr-hoja${h.carga.excedido ? ' excedida' : ''}`} key={h.id}>
+                    {hojas.map(h => {
+                      // 🔒 Cerrada = ya volvió del reparto y se liquidó: no se le toca nada.
+                      const cerrada = h.estado === 'cerrada';
+                      return (
+                        <div className={`hr-hoja${h.carga.excedido ? ' excedida' : ''}${cerrada ? ' cerrada' : ''}`} key={h.id}>
                             <div className="hr-hoja-head">
                                 <span className="hr-hoja-num">Hoja {h.numero}</span>
-                                {h.facturada && (
+                                {cerrada && (
+                                    <span className="hr-badge cerrada" title="Cerrada: entró en la liquidación del chofer">
+                                        <Lock size={11} /> cerrada
+                                    </span>
+                                )}
+                                {h.facturada && !cerrada && (
                                     <span className="hr-badge facturada" title="Todos los pedidos de esta hoja tienen su factura y su remito">
                                         <CheckCircle2 size={11} /> facturada
                                     </span>
                                 )}
-                                <select value={h.camion_id ?? ''} onChange={e => void editarHoja(h.id, { camion_id: e.target.value || null }, 'No se pudo cambiar el camión')} disabled={trabajando}>
+                                <select value={h.camion_id ?? ''} onChange={e => void editarHoja(h.id, { camion_id: e.target.value || null }, 'No se pudo cambiar el camión')} disabled={trabajando || cerrada}>
                                     <option value="">Sin camión</option>
                                     {camiones.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                                 </select>
                                 <button className="hr-icono" title="Imprimir la hoja y el listado de fraccionado" onClick={() => setImprimiendo(h.id)} disabled={!h.pedidos.length}>
                                     <Printer size={14} />
                                 </button>
-                                <button className="hr-icono" title="Borrar la hoja" onClick={() => void borrarHoja(h.id, h.numero)} disabled={trabajando}>
+                                <button className="hr-icono" title="Borrar la hoja" onClick={() => void borrarHoja(h.id, h.numero)} disabled={trabajando || cerrada}>
                                     <Trash2 size={14} />
                                 </button>
                             </div>
 
-                            {/* Turno y transporte van impresos en la cabecera de la hoja de ruta
-                                ("Turno: Mañana · Transporte: Niño"), así que se cargan acá. */}
+                            {/* Turno y chofer van impresos en la cabecera de la hoja de ruta
+                                ("Turno: Mañana · Transporte: Niño"), así que se cargan acá.
+                                🔑 Chofer y transportista son el MISMO dato (Mati, 08/09/2026), y
+                                de él sale el pago: por eso es una lista y no un texto libre. */}
                             <div className="hr-hoja-datos">
-                                <select value={h.turno ?? ''} onChange={e => void editarHoja(h.id, { turno: e.target.value || null }, 'No se pudo cambiar el turno')} disabled={trabajando}>
+                                <select value={h.turno ?? ''} onChange={e => void editarHoja(h.id, { turno: e.target.value || null }, 'No se pudo cambiar el turno')} disabled={trabajando || cerrada}>
                                     <option value="">Turno…</option>
                                     <option value="Mañana">Mañana</option>
                                     <option value="Tarde">Tarde</option>
                                 </select>
-                                <input
-                                    type="text" placeholder="Transporte" defaultValue={h.transporte ?? ''}
-                                    onBlur={e => { if (e.target.value !== (h.transporte ?? '')) void editarHoja(h.id, { transporte: e.target.value || null }, 'No se pudo cambiar el transporte'); }}
-                                    disabled={trabajando}
-                                />
+                                <select
+                                    className={h.chofer_id ? '' : 'sin-chofer'}
+                                    value={h.chofer_id ?? ''}
+                                    onChange={e => void editarHoja(h.id, { chofer_id: e.target.value || null }, 'No se pudo asignar el chofer')}
+                                    disabled={trabajando || cerrada}
+                                >
+                                    <option value="">Sin chofer…</option>
+                                    {choferes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                                </select>
                             </div>
+                            {/* Hojas viejas cargadas con transporte a mano: el dato no se pierde. */}
+                            {!h.chofer_id && h.transporte && (
+                                <div className="hr-transporte-viejo">Transporte cargado a mano: <b>{h.transporte}</b></div>
+                            )}
 
                             {/* La barra es el dato que evita que se arme una hoja que no entra en el camión. */}
                             <div className="hr-carga">
@@ -555,24 +646,56 @@ export function HojasRutaView() {
                             })}
 
 
-                            {!!seleccionados.length && (
+                            {!!seleccionados.length && !cerrada && (
                                 <button className="hr-btn asignar" onClick={() => void asignar(h.id)} disabled={trabajando}>
                                     <ChevronRight size={15} /> Mandar {seleccionados.length} acá ({kilos(kgSel)})
                                 </button>
                             )}
+
+                            {/* El cierre del circuito: lo que volvió del reparto y el archivado.
+                                Sólo tiene sentido con la hoja armada. */}
+                            {!!h.pedidos.length && (
+                                <div className="hr-hoja-pie">
+                                    <button className="hr-btn ghost chico" onClick={() => setAjustandoId(h.id)} disabled={trabajando}>
+                                        <FileMinus size={14} /> Diferencias
+                                    </button>
+                                    <button className="hr-btn chico" onClick={() => void cerrarHoja(h)} disabled={trabajando}>
+                                        {cerrada ? <><Unlock size={14} /> Reabrir</> : <><Lock size={14} /> Cerrar hoja</>}
+                                    </button>
+                                </div>
+                            )}
                         </div>
-                    ))}
+                      );
+                    })}
                 </section>
             </div>
 
             {imprimiendo && <ImprimirHoja hojaId={imprimiendo} onClose={() => setImprimiendo(null)} />}
 
+            {/* Lo que volvió del reparto: las notas de crédito y el número final de la hoja. */}
+            {ajustandoId && (() => {
+                const h = hojas.find(x => x.id === ajustandoId);
+                if (!h) return null;
+                return (
+                    <AjustesHojaModal
+                        hojaId={h.id}
+                        numero={h.numero}
+                        pedidos={h.pedidos}
+                        onClose={() => setAjustandoId(null)}
+                        onCambio={() => void cargarHojas()}
+                    />
+                );
+            })()}
 
             {/* Barra de selección: siempre a la vista mientras haya algo elegido. */}
             {!!seleccionados.length && (
                 <div className="hr-barra-sel">
                     <span><b>{seleccionados.length}</b> pedidos · {kilos(kgSel)}</span>
                     <button className="hr-btn ghost" onClick={() => setSel(new Set())}>Deseleccionar</button>
+                    {/* Los que el cliente pasa a buscar: no salen en ninguna hoja. */}
+                    <button className="hr-btn ghost" onClick={() => void marcarRetiro()} disabled={trabajando}>
+                        <Store size={15} /> Retira el cliente
+                    </button>
                     <button className="hr-btn" onClick={() => void nuevaHoja(seleccionados[0]?.cod_zona ?? null, true)} disabled={trabajando}>
                         <Wand2 size={15} /> Nueva hoja con estos
                     </button>
