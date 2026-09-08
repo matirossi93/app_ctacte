@@ -51,7 +51,8 @@ import { cruceCarpetaHandler, exportCruceHandler } from './server-lib/cruceCarpe
 import { listRebotes, listRecargos, syncRebotesNow, syncRebotes } from './server-lib/rebotes.js';
 import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos, hermanosDeFamilia } from './server-lib/productGoals.js';
 import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, precioArticulo, catalogoPedido, validarListasPedido, editarPedido } from './server-lib/pedidos.js';
-import { pendientesDelDia, arrastreDelDia, impresionHoja, facturarHoja, previsualizarFacturacion, sugerenciaDelDia, listarHojas, listarCamiones, crearHoja, editarHoja, borrarHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
+import { pendientesDelDia, arrastreDelDia, impresionHoja, sugerenciaDelDia, listarHojas, listarCamiones, crearHoja, editarHoja, borrarHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
+import { tableroFacturacion, previsualizarFacturacion, facturarSeleccion } from './server-lib/facturarPresupuestos.js';
 import { listarPresupuestos, revisarPresupuesto, borrarRevision, detallePresupuesto, corregirCantidades, fraccionadoDelRango } from './server-lib/panelPresupuestos.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -657,6 +658,12 @@ app.post('/api/pedidos/:id/anular', requireJwt, (req: any, res) => anularPedido(
 // 🪤 Las rutas fijas van ANTES que las que llevan :id, o Express toma "camiones" como un id.
 // ── Etapa 1: revisión de presupuestos ────────────────────────────────────────
 // 🪤 `/fraccionado` va ANTES de `/:comprobanteId`: si no, Express lo toma como un id.
+// ── Etapa 2: facturación de lo aprobado ──────────────────────────────────────
+// 🪤 `/previa` va antes que cualquier ruta con parámetro del mismo prefijo.
+app.get('/api/facturacion/previa', requireJwt, (req: any, res) => previsualizarFacturacion(req, res));
+app.get('/api/facturacion', requireJwt, (req: any, res) => tableroFacturacion(req, res));
+app.post('/api/facturacion', requireJwt, (req: any, res) => facturarSeleccion(req, res));
+
 app.get('/api/presupuestos/fraccionado', requireJwt, (req: any, res) => fraccionadoDelRango(req, res));
 app.get('/api/presupuestos', requireJwt, (req: any, res) => listarPresupuestos(req, res));
 app.get('/api/presupuestos/:comprobanteId', requireJwt, (req: any, res) => detallePresupuesto(req, res));
@@ -673,8 +680,6 @@ app.get('/api/hojas-ruta', requireJwt, (req: any, res) => listarHojas(req, res))
 app.post('/api/hojas-ruta', requireJwt, (req: any, res) => crearHoja(req, res));
 app.post('/api/hojas-ruta/:id/pedidos', requireJwt, (req: any, res) => asignarPedidos(req, res));
 app.get('/api/hojas-ruta/:id/impresion', requireJwt, (req: any, res) => impresionHoja(req, res));
-app.get('/api/hojas-ruta/:id/facturacion', requireJwt, (req: any, res) => previsualizarFacturacion(req, res));
-app.post('/api/hojas-ruta/:id/facturar', requireJwt, (req: any, res) => facturarHoja(req, res));
 app.put('/api/hojas-ruta/:id', requireJwt, (req: any, res) => editarHoja(req, res));
 app.delete('/api/hojas-ruta/:id', requireJwt, (req: any, res) => borrarHoja(req, res));
 

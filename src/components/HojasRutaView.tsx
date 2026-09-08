@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle, Truck, Plus, Loader2, X, Wand2, MapPin, Package,
-    ChevronRight, RefreshCw, Trash2, Printer, Receipt, CheckCircle2,
+    ChevronRight, RefreshCw, Trash2, Printer, CheckCircle2,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import { ImprimirHoja } from './ImprimirHoja';
-import { FacturarHoja } from './FacturarHoja';
 import './HojasRutaView.css';
 
 /**
- * Armado de hojas de ruta. Reemplaza el panel de InfoManager.
+ * Armado de hojas de ruta: el ÚLTIMO paso del circuito. Reemplaza el panel de InfoManager.
+ *
+ * 📌 Acá ya no se factura (Mati, 08/09/2026: la hoja se arma *"con la factura y el remito
+ * hecho"*). La emisión vive en la sección Facturación; lo que llega acá viaja con su remito, y
+ * los comprobantes emitidos se muestran al lado de cada pedido.
  *
  * 🔑 LA DECISIÓN ES DE LA OFICINA, no del algoritmo (Mati, 07/09/2026: *"el criterio de cómo
  * asignar los camiones tiene que seguir siendo una decisión nuestra... por ahí quizás sí una
@@ -96,8 +99,6 @@ export function HojasRutaView() {
     const [panel, setPanel] = useState<'pedidos' | 'hojas'>('pedidos');
     /** Qué hoja se está imprimiendo. */
     const [imprimiendo, setImprimiendo] = useState<string | null>(null);
-    /** Qué hoja se está facturando. Es lo único irreversible del panel: va con su confirmación. */
-    const [facturando, setFacturando] = useState<Hoja | null>(null);
 
     /**
      * Las hojas solas. Sale de Supabase: es instantáneo.
@@ -552,13 +553,6 @@ export function HojasRutaView() {
                               );
                             })}
 
-                            {/* 🔴 El único botón del panel que emite algo irreversible. Aparece sólo
-                                cuando queda algo por facturar, y abre la confirmación con el detalle. */}
-                            {!!h.pedidos.length && h.pedidos.some(p => !p.facturado_at) && (
-                                <button className="hr-btn facturar" onClick={() => setFacturando(h)} disabled={trabajando}>
-                                    <Receipt size={15} /> Facturar {h.pedidos.filter(p => !p.facturado_at).length} pedidos
-                                </button>
-                            )}
 
                             {!!seleccionados.length && (
                                 <button className="hr-btn asignar" onClick={() => void asignar(h.id)} disabled={trabajando}>
@@ -572,17 +566,6 @@ export function HojasRutaView() {
 
             {imprimiendo && <ImprimirHoja hojaId={imprimiendo} onClose={() => setImprimiendo(null)} />}
 
-            {facturando && (
-                <FacturarHoja
-                    hojaId={facturando.id}
-                    numero={facturando.numero}
-                    onClose={huboCambios => {
-                        setFacturando(null);
-                        // Se emitió algo: las hojas se releen para mostrar los comprobantes que salieron.
-                        if (huboCambios) void cargarHojas();
-                    }}
-                />
-            )}
 
             {/* Barra de selección: siempre a la vista mientras haya algo elegido. */}
             {!!seleccionados.length && (

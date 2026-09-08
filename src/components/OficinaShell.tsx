@@ -1,27 +1,26 @@
 import { useState } from 'react';
-import { Truck, LogOut, ChevronDown, ClipboardCheck, Scissors } from 'lucide-react';
+import { Truck, LogOut, ChevronDown, ClipboardCheck, Scissors, Receipt } from 'lucide-react';
 import { clearToken, getUser } from '../utils/auth';
 import { HojasRutaView } from './HojasRutaView';
 import { PresupuestosView } from './PresupuestosView';
 import { FraccionadoView } from './FraccionadoView';
+import { FacturacionView } from './FacturacionView';
 import './OficinaShell.css';
 
 /**
  * El panel de la oficina, ordenado como el circuito real (Mati, 08/09/2026):
  *
- *   1. PRESUPUESTOS — el primer filtrado de Jorgelina: listas, cantidades, stock.
- *   2. FRACCIONADO  — lo que el sector prepara, y se hace ANTES de armar la hoja.
- *   3. HOJAS DE RUTA — el último paso, con la mercadería ya facturada.
- *
- * (La facturación va entre 1 y 3; hoy todavía cuelga de la hoja y se mueve a su lugar en la
- * etapa siguiente del rediseño.)
+ *   1. PRESUPUESTOS  — el primer filtrado de Jorgelina: listas, cantidades, stock.
+ *   2. FRACCIONADO   — lo que el sector prepara, y se hace ANTES de armar la hoja.
+ *   3. FACTURACIÓN   — sobre lo aprobado, y de ahí salen la factura y el remito.
+ *   4. HOJAS DE RUTA — el último paso, con la mercadería ya facturada.
  *
  * 🔑 Vive DENTRO de esta misma app a propósito: comparte login, usuarios, clientes, cartera y
  * catálogo. Dos apps separadas serían dos deploys, dos sesiones y dos lugares donde arreglar el
  * mismo bug. Si mañana quieren dominio propio, ese dominio apunta acá.
  */
 
-type Tab = 'presupuestos' | 'fraccionado' | 'hojas';
+type Tab = 'presupuestos' | 'fraccionado' | 'facturacion' | 'hojas';
 
 const hoyISO = () => {
     const d = new Date(Date.now() - 3 * 60 * 60 * 1000);   // Argentina es UTC-3 fija
@@ -33,7 +32,7 @@ export function OficinaShell() {
     const [tab, setTab] = useState<Tab>('presupuestos');
     const [menuAbierto, setMenuAbierto] = useState(false);
     /**
-     * El rango de días, compartido por Presupuestos y Fraccionado.
+     * El rango de días, compartido por Presupuestos, Fraccionado y Facturación.
      *
      * 🔑 Mati: *"el filtro de fecha tiene que ser por rangos, ya que Jorgelina ve franjas de
      * varios días para el armado de los pedidos"*. Arranca en el día de hoy: el rango largo se
@@ -42,7 +41,7 @@ export function OficinaShell() {
     const [desde, setDesde] = useState(hoyISO());
     const [hasta, setHasta] = useState(hoyISO());
 
-    const conRango = tab === 'presupuestos' || tab === 'fraccionado';
+    const conRango = tab !== 'hojas';
 
     return (
         <div className="of-root">
@@ -58,6 +57,9 @@ export function OficinaShell() {
                     </button>
                     <button className={tab === 'fraccionado' ? 'on' : ''} onClick={() => setTab('fraccionado')}>
                         <Scissors size={15} /> Fraccionado
+                    </button>
+                    <button className={tab === 'facturacion' ? 'on' : ''} onClick={() => setTab('facturacion')}>
+                        <Receipt size={15} /> Facturación
                     </button>
                     <button className={tab === 'hojas' ? 'on' : ''} onClick={() => setTab('hojas')}>
                         <Truck size={15} /> Hojas de ruta
@@ -79,7 +81,8 @@ export function OficinaShell() {
                 </div>
             </header>
 
-            {/* El rango vale para las dos primeras etapas: lo que se revisa es lo que se fracciona. */}
+            {/* El rango vale para las tres primeras etapas: lo que se revisa es lo que se fracciona y
+        lo que se factura. La hoja se arma por día y tiene su propio selector. */}
             {conRango && (
                 <div className="of-rango">
                     <label>
@@ -103,6 +106,7 @@ export function OficinaShell() {
             <main className="of-body">
                 {tab === 'presupuestos' && <PresupuestosView desde={desde} hasta={hasta} />}
                 {tab === 'fraccionado' && <FraccionadoView desde={desde} hasta={hasta} />}
+                {tab === 'facturacion' && <FacturacionView desde={desde} hasta={hasta} />}
                 {tab === 'hojas' && <HojasRutaView />}
             </main>
         </div>

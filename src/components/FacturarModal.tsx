@@ -2,17 +2,17 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, AlertTriangle, Loader2, Receipt, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
-import './FacturarHoja.css';
+import './FacturarModal.css';
 
 /**
- * Facturar una hoja de ruta: emite en InfoManager la factura y el remito de cada pedido, que es
- * lo que hoy Jorgelina hace a mano comprobante por comprobante.
+ * ETAPA 2: emitir en InfoManager la factura y el remito de los presupuestos elegidos, que es lo
+ * que hoy Jorgelina hace a mano comprobante por comprobante.
  *
  * 🔴 ES LO ÚNICO IRREVERSIBLE DE TODO EL PANEL. Una factura consume numeración fiscal y entra
  * en la cuenta corriente del cliente; el remito descuenta stock. Por eso la pantalla:
  *
  *  1. **Muestra primero qué va a salir**, comprobante por comprobante y con qué letra, sin
- *     emitir nada (`GET .../facturacion`). El botón recién aparece después de eso.
+ *     emitir nada (`GET /api/facturacion/previa`). El botón recién aparece después de eso.
  *  2. **Dice qué NO se puede facturar y por qué** (cliente sin condición de IVA, presupuesto
  *     anulado en IM) en vez de descubrirlo a mitad de camino.
  *  3. **Avisa qué pasa si IM no contesta**: se frena la hoja entera, porque no se sabe si esa
@@ -37,7 +37,6 @@ interface PedidoPrevio {
 }
 
 interface Previa {
-    hoja: { id: string; numero: number; fecha: string; estado: string; facturada_at: string | null };
     pedidos: PedidoPrevio[];
     a_emitir: {
         facturas: number; remitos: number; clientes: number; total: number;
@@ -60,21 +59,25 @@ interface Resultado {
 const money = (n: number) =>
     '$' + new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 
-export function FacturarHoja({ hojaId, numero, onClose }: { hojaId: string; numero: number; onClose: (huboCambios: boolean) => void }) {
+export function FacturarModal(
+    { ids, desde, hasta, onClose }:
+    { ids: string[]; desde: string; hasta: string; onClose: (huboCambios: boolean) => void },
+) {
+    const query = `ids=${ids.join(',')}&desde=${desde}&hasta=${hasta}`;
     const [previa, setPrevia] = useState<Previa | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [emitiendo, setEmitiendo] = useState(false);
     const [resultado, setResultado] = useState<Resultado | null>(null);
 
     useEffect(() => {
-        fetch(`/api/hojas-ruta/${hojaId}/facturacion`, { headers: authHeaders() })
+        fetch(`/api/facturacion/previa?${query}`, { headers: authHeaders() })
             .then(async r => {
                 const d = await r.json().catch(() => null);
                 if (!r.ok) throw new Error(d?.error ?? 'No se pudo revisar qué se puede facturar');
                 setPrevia(d);
             })
             .catch(e => setError(e?.message ?? 'Error de conexión'));
-    }, [hojaId]);
+    }, [query]);
 
     // Mientras se está emitiendo, cerrar la pestaña deja comprobantes emitidos a medias y sin
     // que nadie vea dónde quedó. El navegador pregunta antes de irse.
@@ -89,9 +92,9 @@ export function FacturarHoja({ hojaId, numero, onClose }: { hojaId: string; nume
         if (emitiendo) return;                       // un doble clic no emite dos veces
         setEmitiendo(true); setError(null);
         try {
-            const r = await fetch(`/api/hojas-ruta/${hojaId}/facturar`, {
+            const r = await fetch('/api/facturacion', {
                 method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({}),
+                body: JSON.stringify({ ids, desde, hasta }),
             });
             const d = await r.json().catch(() => null);
             if (!r.ok) throw new Error(d?.error ?? 'No se pudo facturar');
@@ -99,7 +102,7 @@ export function FacturarHoja({ hojaId, numero, onClose }: { hojaId: string; nume
         } catch (e: any) {
             // 🪤 Si se cortó la conexión con NUESTRO server, tampoco se sabe qué llegó a emitir:
             // el mensaje no puede decir "no se emitió nada".
-            setError(`${e?.message ?? 'Error de conexión'}. No se sabe qué llegó a emitirse: revisá la hoja y InfoManager antes de volver a intentar.`);
+            setError(`${e?.message ?? 'Error de conexión'}. No se sabe qué llegó a emitirse: revisá InfoManager antes de volver a intentar.`);
         } finally {
             setEmitiendo(false);
         }
@@ -115,7 +118,7 @@ export function FacturarHoja({ hojaId, numero, onClose }: { hojaId: string; nume
             <div className="fac-modal">
                 <div className="fac-head">
                     <Receipt size={17} />
-                    <h2>Facturar la hoja {numero}</h2>
+                    <h2>Facturar {ids.length} {ids.length === 1 ? 'pedido' : 'pedidos'}</h2>
                     <button className="fac-cerrar" onClick={cerrar} disabled={emitiendo} title={emitiendo ? 'Esperá a que termine de emitir' : 'Cerrar'}>
                         <X size={18} />
                     </button>
@@ -186,9 +189,9 @@ export function FacturarHoja({ hojaId, numero, onClose }: { hojaId: string; nume
                         )}
 
                         <p className="fac-nota">
-                            Se emite <b>de a un pedido por vez</b>. Si InfoManager deja de contestar, se frena la hoja
-                            ahí mismo: no se sabe si esa factura salió y reintentar podría facturarle dos veces al
-                            mismo cliente. Al terminar vas a ver qué se emitió y dónde se cortó.
+                            Se emite <b>de a un pedido por vez</b>. Si InfoManager deja de contestar, se frena
+                            ahí mismo y el resto no se emite: no se sabe si esa factura salió y reintentar podría
+                            facturarle dos veces al mismo cliente. Al terminar vas a ver qué se emitió y dónde se cortó.
                         </p>
 
                         <div className="fac-acciones">
