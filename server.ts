@@ -54,6 +54,7 @@ import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, 
 import { pendientesDelDia, arrastreDelDia, impresionHoja, sugerenciaDelDia, listarHojas, listarCamiones, crearHoja, editarHoja, borrarHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
 import { tableroFacturacion, previsualizarFacturacion, facturarSeleccion } from './server-lib/facturarPresupuestos.js';
 import { marcarRetiro, quitarRetiro, marcarRetirado, listarRetiros, resumenRetiros } from './server-lib/retirosSucursal.js';
+import { listarChoferes, liquidacionMensual } from './server-lib/liquidacionChoferes.js';
 import { listarPresupuestos, revisarPresupuesto, borrarRevision, detallePresupuesto, corregirCantidades, fraccionadoDelRango } from './server-lib/panelPresupuestos.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -659,6 +660,10 @@ app.post('/api/pedidos/:id/anular', requireJwt, (req: any, res) => anularPedido(
 // 🪤 Las rutas fijas van ANTES que las que llevan :id, o Express toma "camiones" como un id.
 // ── Etapa 1: revisión de presupuestos ────────────────────────────────────────
 // 🪤 `/fraccionado` va ANTES de `/:comprobanteId`: si no, Express lo toma como un id.
+// ── Choferes y lo que entregaron: de acá sale un pago ───────────────────────
+app.get('/api/choferes', requireJwt, (req: any, res) => listarChoferes(req, res));
+app.get('/api/liquidacion', requireJwt, (req: any, res) => liquidacionMensual(req, res));
+
 // ── Retiro en sucursal: lo que el cliente pasa a buscar y no sale en el camión ──
 // 🪤 `/resumen` va antes que `/:comprobanteId`, o Express lo toma como un id.
 app.get('/api/retiros/resumen', requireJwt, (req: any, res) => resumenRetiros(req, res));
