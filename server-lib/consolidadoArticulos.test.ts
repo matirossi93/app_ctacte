@@ -15,7 +15,7 @@ const CAT = new Map<number, any>([
 function pedido(over: Record<string, any> = {}) {
   return {
     im_comprobante_id: 'c1', im_numero: 58050, cod_cliente: 1,
-    cliente_nombre: 'ARON', revision_estado: null, ...over,
+    cliente_nombre: 'ARON', revision_estado: null, ya_salio: false, ...over,
   };
 }
 
@@ -98,9 +98,20 @@ describe('consolidado de artículos', () => {
 
   it('un artículo que no está en el catálogo no rompe: se lista con su código', async () => {
     const r = armarConsolidado(
-      [pedido()], new Map([['c1', [{ cod_articulo: 999, cantidad: 5 }]]]), CAT, new Map(),
+      [pedido()], new Map([['c1', [{ cod_articulo: 999, cantidad: 5 }]]]), CAT, new Map([[999, 5]]),
     );
-    expect(r.articulos[0]).toMatchObject({ cod_articulo: 999, descripcion: 'Artículo 999', stock: 0, falta: 5 });
+    expect(r.articulos[0]).toMatchObject({ cod_articulo: 999, descripcion: 'Artículo 999', stock: 5, falta: 0 });
+  });
+
+  it('🔴 un artículo que IM no nombra en el stock queda en "no se sabe", NO en cero', async () => {
+    // `/depositos/stock_por_deposito` devuelve ~563 filas contra 1.856 artículos habilitados.
+    // Con `?? 0` esos artículos salían con falta = todo lo pedido y, como la lista se ordena por
+    // faltante, aparecían PRIMEROS. Es el peor lugar posible para un dato inventado.
+    const r = armarConsolidado(
+      [pedido()], new Map([['c1', [{ cod_articulo: 1, cantidad: 50 }]]]), CAT, new Map([[2, 999]]),
+    );
+    expect(r.articulos[0]).toMatchObject({ cod_articulo: 1, stock: null, falta: null });
+    expect(r.totales.faltantes).toBe(0);
   });
 
   it('los renglones en cero o sin cantidad no cuentan', async () => {
@@ -112,6 +123,53 @@ describe('consolidado de artículos', () => {
     );
     expect(r.articulos).toHaveLength(1);
     expect(r.articulos[0].cod_articulo).toBe(2);
+  });
+
+  it('🔴 lo que YA SALIÓ del depósito no se cuenta: su remito ya descontó el stock', async () => {
+    // Si se contara, el faltante saldría al DOBLE: la mercadería está restada del stock y
+    // sumada en lo pedido a la vez.
+    const r = armarConsolidado(
+      [pedido({ ya_salio: true }), pedido({ im_comprobante_id: 'c2', cod_cliente: 2, cliente_nombre: 'MORELLI' })],
+      new Map([['c1', [{ cod_articulo: 1, cantidad: 300 }]], ['c2', [{ cod_articulo: 1, cantidad: 100 }]]]),
+      CAT, new Map([[1, 100]]),
+    );
+    expect(r.articulos[0]).toMatchObject({ pedido: 100, falta: 0, pedidos: 1 });
+    expect(r.articulos[0].quienes[0].cliente_nombre).toBe('MORELLI');
+  });
+
+  it('🔴 un pedido SIN facturar cuenta, esté donde esté: su mercadería no salió', async () => {
+    // Un retiro en sucursal marcado antes de facturar es un flujo normal. Si no se contara, esa
+    // demanda quedaría invisible y se le prometería a otro lo que está apartado.
+    const r = armarConsolidado(
+      [pedido({ ya_salio: false })],
+      new Map([['c1', [{ cod_articulo: 1, cantidad: 80 }]]]),
+      CAT, new Map([[1, 50]]),
+    );
+    expect(r.articulos[0]).toMatchObject({ pedido: 80, falta: 30 });
+  });
+
+  it('🔴 avisa cuántos pedidos quedaron sin renglones: el total está incompleto', async () => {
+    // Pasa de verdad: la vista trae renglones de 12 días como mucho y acepta rangos de 31, y
+    // además se traga con un warn el error de un día entero contra IM.
+    const r = armarConsolidado(
+      [pedido(), pedido({ im_comprobante_id: 'viejo', cod_cliente: 9, cliente_nombre: 'SIN RENGLONES' })],
+      new Map([['c1', [{ cod_articulo: 1, cantidad: 10 }]]]),
+      CAT, new Map([[1, 100]]),
+    );
+    expect(r.totales.sin_renglones).toBe(1);
+    expect(r.articulos[0].pedido).toBe(10);
+  });
+
+  it('🟠 marca los pedidos con una cantidad sospechosa: pueden estar inflando el artículo', async () => {
+    // "30 × MAIZ QUEBRADO X 30 KG" = 900 kg cuando querían 1 bulto. Un renglón así se lleva
+    // casi todo el reparto y deja sin nada a los pedidos correctos.
+    const r = armarConsolidado(
+      [pedido({ cantidad_dudosa: true })],
+      new Map([['c1', [{ cod_articulo: 1, cantidad: 900 }]]]),
+      CAT, new Map([[1, 100]]),
+    );
+    expect(r.articulos[0].quienes[0].cantidad_dudosa).toBe(true);
+    expect(r.totales.con_cantidad_dudosa).toBe(1);
   });
 
   it('sin pedidos devuelve vacío, no rompe', async () => {

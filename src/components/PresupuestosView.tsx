@@ -182,12 +182,19 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
      */
     async function guardarCantidades(p: Presupuesto) {
         const cambios = Object.entries(editado)
+            // 🪤 Un campo VACÍO no es un cero: `Number('')` da 0 y, desde que el cero da de baja
+            // el renglón, borrar el contenido del input para reescribirlo lo sacaba del pedido.
+            // El cero tiene que estar tipeado.
+            .filter(([, v]) => String(v).trim() !== '')
             .map(([id, v]) => ({ id: Number(id), cantidad: Number(String(v).replace(',', '.')) }))
             // 🔑 El cero ENTRA: es la forma de dar de baja un renglón (IM recalcula el total).
             .filter(c => Number.isFinite(c.cantidad) && c.cantidad >= 0);
         if (!cambios.length) { setAviso('No cambiaste ninguna cantidad.'); return; }
-        const bajas = cambios.filter(c => c.cantidad === 0).length;
-        if (bajas && !confirm(`Vas a sacar ${bajas} producto(s) del presupuesto (quedan en cantidad 0).\n\n¿Seguimos?`)) return;
+        const bajas = cambios.filter(c => c.cantidad === 0);
+        if (bajas.length) {
+            const nombres = bajas.map(b => (items ?? []).find(i => i.id === b.id)?.descripcion ?? `renglón ${b.id}`);
+            if (!confirm(`Vas a sacar del presupuesto:\n\n· ${nombres.join('\n· ')}\n\nQuedan en cantidad 0. ¿Seguimos?`)) return;
+        }
         setTrabajando(p.im_comprobante_id); setAviso(null);
         try {
             const r = await fetch(`/api/presupuestos/${p.im_comprobante_id}/cantidades`, {
@@ -407,15 +414,20 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                                         <td className="n">
                                                             {/* Sacar el producto = dejarlo en 0. Se aplica al guardar, junto
                                                                 con el resto, para no hacer un viaje a IM por renglón. */}
-                                                            <button
-                                                                className="pr-icono"
-                                                                title={enCero ? 'Volver a la cantidad original' : 'Sacar este producto del presupuesto'}
-                                                                onClick={() => setEditado(v => enCero
-                                                                    ? { ...v, [it.id]: String(it.cantidad) }
-                                                                    : { ...v, [it.id]: '0' })}
-                                                            >
-                                                                {enCero ? <RotateCcw size={14} /> : <Trash2 size={14} />}
-                                                            </button>
+                                                            {/* 🪤 Si el renglón YA venía en 0 no hay nada que deshacer: el
+                                                                botón dejaba todo igual pero habilitaba Guardar, y ese PUT
+                                                                deshacía la aprobación del presupuesto sin cambiar nada. */}
+                                                            {Number(it.cantidad) > 0 && (
+                                                                <button
+                                                                    className="pr-icono"
+                                                                    title={enCero ? 'Volver a la cantidad original' : 'Sacar este producto del presupuesto'}
+                                                                    onClick={() => setEditado(v => enCero
+                                                                        ? { ...v, [it.id]: String(it.cantidad) }
+                                                                        : { ...v, [it.id]: '0' })}
+                                                                >
+                                                                    {enCero ? <RotateCcw size={14} /> : <Trash2 size={14} />}
+                                                                </button>
+                                                            )}
                                                         </td>
                                                     </tr>
                                                   );

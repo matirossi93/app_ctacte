@@ -23,6 +23,17 @@ type Seccion = 'pedidos' | 'articulos';
 
 export function PresupuestosShell({ desde, hasta }: { desde: string; hasta: string }) {
     const [seccion, setSeccion] = useState<Seccion>('pedidos');
+    /**
+     * 🪤 La revisión NO se desmonta al cambiar de sección: se esconde.
+     *
+     * El flujo natural es marcar con el tacho qué sacar, pasar a "Por artículo" para ver si eso
+     * alcanza, y volver. Desmontando, al volver el presupuesto estaba cerrado y las marcas no
+     * estaban — trabajo perdido sin ningún aviso (auditoría del 08/09/2026).
+     *
+     * El consolidado sí espera a que lo visiten: consultarlo cuesta segundos contra InfoManager
+     * y no tiene por qué correr cuando nadie lo abrió.
+     */
+    const [visitoArticulos, setVisitoArticulos] = useState(false);
 
     return (
         <div className="ps-root">
@@ -30,13 +41,19 @@ export function PresupuestosShell({ desde, hasta }: { desde: string; hasta: stri
                 <button className={seccion === 'pedidos' ? 'on' : ''} onClick={() => setSeccion('pedidos')}>
                     <ClipboardCheck size={14} /> <span>Por pedido</span>
                 </button>
-                <button className={seccion === 'articulos' ? 'on' : ''} onClick={() => setSeccion('articulos')}>
+                <button className={seccion === 'articulos' ? 'on' : ''} onClick={() => { setSeccion('articulos'); setVisitoArticulos(true); }}>
                     <Boxes size={14} /> <span>Por artículo</span>
                 </button>
             </nav>
 
-            {seccion === 'pedidos' && <PresupuestosView desde={desde} hasta={hasta} />}
-            {seccion === 'articulos' && <ConsolidadoView desde={desde} hasta={hasta} />}
+            <div hidden={seccion !== 'pedidos'}>
+                <PresupuestosView desde={desde} hasta={hasta} />
+            </div>
+            {visitoArticulos && (
+                <div hidden={seccion !== 'articulos'}>
+                    <ConsolidadoView desde={desde} hasta={hasta} />
+                </div>
+            )}
         </div>
     );
 }

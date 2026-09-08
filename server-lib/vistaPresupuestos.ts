@@ -63,7 +63,11 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
       fetchArticulosCatalogo(),
       fetchClientesIMCached().catch(() => []),
       // Sin stock la pantalla igual sirve: se avisa que no se pudo consultar, no se inventa.
-      fetchStockPorDeposito(DEPOSITO_CONTROL).catch(() => null),
+      // 🪤 `forzar` va también acá: el cache de stock dura 10 minutos y sin esto el botón
+      // Actualizar refrescaba lo pedido en vivo contra un stock de hasta 10 minutos atrás. Los
+      // dos lados de la resta tienen que tener la misma edad, sobre todo después de facturar
+      // —que descuenta stock— que es justo cuando se aprieta el botón.
+      fetchStockPorDeposito(DEPOSITO_CONTROL, forzar).catch(() => null),
     ]);
 
     const porCliente = new Map(clientes.map((c: any) => [Number(c.cod_cliente), c]));
@@ -161,6 +165,21 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
       .select('im_comprobante_id').eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
     const enRetiro = new Set((retiros ?? []).map((r: any) => String(r.im_comprobante_id)));
 
+    /**
+     * 🔑 Y cuáles ya SALIERON del depósito, que es cosa distinta de "está en una hoja".
+     *
+     * El remito es el que mueve stock, y en el circuito nuevo se emite ANTES de armar la hoja:
+     * en toda esa ventana el presupuesto seguía figurando como pendiente. Para el consolidado
+     * eso significaba contar una demanda que el stock ya tenía descontada, o sea faltantes al
+     * doble. Auditoría del 08/09/2026.
+     */
+    const { data: facturados } = await sb().from('presupuestos_facturados')
+      .select('im_comprobante_id, im_remito_numero, facturado_at')
+      .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
+    const yaSalio = new Set((facturados ?? [])
+      .filter((f: any) => f.im_remito_numero != null || f.facturado_at != null)
+      .map((f: any) => String(f.im_comprobante_id)));
+
     const filas = presupuestos.map((p: any) => {
       const c = porCliente.get(Number(p.cod_cliente));
       const z = zonaDeCliente(c);
@@ -206,6 +225,8 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
         hoja_id: enHoja.get(String(p.id)) ?? null,
         // Lo pasa a buscar el cliente: no sale en ninguna hoja.
         en_retiro: enRetiro.has(String(p.id)),
+        // Su mercadería ya salió del depósito (hay remito), así que ya descontó stock.
+        ya_salio: yaSalio.has(String(p.id)),
         // La etapa 1: aprobado / observado / null (sin revisar).
         revision: revisionPor.get(String(p.id)) ?? null,
         // Los dos controles que pidió Mati además de las listas.
@@ -243,19 +264,21 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
        * sólo se contesta sumando primero.
        *
        * Sale de los renglones que ya se trajeron acá arriba: no cuesta ni una llamada más a IM.
-       * Y suma sólo los PENDIENTES: lo que ya está en una hoja o en retiro salió con su remito y
-       * por lo tanto ya descontó stock en InfoManager.
+       * Suma lo que TODAVÍA NO SALIÓ del depósito —lo demás ya está descontado del stock—, y
+       * eso lo decide el remito, no la hoja: se factura antes de armarla.
        */
       consolidado: armarConsolidado(
-        filas
-          .filter(f => !f.hoja_id && !f.en_retiro)
-          .map(f => ({
-            im_comprobante_id: f.im_comprobante_id,
-            im_numero: f.im_numero,
-            cod_cliente: f.cod_cliente,
-            cliente_nombre: f.cliente_nombre,
-            revision_estado: (f.revision as any)?.estado ?? null,
-          })),
+        // 🔑 Van TODOS: el que decide si compite por el stock es `ya_salio`, no dónde está.
+        filas.map(f => ({
+          im_comprobante_id: f.im_comprobante_id,
+          im_numero: f.im_numero,
+          cod_cliente: f.cod_cliente,
+          cliente_nombre: f.cliente_nombre,
+          revision_estado: (f.revision as any)?.estado ?? null,
+          ya_salio: f.ya_salio,
+          // "30 × MAIZ X 30 KG" = 900 kg: una cantidad así infla el total de su artículo.
+          cantidad_dudosa: f.avisos_cantidad.length > 0,
+        })),
         renglones,
         cat,
         stock,

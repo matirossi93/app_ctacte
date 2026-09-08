@@ -12,9 +12,18 @@
  * **no sirve para decidir a quién darle**: si hay 300 kg y tres clientes piden 200 cada uno, mirando
  * de a uno los tres parecen servibles. La pregunta sólo se contesta sumando todo primero.
  *
- * 🔑 Se suman los pedidos **pendientes**, no todos. Los que ya están en una hoja o en retiro
- * salieron con su remito y **ya descontaron stock en InfoManager**: contarlos otra vez restaría
- * dos veces la misma mercadería y mostraría faltantes que no existen.
+ * 🔑 Se suma lo que **todavía no salió del depósito**, que es lo único que compite por el stock
+ * que queda. Lo que ya tiene remito emitido descontó stock en InfoManager: contarlo otra vez
+ * restaría dos veces la misma mercadería.
+ *
+ * 🔄 El filtro ANTES era "no está en una hoja ni en retiro", y fallaba para los dos lados
+ * (auditoría del 08/09/2026):
+ *  · La hoja se arma DESPUÉS de facturar. En toda esa ventana el presupuesto facturado seguía
+ *    contando —y su remito ya había descontado stock—, así que el faltante salía al doble.
+ *  · Un retiro marcado ANTES de facturar (flujo soportado: la pantalla lo muestra como "sin
+ *    facturar") desaparecía del consolidado con su mercadería sin descontar, y esa demanda
+ *    invisible hacía que se le prometiera a otro lo que estaba apartado.
+ * Lo que decide es `im_remito_numero`, que es el hecho real: la mercadería salió o no salió.
  */
 
 /** Un renglón de IM, tal como lo junta `vistaDeRango`. */
@@ -29,8 +38,19 @@ export interface PedidoConsolidado {
   im_numero: number | null;
   cod_cliente: number;
   cliente_nombre: string;
-  /** null = sin revisar. Sirve para no repartirle a uno que quedó observado. */
+  /** null = sin revisar. Se muestra al lado de cada uno para decidir a quién postergar. */
   revision_estado: string | null;
+  /**
+   * 🔑 Su mercadería YA SALIÓ del depósito (tiene remito emitido), así que ya está descontada
+   * del stock y no compite por lo que queda.
+   */
+  ya_salio: boolean;
+  /**
+   * El control de cantidades marcó algo raro en este pedido (típico: cargaron kilos donde van
+   * bultos, "30 × MAIZ X 30 KG" = 900 kg). Un renglón así envenena la suma del artículo, así que
+   * se avisa donde se toma la decisión.
+   */
+  cantidad_dudosa?: boolean;
 }
 
 export interface QuienPidio {
@@ -40,6 +60,8 @@ export interface QuienPidio {
   cliente_nombre: string;
   cantidad: number;
   revision_estado: string | null;
+  /** Ver `PedidoConsolidado.cantidad_dudosa`: esta cantidad puede estar mal cargada. */
+  cantidad_dudosa: boolean;
   /** Qué le tocaría si se reparte lo que hay en proporción a lo pedido. */
   sugerido: number;
 }
@@ -74,11 +96,28 @@ export function armarConsolidado(
   renglonesPorComprobante: Map<string, RenglonConsolidado[]>,
   catalogo: Map<number, { descripcion?: string; unidad_de_medida?: string | null; equivalencia_um?: number | null }>,
   stock: Map<number, number> | null,
-): { articulos: FilaConsolidado[]; totales: { articulos: number; faltantes: number; sin_stock_consultado: boolean } } {
+): {
+  articulos: FilaConsolidado[];
+  totales: {
+    articulos: number; faltantes: number; sin_stock_consultado: boolean;
+    sin_renglones: number; con_cantidad_dudosa: number;
+  };
+} {
   const porArticulo = new Map<number, { pedido: number; quienes: QuienPidio[] }>();
+  /**
+   * 🔴 Cuántos pedidos quedaron sin renglones. No es cosmético: `vistaDeRango` sólo trae los
+   * renglones de los últimos 12 días con pedidos (23,7 s para 15 días contra IM) y acepta rangos
+   * de hasta 31, y además se traga con un warn el error de un día entero. Un pedido sin renglones
+   * suma CERO al consolidado sin ninguna señal — y los que se caen son los más viejos, o sea el
+   * arrastre. Hay que decir que el número está incompleto. Auditoría del 08/09/2026.
+   */
+  let sinRenglones = 0;
 
   for (const p of pedidos) {
-    const rs = renglonesPorComprobante.get(String(p.im_comprobante_id)) ?? [];
+    // Lo que ya salió del depósito no compite por el stock que queda: ya está descontado.
+    if (p.ya_salio) continue;
+    const rs = renglonesPorComprobante.get(String(p.im_comprobante_id));
+    if (!rs?.length) { sinRenglones += 1; continue; }
     // 🪤 El mismo artículo puede venir en DOS renglones del mismo presupuesto (el vendedor parte
     // la cantidad). Se acumula por pedido antes de listarlo, o el cliente aparecería dos veces y
     // el reparto sugerido saldría mal.
@@ -100,6 +139,7 @@ export function armarConsolidado(
         cliente_nombre: p.cliente_nombre,
         cantidad: redondear(cant),
         revision_estado: p.revision_estado,
+        cantidad_dudosa: p.cantidad_dudosa === true,
         sugerido: 0,     // se calcula abajo, cuando ya se sabe el total del artículo
       });
     }
@@ -108,7 +148,15 @@ export function armarConsolidado(
   const articulos: FilaConsolidado[] = [];
   for (const [cod, acc] of porArticulo) {
     const art = catalogo.get(cod);
-    const hay = stock ? (stock.get(cod) ?? 0) : null;
+    /**
+     * 🪤 `stock.get(cod) ?? 0` decía "no hay ni uno" cuando en realidad IM **no nombró** ese
+     * artículo: `/depositos/stock_por_deposito` devuelve ~563 filas contra 1.856 artículos
+     * habilitados. El artículo quedaba con falta = todo lo pedido y, como la lista se ordena
+     * por faltante y arranca filtrada en "sólo lo que no alcanza", era lo PRIMERO que se veía.
+     * El resto del panel ya hacía lo correcto (`panelPresupuestos.ts`, `vistaPresupuestos.ts`):
+     * sin dato se muestra "—", no un cero. Auditoría del 08/09/2026.
+     */
+    const hay = stock ? (stock.get(cod) ?? null) : null;
     const pedido = redondear(acc.pedido);
     // 🪤 `falta` sólo tiene sentido si se pudo consultar el stock. Con stock negativo (pasa: hay
     // diferencias de inventario) falta TODO lo pedido, no una parte.
@@ -150,6 +198,10 @@ export function armarConsolidado(
       articulos: articulos.length,
       faltantes: articulos.filter(a => (a.falta ?? 0) > 0).length,
       sin_stock_consultado: stock == null,
+      /** Pedidos cuyos renglones no se pudieron traer: el total está incompleto por abajo. */
+      sin_renglones: sinRenglones,
+      /** Pedidos con una cantidad sospechosa: pueden estar inflando el total de su artículo. */
+      con_cantidad_dudosa: pedidos.filter(p => !p.ya_salio && p.cantidad_dudosa).length,
     },
   };
 }

@@ -91,3 +91,7 @@
     .co-art-nom { flex-basis: 100%; }
     .co-num { align-items: flex-start; }
 }
+
+/* Una cantidad que no cierra con el formato del producto ("30 bolsas de 30 kg" = 900 kg):
+   infla el total del artículo y se lleva casi todo el reparto. */
+.co-dudosa { color: #a33b26; font-weight: 700; }
