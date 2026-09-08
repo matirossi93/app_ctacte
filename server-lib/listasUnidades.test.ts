@@ -55,3 +55,35 @@ describe('umbrales en unidades sobre artículos que IM no marca como bolsa', () 
     expect(r.avisos[0].severidad).toBe('margen');
   });
 });
+
+
+describe('una lista alcanzable por dos caminos a la vez', () => {
+  // Hoy la planilla no trae ninguna línea así, pero el índice único lo permite desde que se
+  // amplió a (destino, lista, condicion). Si algún día una lista se habilita por la promo
+  // general Y por una cantidad propia, el techo y el derecho tienen que seguir siendo cosas
+  // distintas: la promo habilita, la cantidad obliga.
+  const bolsa = clasificarArticulo({ cod_articulo: 400, descripcion: 'GANAVE X 20 KG', subrubro: 'Ganave', equivalencia_um: 20 });
+  const cat = new Map([[400, bolsa]]);
+  const reglas = [
+    R({ match_valor: 'Ganave', cod_lista: 12, condicion: 'libre' }),
+    R({ match_valor: 'Ganave', cod_lista: 13, condicion: 'min', umbral: 10, unidad: 'unidad', ambito: 'linea' }),
+    R({ match_valor: 'Ganave', cod_lista: 13, condicion: 'promo_general', umbral: 10, unidad: 'bulto', ambito: 'pedido' }),
+  ];
+
+  it('🔴 si sólo entra por la promo general, L2 queda habilitada pero NO es un derecho', () => {
+    // 10 bultos surtidos disparan la promo, pero no llegó a las 10 unidades de la línea.
+    const r = evaluarPedido([
+      { cod_articulo: 400, cantidad: 4, cod_lista: 12 },
+      { cod_articulo: 401, cantidad: 6, cod_lista: 12 },
+    ], new Map([...cat, [401, clasificarArticulo({ cod_articulo: 401, descripcion: 'OTRO X 20 KG', subrubro: 'Otro', equivalencia_um: 20 })]]), reglas);
+    expect(r.promo_general).toBe(true);
+    // Está en L1 pudiendo ir a L2: es decisión suya, no un error.
+    expect(r.avisos[0].severidad).toBe('ok');
+  });
+
+  it('🔴 si llegó a la cantidad propia, L2 SÍ es un derecho y venderle en L1 le cobra de más', () => {
+    const r = evaluarPedido([{ cod_articulo: 400, cantidad: 10, cod_lista: 12 }], cat, reglas);
+    expect(r.avisos[0].severidad).toBe('cliente');
+    expect(r.avisos[0].lista_sugerida).toBe(13);
+  });
+});
