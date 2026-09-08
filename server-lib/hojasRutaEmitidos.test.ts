@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
- * Lo que ya se emitió no se borra de la hoja de ruta.
+ * Qué se puede tocar de una hoja de ruta y qué no.
  *
- * La fila es el único registro de qué comprobante salió de qué presupuesto —facturar por API no
- * deja ese vínculo en InfoManager—, así que sacarla habilita una segunda factura al mismo
- * cliente. La facturación en sí se prueba en `facturarPresupuestos.test.ts`.
+ * 🔄 La regla cambió con el circuito nuevo (08/09/2026): lo facturado ya no vive en la hoja sino
+ * en `presupuestos_facturados`, así que sacar un pedido de una hoja abierta no pierde ningún
+ * rastro. Lo que no se toca es una hoja CERRADA: ésa ya volvió del reparto y es la base de la
+ * liquidación del chofer. La facturación se prueba en `facturarPresupuestos.test.ts`.
  */
 
 vi.hoisted(() => { process.env.INFOMANAGER_CLIENT_SECRET = 'test-secret'; });
@@ -115,34 +116,54 @@ beforeEach(() => {
   m.desconfirmarPresupuesto.mockResolvedValue({ ok: true });
 });
 
-describe('lo emitido no se puede borrar de la hoja', () => {
-  it('🔴 sacar de la hoja un pedido ya facturado se rechaza', async () => {
-    // La fila es el ÚNICO registro de qué factura salió de qué presupuesto: facturar por API no
-    // deja el vínculo en IM. Borrarla es perder el rastro y habilitar una segunda factura.
+describe('una hoja cerrada no se toca', () => {
+  it('🔴 no se saca un pedido de una hoja cerrada: ya se liquidó', async () => {
+    // Cerrar la hoja es decir "esto se entregó", y de ahí sale el pago del chofer.
     tablas['hojas_ruta_pedidos'] = {
-      data: { id: 'p1', im_factura_numero: 50360, facturado_at: '2026-09-08T12:00:00Z', hoja_id: 'h1' },
+      data: { hoja_id: 'h1', im_numero: 58050, hojas_ruta: { numero: 3395, estado: 'cerrada' } },
       error: null,
     };
 
     const r = await llamar(quitarPedido, { params: { comprobanteId: '58700637' } });
 
     expect(r.status).toBe(409);
-    expect(r.body.error).toMatch(/50360/);
+    expect(r.body.error).toMatch(/cerrada/i);
     expect(escrituras.some(e => e.op === 'delete')).toBe(false);
   });
 
-  it('🔴 borrar una hoja con comprobantes emitidos se rechaza', async () => {
-    tablas['hojas_ruta_pedidos'] = { data: [{ id: 'p1', im_factura_numero: 50360, facturado_at: 'x' }], error: null };
+  it('🔴 de una hoja ABIERTA sí se saca, aunque el pedido ya esté facturado', async () => {
+    // 🔄 Antes esto se bloqueaba, porque la fila de la hoja era el único registro de qué
+    // factura salió de qué presupuesto. Desde que eso vive en `presupuestos_facturados`, sacar
+    // el pedido no pierde nada — y con el guard viejo la hoja quedaba inutilizable, porque en
+    // el circuito nuevo TODO lo que entra a una hoja está facturado.
+    tablas['hojas_ruta_pedidos'] = {
+      data: { hoja_id: 'h1', im_numero: 58050, hojas_ruta: { numero: 3395, estado: 'abierta' } },
+      error: null,
+    };
 
+    const r = await llamar(quitarPedido, { params: { comprobanteId: '58700637' } });
+
+    expect(r.status).toBe(200);
+    expect(escrituras.some(e => e.op === 'delete')).toBe(true);
+  });
+
+  it('🔴 una hoja cerrada tampoco se borra', async () => {
+    tablas['hojas_ruta'] = { data: { numero: 3395, estado: 'cerrada' }, error: null };
     const r = await llamar(borrarHoja, { params: { id: 'h1' } });
-
     expect(r.status).toBe(409);
     expect(escrituras.some(e => e.op === 'delete')).toBe(false);
   });
 
-  it('una hoja sin facturar se borra normal', async () => {
-    tablas['hojas_ruta_pedidos'] = { data: [{ id: 'p1', facturado_at: null, im_factura_numero: null }], error: null };
+  it('una hoja abierta se borra normal, y lo facturado sigue registrado aparte', async () => {
+    tablas['hojas_ruta'] = { data: { numero: 3396, estado: 'abierta' }, error: null };
     const r = await llamar(borrarHoja, { params: { id: 'h1' } });
     expect(r.status).toBe(200);
+    // Se borran las filas de la hoja, nunca `presupuestos_facturados`.
+    expect(escrituras.filter(e => e.tabla === 'presupuestos_facturados')).toHaveLength(0);
+  });
+
+  it('una hoja que no existe da 404', async () => {
+    tablas['hojas_ruta'] = { data: null, error: null };
+    expect((await llamar(borrarHoja, { params: { id: 'nope' } })).status).toBe(404);
   });
 });

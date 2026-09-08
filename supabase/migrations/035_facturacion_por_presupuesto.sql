@@ -36,12 +36,18 @@ create table if not exists presupuestos_facturados (
   -- veces al mismo cliente.
   facturado_at timestamptz,
   facturado_por uuid references usuarios(id),
+  -- 🔑 Cuándo se RECLAMÓ este presupuesto para facturarlo, antes de emitir nada. El rol
+  -- `administrativo` lo tienen dos personas: si las dos aprietan Facturar sobre la misma
+  -- selección, las dos leen "no está facturado" y emiten. La fila se inserta ANTES de llamar a
+  -- InfoManager, así el índice único de abajo hace que la segunda choque en vez de duplicar.
+  -- Un reclamo sin factura y viejo es un intento que se cortó: se puede retomar.
+  reclamado_at timestamptz,
   created_at timestamptz not null default now()
 );
 
 -- Un presupuesto se factura UNA vez.
 create unique index if not exists presupuestos_facturados_comp_uidx
-  on presupuestos_facturados (im_comprobante_id);
+  on presupuestos_facturados (tenant_id, im_comprobante_id);
 -- Para encontrar rápido lo facturado que todavía no entró en ninguna hoja.
 create index if not exists presupuestos_facturados_fecha_idx
   on presupuestos_facturados (tenant_id, fecha desc);
@@ -50,3 +56,10 @@ create index if not exists presupuestos_facturados_remito_idx
 
 comment on table presupuestos_facturados is
   'Que factura y remito salieron de cada presupuesto. En InfoManager ese vinculo no existe cuando se emite por API: este es el unico registro.';
+
+-- ── Row Level Security ───────────────────────────────────────────────────────
+-- 🔴 Esta tabla es el ÚNICO registro del vínculo factura↔presupuesto. Sin RLS quedaría legible
+-- —y borrable— con la anon key, que es pública. Mismo patrón que el resto del proyecto (032).
+alter table presupuestos_facturados enable row level security;
+drop policy if exists presupuestos_facturados_service on presupuestos_facturados;
+create policy presupuestos_facturados_service on presupuestos_facturados for all to service_role using (true) with check (true);

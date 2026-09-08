@@ -78,7 +78,7 @@ export async function marcarRetiro(req: Request & { user?: JwtPayload }, res: Re
       };
     });
 
-    const { error } = await sb().from('retiros_sucursal').upsert(filas, { onConflict: 'im_comprobante_id' });
+    const { error } = await sb().from('retiros_sucursal').upsert(filas, { onConflict: 'tenant_id,im_comprobante_id' });
     if (error) { res.status(500).json({ error: error.message }); return; }
     invalidarVista();
     res.json({ ok: true, agregados: filas.length, sin_facturar: filas.filter(f => !f.im_remito_numero).length });

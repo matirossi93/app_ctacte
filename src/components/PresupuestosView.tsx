@@ -128,6 +128,10 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
             if (!r.ok) { setAviso(d?.error ?? 'No se pudo guardar la revisión'); return; }
             pintarRevision(p.im_comprobante_id, { estado, observacion: observacion ?? null, revisado_at: new Date().toISOString() });
             setObservando(null); setMotivo('');
+        } catch (e: any) {
+            // Sin esto, con el server caído el botón se re-habilitaba y no pasaba nada: parecía
+            // que se había guardado.
+            setAviso(e?.message ?? 'No se pudo guardar la revisión: sin conexión con el servidor');
         } finally { setTrabajando(null); }
     }
 
@@ -139,16 +143,31 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
             });
             if (!r.ok) { setAviso('No se pudo deshacer la revisión'); return; }
             pintarRevision(p.im_comprobante_id, null);
+        } catch (e: any) {
+            setAviso(e?.message ?? 'No se pudo deshacer la revisión: sin conexión con el servidor');
         } finally { setTrabajando(null); }
     }
 
-    async function abrirDetalle(p: Presupuesto) {
+    /** Trae los renglones de un presupuesto. Separado de abrir/cerrar para poder RECARGARLO. */
+    async function cargarDetalle(id: string) {
+        setItems(null); setEditado({});
+        try {
+            const r = await fetch(`/api/presupuestos/${id}`, { headers: authHeaders() });
+            const d = await r.json().catch(() => null);
+            if (!r.ok) throw new Error(d?.error ?? 'No se pudo abrir el detalle');
+            setItems(d.items ?? []);
+        } catch (e: any) {
+            // 🪤 Sin esto, un fetch que fallaba dejaba `items` en null y el spinner giraba para
+            // siempre, sin un solo mensaje.
+            setAviso(e?.message ?? 'Error de conexión al traer el detalle');
+            setAbierto(null);
+        }
+    }
+
+    function abrirDetalle(p: Presupuesto) {
         if (abierto === p.im_comprobante_id) { setAbierto(null); setItems(null); return; }
-        setAbierto(p.im_comprobante_id); setItems(null); setEditado({}); setAviso(null);
-        const r = await fetch(`/api/presupuestos/${p.im_comprobante_id}`, { headers: authHeaders() });
-        const d = await r.json().catch(() => null);
-        if (!r.ok) { setAviso(d?.error ?? 'No se pudo abrir el detalle'); setAbierto(null); return; }
-        setItems(d.items ?? []);
+        setAbierto(p.im_comprobante_id); setAviso(null);
+        void cargarDetalle(p.im_comprobante_id);
     }
 
     /**
@@ -171,10 +190,15 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
             });
             const d = await r.json().catch(() => null);
             if (!r.ok) { setAviso(d?.error ?? 'InfoManager no aceptó el cambio'); return; }
+            // (el catch de abajo cubre la caída de red)
             setEditado({});
-            setAviso(`Listo: ${d.actualizados} renglón(es) corregidos en InfoManager.`);
-            await abrirDetalle(p); await abrirDetalle(p);   // recarga el detalle ya corregido
+            setAviso(d.revision_reiniciada
+                ? `Listo: ${d.actualizados} renglón(es) corregidos. Como cambió el pedido, la aprobación se deshizo: revisalo de nuevo.`
+                : `Listo: ${d.actualizados} renglón(es) corregidos en InfoManager.`);
+            await cargarDetalle(p.im_comprobante_id);       // el detalle ya corregido
             void cargar(true);                              // y el importe del listado
+        } catch (e: any) {
+            setAviso(`${e?.message ?? 'Error de conexión'}. Fijate en InfoManager si el cambio entró antes de reintentar.`);
         } finally { setTrabajando(null); }
     }
 
@@ -239,7 +263,7 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                 return (
                     <div className={`pr-fila${rev ? ' ' + rev.estado : ''}`} key={p.im_comprobante_id}>
                         <div className="pr-fila-head">
-                            <button className="pr-abrir" onClick={() => void abrirDetalle(p)}>
+                            <button className="pr-abrir" onClick={() => abrirDetalle(p)}>
                                 <ChevronRight size={15} className={`pr-chevron${abiertoEste ? ' abierto' : ''}`} />
                                 <div className="pr-fila-info">
                                     <div className="pr-cli">

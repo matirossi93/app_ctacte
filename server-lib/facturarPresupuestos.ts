@@ -68,6 +68,11 @@ export interface PresupuestoAFacturar {
   im_remito_id?: string | null;
   im_remito_numero?: number | null;
   facturado_at?: string | null;
+  /** Ya existe la fila en `presupuestos_facturados` (aunque esté vacía: es un reclamo). */
+  tiene_fila?: boolean;
+  reclamado_at?: string | null;
+  /** Si el pedido salió de la app, su id: hay que marcarlo facturado del lado del vendedor. */
+  pedido_id?: string | null;
 }
 
 export interface Preparado {
@@ -132,6 +137,12 @@ export async function prepararFacturacion(
     const cab = cabeceras.get(String(f.im_comprobante_id));
     if (cab?.existe === false) return no(`${quien}: el presupuesto ya no está en InfoManager.`);
     if (cab?.anulada === true) return no(`${quien}: el presupuesto está ANULADO en InfoManager.`);
+    // 🪤 `null` en esos campos es "no pude preguntar", y NO es lo mismo que "está vigente"
+    // (`cabeceraComprobante` lo documenta así). La oficina anula presupuestos en IM todo el
+    // tiempo: emitir sin poder verificarlo deja una factura sin respaldo. Se cae del lado seguro.
+    if (cab?.existe !== true || cab?.anulada !== false) {
+      return no(`${quien}: no pude verificar en InfoManager si el presupuesto sigue vigente. Probá de nuevo en un rato.`);
+    }
 
     const items = renglonesPorComp.get(String(f.im_comprobante_id)) ?? [];
     if (!items.length) return no(`No pude traer los renglones del ${quien}. Facturalo a mano.`);
@@ -181,8 +192,13 @@ async function filasDe(ids: string[], desde: string, hasta: string): Promise<Pre
   const enVista = new Map<string, any>();
   for (const p of [...vista.pendientes, ...vista.asignados]) enVista.set(String(p.im_comprobante_id), p);
 
-  const { data: emitidos } = await sb().from('presupuestos_facturados')
-    .select('*').eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids.slice(0, 400));
+  // 🔴 ESTA CONSULTA ES EL ÚNICO GUARD CONTRA FACTURAR DOS VECES. Supabase no tira excepción
+  // cuando falla: devuelve `{ data: null, error }`. Ignorar ese error convierte "no pude
+  // preguntar" en "no hay nada facturado" y se emite todo de nuevo. Si no se puede leer, se
+  // corta antes de tocar InfoManager.
+  const { data: emitidos, error } = await sb().from('presupuestos_facturados')
+    .select('*').eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
+  if (error) throw new Error(`no pude leer qué se facturó ya (${error.message})`);
   const porId = new Map((emitidos ?? []).map((e: any) => [String(e.im_comprobante_id), e]));
 
   return ids.map((id) => {
@@ -203,19 +219,42 @@ async function filasDe(ids: string[], desde: string, hasta: string): Promise<Pre
       im_remito_id: e?.im_remito_id ?? null,
       im_remito_numero: e?.im_remito_numero ?? null,
       facturado_at: e?.facturado_at ?? null,
+      tiene_fila: !!e,
+      reclamado_at: e?.reclamado_at ?? e?.created_at ?? null,
+      pedido_id: p?.pedido_id ?? null,
       // El estado de la revisión: sólo se factura lo aprobado.
       ...(p ? { _revision: p.revision } : {}),
     } as any;
   });
 }
 
-/** `?desde=&hasta=` para ubicar los presupuestos elegidos. Sin eso, hoy. */
+/**
+ * `?desde=&hasta=` para ubicar los presupuestos elegidos. Sin eso, hoy.
+ *
+ * 🪤 Se acota al mismo tope que la etapa 1 (`MAX_RANGO_DIAS`): con rangos distintos, las dos
+ * pantallas hablarían de conjuntos distintos y cada una pagaría su propia consulta pesada a IM.
+ */
+const MAX_RANGO_DIAS = 31;
+
 function rango(req: Request): { desde: string; hasta: string } {
   const ok = (v: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) ? String(v) : null;
   const q = req.method === 'GET' ? req.query : req.body;
   const hasta = ok(q?.hasta) ?? ok(q?.desde) ?? new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
-  return { desde: ok(q?.desde) ?? hasta, hasta };
+  let desde = ok(q?.desde) ?? hasta;
+  if (desde > hasta) desde = hasta;
+  const tope = new Date(new Date(hasta + 'T12:00:00Z').getTime() - MAX_RANGO_DIAS * 864e5).toISOString().slice(0, 10);
+  if (desde < tope) desde = tope;
+  return { desde, hasta };
 }
+
+/**
+ * Tope de comprobantes por tanda.
+ *
+ * 🪤 No es estético: la consulta de lo ya facturado usa un `.in(...)`, y truncarla haría que los
+ * de más allá del tope vuelvan como "sin facturar" y se emitan de nuevo. Se rechaza en vez de
+ * cortar en silencio. Una tanda de 300 pedidos ya son ~10 minutos de emisión.
+ */
+const MAX_POR_TANDA = 300;
 
 function idsDe(req: Request): string[] {
   const q = req.method === 'GET' ? req.query : req.body;
@@ -235,6 +274,10 @@ export async function previsualizarFacturacion(req: Request & { user?: JwtPayloa
   try {
     const ids = idsDe(req);
     if (!ids.length) { res.status(400).json({ error: 'No elegiste ningún presupuesto.' }); return; }
+    if (ids.length > MAX_POR_TANDA) {
+      res.status(400).json({ error: `Elegiste ${ids.length} pedidos y el máximo por tanda es ${MAX_POR_TANDA}. Hacelo en varias tandas.` });
+      return;
+    }
     const { desde, hasta } = rango(req);
     const filas = await filasDe(ids, desde, hasta);
     const preparados = await prepararFacturacion(filas, '');
@@ -273,6 +316,38 @@ export async function previsualizarFacturacion(req: Request & { user?: JwtPayloa
 }
 
 /**
+ * Un reclamo sin factura vence a los 5 minutos: es un intento que se cortó a la mitad y hay que
+ * poder retomarlo. Ninguna emisión de UN comprobante tarda tanto.
+ */
+const RECLAMO_VENCE_MS = 5 * 60_000;
+
+/** Marca el presupuesto como "lo estoy facturando yo", antes de tocar InfoManager. */
+async function reclamar(f: PresupuestoAFacturar, base: Record<string, any>): Promise<{ ok: boolean; error?: string }> {
+  const ahora = new Date().toISOString();
+  if (f.tiene_fila) {
+    // Ya hay fila sin factura: o alguien está facturándolo ahora, o quedó de un intento cortado.
+    const edad = Date.now() - new Date(f.reclamado_at ?? 0).getTime();
+    if (Number.isFinite(edad) && edad < RECLAMO_VENCE_MS) {
+      return { ok: false, error: 'lo está facturando alguien más en este momento. Actualizá la pantalla antes de reintentar.' };
+    }
+    const { error } = await sb().from('presupuestos_facturados')
+      .update({ ...base, reclamado_at: ahora }).eq('im_comprobante_id', String(f.im_comprobante_id));
+    return error ? { ok: false, error: `no pude registrar el intento (${error.message})` } : { ok: true };
+  }
+  const { error } = await sb().from('presupuestos_facturados').insert({ ...base, reclamado_at: ahora });
+  // El índice único es el que frena a la segunda persona.
+  if (error) return { ok: false, error: 'otro usuario lo tomó primero. Actualizá la pantalla antes de reintentar.' };
+  return { ok: true };
+}
+
+/** Suelta el reclamo cuando la emisión falló, para poder reintentar sin esperar los 5 minutos. */
+async function soltarReclamo(f: PresupuestoAFacturar): Promise<void> {
+  const { error } = await sb().from('presupuestos_facturados')
+    .delete().eq('im_comprobante_id', String(f.im_comprobante_id)).is('im_factura_id', null);
+  if (error) console.warn(`[facturarSeleccion] no pude soltar el reclamo del ${f.im_comprobante_id}:`, error.message);
+}
+
+/**
  * POST /api/facturacion — emite factura y remito de los presupuestos elegidos.
  *
  * 🔴 Acá se emiten comprobantes REALES. Ver la cabecera del archivo.
@@ -282,8 +357,19 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
   try {
     const ids = idsDe(req);
     if (!ids.length) { res.status(400).json({ error: 'No elegiste ningún presupuesto.' }); return; }
+    if (ids.length > MAX_POR_TANDA) {
+      res.status(400).json({ error: `Elegiste ${ids.length} pedidos y el máximo por tanda es ${MAX_POR_TANDA}. Hacelo en varias tandas.` });
+      return;
+    }
     const { desde, hasta } = rango(req);
-    const filas = await filasDe(ids, desde, hasta);
+    let filas: PresupuestoAFacturar[];
+    try {
+      filas = await filasDe(ids, desde, hasta);
+    } catch (e: any) {
+      // Sin saber qué se emitió ya, no se emite NADA.
+      res.status(502).json({ error: `No pude preparar la facturación: ${e?.message ?? 'sin respuesta'}` });
+      return;
+    }
 
     // 🔴 Sólo lo aprobado en la etapa 1: facturar sin revisar es justo lo que este panel vino a
     // evitar. Lo que ya se facturó pasa igual (se saltea más abajo).
@@ -337,20 +423,37 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
       let facturaNumero: number | null = f.im_factura_numero ?? null;
       let tipoFactura = `FA ${p.letra ?? ''}`.trim();
       if (!f.im_factura_id) {
+        // 🔴 RECLAMO. El rol administrativo lo tienen dos personas: si las dos aprietan Facturar
+        // sobre la misma selección, las dos leen "no está facturado" y las dos emiten. La fila se
+        // escribe ANTES de llamar a IM, y el índice único hace que la segunda choque.
+        const reclamo = await reclamar(f, base);
+        if (!reclamo.ok) { fallados.push(`${quien}: ${reclamo.error}`); continue; }
+
         const letra = p.letra!;
         const fa = await emitirFactura({ ...p.datos, numero: numeros[letra] } as any);
         if (fa.ok && fa.numero != null) numeros[letra] = Number(fa.numero) + 1;
         if (!fa.ok) {
           fallados.push(`${quien}: ${fa.error}`);
+          // El reclamo se suelta para que se pueda reintentar; si no se puede soltar, queda y
+          // vence solo a los 5 minutos.
+          await soltarReclamo(f);
           // 🔴 Sin respuesta = NO se sabe si la factura salió. Se corta: seguir sería arriesgarse
           // a facturar dos veces al resto si IM está a medio camino.
           if (fa.sinRespuesta) cortado = `InfoManager no contestó al facturar ${quien}. NO se sabe si la factura se emitió: verificalo en IM antes de volver a intentar. Se frenó el resto.`;
           continue;
         }
         // Se guarda ANTES de seguir: un comprobante emitido sin registrar se vuelve a emitir.
-        await sb().from('presupuestos_facturados').upsert({
+        const { error: errFa } = await sb().from('presupuestos_facturados').upsert({
           ...base, im_factura_id: fa.id, im_factura_numero: fa.numero, im_factura_tipo: fa.tipo,
-        }, { onConflict: 'im_comprobante_id' });
+          reclamado_at: new Date().toISOString(),
+        }, { onConflict: 'tenant_id,im_comprobante_id' });
+        // 🔴 La factura YA SALIÓ en InfoManager. Si no se pudo registrar, nadie sabe que existe:
+        // se frena todo y el mensaje lleva el número para poder ir a buscarla.
+        if (errFa) {
+          fallados.push(`${quien}: se emitió la FACTURA ${fa.numero} pero NO se pudo registrar (${errFa.message}).`);
+          cortado = `Se emitió la factura ${fa.numero} de ${quien} y no se pudo guardar en la base (${errFa.message}). ANOTALA: hasta que se registre, el sistema la va a seguir viendo como pendiente. Se frenó el resto.`;
+          continue;
+        }
         facturaNumero = fa.numero;
         tipoFactura = fa.tipo;
       }
@@ -362,18 +465,33 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
         if (re.sinRespuesta) cortado = `InfoManager no contestó al emitir el remito de ${quien}. La factura ${facturaNumero} SÍ se emitió. Revisalo en IM. Se frenó el resto.`;
         continue;
       }
-      await sb().from('presupuestos_facturados').upsert({
+      const { error: errRe } = await sb().from('presupuestos_facturados').upsert({
         ...base,
-        im_factura_id: f.im_factura_id ?? undefined,
+        ...(f.im_factura_id ? { im_factura_id: f.im_factura_id } : {}),
         im_factura_numero: facturaNumero,
         im_factura_tipo: tipoFactura,
         im_remito_id: re.id, im_remito_numero: re.numero,
         facturado_at: new Date().toISOString(),
-      }, { onConflict: 'im_comprobante_id' });
+      }, { onConflict: 'tenant_id,im_comprobante_id' });
+      // Los dos comprobantes salieron y no se pudieron registrar: mismo criterio que arriba.
+      if (errRe) {
+        fallados.push(`${quien}: salieron la factura ${facturaNumero} y el remito ${re.numero}, pero NO se pudieron registrar (${errRe.message}).`);
+        cortado = `Se emitieron la factura ${facturaNumero} y el remito ${re.numero} de ${quien} y no se pudieron guardar en la base (${errRe.message}). ANOTALOS. Se frenó el resto.`;
+        continue;
+      }
 
       // 3) El presupuesto sale de la ventana de facturación de la oficina.
       const desc = await desconfirmarPresupuesto(f.im_comprobante_id);
       if (!desc.ok) console.warn(`[facturarSeleccion] no pude desconfirmar el PR ${f.im_numero}:`, desc.error);
+
+      // 4) Si el pedido vino de la app, el vendedor tiene que verlo facturado.
+      // 🪤 El cron `marcarFacturados` NO lo cubre: pregunta por `/presupuestos/obtener_facturas`,
+      // y facturar por API no crea ese vínculo en IM — el pedido quedaría "enviado" para siempre.
+      if (f.pedido_id) {
+        const { error: errPed } = await sb().from('pedidos_vendedor')
+          .update({ estado: 'facturado' }).eq('id', f.pedido_id);
+        if (errPed) console.warn(`[facturarSeleccion] no pude marcar el pedido ${f.pedido_id}:`, errPed.message);
+      }
 
       hechos.push({ cliente: f.cliente_nombre, factura: facturaNumero, remito: re.numero, tipo: tipoFactura });
     }
@@ -403,9 +521,11 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
     const todos = [...vista.pendientes, ...vista.asignados];
     const aprobados = todos.filter((p: any) => p.revision?.estado === 'aprobado');
 
-    const { data: emitidos } = await sb().from('presupuestos_facturados')
+    const { data: emitidos, error: errEmitidos } = await sb().from('presupuestos_facturados')
       .select('*').eq('tenant_id', TENANT_ID)
-      .in('im_comprobante_id', aprobados.map((p: any) => String(p.im_comprobante_id)).slice(0, 400));
+      .in('im_comprobante_id', aprobados.map((p: any) => String(p.im_comprobante_id)));
+    // Sin esto, la pantalla mostraría como "para facturar" cosas que ya se facturaron.
+    if (errEmitidos) { res.status(502).json({ error: `No pude leer qué se facturó ya: ${errEmitidos.message}` }); return; }
     const porId = new Map((emitidos ?? []).map((e: any) => [String(e.im_comprobante_id), e]));
 
     const filas = aprobados.map((p: any) => {

@@ -68,7 +68,14 @@
 
 @media print {
     /* Con .fr-print-active en el body, se imprime SOLO el listado: sin header ni panel. */
-    body.fr-print-active .of-header, body.fr-print-active .fr-no-print { display: none !important; }
+    body.fr-print-active .of-header, body.fr-print-active .fr-no-print,
+    body.fr-print-active .of-rango { display: none !important; }
+    /* 🪤 La app se comporta como nativa: `html, body` y `.of-root` están en height:100% con
+       overflow:hidden, y el scroll vive en `.of-body`. Al imprimir eso recorta el listado a lo
+       que entraba en la pantalla — medido: 23 filas de 120, y las otras 97 se perdían sin
+       ningún aviso. Mismo remedio que en ImprimirHoja.css. */
+    html, body, .of-root { height: auto !important; overflow: visible !important; }
+    .of-body { overflow: visible !important; height: auto !important; }
     html, body { background: #fff !important; }
     .fr-hoja { border: none !important; padding: 0 !important; }
     .fr-tabla { font-size: 9pt; }

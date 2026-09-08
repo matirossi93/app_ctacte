@@ -207,6 +207,3 @@ button.hr-badge { cursor: pointer; font-family: inherit; }
 .hr-badge.facturada {
     background: rgba(6, 101, 47, 0.1); color: #06652F; border: 1px solid rgba(6, 101, 47, 0.35);
 }
-/* El botón que emite comprobantes reales: ancho completo y abajo de todo, para que no se
-   confunda con los de armar la hoja. La confirmación con el detalle está en el modal. */
-.hr-btn.facturar { width: 100%; margin-top: 0.4rem; }

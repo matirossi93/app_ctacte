@@ -139,7 +139,9 @@ describe('corregir cantidades desde el panel', () => {
   it('🔴 un presupuesto YA FACTURADO no se toca', async () => {
     // La factura quedaría diciendo otra cosa que el pedido. Eso se arregla con una NC, no
     // editando el comprobante de origen.
-    tablas['hojas_ruta_pedidos'] = { data: { im_factura_numero: 50360, facturado_at: '2026-09-08T12:00:00Z' }, error: null };
+    // 📌 Se mira `presupuestos_facturados`: en el circuito nuevo la hoja se arma DESPUÉS de
+    // facturar, así que mirar `hojas_ruta_pedidos` no frenaba nada (auditoría del 08/09/2026).
+    tablas['presupuestos_facturados'] = { data: { im_factura_numero: 50360, facturado_at: '2026-09-08T12:00:00Z' }, error: null };
     const r = await llamar(corregirCantidades, {
       params: { comprobanteId: '58700637' }, body: { items: [{ id: 9, cantidad: 5 }] },
     });
@@ -149,7 +151,7 @@ describe('corregir cantidades desde el panel', () => {
   });
 
   it('🔴 sin facturar, el cambio va a InfoManager', async () => {
-    tablas['hojas_ruta_pedidos'] = { data: null, error: null };
+    tablas['presupuestos_facturados'] = { data: null, error: null };
     const r = await llamar(corregirCantidades, {
       params: { comprobanteId: '58700637' }, body: { items: [{ id: 9, cantidad: 5 }, { id: 10, cantidad: 2 }] },
     });
@@ -158,7 +160,7 @@ describe('corregir cantidades desde el panel', () => {
   });
 
   it('🔴 una cantidad en cero o negativa no llega a IM', async () => {
-    tablas['hojas_ruta_pedidos'] = { data: null, error: null };
+    tablas['presupuestos_facturados'] = { data: null, error: null };
     const r = await llamar(corregirCantidades, {
       params: { comprobanteId: '1' }, body: { items: [{ id: 9, cantidad: 0 }, { id: 10, cantidad: -3 }] },
     });
@@ -166,8 +168,17 @@ describe('corregir cantidades desde el panel', () => {
     expect(m.actualizarPresupuestoCantidades).not.toHaveBeenCalled();
   });
 
+  it('🔴 corregir cantidades tira abajo la aprobación: era sobre otras cantidades', async () => {
+    tablas['presupuestos_facturados'] = { data: null, error: null };
+    const r = await llamar(corregirCantidades, {
+      params: { comprobanteId: '58700637' }, body: { items: [{ id: 9, cantidad: 5 }] },
+    });
+    expect(r.status).toBe(200);
+    expect(escrituras.some(e => e.tabla === 'presupuestos_revision' && e.op === 'delete')).toBe(true);
+  });
+
   it('si IM rechaza, se dice qué contestó', async () => {
-    tablas['hojas_ruta_pedidos'] = { data: null, error: null };
+    tablas['presupuestos_facturados'] = { data: null, error: null };
     m.actualizarPresupuestoCantidades.mockResolvedValue({ ok: false, error: 'Talonario cerrado' });
     const r = await llamar(corregirCantidades, { params: { comprobanteId: '1' }, body: { items: [{ id: 9, cantidad: 5 }] } });
     expect(r.status).toBe(502);

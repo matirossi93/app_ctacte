@@ -36,7 +36,7 @@ create table if not exists presupuestos_revision (
 
 -- Un presupuesto tiene UNA revisión: al volver a tocarlo se pisa la anterior.
 create unique index if not exists presupuestos_revision_comp_uidx
-  on presupuestos_revision (im_comprobante_id);
+  on presupuestos_revision (tenant_id, im_comprobante_id);
 create index if not exists presupuestos_revision_estado_idx
   on presupuestos_revision (tenant_id, estado);
 
@@ -109,6 +109,21 @@ create table if not exists retiros_sucursal (
 );
 
 -- Un comprobante se retira una sola vez.
-create unique index if not exists retiros_sucursal_comp_uidx on retiros_sucursal (im_comprobante_id);
+create unique index if not exists retiros_sucursal_comp_uidx on retiros_sucursal (tenant_id, im_comprobante_id);
 -- El análisis es por mes: este índice es el que lo hace barato.
 create index if not exists retiros_sucursal_fecha_idx on retiros_sucursal (tenant_id, fecha desc);
+
+-- ── Row Level Security ───────────────────────────────────────────────────────
+-- Igual que el resto de las tablas del proyecto (ver 032). Sin esto, en Supabase una tabla del
+-- schema `public` queda accesible con la anon key, que es pública por diseño: cualquiera podría
+-- leer —o borrar— la revisión de los presupuestos y los retiros. El server entra con la service
+-- key, así que la policy le deja todo a él y a nadie más.
+alter table presupuestos_revision enable row level security;
+alter table choferes enable row level security;
+alter table retiros_sucursal enable row level security;
+drop policy if exists presupuestos_revision_service on presupuestos_revision;
+create policy presupuestos_revision_service on presupuestos_revision for all to service_role using (true) with check (true);
+drop policy if exists choferes_service on choferes;
+create policy choferes_service on choferes for all to service_role using (true) with check (true);
+drop policy if exists retiros_sucursal_service on retiros_sucursal;
+create policy retiros_sucursal_service on retiros_sucursal for all to service_role using (true) with check (true);

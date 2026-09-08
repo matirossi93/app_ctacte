@@ -68,6 +68,15 @@ export function FacturarModal(
     const [error, setError] = useState<string | null>(null);
     const [emitiendo, setEmitiendo] = useState(false);
     const [resultado, setResultado] = useState<Resultado | null>(null);
+    /**
+     * 🔴 Ya se apretó Emitir alguna vez en esta pantalla.
+     *
+     * El server emite de a un comprobante y una tanda de 5-10 pedidos se pasa de los ~30 s que
+     * aguanta el proxy: el navegador recibe el corte MIENTRAS el server sigue emitiendo. Si el
+     * botón quedara habilitado, el segundo clic manda los mismos pedidos y salen las facturas
+     * dos veces. Después de intentar una vez, la única salida es cerrar y ver qué quedó.
+     */
+    const [intentado, setIntentado] = useState(false);
 
     useEffect(() => {
         fetch(`/api/facturacion/previa?${query}`, { headers: authHeaders() })
@@ -89,8 +98,8 @@ export function FacturarModal(
     }, [emitiendo]);
 
     async function emitir() {
-        if (emitiendo) return;                       // un doble clic no emite dos veces
-        setEmitiendo(true); setError(null);
+        if (emitiendo || intentado) return;          // un doble clic no emite dos veces
+        setEmitiendo(true); setIntentado(true); setError(null);
         try {
             const r = await fetch('/api/facturacion', {
                 method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
@@ -102,7 +111,7 @@ export function FacturarModal(
         } catch (e: any) {
             // 🪤 Si se cortó la conexión con NUESTRO server, tampoco se sabe qué llegó a emitir:
             // el mensaje no puede decir "no se emitió nada".
-            setError(`${e?.message ?? 'Error de conexión'}. No se sabe qué llegó a emitirse: revisá InfoManager antes de volver a intentar.`);
+            setError(`${e?.message ?? 'Error de conexión'}. **No se sabe qué llegó a emitirse**: puede que el servidor haya seguido emitiendo. Cerrá esta ventana, actualizá la lista y fijate qué quedó facturado ANTES de reintentar.`);
         } finally {
             setEmitiendo(false);
         }
@@ -111,7 +120,9 @@ export function FacturarModal(
     const aEmitir = previa?.a_emitir;
     const puedeEmitir = !!aEmitir && (aEmitir.facturas > 0 || aEmitir.remitos > 0);
     const noSePuede = (previa?.pedidos ?? []).filter(p => p.estado === 'no_se_puede');
-    const cerrar = () => { if (!emitiendo) onClose(!!resultado); };
+    // Si se intentó emitir, al cerrar SIEMPRE se recarga: aunque la respuesta no haya llegado,
+    // del otro lado puede haber comprobantes nuevos.
+    const cerrar = () => { if (!emitiendo) onClose(intentado || !!resultado); };
 
     return createPortal(
         <div className="fac-overlay" onClick={e => { if (e.target === e.currentTarget) cerrar(); }}>
@@ -195,8 +206,10 @@ export function FacturarModal(
                         </p>
 
                         <div className="fac-acciones">
-                            <button className="fac-btn ghost" onClick={cerrar} disabled={emitiendo}>Cancelar</button>
-                            <button className="fac-btn emitir" onClick={() => void emitir()} disabled={!puedeEmitir || emitiendo}>
+                            <button className="fac-btn ghost" onClick={cerrar} disabled={emitiendo}>
+                                {intentado ? 'Cerrar y revisar' : 'Cancelar'}
+                            </button>
+                            <button className="fac-btn emitir" onClick={() => void emitir()} disabled={!puedeEmitir || emitiendo || intentado}>
                                 {emitiendo
                                     ? <><Loader2 className="spin" size={15} /> Emitiendo… no cierres esta pantalla</>
                                     : <><Receipt size={15} /> Emitir {[

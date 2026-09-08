@@ -122,7 +122,7 @@ export async function revisarPresupuesto(req: Request & { user?: JwtPayload }, r
       updated_at: new Date().toISOString(),
     };
     const { error } = await sb().from('presupuestos_revision')
-      .upsert(fila, { onConflict: 'im_comprobante_id' });
+      .upsert(fila, { onConflict: 'tenant_id,im_comprobante_id' });
     if (error) { res.status(500).json({ error: error.message }); return; }
     invalidarVista();
     res.json({ ok: true, revision: fila });
@@ -228,19 +228,32 @@ export async function corregirCantidades(req: Request & { user?: JwtPayload }, r
     }
 
     // 🪤 Un presupuesto ya facturado no se toca: la factura quedaría diciendo otra cosa.
-    const { data: enHoja } = await sb().from('hojas_ruta_pedidos')
-      .select('im_factura_numero, facturado_at').eq('im_comprobante_id', id).maybeSingle();
-    if (enHoja?.facturado_at || enHoja?.im_factura_numero) {
+    // 🔴 Se mira `presupuestos_facturados`, NO la hoja de ruta: en el circuito nuevo la hoja se
+    // arma DESPUÉS de facturar, así que durante toda esa ventana la fila de la hoja no existe y
+    // el guard no frenaba nada (auditoría del 08/09/2026).
+    const { data: emitido, error: errEmitido } = await sb().from('presupuestos_facturados')
+      .select('im_factura_numero, im_remito_numero, facturado_at')
+      .eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id).maybeSingle();
+    // Si no se puede consultar, no se edita: "no pude preguntar" no es "no está facturado".
+    if (errEmitido) { res.status(502).json({ error: `No pude verificar si ya se facturó (${errEmitido.message}).` }); return; }
+    if (emitido?.facturado_at || emitido?.im_factura_numero) {
       res.status(409).json({
-        error: `Este presupuesto ya se facturó (factura ${enHoja.im_factura_numero ?? '—'}). Para cambiarlo hay que hacer una nota de crédito en InfoManager.`,
+        error: `Este presupuesto ya se facturó (factura ${emitido.im_factura_numero ?? '—'}). Para cambiarlo hay que hacer una nota de crédito en InfoManager.`,
       });
       return;
     }
 
     const r = await actualizarPresupuestoCantidades(id, items);
     if (!r.ok) { res.status(502).json({ error: `InfoManager rechazó el cambio: ${r.error}` }); return; }
+
+    // 🪤 Si estaba aprobado, la aprobación era sobre OTRAS cantidades: vuelve a "sin revisar"
+    // para que alguien lo mire de nuevo antes de facturarlo.
+    const { error: errRev } = await sb().from('presupuestos_revision')
+      .delete().eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id);
+    if (errRev) console.warn('[corregirCantidades] no pude limpiar la revisión:', errRev.message);
+
     invalidarVista();
-    res.json({ ok: true, actualizados: items.length });
+    res.json({ ok: true, actualizados: items.length, revision_reiniciada: !errRev });
   } catch (err: any) {
     console.error('[corregirCantidades]', err?.message);
     res.status(500).json({ error: err?.message ?? 'error' });

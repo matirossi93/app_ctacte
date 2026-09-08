@@ -47,6 +47,10 @@ const { facturarSeleccion, previsualizarFacturacion, tableroFacturacion } = awai
 
 let tablas: Record<string, any> = {};
 let escrituras: Array<{ tabla: string; op: string; valor: any }> = [];
+/** Si está seteado, TODA escritura contesta este error (Supabase no tira: devuelve `{error}`). */
+let errorAlEscribir: any = null;
+/** Si está seteado, el reclamo previo a emitir choca: otro usuario lo tomó primero. */
+let errorAlReclamar: any = null;
 
 function fakeSb() {
   m.sbMock.mockImplementation(() => ({
@@ -55,7 +59,20 @@ function fakeSb() {
       const q: any = {
         then: (r: any, j: any) => Promise.resolve(res).then(r, j),
         maybeSingle: () => Promise.resolve(res),
-        upsert: (v: any) => { escrituras.push({ tabla: t, op: 'upsert', valor: v }); return q; },
+        upsert: (v: any) => {
+          escrituras.push({ tabla: t, op: 'upsert', valor: v });
+          return errorAlEscribir
+            ? { ...q, then: (r: any, j: any) => Promise.resolve({ data: null, error: errorAlEscribir }).then(r, j) }
+            : q;
+        },
+        // El "reclamo" que se escribe ANTES de emitir: con `errorAlReclamar` se simula que otro
+        // usuario lo tomó primero (el índice único de la tabla lo rechaza).
+        insert: (v: any) => {
+          escrituras.push({ tabla: t, op: 'insert', valor: v });
+          return errorAlReclamar
+            ? { ...q, then: (r: any, j: any) => Promise.resolve({ data: null, error: errorAlReclamar }).then(r, j) }
+            : q;
+        },
         update: (v: any) => { escrituras.push({ tabla: t, op: 'update', valor: v }); return q; },
         delete: () => { escrituras.push({ tabla: t, op: 'delete', valor: null }); return q; },
       };
@@ -85,7 +102,7 @@ const VISTA_BASE = { asignados: [], con_avisos: 0, pierde_margen: 0, cobra_de_ma
 const RENGLON = { id_comprobante: '10', cod_articulo: 661, cantidad: 1, precio: 29771.58, iva_por: 0, cod_vendedor: 2, cod_lista_precios: 13 };
 
 beforeEach(() => {
-  tablas = {}; escrituras = [];
+  tablas = {}; escrituras = []; errorAlEscribir = null; errorAlReclamar = null;
   vi.clearAllMocks();
   fakeSb();
   m.vistaDeRango.mockResolvedValue({ ...VISTA_BASE, pendientes: [presu()] });
@@ -193,7 +210,7 @@ describe('no emitir dos veces lo mismo', () => {
   it('🔴 la factura se guarda apenas se emite, antes de intentar el remito', async () => {
     m.emitirRemito.mockResolvedValue({ ok: false, error: 'IM rechazó el remito' });
     const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
-    const guardadas = escrituras.filter(e => e.tabla === 'presupuestos_facturados');
+    const guardadas = escrituras.filter(e => e.tabla === 'presupuestos_facturados' && e.op === 'upsert');
     expect(guardadas[0].valor).toMatchObject({ im_factura_id: 'f1', im_factura_numero: 50360 });
     expect(guardadas.some(g => g.valor.facturado_at)).toBe(false);   // sin remito no está facturado
     expect(r.body.fallados[0]).toMatch(/remito/i);
@@ -246,5 +263,107 @@ describe('el tablero de la etapa 2', () => {
 
   it('🔴 un vendedor no entra', async () => {
     expect((await llamar(tableroFacturacion, { rol: 'vendedor', method: 'GET' })).status).toBe(403);
+  });
+});
+
+/**
+ * Hallazgos de la auditoría del 08/09/2026. Supabase NO tira excepción cuando una consulta
+ * falla: devuelve `{ data: null, error }`. Ignorar ese `error` convierte "no pude preguntar" en
+ * "nadie está facturado", que es la receta exacta para emitir dos veces.
+ */
+describe('cuando la base no contesta', () => {
+  it('🔴 si no se puede leer lo ya facturado, NO se emite nada', async () => {
+    // Sin esa lectura no se sabe qué ya salió. Emitir a ciegas duplica facturas.
+    tablas['presupuestos_facturados'] = { data: null, error: { message: 'timeout' } };
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(r.status).toBe(502);
+    expect(m.emitirFactura).not.toHaveBeenCalled();
+    expect(m.emitirRemito).not.toHaveBeenCalled();
+  });
+
+  it('🔴 si no se puede REGISTRAR la factura emitida, se frena la tanda y se dice el número', async () => {
+    // La factura ya salió en IM. Si nadie la registra, mañana el presupuesto figura pendiente y
+    // alguien la vuelve a emitir. Se corta y el mensaje lleva el número para poder buscarla.
+    m.vistaDeRango.mockResolvedValue({
+      ...VISTA_BASE,
+      pendientes: [presu(), presu({ im_comprobante_id: '20', cod_cliente: 500 })],
+    });
+    m.fetchVentasItems.mockResolvedValue([RENGLON, { ...RENGLON, id_comprobante: '20' }]);
+    errorAlEscribir = { message: 'connection reset' };
+
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10', '20'] } });
+
+    expect(m.emitirFactura).toHaveBeenCalledTimes(1);          // no siguió con el segundo
+    expect(r.body.cortado).toMatch(/50360/);                   // el número de la factura que salió
+    expect(r.body.ok).toBe(false);
+  });
+
+  it('🔴 y tampoco sigue si falla el registro del remito', async () => {
+    tablas['presupuestos_facturados'] = { data: [], error: null };
+    errorAlEscribir = null;
+    let upserts = 0;
+    m.sbMock.mockImplementation(() => ({
+      from: () => {
+        const q: any = {
+          then: (r: any, j: any) => Promise.resolve({ data: [], error: null }).then(r, j),
+          maybeSingle: () => Promise.resolve({ data: null, error: null }),
+          insert: () => q,                     // el reclamo entra bien
+          delete: () => q,
+          upsert: () => {
+            upserts += 1;   // el primero (factura) pasa; el segundo (remito) falla
+            const res = upserts >= 2 ? { data: null, error: { message: 'boom' } } : { data: null, error: null };
+            return { ...q, then: (r: any, j: any) => Promise.resolve(res).then(r, j) };
+          },
+        };
+        for (const k of ['select', 'eq', 'in', 'order', 'limit', 'is']) q[k] = () => q;
+        return q;
+      },
+    }));
+
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+
+    expect(r.body.cortado).toMatch(/77291|remito/i);
+    expect(r.body.ok).toBe(false);
+  });
+});
+
+describe('cuando InfoManager no contesta la cabecera', () => {
+  it('🔴 "no pude preguntar si está anulado" NO es "está vigente"', async () => {
+    // `cabeceraComprobante` devuelve null en los tres campos cuando IM falla. La oficina anula
+    // presupuestos en IM todo el tiempo: emitir sin poder verificarlo deja una factura sin
+    // respaldo.
+    m.cabeceraComprobante.mockResolvedValue({ fecha: null, anulada: null, existe: null });
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(m.emitirFactura).not.toHaveBeenCalled();
+    expect(r.body.fallados[0]).toMatch(/verificar|InfoManager/i);
+  });
+});
+
+describe('tandas grandes', () => {
+  it('🔴 más de 400 pedidos se rechaza en vez de truncar la consulta', async () => {
+    // La consulta de lo ya facturado se corta en 400: los de más allá volverían como "sin
+    // facturar" y se re-emitirían.
+    const ids = Array.from({ length: 401 }, (_, i) => String(i + 1));
+    const r = await llamar(facturarSeleccion, { body: { ids } });
+    expect(r.status).toBe(400);
+    expect(m.emitirFactura).not.toHaveBeenCalled();
+  });
+});
+
+describe('dos personas facturando a la vez', () => {
+  it('🔴 el segundo que llega NO emite: el reclamo choca contra el índice único', async () => {
+    // El rol administrativo lo tienen dos personas. Sin esto, las dos leen "no está facturado"
+    // y las dos emiten la misma factura.
+    errorAlReclamar = { code: '23505', message: 'duplicate key value violates unique constraint' };
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(m.emitirFactura).not.toHaveBeenCalled();
+    expect(r.body.fallados[0]).toMatch(/otro usuario|actualizá/i);
+  });
+
+  it('🔴 el reclamo se escribe ANTES de llamar a InfoManager', async () => {
+    await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    const orden = escrituras.map(e => e.op);
+    expect(orden[0]).toBe('insert');                       // primero se reclama
+    expect(m.emitirFactura).toHaveBeenCalled();            // y recién después se emite
   });
 });

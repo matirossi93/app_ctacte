@@ -167,17 +167,35 @@ export async function listarHojas(req: Request & { user?: JwtPayload }, res: Res
   try {
     const fecha = fechaPedida(req);
     const { data: hojas, error } = await sb().from('hojas_ruta')
-      .select('*, hojas_ruta_camiones(nombre, capacidad_kg), hojas_ruta_pedidos(*)')
+      .select('*, hojas_ruta_camiones(nombre, capacidad_kg), choferes(nombre), hojas_ruta_pedidos(*)')
       .eq('tenant_id', TENANT_ID).eq('fecha', fecha).order('numero');
     if (error) { res.status(500).json({ error: error.message }); return; }
+    // 🔑 Lo emitido se cruza contra `presupuestos_facturados`, que es la fuente viva: los campos
+    // copiados en `hojas_ruta_pedidos` son de cuando se armó la hoja, y si el pedido se facturó
+    // DESPUÉS quedaban vacíos (auditoría del 08/09/2026).
+    const idsEnHojas = (hojas ?? []).flatMap((h: any) => (h.hojas_ruta_pedidos ?? []).map((p: any) => String(p.im_comprobante_id)));
+    const { data: emitidos } = idsEnHojas.length
+      ? await sb().from('presupuestos_facturados')
+          .select('im_comprobante_id, im_factura_numero, im_remito_numero, facturado_at')
+          .eq('tenant_id', TENANT_ID).in('im_comprobante_id', idsEnHojas)
+      : { data: [] as any[] };
+    const emitidoPor = new Map((emitidos ?? []).map((e: any) => [String(e.im_comprobante_id), e]));
+
     const conCarga = (hojas ?? []).map((h: any) => {
-      const ps = h.hojas_ruta_pedidos ?? [];
+      const ps = (h.hojas_ruta_pedidos ?? []).map((p: any) => {
+        const e = emitidoPor.get(String(p.im_comprobante_id));
+        return e ? { ...p, im_factura_numero: e.im_factura_numero, im_remito_numero: e.im_remito_numero, facturado_at: e.facturado_at } : p;
+      });
       const kg = ps.reduce((s: number, p: any) => s + Number(p.kg ?? 0), 0);
       const bultos = ps.reduce((s: number, p: any) => s + Number(p.bultos ?? 0), 0);
       const cap = h.hojas_ruta_camiones?.capacidad_kg;
       return {
         ...h,
         camion: h.hojas_ruta_camiones?.nombre ?? null,
+        chofer: h.choferes?.nombre ?? null,
+        // Se deriva de los pedidos: `hojas_ruta.facturada_at` quedó sin escritor cuando la
+        // facturación se mudó de etapa.
+        facturada: !!ps.length && ps.every((p: any) => p.facturado_at),
         capacidad_kg: cap ?? null,
         pedidos: ps.sort((a: any, b: any) => a.orden - b.orden),
         totales: { pedidos: ps.length, bultos: Math.round(bultos * 100) / 100, kg: Math.round(kg * 100) / 100 },
@@ -407,9 +425,11 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
     // 🔑 Lo que ya se facturó (etapa 2) viaja con el pedido: la hoja de ruta lleva el REMITO,
     // no el presupuesto, y ese vínculo sólo existe de nuestro lado. Sin esto, un pedido
     // facturado entraría en la hoja como si no lo estuviera y alguien lo facturaría de nuevo.
-    const { data: emitidos } = await sb().from('presupuestos_facturados')
+    const { data: emitidos, error: errEmitidos } = await sb().from('presupuestos_facturados')
       .select('im_comprobante_id, im_factura_id, im_factura_numero, im_remito_id, im_remito_numero, facturado_at')
-      .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids.slice(0, 400));
+      .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
+    // Sin esto la hoja se armaría sin los comprobantes emitidos y se imprimiría sin el remito.
+    if (errEmitidos) { res.status(502).json({ error: `No pude leer qué comprobantes se emitieron: ${errEmitidos.message}` }); return; }
     const facturado = new Map((emitidos ?? []).map((e: any) => [String(e.im_comprobante_id), e]));
 
     // 🔑 El peso se RECALCULA acá contra IM; no se guarda el que mandó el navegador. Los kilos
@@ -444,6 +464,7 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
 
     const filas = entrada.map((p) => {
       const peso = pesos.get(String(p.im_comprobante_id));
+      const emitido = facturado.get(String(p.im_comprobante_id));
       return {
         hoja_id: hojaId,
         im_comprobante_id: String(p.im_comprobante_id),
@@ -457,14 +478,15 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
         kg: peso ? peso.kg : (Number(p.kg) || 0),
         // El importe sale impreso en la hoja ("Imp. Total" y "Total por cliente").
         total: Number(p.total) || 0,
-        ...(() => {
-          const e = facturado.get(String(p.im_comprobante_id));
-          return e ? {
-            im_factura_id: e.im_factura_id, im_factura_numero: e.im_factura_numero,
-            im_remito_id: e.im_remito_id, im_remito_numero: e.im_remito_numero,
-            facturado_at: e.facturado_at,
-          } : {};
-        })(),
+        // 🪤 TODAS las filas llevan las mismas claves, aunque vayan en null. En un upsert de
+        // array, postgrest manda la UNIÓN de las claves de todas las filas y completa con NULL
+        // las que falten: con claves distintas por fila, un pedido que ya tenía su remito
+        // copiado se pisaba con NULL al reasignarlo (auditoría del 08/09/2026).
+        im_factura_id: emitido?.im_factura_id ?? null,
+        im_factura_numero: emitido?.im_factura_numero ?? null,
+        im_remito_id: emitido?.im_remito_id ?? null,
+        im_remito_numero: emitido?.im_remito_numero ?? null,
+        facturado_at: emitido?.facturado_at ?? null,
       };
     });
     let { error } = await sb().from('hojas_ruta_pedidos').upsert(filas, { onConflict: 'im_comprobante_id' });
@@ -506,10 +528,16 @@ export async function editarHoja(req: Request & { user?: JwtPayload }, res: Resp
     if ('camion_id' in b) cambios.camion_id = b.camion_id ? String(b.camion_id) : null;
     if ('observaciones' in b) cambios.observaciones = b.observaciones ? String(b.observaciones) : null;
     if ('cod_zona' in b) cambios.cod_zona = Number(b.cod_zona) > 0 ? Number(b.cod_zona) : null;
+    // 🔑 El chofer es el dato del que sale el pago: se le liquida por el importe que entregó.
+    if ('chofer_id' in b) cambios.chofer_id = b.chofer_id ? String(b.chofer_id) : null;
     if ('estado' in b) {
       const e = String(b.estado);
       if (!['abierta', 'cerrada', 'anulada'].includes(e)) { res.status(400).json({ error: 'Estado inválido' }); return; }
       cambios.estado = e;
+      // Cerrar una hoja es decir "esto ya se entregó": queda quién y cuándo, porque a partir de
+      // ahí entra en la liquidación del mes. Al reabrirla se limpia.
+      cambios.cerrada_at = e === 'cerrada' ? new Date().toISOString() : null;
+      cambios.cerrada_por = e === 'cerrada' ? (req.user?.sub ?? null) : null;
     }
     if (!Object.keys(cambios).length) { res.status(400).json({ error: 'No mandaste nada para cambiar' }); return; }
     const { data, error } = await sb().from('hojas_ruta').update(cambios)
@@ -523,36 +551,42 @@ export async function editarHoja(req: Request & { user?: JwtPayload }, res: Resp
 }
 
 /**
- * ¿Este pedido tiene comprobantes ya emitidos?
+ * ¿La hoja ya está cerrada?
  *
- * 🔴 La fila de `hojas_ruta_pedidos` es el ÚNICO registro de qué factura salió de qué
- * presupuesto: facturar por API NO deja ese vínculo en InfoManager (probado el 07/09/2026).
- * Borrarla es perder el rastro — y un presupuesto que vuelve a "pendiente" es un presupuesto
- * que alguien factura por segunda vez.
+ * 🔄 Esto ANTES bloqueaba sacar cualquier pedido con comprobantes emitidos, porque la fila de
+ * `hojas_ruta_pedidos` era el único registro de qué factura salió de qué presupuesto. Desde que
+ * la facturación se mudó a su etapa (migración 035), ese registro vive en
+ * `presupuestos_facturados` y **sobrevive al borrado de la fila de la hoja**: sacar un pedido ya
+ * no pierde nada. Con el guard viejo, en cambio, la hoja quedaba inutilizable — en el circuito
+ * nuevo TODO lo que entra a una hoja está facturado (auditoría del 08/09/2026).
+ *
+ * Lo que sí no se toca es una hoja **cerrada**: ésa ya volvió del reparto y es la base de la
+ * liquidación del chofer.
  */
-function tieneEmitido(p: any): boolean {
-  return !!(p?.facturado_at || p?.im_factura_id || p?.im_factura_numero || p?.im_remito_id || p?.im_remito_numero);
+function estaCerrada(hoja: any): boolean {
+  return String(hoja?.estado ?? '') === 'cerrada';
 }
 
 /** DELETE /api/hojas-ruta/:id — borra una hoja vacía. Los pedidos vuelven a pendientes. */
 export async function borrarHoja(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
   const id = String(req.params.id);
-  const { data: dentro } = await sb().from('hojas_ruta_pedidos')
-    .select('im_numero, im_factura_numero, facturado_at, im_factura_id, im_remito_id, im_remito_numero').eq('hoja_id', id);
-  const emitidos = (dentro ?? []).filter(tieneEmitido);
-  if (emitidos.length) {
-    res.status(409).json({
-      error: `Esta hoja tiene ${emitidos.length} comprobante(s) ya emitidos en InfoManager (factura ${emitidos.map((p: any) => p.im_factura_numero ?? '—').join(', ')}). No se puede borrar: se perdería el registro de qué se facturó.`,
-    });
+  const { data: hoja } = await sb().from('hojas_ruta')
+    .select('numero, estado').eq('id', id).eq('tenant_id', TENANT_ID).maybeSingle();
+  if (!hoja) { res.status(404).json({ error: 'Hoja de ruta no encontrada' }); return; }
+  // Una hoja cerrada ya volvió del reparto y es la base de la liquidación del chofer.
+  if (estaCerrada(hoja)) {
+    res.status(409).json({ error: `La hoja ${(hoja as any).numero} está cerrada: es la base de la liquidación del chofer y no se borra. Reabrila si de verdad hay que cambiarla.` });
     return;
   }
   // Los pedidos se sueltan primero: si se borrara la hoja con pedidos adentro, el cascade se
   // los llevaría y nadie sabría que esos comprobantes quedaron sin repartir.
+  // 📌 Lo facturado NO se pierde: vive en `presupuestos_facturados`, que no se toca acá.
   const { error: e1 } = await sb().from('hojas_ruta_pedidos').delete().eq('hoja_id', id);
   if (e1) { res.status(500).json({ error: e1.message }); return; }
   const { error } = await sb().from('hojas_ruta').delete().eq('id', id).eq('tenant_id', TENANT_ID);
   if (error) { res.status(500).json({ error: error.message }); return; }
+  invalidarVista();   // los pedidos volvieron a estar libres
   res.json({ ok: true });
 }
 
@@ -560,12 +594,14 @@ export async function borrarHoja(req: Request & { user?: JwtPayload }, res: Resp
 export async function quitarPedido(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
   const comprobanteId = String(req.params.comprobanteId);
+  // Sólo se frena si la hoja está cerrada: sacar un pedido de una hoja abierta es normal, y el
+  // registro de lo facturado vive en otra tabla que no se toca.
   const { data: fila } = await sb().from('hojas_ruta_pedidos')
-    .select('im_numero, im_factura_numero, im_remito_numero, im_factura_id, im_remito_id, facturado_at')
+    .select('hoja_id, im_numero, hojas_ruta(numero, estado)')
     .eq('im_comprobante_id', comprobanteId).maybeSingle();
-  if (tieneEmitido(fila)) {
+  if (estaCerrada((fila as any)?.hojas_ruta)) {
     res.status(409).json({
-      error: `Este pedido ya se facturó (factura ${(fila as any)?.im_factura_numero ?? '—'}${(fila as any)?.im_remito_numero ? `, remito ${(fila as any).im_remito_numero}` : ''}). No se puede sacar de la hoja: se perdería el registro de qué comprobante salió de este presupuesto.`,
+      error: `La hoja ${(fila as any)?.hojas_ruta?.numero ?? ''} está cerrada: ya se liquidó. Reabrila antes de sacarle pedidos.`,
     });
     return;
   }

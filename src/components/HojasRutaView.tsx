@@ -58,7 +58,10 @@ interface HojaPedido {
 interface Hoja {
     id: string; numero: number; turno: string | null; transporte: string | null;
     camion: string | null; camion_id: string | null; capacidad_kg: number | null;
-    cod_zona: number | null; estado: string; facturada_at: string | null;
+    cod_zona: number | null; estado: string;
+    /** Derivado en el server: todos los pedidos de la hoja tienen sus comprobantes emitidos. */
+    facturada: boolean;
+    chofer: string | null;
     pedidos: HojaPedido[];
     totales: { pedidos: number; bultos: number; kg: number };
     carga: { porcentaje: number | null; excedido: boolean; sobra_kg: number | null };
@@ -470,8 +473,8 @@ export function HojasRutaView() {
                         <div className={`hr-hoja${h.carga.excedido ? ' excedida' : ''}`} key={h.id}>
                             <div className="hr-hoja-head">
                                 <span className="hr-hoja-num">Hoja {h.numero}</span>
-                                {h.facturada_at && (
-                                    <span className="hr-badge facturada" title={`Facturada el ${h.facturada_at.slice(8, 10)}/${h.facturada_at.slice(5, 7)}`}>
+                                {h.facturada && (
+                                    <span className="hr-badge facturada" title="Todos los pedidos de esta hoja tienen su factura y su remito">
                                         <CheckCircle2 size={11} /> facturada
                                     </span>
                                 )}
@@ -541,11 +544,9 @@ export function HojasRutaView() {
                                     </div>
                                     <button
                                         className="hr-icono"
-                                        title={emitido
-                                            ? 'Ya se facturó: no se puede sacar de la hoja sin perder el registro de qué comprobante salió'
-                                            : 'Sacar de la hoja'}
+                                        title="Sacar de la hoja"
                                         onClick={() => void quitar(p.im_comprobante_id)}
-                                        disabled={trabajando || emitido}
+                                        disabled={trabajando}
                                     >
                                         <X size={14} />
                                     </button>

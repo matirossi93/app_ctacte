@@ -53,16 +53,16 @@ export function OficinaShell() {
 
                 <nav className="of-tabs">
                     <button className={tab === 'presupuestos' ? 'on' : ''} onClick={() => setTab('presupuestos')}>
-                        <ClipboardCheck size={15} /> Presupuestos
+                        <ClipboardCheck size={15} /> <span>Presupuestos</span>
                     </button>
                     <button className={tab === 'fraccionado' ? 'on' : ''} onClick={() => setTab('fraccionado')}>
-                        <Scissors size={15} /> Fraccionado
+                        <Scissors size={15} /> <span>Fraccionado</span>
                     </button>
                     <button className={tab === 'facturacion' ? 'on' : ''} onClick={() => setTab('facturacion')}>
-                        <Receipt size={15} /> Facturación
+                        <Receipt size={15} /> <span>Facturación</span>
                     </button>
                     <button className={tab === 'hojas' ? 'on' : ''} onClick={() => setTab('hojas')}>
-                        <Truck size={15} /> Hojas de ruta
+                        <Truck size={15} /> <span>Hojas de ruta</span>
                     </button>
                 </nav>
 
