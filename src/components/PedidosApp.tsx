@@ -93,6 +93,8 @@ interface AvisoLista {
     mensaje_descuento: string | null;
     /** Condición que el sistema no puede verificar (ej: que el pago sea contado). */
     nota_descuento: string | null;
+    /** El renglón va a precio 0 y el producto tiene promo "10+1": cómo se carga bien. */
+    mensaje_bonificacion: string | null;
 }
 interface ControlListas {
     bultos: number; promo_general: boolean; avisos: AvisoLista[];
@@ -1139,6 +1141,12 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                             {dsc.descuento_max === 0 && (
                                                 <button onClick={() => escribirDesc(i.uid, '')}>Sacar</button>
                                             )}
+                                        </div>
+                                    )}
+                                    {dsc?.mensaje_bonificacion && (
+                                        <div className="ped-aviso nota">
+                                            <AlertCircle size={14} />
+                                            <span>{dsc.mensaje_bonificacion}</span>
                                         </div>
                                     )}
                                     {dsc?.nota_descuento && !dsc.mensaje_descuento && (

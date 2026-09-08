@@ -35,10 +35,28 @@ export interface ReglaLista {
   match_tipo: 'subrubro' | 'articulo';
   match_valor: string;
   cod_lista: number;
-  condicion: 'libre' | 'promo_general' | 'min' | 'max' | 'excluido';
+  /**
+   * `bulto_cerrado` es la celda "BOLSA" de la planilla: alcanza con llevarse la bolsa
+   * cerrada, sin importar cuántos kilos trae. Reemplaza al "min 20 kg" que dejaba afuera
+   * las bolsas de 25, 30 y 50 kg.
+   */
+  condicion: 'libre' | 'promo_general' | 'min' | 'max' | 'excluido' | 'bulto_cerrado';
   umbral: number | null;
   unidad: 'bulto' | 'kg' | null;
   ambito: 'articulo' | 'linea' | 'pedido' | null;
+  /**
+   * La condición habilita la lista pero NO le da derecho al cliente: el vendedor puede
+   * usarla o no. Es la celda "BOLS +10%" (Mati 08/09: el 10% extra es decisión suya).
+   * 🪤 Sin esto, L2 y L3 con la misma condición hacían que L2 fuera inalcanzable y todo
+   * pedido disparara "le estás cobrando de más" — 110 casos en MEZCLAS en 4 semanas.
+   */
+  opcional?: boolean;
+  /**
+   * La promo tal como está escrita en la planilla ("10+1", "5+1"). El umbral ya viene
+   * convertido a la cantidad total (10+1 -> 11), que es como Mati pidió que se cargue;
+   * esto queda para poder explicárselo al vendedor con sus palabras.
+   */
+  bonificacion?: string | null;
 }
 
 /** Lo que necesitamos saber de un artículo para evaluarlo. */
@@ -116,6 +134,11 @@ export interface AvisoRenglon {
   mensaje_descuento: string | null;
   /** Condición que el sistema no puede verificar solo (ej: que el pago sea contado). */
   nota_descuento: string | null;
+  /**
+   * El renglón viene cargado como unidad regalada (precio 0) y el artículo tiene una promo
+   * del tipo "10+1": acá va cómo corresponde cargarlo. null cuando no aplica.
+   */
+  mensaje_bonificacion: string | null;
 }
 
 export interface ResultadoPedido {
@@ -263,8 +286,22 @@ function evaluarDescuento(
   linea: { bultos: number; kilos: number },
   reglasDescuento: ReglaDescuento[],
   nombre: string,
-): Pick<AvisoRenglon, 'descuento' | 'descuento_max' | 'mensaje_descuento' | 'nota_descuento'> {
+  misReglas: ReglaLista[] = [],
+): Pick<AvisoRenglon, 'descuento' | 'descuento_max' | 'mensaje_descuento' | 'nota_descuento' | 'mensaje_bonificacion'> {
   const puesto = Math.max(0, Number(r.descuento) || 0);
+
+  // 🪤 La planilla escribe la lista 2 de varias líneas como "10+1" o "5+1": el cliente se
+  // lleva una unidad sin cargo. Los vendedores lo cargan como un renglón al 100% de
+  // descuento, y el control lo leía como un descuento ilegal — 207 casos en 4 semanas.
+  // Mati (08/09): "tiene que convertirse en una lista 2 con 11 unidades, que es el
+  // equivalente, así deberían cargar los vendedores".
+  const promo = puesto >= 100 ? misReglas.find(g => g.bonificacion) : undefined;
+  if (promo) {
+    return {
+      descuento: puesto, descuento_max: 100, mensaje_descuento: null, nota_descuento: null,
+      mensaje_bonificacion: `${nombre}: es la promo ${promo.bonificacion}. Se carga como ${promo.umbral} unidades en ${nombreLista(promo.cod_lista)}, no como una unidad regalada.`,
+    };
+  }
 
   const mias = art
     ? (() => {
@@ -286,7 +323,7 @@ function evaluarDescuento(
   const nota = puesto > 0 ? (aplican.find(g => g.aviso)?.aviso ?? null) : null;
 
   if (puesto <= max) {
-    return { descuento: puesto, descuento_max: max, mensaje_descuento: null, nota_descuento: nota };
+    return { descuento: puesto, descuento_max: max, mensaje_descuento: null, nota_descuento: nota, mensaje_bonificacion: null };
   }
   // Se pasó: el mensaje tiene que decir POR QUÉ, que es lo accionable.
   let motivo: string;
@@ -301,7 +338,7 @@ function evaluarDescuento(
   } else {
     motivo = `${nombre}: el descuento máximo para esta cantidad es ${max}% y pusiste ${puesto}%.`;
   }
-  return { descuento: puesto, descuento_max: max, mensaje_descuento: motivo, nota_descuento: nota };
+  return { descuento: puesto, descuento_max: max, mensaje_descuento: motivo, nota_descuento: nota, mensaje_bonificacion: null };
 }
 
 /**
@@ -361,16 +398,21 @@ export function evaluarPedido(
       // Sin regla de LISTA, pero puede tener regla de DESCUENTO: son dos cosas distintas.
       return { idx, cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: null,
         severidad: 'sin_regla', mensaje: null,
-        ...evaluarDescuento(r, art, LISTA_BASE, propio, linea, reglasDescuento, nombre) };
+        ...evaluarDescuento(r, art, LISTA_BASE, propio, linea, reglasDescuento, nombre, misReglas) };
     }
 
     const cumple = misReglas.filter((g) => {
       if (g.condicion === 'libre') return true;
       if (g.condicion === 'promo_general') return promoGeneral;
+      // "BOLSA": el artículo se vende en bulto y se lleva al menos uno entero. El granel
+      // suelto no cuenta por más kilos que sume — no es una bolsa cerrada.
+      if (g.condicion === 'bulto_cerrado') return Boolean(art?.es_bulto) && propio.bultos >= 1;
       const umbral = Number(g.umbral ?? 0);
       const base = g.ambito === 'linea' ? linea : propio;
       const valor = g.unidad === 'kg' ? base.kilos : base.bultos;
-      return g.condicion === 'min' ? valor >= umbral : valor < umbral;
+      // 🪤 `max` es INCLUSIVE: la celda "- 5 UDS" es "hasta 5 unidades" (Mati, 08/09), así
+      // que con 5 exactas todavía corresponde esa lista.
+      return g.condicion === 'min' ? valor >= umbral : valor <= umbral;
     });
 
     // 🔑 Habilitar una lista y obligar a usarla NO son lo mismo:
@@ -386,11 +428,12 @@ export function evaluarPedido(
     //                      le avisa que está disponible; acusarlo de error sería falso.
     // Sin esta distinción el validador marcaba mal 1 de cada 3 renglones facturados.
     const OPCIONALES = new Set(['libre', 'promo_general']);
+    const esOpcional = (g: ReglaLista) => OPCIONALES.has(g.condicion) || g.opcional === true;
     const techo = cumple.length ? Math.max(...cumple.map((g) => g.cod_lista)) : LISTA_BASE;
-    const porCantidad = cumple.filter((g) => !OPCIONALES.has(g.condicion)).map((g) => g.cod_lista);
+    const porCantidad = cumple.filter((g) => !esOpcional(g)).map((g) => g.cod_lista);
     const derecho = porCantidad.length ? Math.max(...porCantidad) : LISTA_BASE;
 
-    const desc = evaluarDescuento(r, art, techo, propio, linea, reglasDescuento, nombre);
+    const desc = evaluarDescuento(r, art, techo, propio, linea, reglasDescuento, nombre, misReglas);
 
     if (r.cod_lista > techo) {
       return { idx, cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: techo,
