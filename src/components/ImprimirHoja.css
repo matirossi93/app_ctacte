@@ -105,8 +105,9 @@
     .imp-no-print, .imp-toolbar { display: none !important; }
     .imp-hoja { padding: 0 !important; max-width: none !important; }
     .imp-tabla { font-size: 9pt; }
-    .imp-tabla th { background: #eee !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .imp-total-cli td, .imp-tabla tfoot td { background: #f6f6f6 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    /* Se conservan los colores de la marca: en blanco y negro el verde sale gris oscuro y el
+       texto claro encima igual se lee. */
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     /* Que un cliente no quede partido entre dos hojas: cada uno es su propio tbody. */
     .imp-grupo { page-break-inside: avoid; break-inside: avoid; }
     .imp-tabla tr { page-break-inside: avoid; }
