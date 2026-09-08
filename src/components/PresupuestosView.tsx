@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle, Check, CircleAlert, Loader2, RefreshCw, ChevronRight, X, Save, Package,
+    Trash2, RotateCcw,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import './PresupuestosView.css';
@@ -57,6 +58,8 @@ interface ItemDetalle {
     equivalencia_um: number | null;
     cantidad: number;
     cod_lista_precios: number | null;
+    /** "Lista 2" en vez de 13: el código de IM no le dice nada a nadie en la oficina. */
+    lista_nombre: string | null;
     precio: number | null;
     importe: number | null;
     /** Cuánto hay en el depósito, en la misma unidad. Negativo = diferencia de inventario. */
@@ -180,8 +183,11 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
     async function guardarCantidades(p: Presupuesto) {
         const cambios = Object.entries(editado)
             .map(([id, v]) => ({ id: Number(id), cantidad: Number(String(v).replace(',', '.')) }))
-            .filter(c => Number.isFinite(c.cantidad) && c.cantidad > 0);
+            // 🔑 El cero ENTRA: es la forma de dar de baja un renglón (IM recalcula el total).
+            .filter(c => Number.isFinite(c.cantidad) && c.cantidad >= 0);
         if (!cambios.length) { setAviso('No cambiaste ninguna cantidad.'); return; }
+        const bajas = cambios.filter(c => c.cantidad === 0).length;
+        if (bajas && !confirm(`Vas a sacar ${bajas} producto(s) del presupuesto (quedan en cantidad 0).\n\n¿Seguimos?`)) return;
         setTrabajando(p.im_comprobante_id); setAviso(null);
         try {
             const r = await fetch(`/api/presupuestos/${p.im_comprobante_id}/cantidades`, {
@@ -192,9 +198,12 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
             if (!r.ok) { setAviso(d?.error ?? 'InfoManager no aceptó el cambio'); return; }
             // (el catch de abajo cubre la caída de red)
             setEditado({});
+            const queHizo = d.dados_de_baja
+                ? `${d.actualizados} renglón(es) corregidos, ${d.dados_de_baja} dado(s) de baja`
+                : `${d.actualizados} renglón(es) corregidos`;
             setAviso(d.revision_reiniciada
-                ? `Listo: ${d.actualizados} renglón(es) corregidos. Como cambió el pedido, la aprobación se deshizo: revisalo de nuevo.`
-                : `Listo: ${d.actualizados} renglón(es) corregidos en InfoManager.`);
+                ? `Listo: ${queHizo}. Como cambió el pedido, la aprobación se deshizo: revisalo de nuevo.`
+                : `Listo: ${queHizo} en InfoManager.`);
             await cargarDetalle(p.im_comprobante_id);       // el detalle ya corregido
             void cargar(true);                              // y el importe del listado
         } catch (e: any) {
@@ -366,11 +375,13 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                     <>
                                         <table className="pr-tabla">
                                             <thead>
-                                                <tr><th>Producto</th><th className="n">Cantidad</th><th className="n">Stock</th><th className="n">Precio</th><th className="n">Importe</th><th>Lista</th></tr>
+                                                <tr><th>Producto</th><th className="n">Cantidad</th><th className="n">Stock</th><th className="n">Precio</th><th className="n">Importe</th><th>Lista</th><th /></tr>
                                             </thead>
                                             <tbody>
-                                                {items.map(it => (
-                                                    <tr key={it.id}>
+                                                {items.map(it => {
+                                                  const enCero = (editado[it.id] ?? String(it.cantidad)) === '0';
+                                                  return (
+                                                    <tr key={it.id} className={enCero ? 'pr-baja' : ''}>
                                                         <td>
                                                             {it.descripcion}
                                                             {/* Kilos por bulto: es lo que dice si "30" son 30 kilos o 30 bolsas. */}
@@ -392,15 +403,30 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                                         </td>
                                                         <td className="n">{it.precio != null ? money(it.precio) : '—'}</td>
                                                         <td className="n">{it.importe != null ? money(it.importe) : '—'}</td>
-                                                        <td>{it.cod_lista_precios ?? '—'}</td>
+                                                        <td>{it.lista_nombre ?? (it.cod_lista_precios ?? '—')}</td>
+                                                        <td className="n">
+                                                            {/* Sacar el producto = dejarlo en 0. Se aplica al guardar, junto
+                                                                con el resto, para no hacer un viaje a IM por renglón. */}
+                                                            <button
+                                                                className="pr-icono"
+                                                                title={enCero ? 'Volver a la cantidad original' : 'Sacar este producto del presupuesto'}
+                                                                onClick={() => setEditado(v => enCero
+                                                                    ? { ...v, [it.id]: String(it.cantidad) }
+                                                                    : { ...v, [it.id]: '0' })}
+                                                            >
+                                                                {enCero ? <RotateCcw size={14} /> : <Trash2 size={14} />}
+                                                            </button>
+                                                        </td>
                                                     </tr>
-                                                ))}
+                                                  );
+                                                })}
                                             </tbody>
                                         </table>
                                         <div className="pr-detalle-pie">
                                             <span className="pr-nota">
-                                                Se pueden corregir <b>cantidades</b>. Para agregar o sacar un producto hay que
-                                                rehacer el pedido: InfoManager no deja cambiar el surtido de un presupuesto.
+                                                Se pueden corregir <b>cantidades</b> y <b>sacar</b> productos (quedan en 0).
+                                                Para <b>agregar</b> uno hay que rehacer el pedido: la API de InfoManager no
+                                                deja sumar renglones a un presupuesto ya creado.
                                             </span>
                                             <button
                                                 className="pr-btn chico"

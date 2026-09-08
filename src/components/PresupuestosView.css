@@ -139,3 +139,10 @@
    de vendedores (`.ped-aviso.cliente`), para que las dos pantallas digan lo mismo. */
 .pr-chip.nota { background: var(--color-bg); color: var(--color-text-muted); border-color: var(--color-border); }
 .pr-badge.nota { background: var(--color-bg); color: var(--color-text-muted); border: 1px solid var(--color-border); }
+
+/* Sacar un producto = dejarlo en cantidad 0 (es lo único que acepta la API de IM). El renglón
+   se apaga en vez de desaparecer: así se ve que se sacó a propósito y se puede deshacer. */
+.pr-baja { opacity: 0.5; text-decoration: line-through; }
+.pr-baja input { text-decoration: none; }
+.pr-icono { border: none; background: transparent; color: var(--color-text-muted); cursor: pointer; padding: 0.2rem; }
+.pr-icono:hover { color: var(--color-text); }

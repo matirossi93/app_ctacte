@@ -23,6 +23,7 @@ import {
   cabeceraComprobante, actualizarPresupuestoCantidades, fetchStockPorDeposito,
 } from './infomanager.js';
 import { vistaDeRango, invalidarVista } from './vistaPresupuestos.js';
+import { nombreListaLargo } from './listas.js';
 import { armarFraccionado, totalesFraccionado } from './fraccionado.js';
 
 /** Sólo la oficina (admin, gerente y administrativo). Devuelve true si ya contestó el 403. */
@@ -89,6 +90,28 @@ export async function listarPresupuestos(req: Request & { user?: JwtPayload }, r
   } catch (err: any) {
     console.error('[listarPresupuestos]', err?.message);
     res.status(502).json({ error: `No se pudieron traer los presupuestos: ${err?.message ?? 'sin respuesta de IM'}` });
+  }
+}
+
+/**
+ * GET /api/presupuestos/consolidado?desde=&hasta= — cuánto se pidió de cada artículo vs. el stock.
+ *
+ * Mati (08/09/2026): *"para que Jo antes de facturar pueda ver con qué cantidad cuenta de cada
+ * artículo y si hay algo que le falta, o si está más pedido de lo que hay, pueda avisar o pueda
+ * **redistribuir esas cantidades entre los clientes** que hicieron el pedido"*.
+ *
+ * Sale de la MISMA vista cacheada que la lista de presupuestos, así que abrirlo no cuesta ni una
+ * llamada más a InfoManager.
+ */
+export async function consolidadoDelRango(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  try {
+    const { desde, hasta } = rangoPedido(req);
+    const vista = await vistaDeRango(desde, hasta, req.query.refrescar === '1');
+    res.json({ ok: true, desde, hasta, ...vista.consolidado });
+  } catch (err: any) {
+    console.error('[consolidadoDelRango]', err?.message);
+    res.status(502).json({ error: `No se pudo armar el consolidado: ${err?.message ?? 'sin respuesta de IM'}` });
   }
 }
 
@@ -190,6 +213,8 @@ export async function detallePresupuesto(req: Request & { user?: JwtPayload }, r
           equivalencia_um: art?.equivalencia_um ?? null,
           cantidad: it.cantidad,
           cod_lista_precios: it.cod_lista_precios,
+          // El código crudo (13, 14, 15) no le dice nada a nadie en la oficina.
+          lista_nombre: it.cod_lista_precios != null ? nombreListaLargo(Number(it.cod_lista_precios)) : null,
           precio: p?.precio ?? null,
           importe: p ? Math.round(p.precio * it.cantidad * 100) / 100 : null,
           // Cuánto hay en el depósito, en la misma unidad que la cantidad. Puede ser negativo:
@@ -210,10 +235,14 @@ export async function detallePresupuesto(req: Request & { user?: JwtPayload }, r
  * Mati: *"estaría bueno que pueda hacer las correcciones directamente del panel así no tiene
  * que ir y venir de InfoManager"*.
  *
- * ⚠️ LÍMITE DE LA API DE IM, no nuestro: `PUT /presupuestos/{id}` **sólo acepta cambiar la
- * cantidad de renglones que ya existen**. Para agregar o sacar un producto, o cambiar la lista
- * de precios, hay que anular y crear de nuevo el comprobante — que es lo que hace el editor de
- * pedidos de la app. Acá se avisa en vez de fingir que se puede.
+ * 🔑 **Sacar un producto SÍ se puede**: `cantidad: 0` da de baja el renglón y recalcula el total
+ * (probado contra IM real el 04/09/2026: 81.185,40 → 59.543,16). El renglón queda a la vista en
+ * cero, lo que además es mejor que desaparecer — se ve que se sacó a propósito.
+ *
+ * ⚠️ LÍMITE DE LA API DE IM, no nuestro: **AGREGAR un producto no se puede**. `PUT
+ * /presupuestos/{id}` con un renglón nuevo contesta 200 y no hace nada, y no existe ningún
+ * endpoint de alta de renglones (13 rutas probadas). El sistema propio de IM sí lo hace, así que
+ * es algo para pedirle a Sistec. Tampoco se puede cambiar el precio ni la lista.
  */
 export async function corregirCantidades(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
@@ -222,9 +251,9 @@ export async function corregirCantidades(req: Request & { user?: JwtPayload }, r
     const entrada: any[] = Array.isArray(req.body?.items) ? req.body.items : [];
     const items = entrada
       .map(i => ({ id: Number(i.id), cantidad: Number(i.cantidad) }))
-      .filter(i => Number.isFinite(i.id) && Number.isFinite(i.cantidad) && i.cantidad > 0);
-    if (!items.length) {
-      res.status(400).json({ error: 'Mandá al menos un renglón con id y cantidad mayor a cero.' }); return;
+      .filter(i => Number.isFinite(i.id) && Number.isFinite(i.cantidad) && i.cantidad >= 0);
+    if (!items.length || items.length !== entrada.length) {
+      res.status(400).json({ error: 'Mandá renglones con id y una cantidad de cero o más.' }); return;
     }
 
     // 🪤 Un presupuesto ya facturado no se toca: la factura quedaría diciendo otra cosa.
@@ -243,6 +272,31 @@ export async function corregirCantidades(req: Request & { user?: JwtPayload }, r
       return;
     }
 
+    /**
+     * 🔴 Si se dan de baja renglones, hay que confirmar que NO queden todos en cero: un
+     * presupuesto vacío se facturaría por $0 y nadie se enteraría hasta ver la factura. Sólo se
+     * consulta cuando de verdad hay un cero, para no gastar una llamada a IM en el caso normal.
+     */
+    const bajas = items.filter(i => i.cantidad === 0);
+    if (bajas.length) {
+      let actuales: Array<{ id: number; cantidad: number }>;
+      try {
+        actuales = (await getItemsComprobante(id)).map((it: any) => ({ id: Number(it.id), cantidad: Number(it.cantidad) }));
+      } catch (e: any) {
+        // No poder preguntar no es "está todo bien": sin esto se vaciaría el presupuesto a ciegas.
+        res.status(502).json({ error: `No pude leer los renglones del presupuesto en InfoManager (${e?.message ?? 'sin respuesta'}). No cambié nada.` });
+        return;
+      }
+      const pedido = new Map(items.map(i => [i.id, i.cantidad]));
+      const quedaAlgo = actuales.some(a => (pedido.has(a.id) ? pedido.get(a.id)! : a.cantidad) > 0);
+      if (!quedaAlgo) {
+        res.status(409).json({
+          error: 'Así quedarían todos los renglones en cero y el presupuesto se facturaría por $0. Si hay que anularlo, hacelo en InfoManager.',
+        });
+        return;
+      }
+    }
+
     const r = await actualizarPresupuestoCantidades(id, items);
     if (!r.ok) { res.status(502).json({ error: `InfoManager rechazó el cambio: ${r.error}` }); return; }
 
@@ -253,7 +307,12 @@ export async function corregirCantidades(req: Request & { user?: JwtPayload }, r
     if (errRev) console.warn('[corregirCantidades] no pude limpiar la revisión:', errRev.message);
 
     invalidarVista();
-    res.json({ ok: true, actualizados: items.length, revision_reiniciada: !errRev });
+    res.json({
+      ok: true,
+      actualizados: items.length,
+      dados_de_baja: items.filter(i => i.cantidad === 0).length,
+      revision_reiniciada: !errRev,
+    });
   } catch (err: any) {
     console.error('[corregirCantidades]', err?.message);
     res.status(500).json({ error: err?.message ?? 'error' });

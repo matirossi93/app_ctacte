@@ -1,0 +1,93 @@
+/* Consolidado de artículos: lo pedido en todo el rango contra lo que hay en el depósito. */
+
+.co-root { display: flex; flex-direction: column; gap: 0.5rem; max-width: 1200px; margin: 0 auto; }
+
+.co-top { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
+.co-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem;
+    border: none; background: linear-gradient(135deg, #06652F 0%, #03481F 100%); color: #EEC045;
+    font-family: inherit; font-weight: 600; font-size: 0.83rem;
+    padding: 0.4rem 0.85rem; border-radius: 25px; cursor: pointer;
+}
+.co-btn.ghost { background: transparent; color: var(--color-text-muted); border: 1px solid var(--color-border); }
+.co-btn:disabled { opacity: 0.55; cursor: default; }
+.co-check { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.83rem; color: var(--color-text-muted); }
+.co-girando { animation: co-girar 1s linear infinite; }
+@keyframes co-girar { to { transform: rotate(360deg); } }
+
+.co-resumen { display: flex; align-items: center; gap: 0.8rem; margin-left: auto; font-size: 0.85rem; color: var(--color-text-muted); }
+.co-resumen b { color: var(--color-text); }
+.co-chip {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    padding: 0.2rem 0.55rem; border-radius: 999px; font-weight: 600; font-size: 0.78rem;
+    background: var(--color-bg); border: 1px solid var(--color-border);
+}
+.co-chip.grave { background: #fbe9e7; color: #a33b26; border-color: #d98b7a; }
+
+.co-aviso {
+    display: flex; align-items: flex-start; gap: 0.5rem;
+    background: #fdf0d5; color: #8a5a00; border: 1px solid #EEC045;
+    padding: 0.6rem 0.8rem; border-radius: var(--radius-md); font-size: 0.85rem;
+}
+.co-aviso.error { background: #fbe9e7; color: #8a2a1a; border-color: #e0a89e; }
+.co-aviso > svg { flex-shrink: 0; margin-top: 0.12rem; }
+
+.co-cargando { display: flex; align-items: center; gap: 0.5rem; color: var(--color-text-muted); font-size: 0.88rem; padding: 1rem 0; }
+.co-vacio {
+    display: flex; flex-direction: column; align-items: center; gap: 0.4rem;
+    padding: 2rem 1rem; color: var(--color-text-muted); text-align: center;
+    border: 1px dashed var(--color-border); border-radius: var(--radius-md);
+}
+
+.co-art {
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-md); overflow: hidden;
+}
+/* Lo que no alcanza es lo único que hay que resolver hoy: se ve de lejos. */
+.co-art.falta { border-color: #d98b7a; }
+
+.co-art-head {
+    display: flex; align-items: center; gap: 0.7rem; width: 100%;
+    background: transparent; border: none; font-family: inherit; text-align: left;
+    padding: 0.55rem 0.7rem; cursor: pointer; color: var(--color-text);
+}
+.co-art-head:hover { background: var(--color-surface-hover); }
+.co-chevron { transition: transform 0.15s; flex-shrink: 0; color: var(--color-text-muted); }
+.co-chevron.abierto { transform: rotate(90deg); }
+.co-art-nom { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.co-art-nom span { font-weight: 600; font-size: 0.88rem; }
+.co-art-nom small { font-size: 0.74rem; color: var(--color-text-muted); }
+
+.co-num { display: flex; flex-direction: column; align-items: flex-end; gap: 0.1rem; min-width: 66px; }
+.co-num span { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--color-text-muted); }
+.co-num b { font-size: 0.95rem; }
+.co-num.falta b { color: #a33b26; }
+.co-num.ok b { color: var(--color-success); }
+
+.co-quienes { padding: 0.2rem 0.7rem 0.7rem; border-top: 1px solid var(--color-border); }
+.co-ayuda { margin: 0.5rem 0; font-size: 0.8rem; color: var(--color-text-muted); }
+.co-ayuda b { color: var(--color-text); }
+.co-quienes table { width: 100%; border-collapse: collapse; font-size: 0.83rem; }
+.co-quienes th {
+    text-align: left; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em;
+    color: var(--color-text-muted); font-weight: 600; padding: 0.25rem 0.4rem;
+    border-bottom: 1px solid var(--color-border);
+}
+.co-quienes td { padding: 0.3rem 0.4rem; border-bottom: 1px solid var(--color-border); }
+.co-quienes .n { text-align: right; }
+.co-pr { color: var(--color-text-muted); font-size: 0.74rem; }
+/* La cantidad propuesta: es el número sobre el que se decide. */
+.co-sug { font-weight: 700; color: var(--color-primary); }
+
+.co-tag { padding: 0.05rem 0.4rem; border-radius: 999px; font-size: 0.68rem; font-weight: 600; }
+.co-tag.ok { background: rgba(6, 101, 47, 0.1); color: #06652F; border: 1px solid rgba(6, 101, 47, 0.35); }
+.co-tag.obs { background: #fdf0d5; color: #8a5a00; border: 1px solid #EEC045; }
+.co-tag.tenue { background: var(--color-bg); color: var(--color-text-muted); border: 1px solid var(--color-border); }
+
+@media (max-width: 700px) {
+    .co-resumen { margin-left: 0; width: 100%; }
+    /* El nombre del artículo se lleva la fila y los números van abajo. */
+    .co-art-head { flex-wrap: wrap; }
+    .co-art-nom { flex-basis: 100%; }
+    .co-num { align-items: flex-start; }
+}

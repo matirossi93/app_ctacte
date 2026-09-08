@@ -56,7 +56,7 @@ import { tableroFacturacion, previsualizarFacturacion, facturarSeleccion, libera
 import { marcarRetiro, quitarRetiro, marcarRetirado, listarRetiros, resumenRetiros } from './server-lib/retirosSucursal.js';
 import { listarChoferes, liquidacionMensual } from './server-lib/liquidacionChoferes.js';
 import { listarAjustes, crearAjuste, borrarAjuste, candidatasAVincular, vincularAjuste } from './server-lib/ajustesEntrega.js';
-import { listarPresupuestos, revisarPresupuesto, borrarRevision, detallePresupuesto, corregirCantidades, fraccionadoDelRango } from './server-lib/panelPresupuestos.js';
+import { listarPresupuestos, revisarPresupuesto, borrarRevision, detallePresupuesto, corregirCantidades, fraccionadoDelRango, consolidadoDelRango } from './server-lib/panelPresupuestos.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -682,6 +682,8 @@ app.post('/api/facturacion', requireJwt, (req: any, res) => facturarSeleccion(re
 app.delete('/api/facturacion/reclamo/:comprobanteId', requireJwt, (req: any, res) => liberarReclamo(req, res));
 
 app.get('/api/presupuestos/fraccionado', requireJwt, (req: any, res) => fraccionadoDelRango(req, res));
+// 🪤 Antes de `/:comprobanteId`: si no, la ruta con parámetro se come "consolidado".
+app.get('/api/presupuestos/consolidado', requireJwt, (req: any, res) => consolidadoDelRango(req, res));
 app.get('/api/presupuestos', requireJwt, (req: any, res) => listarPresupuestos(req, res));
 app.get('/api/presupuestos/:comprobanteId', requireJwt, (req: any, res) => detallePresupuesto(req, res));
 app.post('/api/presupuestos/:comprobanteId/revision', requireJwt, (req: any, res) => revisarPresupuesto(req, res));

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Truck, LogOut, ChevronDown, ClipboardCheck, Scissors, Receipt } from 'lucide-react';
 import { clearToken, getUser } from '../utils/auth';
 import { EntregasView } from './EntregasView';
-import { PresupuestosView } from './PresupuestosView';
+import { PresupuestosShell } from './PresupuestosShell';
 import { FraccionadoView } from './FraccionadoView';
 import { FacturacionView } from './FacturacionView';
 import './OficinaShell.css';
@@ -104,7 +104,7 @@ export function OficinaShell() {
             )}
 
             <main className="of-body">
-                {tab === 'presupuestos' && <PresupuestosView desde={desde} hasta={hasta} />}
+                {tab === 'presupuestos' && <PresupuestosShell desde={desde} hasta={hasta} />}
                 {tab === 'fraccionado' && <FraccionadoView desde={desde} hasta={hasta} />}
                 {tab === 'facturacion' && <FacturacionView desde={desde} hasta={hasta} />}
                 {tab === 'hojas' && <EntregasView />}

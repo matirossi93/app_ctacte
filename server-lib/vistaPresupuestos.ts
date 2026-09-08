@@ -19,6 +19,7 @@ import { pesoDeRenglones } from './pesoComprobante.js';
 import { zonaDeCliente } from './zonaCliente.js';
 import { revisarCantidades } from './controlCantidades.js';
 import { formatosDeBolsa } from './formatosBolsa.js';
+import { armarConsolidado } from './consolidadoArticulos.js';
 
 /** Depósito contra el que se controla el stock. 1 = Depósito General (Casa Central). */
 const DEPOSITO_CONTROL = Number(process.env.PEDIDO_DEPOSITO || 1);
@@ -233,6 +234,32 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
       aprobados: filas.filter(f => f.revision?.estado === 'aprobado').length,
       observados: filas.filter(f => f.revision?.estado === 'observado').length,
       de_otros_dias: filas.filter(f => f.de_otro_dia && !f.hoja_id).length,
+      /**
+       * 🔑 Cuánto se pidió de cada artículo en TODO el rango, contra lo que hay.
+       *
+       * Mati (08/09/2026), corrigiendo el control que ya existía: *"eso se está midiendo factura
+       * a factura, esa no era la idea"*. Mirando de a un presupuesto por vez, tres clientes que
+       * piden 200 con 300 en depósito parecen los tres servibles. La pregunta —a quién le doy—
+       * sólo se contesta sumando primero.
+       *
+       * Sale de los renglones que ya se trajeron acá arriba: no cuesta ni una llamada más a IM.
+       * Y suma sólo los PENDIENTES: lo que ya está en una hoja o en retiro salió con su remito y
+       * por lo tanto ya descontó stock en InfoManager.
+       */
+      consolidado: armarConsolidado(
+        filas
+          .filter(f => !f.hoja_id && !f.en_retiro)
+          .map(f => ({
+            im_comprobante_id: f.im_comprobante_id,
+            im_numero: f.im_numero,
+            cod_cliente: f.cod_cliente,
+            cliente_nombre: f.cliente_nombre,
+            revision_estado: (f.revision as any)?.estado ?? null,
+          })),
+        renglones,
+        cat,
+        stock,
+      ),
     };
     _vistaCache.set(clave, { at: Date.now(), datos });
     return datos;

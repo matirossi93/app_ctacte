@@ -221,3 +221,69 @@ describe('el listado de fraccionado', () => {
     expect(m.fetchVentasItems).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * 🔑 Sacar un producto del presupuesto sin salir del panel (Mati, 08/09/2026).
+ *
+ * La API de IM no tiene un "borrar renglón", pero `cantidad: 0` **sí funciona y recalcula el
+ * total** (probado contra IM real el 04/09/2026: 81.185,40 → 59.543,16). El renglón queda a la
+ * vista con cantidad 0, que además es mejor que desaparecer: se ve que se sacó a propósito.
+ */
+describe('sacar un producto del presupuesto', () => {
+  beforeEach(() => {
+    tablas['presupuestos_facturados'] = { data: null, error: null };
+    m.actualizarPresupuestoCantidades.mockResolvedValue({ ok: true });
+    // El presupuesto tiene DOS renglones: se puede sacar uno.
+    m.getItemsComprobante.mockResolvedValue([
+      { id: 101, cod_articulo: 1, cantidad: 10 },
+      { id: 102, cod_articulo: 2, cantidad: 5 },
+    ]);
+  });
+
+  it('🔑 cantidad 0 da de baja el renglón', async () => {
+    const r = await llamar(corregirCantidades, {
+      params: { comprobanteId: '58700637' },
+      body: { items: [{ id: 101, cantidad: 0 }] },
+    });
+    expect(r.status).toBe(200);
+    expect(m.actualizarPresupuestoCantidades).toHaveBeenCalledWith('58700637', [{ id: 101, cantidad: 0 }]);
+    expect(r.body.dados_de_baja).toBe(1);
+  });
+
+  it('🔴 no se puede vaciar el presupuesto entero: quedaría facturándose por $0', async () => {
+    const r = await llamar(corregirCantidades, {
+      params: { comprobanteId: '58700637' },
+      body: { items: [{ id: 101, cantidad: 0 }, { id: 102, cantidad: 0 }] },
+    });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/vac|todos/i);
+    expect(m.actualizarPresupuestoCantidades).not.toHaveBeenCalled();
+  });
+
+  it('🔴 si no se puede leer el presupuesto en IM, no se da de baja nada a ciegas', async () => {
+    m.getItemsComprobante.mockRejectedValue(new Error('timeout'));
+    const r = await llamar(corregirCantidades, {
+      params: { comprobanteId: '58700637' },
+      body: { items: [{ id: 101, cantidad: 0 }] },
+    });
+    expect(r.status).toBe(502);
+    expect(m.actualizarPresupuestoCantidades).not.toHaveBeenCalled();
+  });
+
+  it('cambiar cantidades sin ningún cero no consulta los renglones: es el camino de siempre', async () => {
+    const r = await llamar(corregirCantidades, {
+      params: { comprobanteId: '58700637' },
+      body: { items: [{ id: 101, cantidad: 8 }] },
+    });
+    expect(r.status).toBe(200);
+    expect(m.getItemsComprobante).not.toHaveBeenCalled();
+  });
+
+  it('una cantidad negativa sigue sin pasar', async () => {
+    const r = await llamar(corregirCantidades, {
+      params: { comprobanteId: '58700637' },
+      body: { items: [{ id: 101, cantidad: -3 }] },
+    });
+    expect(r.status).toBe(400);
+  });
+});

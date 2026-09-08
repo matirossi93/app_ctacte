@@ -1,0 +1,18 @@
+/* Sub-secciones de Presupuestos. Van abajo del header para que entren en el celular. */
+
+.ps-root { display: flex; flex-direction: column; gap: 0.85rem; }
+
+.ps-subtabs {
+    display: flex; gap: 0.3rem; flex-wrap: wrap;
+    border-bottom: 1px solid var(--color-border); padding-bottom: 0.45rem;
+}
+.ps-subtabs button {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    border: 1px solid transparent; background: transparent; color: var(--color-text-muted);
+    font-family: inherit; font-weight: 600; font-size: 0.82rem;
+    padding: 0.35rem 0.75rem; border-radius: 25px; cursor: pointer;
+}
+.ps-subtabs button:hover { background: var(--color-surface-hover); }
+.ps-subtabs button.on {
+    background: var(--color-surface); border-color: var(--color-border); color: var(--color-primary);
+}

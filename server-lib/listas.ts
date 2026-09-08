@@ -132,6 +132,16 @@ export interface ResultadoPedido {
 
 const NOMBRE_LISTA: Record<number, string> = { 9: 'Minorista', 11: 'Sucursales', 12: 'L1', 13: 'L2', 14: 'L3', 15: 'L4' };
 export const nombreLista = (cod: number) => NOMBRE_LISTA[cod] ?? `lista ${cod}`;
+/**
+ * Igual, pero con el nombre entero. Los avisos del vendedor van cortos ("está en L2") porque
+ * comparten renglón con el producto; en el panel de la oficina el código crudo no le dice nada
+ * a nadie (Mati, 08/09/2026: *"la lista de precios sale como 13, 14, 15 en vez de LISTA 1, 2, 3"*).
+ */
+export const nombreListaLargo = (cod: number) => {
+  const n = NOMBRE_LISTA[cod];
+  if (!n) return `Lista ${cod}`;                      // una lista que no conocemos: el código igual sirve
+  return /^L\d$/.test(n) ? `Lista ${n.slice(1)}` : n; // Minorista y Sucursales van con su nombre
+};
 
 /**
  * ¿El artículo se vende por bulto o por kilo?
