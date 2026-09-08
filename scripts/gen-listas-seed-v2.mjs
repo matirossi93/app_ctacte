@@ -106,11 +106,14 @@ function traducir(celda, codLista) {
   if (c === 'PALLET') return { condicion: 'pallet' };
   let m;
   if ((m = /^(\d+)\s*\+\s*(\d+)$/.exec(c)))
-    return { condicion: 'min', umbral: Number(m[1]) + Number(m[2]), unidad: 'bulto', ambito: 'linea', bonificacion: `${m[1]}+${m[2]}` };
+    return { condicion: 'min', umbral: Number(m[1]) + Number(m[2]), unidad: 'unidad', ambito: 'linea', bonificacion: `${m[1]}+${m[2]}` };
   if ((m = /^-\s*(\d+) ?UDS?$/.exec(c)))
-    return { condicion: 'max', umbral: Number(m[1]), unidad: 'bulto', ambito: 'linea' };
+    return { condicion: 'max', umbral: Number(m[1]), unidad: 'unidad', ambito: 'linea' };
   if ((m = /^(\d+) ?UDS?$/.exec(c)))
-    return { condicion: 'min', umbral: Number(m[1]), unidad: 'bulto', ambito: 'linea' };
+    // 🪤 "UDS" son UNIDADES, no bolsas: un collar antipulgas o una pipeta es una unidad y
+    // nunca llega a contar como bulto. Traducirlo a 'bulto' hacía que la condición fuera
+    // imposible de cumplir para los 201 artículos de accesorios.
+    return { condicion: 'min', umbral: Number(m[1]), unidad: 'unidad', ambito: 'linea' };
   if ((m = /^(\d+) ?BOLSAS?$/.exec(c)))
     return { condicion: 'min', umbral: Number(m[1]), unidad: 'bulto', ambito: 'linea' };
   if ((m = /^(\d+) ?KGS?$/.exec(c)))
@@ -209,6 +212,19 @@ out.push(`alter table listas_reglas add column if not exists opcional boolean no
 out.push(`alter table listas_reglas add column if not exists bonificacion text;`);
 out.push(`comment on column listas_reglas.opcional is 'La condición habilita la lista pero no le da derecho al cliente (celda "BOLS +10%").';`);
 out.push(`comment on column listas_reglas.bonificacion is 'La promo como la escribe la planilla ("10+1"): el umbral ya viene sumado.';`);
+out.push(`-- 🪤 El índice único era (tenant, tipo, valor, lista): UNA sola condición por lista.`);
+out.push(`-- Ahora una lista puede alcanzarse por DOS caminos —la condición propia de la línea y`);
+out.push(`-- la promo general de 10 bultos surtidos, que sigue vigente— así que la condición entra`);
+out.push(`-- en la clave. Sin esto el insert falla con "duplicate key ... (subrubro, Ganave, 13)".`);
+out.push(`drop index if exists listas_reglas_target_uidx;`);
+out.push(`create unique index if not exists listas_reglas_target_uidx`);
+out.push(`  on listas_reglas (tenant_id, match_tipo, match_valor, cod_lista, condicion);`);
+out.push(``);
+out.push(`-- "10 UDS" cuenta unidades vendidas; "10 BOLSAS", bolsas. La planilla los distingue.`);
+out.push(`alter table listas_reglas drop constraint if exists listas_reglas_unidad_check;`);
+out.push(`alter table listas_reglas add constraint listas_reglas_unidad_check`);
+out.push(`  check (unidad is null or unidad in ('bulto','kg','unidad'));`);
+out.push(``);
 out.push(`alter table listas_reglas drop constraint if exists listas_reglas_condicion_check;`);
 out.push(`alter table listas_reglas add constraint listas_reglas_condicion_check`);
 out.push(`  check (condicion in ('libre','promo_general','min','max','excluido','bulto_cerrado'));`);

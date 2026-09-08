@@ -42,7 +42,12 @@ export interface ReglaLista {
    */
   condicion: 'libre' | 'promo_general' | 'min' | 'max' | 'excluido' | 'bulto_cerrado';
   umbral: number | null;
-  unidad: 'bulto' | 'kg' | null;
+  /**
+   * `unidad` es la celda de la planilla: "10 UDS" cuenta unidades vendidas, "10 BOLSAS"
+   * cuenta bolsas y "10 KGS" cuenta kilos. No son lo mismo: un collar es una unidad y
+   * nunca una bolsa.
+   */
+  unidad: 'bulto' | 'kg' | 'unidad' | null;
   ambito: 'articulo' | 'linea' | 'pedido' | null;
   /**
    * La condición habilita la lista pero NO le da derecho al cliente: el vendedor puede
@@ -199,13 +204,26 @@ export function clasificarArticulo(raw: {
   return { ...base, es_bulto: false, kg_por_bulto: 0 };
 }
 
-/** Cuántos bultos y cuántos kilos representa un renglón. */
+/**
+ * Cuántos BULTOS, cuántos KILOS y cuántas UNIDADES representa un renglón.
+ *
+ * Los tres se miden distinto y la planilla los usa para cosas distintas:
+ *   · bultos   -> la promo general ("10 bultos surtidos"): sólo bolsas de verdad.
+ *   · kilos    -> las celdas "10 KGS".
+ *   · unidades -> las celdas "10 UDS" y "10+1": lo que el cliente se lleva, sea una bolsa,
+ *                 un collar o una pipeta.
+ *
+ * 🪤 Sin `unidades` esto contaba los accesorios como si fueran granel: un collar antipulgas
+ * viene en IM con unidad de medida vacía y equivalencia 0, así que 11 collares daban CERO
+ * bultos y la condición "10+1" no se podía cumplir nunca. Afectaba a los 201 artículos de la
+ * línea de accesorios y venenos, más pipetas, shampoos y talqueras.
+ */
 function medirRenglon(r: RenglonPedido, art: ArticuloInfo | undefined) {
   if (art?.es_bulto) {
-    return { bultos: r.cantidad, kilos: art.kg_por_bulto > 0 ? r.cantidad * art.kg_por_bulto : 0 };
+    return { bultos: r.cantidad, kilos: art.kg_por_bulto > 0 ? r.cantidad * art.kg_por_bulto : 0, unidades: r.cantidad };
   }
   // Granel: la cantidad ya viene en kilos. 20 kg o más suman UN bulto (no acumula).
-  return { bultos: r.cantidad >= KG_PARA_CONTAR_BULTO ? 1 : 0, kilos: r.cantidad };
+  return { bultos: r.cantidad >= KG_PARA_CONTAR_BULTO ? 1 : 0, kilos: r.cantidad, unidades: r.cantidad };
 }
 
 /**
@@ -222,26 +240,28 @@ function medirRenglon(r: RenglonPedido, art: ArticuloInfo | undefined) {
 function medirPorArticulo(
   renglones: RenglonPedido[],
   catalogo: Map<number, ArticuloInfo>,
-): Map<number, { bultos: number; kilos: number }> {
+): Map<number, { bultos: number; kilos: number; unidades: number }> {
   const kilosPorArt = new Map<number, number>();
   const bultosPorArt = new Map<number, number>();
+  const unidadesPorArt = new Map<number, number>();
   for (const r of renglones) {
     const art = catalogo.get(r.cod_articulo);
     const m = medirRenglon(r, art);
     kilosPorArt.set(r.cod_articulo, (kilosPorArt.get(r.cod_articulo) ?? 0) + m.kilos);
+    unidadesPorArt.set(r.cod_articulo, (unidadesPorArt.get(r.cod_articulo) ?? 0) + m.unidades);
     if (art?.es_bulto) bultosPorArt.set(r.cod_articulo, (bultosPorArt.get(r.cod_articulo) ?? 0) + m.bultos);
   }
   // Alcanza con recorrer kilosPorArt: se llena para TODO renglón (los bultos con kilos > 0 o
   // con 0 si el artículo no declara kg), así que bultosPorArt nunca tiene un código que no
   // esté también acá.
-  const out = new Map<number, { bultos: number; kilos: number }>();
+  const out = new Map<number, { bultos: number; kilos: number; unidades: number }>();
   for (const [cod, kilos] of kilosPorArt) {
     const art = catalogo.get(cod);
     // El granel suma UN bulto a partir de 20 kg y no acumula (Mati: "60 kg siguen siendo 1").
     const bultos = art?.es_bulto
       ? (bultosPorArt.get(cod) ?? 0)
       : (kilos >= KG_PARA_CONTAR_BULTO ? 1 : 0);
-    out.set(cod, { bultos, kilos });
+    out.set(cod, { bultos, kilos, unidades: unidadesPorArt.get(cod) ?? 0 });
   }
   return out;
 }
@@ -377,12 +397,12 @@ export function evaluarPedido(
   // cantidad de un producto en dos renglones, el cliente igual se lleva la suma.
   const porArticulo = medirPorArticulo(renglones, catalogo);
 
-  const porLinea = new Map<string, { bultos: number; kilos: number }>();
+  const porLinea = new Map<string, { bultos: number; kilos: number; unidades: number }>();
   for (const [cod, m] of porArticulo) {
     const k = claveLinea(catalogo.get(cod));
     if (!k) continue;
-    const acc = porLinea.get(k) ?? { bultos: 0, kilos: 0 };
-    porLinea.set(k, { bultos: acc.bultos + m.bultos, kilos: acc.kilos + m.kilos });
+    const acc = porLinea.get(k) ?? { bultos: 0, kilos: 0, unidades: 0 };
+    porLinea.set(k, { bultos: acc.bultos + m.bultos, kilos: acc.kilos + m.kilos, unidades: acc.unidades + m.unidades });
   }
 
   const avisos = renglones.map<AvisoRenglon>((r, idx) => {
@@ -413,7 +433,9 @@ export function evaluarPedido(
       if (g.condicion === 'bulto_cerrado') return propio.bultos >= 1;
       const umbral = Number(g.umbral ?? 0);
       const base = g.ambito === 'linea' ? linea : propio;
-      const valor = g.unidad === 'kg' ? base.kilos : base.bultos;
+      const valor = g.unidad === 'kg' ? base.kilos
+        : g.unidad === 'unidad' ? base.unidades
+        : base.bultos;
       // 🪤 `max` es INCLUSIVE: la celda "- 5 UDS" es "hasta 5 unidades" (Mati, 08/09), así
       // que con 5 exactas todavía corresponde esa lista.
       return g.condicion === 'min' ? valor >= umbral : valor <= umbral;

@@ -139,6 +139,37 @@ describe('"- 5 UDS" — hasta 5 unidades, el 5 incluido', () => {
   });
 });
 
+describe('"10 UDS" cuenta unidades, no bolsas', () => {
+  // 🪤 Un collar antipulgas viene en IM con unidad de medida vacía y equivalencia 0, así que
+  // el módulo lo medía como granel: 11 collares daban CERO bultos y la condición "10+1" era
+  // imposible de cumplir. Afectaba a los 201 artículos de accesorios y venenos, más pipetas,
+  // shampoos y talqueras. Por eso "UDS" se cuenta en unidades y "BOLSAS" en bultos.
+  const collar = clasificarArticulo({ cod_articulo: 921, descripcion: 'COLLAR ANTIPULGAS CHICO', subrubro: 'Accesorios Perros y Gatos', equivalencia_um: 0, unidad_de_medida: null });
+  const cat = new Map([[921, collar]]);
+  const reglas = [
+    R({ nombre: 'LABORATORIO GRAL', match_valor: 'Accesorios Perros y Gatos', cod_lista: 12, condicion: 'libre' }),
+    R({ nombre: 'LABORATORIO GRAL', match_valor: 'Accesorios Perros y Gatos', cod_lista: 13,
+        condicion: 'min', umbral: 11, unidad: 'unidad', ambito: 'linea', bonificacion: '10+1' }),
+  ];
+
+  it('🔴 11 collares alcanzan la Lista 2 (con "bulto" no llegaba nunca)', () => {
+    const r = evaluarPedido([{ cod_articulo: 921, cantidad: 11, cod_lista: 13 }], cat, reglas);
+    expect(r.avisos[0].severidad).toBe('ok');
+  });
+
+  it('con 10 todavía no', () => {
+    const r = evaluarPedido([{ cod_articulo: 921, cantidad: 10, cod_lista: 13 }], cat, reglas);
+    expect(r.avisos[0].severidad).toBe('margen');
+  });
+
+  it('y esos 11 collares NO cuentan como 11 bultos para la promo general', () => {
+    // La promo pide 10 bultos SURTIDOS: un collar no es un bulto.
+    const r = evaluarPedido([{ cod_articulo: 921, cantidad: 11, cod_lista: 13 }], cat, reglas);
+    expect(r.bultos).toBe(0);
+    expect(r.promo_general).toBe(false);
+  });
+});
+
 describe('los umbrales se cuentan sumando la línea', () => {
   // Mati, 08/09: "es sumando la linea". En Flecky esto mueve el cumplimiento del 4% al 10%.
   const reglas = [
