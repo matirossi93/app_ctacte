@@ -53,6 +53,7 @@ import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos
 import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, precioArticulo, catalogoPedido, validarListasPedido, editarPedido } from './server-lib/pedidos.js';
 import { pendientesDelDia, arrastreDelDia, impresionHoja, sugerenciaDelDia, listarHojas, listarCamiones, crearHoja, editarHoja, borrarHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
 import { tableroFacturacion, previsualizarFacturacion, facturarSeleccion } from './server-lib/facturarPresupuestos.js';
+import { marcarRetiro, quitarRetiro, marcarRetirado, listarRetiros, resumenRetiros } from './server-lib/retirosSucursal.js';
 import { listarPresupuestos, revisarPresupuesto, borrarRevision, detallePresupuesto, corregirCantidades, fraccionadoDelRango } from './server-lib/panelPresupuestos.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -658,6 +659,14 @@ app.post('/api/pedidos/:id/anular', requireJwt, (req: any, res) => anularPedido(
 // 🪤 Las rutas fijas van ANTES que las que llevan :id, o Express toma "camiones" como un id.
 // ── Etapa 1: revisión de presupuestos ────────────────────────────────────────
 // 🪤 `/fraccionado` va ANTES de `/:comprobanteId`: si no, Express lo toma como un id.
+// ── Retiro en sucursal: lo que el cliente pasa a buscar y no sale en el camión ──
+// 🪤 `/resumen` va antes que `/:comprobanteId`, o Express lo toma como un id.
+app.get('/api/retiros/resumen', requireJwt, (req: any, res) => resumenRetiros(req, res));
+app.get('/api/retiros', requireJwt, (req: any, res) => listarRetiros(req, res));
+app.post('/api/retiros', requireJwt, (req: any, res) => marcarRetiro(req, res));
+app.put('/api/retiros/:comprobanteId', requireJwt, (req: any, res) => marcarRetirado(req, res));
+app.delete('/api/retiros/:comprobanteId', requireJwt, (req: any, res) => quitarRetiro(req, res));
+
 // ── Etapa 2: facturación de lo aprobado ──────────────────────────────────────
 // 🪤 `/previa` va antes que cualquier ruta con parámetro del mismo prefijo.
 app.get('/api/facturacion/previa', requireJwt, (req: any, res) => previsualizarFacturacion(req, res));
