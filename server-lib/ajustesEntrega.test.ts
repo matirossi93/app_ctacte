@@ -58,8 +58,8 @@ function llamar(fn: any, { rol = 'administrativo', params = {}, body = {} } = {}
 const HOJA = {
   id: 'h1', numero: 3395, fecha: '2026-09-08', estado: 'abierta', cod_empresa: 1,
   hojas_ruta_pedidos: [
-    { im_comprobante_id: '10', cod_cliente: 1093, cliente_nombre: 'ARON, Jorge', total: 100000 },
-    { im_comprobante_id: '20', cod_cliente: 500, cliente_nombre: 'MORELLI', total: 50000 },
+    { im_comprobante_id: '10', cod_cliente: 1093, cliente_nombre: 'ARON, Jorge', total: 100000, facturado_at: '2026-09-08T12:00:00Z', im_factura_numero: 50360 },
+    { im_comprobante_id: '20', cod_cliente: 500, cliente_nombre: 'MORELLI', total: 50000, facturado_at: '2026-09-08T12:00:00Z', im_factura_numero: 50361 },
   ],
 };
 const RENGLONES = [
@@ -72,6 +72,7 @@ beforeEach(() => {
   fakeSb();
   tablas['hojas_ruta'] = { data: HOJA, error: null };
   tablas['hojas_ruta_ajustes'] = { data: [], error: null };
+  tablas['presupuestos_facturados'] = { data: { cod_empresa: 1, im_factura_numero: 50360 }, error: null };
   m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-08', anulada: false, existe: true });
   m.fetchVentasItems.mockResolvedValue(RENGLONES);
   m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 1093, categoria_iva: 'CF' }]);
@@ -231,5 +232,86 @@ describe('listar', () => {
     tablas['hojas_ruta_ajustes'] = { data: [{ tipo: 'nc', importe: 10000, emitido_at: 'x' }], error: null };
     const r = await llamar(listarAjustes, { params: { id: 'h1' } });
     expect(r.body).toMatchObject({ despachado: 150000, notas_credito: 10000, final: 140000 });
+  });
+});
+
+/** Hallazgos de la auditoría del 08/09/2026 sobre las notas de crédito. */
+describe('lo que ya se acreditó antes', () => {
+  it('🔴 dos notas de crédito no pueden sumar más de lo que se entregó', async () => {
+    // Cargar dos veces la misma diferencia emitía dos NC enteras y el cliente quedaba con saldo
+    // a favor del doble. El guard anterior sólo miraba los ajustes SIN emitir, o sea ninguno.
+    tablas['hojas_ruta_ajustes'] = {
+      data: [{ id: 'v1', emitido_at: 'x', tipo: 'nc', importe: 50000, items: [{ cod_articulo: 661, cantidad: 10 }] }],
+      error: null,
+    };
+    const r = await llamar(crearAjuste, {
+      params: { id: 'h1' },
+      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
+    });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/ya se acreditaron 10/);
+    expect(m.emitirNotaCredito).not.toHaveBeenCalled();
+  });
+
+  it('lo que falta acreditar sí se puede', async () => {
+    tablas['hojas_ruta_ajustes'] = {
+      data: [{ id: 'v1', emitido_at: 'x', tipo: 'nc', importe: 20000, items: [{ cod_articulo: 661, cantidad: 4 }] }],
+      error: null,
+    };
+    const r = await llamar(crearAjuste, {
+      params: { id: 'h1' },
+      body: { im_comprobante_id: '10', motivo: 'SIN STOCK', items: [{ cod_articulo: 661, cantidad: 6 }] },
+    });
+    expect(r.status).toBe(200);
+  });
+
+  it('🔴 los renglones acreditados quedan guardados: son la base de ese control', async () => {
+    await llamar(crearAjuste, {
+      params: { id: 'h1' },
+      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 3 }] },
+    });
+    const fila = escrituras.find(e => e.op === 'insert')!.valor;
+    expect(fila.items).toEqual([{ cod_articulo: 661, cantidad: 3, precio: 5000, iva_por: 0, cod_lista_precios: 13 }]);
+  });
+});
+
+describe('contra qué se puede emitir', () => {
+  it('🔴 no se acredita un pedido que todavía no se facturó', async () => {
+    tablas['hojas_ruta'] = {
+      data: { ...HOJA, hojas_ruta_pedidos: [{ im_comprobante_id: '10', cod_cliente: 1093, total: 100000, facturado_at: null, im_factura_numero: null }] },
+      error: null,
+    };
+    const r = await llamar(crearAjuste, {
+      params: { id: 'h1' }, body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
+    });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/no se facturó/i);
+  });
+
+  it('🔴 ni contra un comprobante ANULADO en InfoManager', async () => {
+    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-08', anulada: true, existe: true });
+    const r = await llamar(crearAjuste, {
+      params: { id: 'h1' }, body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
+    });
+    expect(r.status).toBe(502);
+    expect(m.emitirNotaCredito).not.toHaveBeenCalled();
+  });
+
+  it('🔴 ni cuando IM no contesta si sigue vigente', async () => {
+    m.cabeceraComprobante.mockResolvedValue({ fecha: null, anulada: null, existe: null });
+    const r = await llamar(crearAjuste, {
+      params: { id: 'h1' }, body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
+    });
+    expect(r.status).toBe(502);
+    expect(m.emitirNotaCredito).not.toHaveBeenCalled();
+  });
+
+  it('🔴 ni sobre una hoja CERRADA: ya se liquidó', async () => {
+    tablas['hojas_ruta'] = { data: { ...HOJA, estado: 'cerrada' }, error: null };
+    const r = await llamar(crearAjuste, {
+      params: { id: 'h1' }, body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
+    });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/cerrada/i);
   });
 });

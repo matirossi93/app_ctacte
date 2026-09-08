@@ -207,3 +207,28 @@ describe('los guards no pueden fallar abiertos', () => {
     expect(escrituras.some(e => e.op === 'upsert')).toBe(false);
   });
 });
+
+describe('las notas de crédito atan el pedido a su hoja', () => {
+  it('🔴 un pedido con NC emitida no se saca de la hoja', async () => {
+    // El descuento quedaría colgado de una hoja que ya no lleva ese pedido.
+    tablas['hojas_ruta_pedidos'] = {
+      data: { hoja_id: 'h1', im_numero: 58050, hojas_ruta: { numero: 3395, estado: 'abierta' } },
+      error: null,
+    };
+    tablas['hojas_ruta_ajustes'] = { data: [{ im_ajuste_numero: 29800 }], error: null };
+
+    const r = await llamar(quitarPedido, { params: { comprobanteId: '58700637' } });
+
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/29800/);
+    expect(escrituras.some(e => e.op === 'delete')).toBe(false);
+  });
+
+  it('🔴 ni se borra una hoja con notas de crédito emitidas: el cascade se las llevaría', async () => {
+    tablas['hojas_ruta'] = { data: { numero: 3395, estado: 'abierta' }, error: null };
+    tablas['hojas_ruta_ajustes'] = { data: [{ im_ajuste_numero: 29800 }], error: null };
+    const r = await llamar(borrarHoja, { params: { id: 'h1' } });
+    expect(r.status).toBe(409);
+    expect(escrituras.some(e => e.op === 'delete')).toBe(false);
+  });
+});

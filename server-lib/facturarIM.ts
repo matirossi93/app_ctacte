@@ -73,6 +73,19 @@ export type ResultadoEmision =
  */
 const PTO_VENTA_FACTURA = Number(process.env.IM_PTO_VENTA_FACTURA || 777);
 const PTO_VENTA_REMITO = Number(process.env.IM_PTO_VENTA_REMITO || 7);
+/**
+ * Punto de venta de las notas de crédito. Verificado en `GET /puntos-de-venta` el 08/09/2026:
+ * los comprobantes 41 (NC A) y 42 (NC B) de la empresa 1 con `id_destino: 1` salen por el 777,
+ * el mismo de las facturas. Va en su propia variable para poder corregirlo sin deploy.
+ */
+const PTO_VENTA_NC = Number(process.env.IM_PTO_VENTA_NC || 777);
+/**
+ * ⚠️ La NC real de la oficina viene con `genero_re_auto: 'S'`, pero esa la creó la pantalla de
+ * IM, no la API. El remito y el presupuesto —los dos verificados por API— mandan 'N', y una 'S'
+ * podría hacer que IM intente generar un remito automático y falte el punto de venta. Se manda
+ * 'N' por prudencia, en una variable para cambiarlo sin deploy si IM se queja.
+ */
+const NC_GENERO_RE_AUTO = process.env.IM_NC_GENERO_RE_AUTO || 'N';
 const ID_DESTINO = Number(process.env.IM_ID_DESTINO_FACTURA || 1);
 const CUENTA_VENTA = process.env.IM_CUENTA_VENTA_PEDIDOS || '4100002';
 
@@ -306,24 +319,31 @@ export async function emitirNotaCredito(
       tipo_comprobante: 'NC',
       tipo_factura: letra,
       numero,
-      punto_de_venta: PTO_VENTA_FACTURA,
+      punto_de_venta: PTO_VENTA_NC,
       condicion_venta_tipo: 2,
       talonario_manual: 'S',
       mueve_stock: 'N',
       no_grabado: 0,
       cod_deposito: d.cod_deposito ?? 1,
       cod_unidad_negocio_cab: 0,
-      genero_re_auto: 'S',
+      genero_re_auto: NC_GENERO_RE_AUTO,
+      // 🪤 La NC NO puede llevar el `cod_compatibilidad` del presupuesto: ya lo usó la factura, y
+      // IM rechaza un código repetido incluso contra comprobantes anulados. El vínculo con la
+      // hoja vive en `hojas_ruta_ajustes` y, para leerlo desde IM, en las observaciones.
+      cod_compatibilidad: '',
       items: renglones(d.items),
     };
     try {
       const { data } = await cli.post('/ventas', payload);
       const r = interpretar(data, `NC ${letra}`);
-      if (!r.ok && /ya existe/i.test(r.error) && intento < 2) { numero += 1; continue; }
+      // 🪤 Sólo se reintenta cuando el choque es de NUMERACIÓN. Un "ya existe" por otra cosa
+      // (por ejemplo un cod_compatibilidad repetido) haría subir el número tres veces y
+      // terminar diciendo "el número y los dos siguientes ya estaban usados", que sería falso.
+      if (!r.ok && /ya existe una nota/i.test(r.error) && intento < 2) { numero += 1; continue; }
       return r.ok ? { ...r, numero: r.numero ?? numero } : r;
     } catch (err: any) {
       const e = comoError(err);
-      if (!e.ok && /ya existe/i.test(e.error) && intento < 2) { numero += 1; continue; }
+      if (!e.ok && /ya existe una nota/i.test(e.error) && intento < 2) { numero += 1; continue; }
       return e;
     }
   }

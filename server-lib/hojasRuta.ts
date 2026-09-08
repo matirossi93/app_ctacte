@@ -411,6 +411,23 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
       });
       return;
     }
+
+    // 🪤 Y tampoco se mueve un pedido que ya tiene una nota de crédito emitida: el ajuste está
+    // atado a la hoja donde se cargó, así que al chofer viejo se le seguiría descontando y al
+    // nuevo no. Se saca de la hoja primero, se mueve, y se vuelve a cargar la diferencia.
+    if (enOtra.length) {
+      const { data: conAjuste, error: errAj } = await sb().from('hojas_ruta_ajustes')
+        .select('im_comprobante_id').eq('tenant_id', TENANT_ID)
+        .in('im_comprobante_id', enOtra.map((a: any) => String(a.im_comprobante_id)))
+        .not('emitido_at', 'is', null);
+      if (errAj) { res.status(502).json({ error: `No pude verificar si tienen notas de crédito: ${errAj.message}` }); return; }
+      if ((conAjuste ?? []).length) {
+        res.status(409).json({
+          error: `Estos pedidos ya tienen notas de crédito cargadas en su hoja actual y no se pueden mover: el descuento quedaría en la hoja equivocada y le cambiaría el pago al chofer.`,
+        });
+        return;
+      }
+    }
     // 🔑 Con `mover: true` se reasignan a esta hoja. Es una operación NORMAL de la oficina:
     // cuando una zona se pasa de kilos, Jorgelina va moviendo pedidos entre hojas hasta que
     // entren (Mati, 07/09/2026: "permitir que podamos mover los pedidos y manejar las hojas").
@@ -593,6 +610,19 @@ export async function borrarHoja(req: Request & { user?: JwtPayload }, res: Resp
     res.status(409).json({ error: `La hoja ${(hoja as any).numero} está cerrada: es la base de la liquidación del chofer y no se borra. Reabrila si de verdad hay que cambiarla.` });
     return;
   }
+  // 🔴 Los ajustes cuelgan de la hoja con `on delete cascade`: borrarla se llevaría notas de
+  // crédito YA EMITIDAS en InfoManager, que es el único registro de a qué factura corresponden.
+  const { data: ajustes, error: errAj } = await sb().from('hojas_ruta_ajustes')
+    .select('im_ajuste_numero').eq('tenant_id', TENANT_ID).eq('hoja_id', id)
+    .not('emitido_at', 'is', null);
+  if (errAj) { res.status(502).json({ error: `No pude verificar las notas de crédito de la hoja: ${errAj.message}` }); return; }
+  if ((ajustes ?? []).length) {
+    res.status(409).json({
+      error: `Esta hoja tiene ${(ajustes ?? []).length} nota(s) de crédito emitidas (${(ajustes ?? []).map((a: any) => a.im_ajuste_numero ?? '—').join(', ')}). No se puede borrar: se perdería el registro de a qué factura corresponden.`,
+    });
+    return;
+  }
+
   // Los pedidos se sueltan primero: si se borrara la hoja con pedidos adentro, el cascade se
   // los llevaría y nadie sabría que esos comprobantes quedaron sin repartir.
   // 📌 Lo facturado NO se pierde: vive en `presupuestos_facturados`, que no se toca acá.
@@ -619,6 +649,18 @@ export async function quitarPedido(req: Request & { user?: JwtPayload }, res: Re
   if (estaCerrada((fila as any)?.hojas_ruta)) {
     res.status(409).json({
       error: `La hoja ${(fila as any)?.hojas_ruta?.numero ?? ''} está cerrada: ya se liquidó. Reabrila antes de sacarle pedidos.`,
+    });
+    return;
+  }
+  // Con una nota de crédito emitida, sacarlo dejaría el descuento colgado de una hoja que ya no
+  // lo lleva.
+  const { data: ajuste, error: errAjuste } = await sb().from('hojas_ruta_ajustes')
+    .select('im_ajuste_numero').eq('tenant_id', TENANT_ID).eq('im_comprobante_id', comprobanteId)
+    .not('emitido_at', 'is', null).limit(1);
+  if (errAjuste) { res.status(502).json({ error: `No pude verificar si tiene notas de crédito: ${errAjuste.message}` }); return; }
+  if ((ajuste ?? []).length) {
+    res.status(409).json({
+      error: `Este pedido tiene una nota de crédito emitida (${(ajuste ?? [])[0]?.im_ajuste_numero ?? '—'}) cargada en esta hoja. Borrá el ajuste antes de sacarlo, o anulá la NC en InfoManager.`,
     });
     return;
   }

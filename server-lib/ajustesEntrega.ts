@@ -34,6 +34,9 @@ function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): bo
 }
 
 const redondear = (n: number) => Math.round(n * 100) / 100;
+/** Mismos defaults que el resto del panel. */
+const EMPRESA_DEFAULT = Number(process.env.PEDIDO_EMPRESA_DEFAULT || 1);
+const LISTA_FALLBACK = Number(process.env.PEDIDO_LISTA_FALLBACK || 12);
 /** Igual que en la facturación: un reclamo sin emitir vence a los 5 minutos. */
 const RECLAMO_VENCE_MS = 5 * 60_000;
 
@@ -103,20 +106,45 @@ export async function crearAjuste(req: Request & { user?: JwtPayload }, res: Res
     if (!motivo) { res.status(400).json({ error: 'Escribí el motivo: es lo que se lee después en InfoManager.' }); return; }
     if (!entrada.length) { res.status(400).json({ error: 'No mandaste ningún renglón para acreditar.' }); return; }
 
+    // 🪤 `hojas_ruta` NO tiene `cod_empresa` (no la crea ninguna migración): pedirla hacía que
+    // PostgREST rechazara la consulta entera y no se emitiera nunca una nota de crédito.
     const { data: hoja, error: errHoja } = await sb().from('hojas_ruta')
-      .select('id, numero, fecha, estado, cod_empresa, hojas_ruta_pedidos(im_comprobante_id, cod_cliente, cliente_nombre, total)')
+      .select('id, numero, fecha, estado, hojas_ruta_pedidos(im_comprobante_id, cod_cliente, cliente_nombre, total, facturado_at, im_factura_numero)')
       .eq('id', hojaId).eq('tenant_id', TENANT_ID).maybeSingle();
     if (errHoja) { res.status(502).json({ error: `No pude leer la hoja: ${errHoja.message}` }); return; }
     if (!hoja) { res.status(404).json({ error: 'Hoja de ruta no encontrada' }); return; }
+    // Una hoja cerrada ya se liquidó: cargarle una NC ahora cambiaría un pago hecho.
+    if (String((hoja as any).estado) === 'cerrada') {
+      res.status(409).json({ error: `La hoja ${(hoja as any).numero} está cerrada: ya se liquidó. Reabrila si de verdad hay que ajustarla.` });
+      return;
+    }
 
     const pedido = ((hoja as any).hojas_ruta_pedidos ?? [])
       .find((p: any) => String(p.im_comprobante_id) === comprobanteId);
     if (!pedido) { res.status(409).json({ error: 'Ese pedido no está en esta hoja.' }); return; }
+    // 🔴 No se acredita lo que nunca se cobró: sin factura no hay nada que devolver.
+    if (!pedido.facturado_at && !pedido.im_factura_numero) {
+      res.status(409).json({ error: 'Ese pedido todavía no se facturó: no hay nada que acreditar. Si no se entregó, sacalo de la hoja.' });
+      return;
+    }
+
+    // La empresa sale de la factura que se emitió, que es la que la NC tiene que revertir.
+    const { data: emitido, error: errEmitido } = await sb().from('presupuestos_facturados')
+      .select('cod_empresa, im_factura_numero').eq('tenant_id', TENANT_ID)
+      .eq('im_comprobante_id', comprobanteId).maybeSingle();
+    if (errEmitido) { res.status(502).json({ error: `No pude leer la factura de ese pedido: ${errEmitido.message}` }); return; }
+    const codEmpresa = Number((emitido as any)?.cod_empresa) || EMPRESA_DEFAULT;
 
     // ── Lo que se acredita no puede pasar lo que se entregó ───────────────────
     // 🔴 Sin este control, un error de tipeo genera una nota de crédito por más de lo que el
     // cliente compró y le queda saldo a favor de la nada.
     const cab = await cabeceraComprobante(comprobanteId);
+    // 🪤 Igual que al facturar: `null` es "no pude preguntar" y no habilita nada. Emitir una NC
+    // contra un comprobante anulado deja una nota sin respaldo.
+    if (cab.existe !== true || cab.anulada !== false) {
+      res.status(502).json({ error: 'No pude verificar en InfoManager que el comprobante siga vigente (o está anulado). Probá de nuevo en un rato.' });
+      return;
+    }
     const dia = cab.fecha ?? String((hoja as any).fecha).slice(0, 10);
     const renglones = (await fetchVentasItems(dia, dia).catch(() => [] as any[]))
       .filter((it: any) => String(it.id_comprobante) === comprobanteId);
@@ -156,14 +184,39 @@ export async function crearAjuste(req: Request & { user?: JwtPayload }, res: Res
     const importe = redondear(items.reduce((s, i) => s + i.precio * i.cantidad, 0));
     if (!(importe > 0)) { res.status(400).json({ error: 'La nota de crédito daría cero: revisá los precios del pedido.' }); return; }
 
-    // ── Reclamo: la fila existe antes de emitir ───────────────────────────────
+    // ── Lo YA acreditado antes ────────────────────────────────────────────────
+    // 🔴 El control de arriba mira lo facturado, pero un pedido puede tener VARIAS notas de
+    // crédito. Sin sumar las anteriores, cargar dos veces la misma diferencia emitía dos NC
+    // enteras y el cliente quedaba con saldo a favor del doble.
     const { data: previos, error: errPrev } = await sb().from('hojas_ruta_ajustes')
-      .select('id, emitido_at, reclamado_at').eq('tenant_id', TENANT_ID)
-      .eq('im_comprobante_id', comprobanteId).is('emitido_at', null);
-    if (errPrev) { res.status(502).json({ error: `No pude verificar si hay un ajuste a medias: ${errPrev.message}` }); return; }
-    const enCurso = (previos ?? []).find((p: any) => Date.now() - new Date(p.reclamado_at ?? 0).getTime() < RECLAMO_VENCE_MS);
+      .select('id, emitido_at, reclamado_at, items, importe, tipo')
+      .eq('tenant_id', TENANT_ID).eq('im_comprobante_id', comprobanteId);
+    if (errPrev) { res.status(502).json({ error: `No pude verificar los ajustes anteriores de este pedido: ${errPrev.message}` }); return; }
+
+    const yaAcreditado = new Map<number, number>();
+    for (const a of (previos ?? []) as any[]) {
+      if (!a.emitido_at || a.tipo !== 'nc') continue;
+      for (const i of (Array.isArray(a.items) ? a.items : [])) {
+        const cod = Number(i.cod_articulo);
+        yaAcreditado.set(cod, (yaAcreditado.get(cod) ?? 0) + Number(i.cantidad ?? 0));
+      }
+    }
+    for (const i of items) {
+      const previo = yaAcreditado.get(i.cod_articulo) ?? 0;
+      const tope = facturado.get(i.cod_articulo)!.cantidad;
+      if (previo + i.cantidad > tope) {
+        res.status(409).json({
+          error: `Del artículo ${i.cod_articulo} se entregaron ${tope} y ya se acreditaron ${previo}. No se puede acreditar ${i.cantidad} más.`,
+        });
+        return;
+      }
+    }
+
+    // ── Reclamo: la fila existe antes de emitir ───────────────────────────────
+    const aMedias = (previos ?? []).filter((p: any) => !p.emitido_at);
+    const enCurso = aMedias.find((p: any) => Date.now() - new Date(p.reclamado_at ?? 0).getTime() < RECLAMO_VENCE_MS);
     if (enCurso) { res.status(409).json({ error: 'Ya hay una nota de crédito de este pedido emitiéndose en este momento.' }); return; }
-    if ((previos ?? []).length) {
+    if (aMedias.length) {
       res.status(409).json({
         error: 'Quedó un ajuste anterior sin terminar de este pedido. **Puede que la nota de crédito se haya emitido igual**: verificalo en InfoManager y borrá el ajuste a medias antes de cargar otro.',
       });
@@ -173,21 +226,31 @@ export async function crearAjuste(req: Request & { user?: JwtPayload }, res: Res
     const { data: fila, error: errFila } = await sb().from('hojas_ruta_ajustes').insert({
       tenant_id: TENANT_ID, hoja_id: hojaId, im_comprobante_id: comprobanteId,
       cod_cliente: Number(pedido.cod_cliente), cliente_nombre: pedido.cliente_nombre ?? null,
-      tipo: 'nc', motivo, importe,
+      tipo: 'nc', motivo, importe, items,
       reclamado_at: new Date().toISOString(), created_by: req.user?.sub ?? null,
     }).select().maybeSingle();
-    if (errFila || !fila) { res.status(500).json({ error: `No pude registrar el ajuste: ${errFila?.message ?? 'sin respuesta'}` }); return; }
+    // 🪤 El índice único parcial `(tenant_id, im_comprobante_id) where emitido_at is null` es lo
+    // que frena de verdad a dos personas a la vez: el select de arriba solo no alcanza.
+    if (errFila || !fila) {
+      const choque = String(errFila?.code ?? '') === '23505';
+      res.status(choque ? 409 : 500).json({
+        error: choque
+          ? 'Otro usuario está cargando una nota de crédito de este pedido en este momento.'
+          : `No pude registrar el ajuste: ${errFila?.message ?? 'sin respuesta'}`,
+      });
+      return;
+    }
 
     // ── Emisión ──────────────────────────────────────────────────────────────
     const clientes = await fetchClientesIMCached().catch(() => [] as any[]);
     const cliente = clientes.find((c: any) => Number(c.cod_cliente) === Number(pedido.cod_cliente));
     const usuario = await usuarioIM(req.user);
     const nc = await emitirNotaCredito({
-      cod_empresa: Number((hoja as any).cod_empresa) || 1,
+      cod_empresa: codEmpresa,
       cod_cliente: Number(pedido.cod_cliente),
       cod_vendedor: Number(renglones[0]?.cod_vendedor ?? 0) || 1,
       categoria_iva: cliente?.categoria_iva,
-      cod_lista_precios: Number(renglones[0]?.cod_lista_precios) || 12,
+      cod_lista_precios: Number(renglones[0]?.cod_lista_precios) || LISTA_FALLBACK,
       usuario,
       // La misma convención que ya usa la oficina en IM.
       observaciones: `${motivo} SEGUN HR ${(hoja as any).numero}`.slice(0, 200),

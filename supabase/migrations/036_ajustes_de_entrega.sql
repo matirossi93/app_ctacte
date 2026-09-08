@@ -30,6 +30,10 @@ create table if not exists hojas_ruta_ajustes (
   motivo text not null,
   -- Lo que se acredita (siempre positivo; el signo lo da `tipo`).
   importe numeric(14,2) not null check (importe > 0),
+  -- 🔑 Qué se acreditó, renglón por renglón: `[{cod_articulo, cantidad, precio}]`. Sin esto no
+  -- se puede controlar que entre varias notas de crédito no se termine acreditando MÁS de lo
+  -- que se entregó — que es como un cliente queda con saldo a favor de la nada.
+  items jsonb not null default '[]'::jsonb,
 
   -- El comprobante emitido en InfoManager.
   im_ajuste_id text,
@@ -47,10 +51,17 @@ create table if not exists hojas_ruta_ajustes (
 -- El análisis y el impreso van por hoja; la liquidación del chofer, por hoja también.
 create index if not exists hojas_ruta_ajustes_hoja_idx on hojas_ruta_ajustes (hoja_id);
 create index if not exists hojas_ruta_ajustes_comp_idx on hojas_ruta_ajustes (im_comprobante_id);
--- 🪤 Un pedido puede tener VARIOS ajustes (dos motivos distintos), así que no hay índice único
--- por comprobante. Lo que no puede haber son dos ajustes emitidos con el mismo número de NC.
+-- 🪤 Un pedido puede tener VARIOS ajustes emitidos (dos motivos distintos), pero UNO SOLO a
+-- medias: la fila sin emitir es el "reclamo", y este índice es lo que hace que dos personas no
+-- emitan la misma nota de crédito a la vez. Sin él, el select-antes-del-insert no frena nada.
+create unique index if not exists hojas_ruta_ajustes_reclamo_uidx
+  on hojas_ruta_ajustes (tenant_id, im_comprobante_id) where emitido_at is null;
+
+-- Dos ajustes no pueden compartir el mismo número de comprobante DEL MISMO TALONARIO.
+-- 🪤 NC A y NC B son talonarios independientes y pueden repetir número: sin el tipo, el segundo
+-- update fallaría DESPUÉS de que la nota ya salió en InfoManager.
 create unique index if not exists hojas_ruta_ajustes_numero_uidx
-  on hojas_ruta_ajustes (tenant_id, im_ajuste_numero) where im_ajuste_numero is not null;
+  on hojas_ruta_ajustes (tenant_id, im_ajuste_tipo, im_ajuste_numero) where im_ajuste_numero is not null;
 
 -- ── Row Level Security ───────────────────────────────────────────────────────
 alter table hojas_ruta_ajustes enable row level security;
