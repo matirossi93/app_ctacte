@@ -52,6 +52,16 @@ const NUEVAS = {
 
 const norm = (s) => String(s).toUpperCase().replace(/[^A-Z0-9]/g, '');
 
+/**
+ * Mati, 08/09: cuando falta stock se le hace el mejor precio igual — *"ya es un problema
+ * nuestro, no del cliente, por eso le respetamos el precio"*. El sistema no sabe qué había
+ * en el depósito el día del pedido, así que no puede distinguir ese caso: queda escrito acá
+ * para quien revise el aviso.
+ */
+const FALTANTES = {
+  'CEREALES DESYUNO': 'Si el producto estaba faltante se respeta el mejor precio aunque no llegue a la cantidad: el sistema no puede verificarlo y va a marcarlo igual.',
+};
+
 function traducir(celda) {
   const c = String(celda || '').trim().toLowerCase().replace(/\s+/g, ' ');
   if (!c) return null;
@@ -124,7 +134,7 @@ for (const c of csv) {
         nombre: linea, match_tipo: tg.tipo, match_valor: tg.valor, cod_lista: 12 + i,
         condicion: t.condicion, umbral: t.umbral ?? null, unidad: t.unidad ?? null,
         ambito: t.ambito ?? null, activo,
-        nota: [notaLinea, notaPlanilla && `Nota de la planilla: ${notaPlanilla}`].filter(Boolean).join(' ') || null,
+        nota: [notaLinea, notaPlanilla && `Nota de la planilla: ${notaPlanilla}`, FALTANTES[linea.toUpperCase()]].filter(Boolean).join(' ') || null,
       });
     }
   }
@@ -184,9 +194,11 @@ out.push(filas.map(f => `  (${q(f.nombre)}, ${q(f.match_tipo)}, ${q(f.match_valo
 // La planilla trae este descuento como nota al margen de la línea, no como una lista.
 // La auditoría del 08/09 encontró 52 renglones de Exact Criadores con 5% que el control
 // marcaba como "producto sin descuentos habilitados": estaban bien, faltaba cargarlo.
+// 🔑 La nota dice "sobre lista 1", pero Mati confirmó que el 5% va sobre la LISTA 3, que es
+// donde los vendedores lo estaban aplicando (los 52 renglones, sin excepción).
 out.push(``);
 out.push(`insert into descuentos_reglas (nombre, match_tipo, match_valor, desde_cantidad, ambito, porcentaje_max, requiere_lista, requiere_mejor_lista, aviso, activo) values`);
-out.push(`  ('EXACT CRIADORES', 'subrubro', 'Exact Criadores', 1, 'articulo', 5, 12, false, null, true)`);
+out.push(`  ('EXACT CRIADORES', 'subrubro', 'Exact Criadores', 1, 'articulo', 5, 14, false, null, true)`);
 out.push(`on conflict (tenant_id, match_tipo, match_valor, desde_cantidad, coalesce(requiere_lista, -1)) do update set`);
 out.push(`  porcentaje_max = excluded.porcentaje_max, ambito = excluded.ambito, activo = excluded.activo;`);
 console.log(out.join('\n'));

@@ -91,10 +91,10 @@ insert into listas_reglas (nombre, match_tipo, match_valor, cod_lista, condicion
   ('LINEA CHEF CAT', 'subrubro', 'Chef Cat', 12, 'libre', null, null, null, true, null),
   ('LINEA CHEF CAT', 'subrubro', 'Chef Cat', 13, 'promo_general', 10, 'bulto', 'pedido', true, null),
   ('LINEA CHEF CAT', 'subrubro', 'Chef Cat', 14, 'min', 5, 'unidad', 'linea', true, null),
-  ('CEREALES DESYUNO', 'subrubro', 'Cereales para desayuno', 12, 'libre', null, null, null, true, 'Nota de la planilla: aclarar los faltantes habilitan la venta sin requerimiento de listas'),
-  ('CEREALES DESYUNO', 'subrubro', 'Cereales para desayuno', 13, 'min', 5, 'unidad', 'linea', true, 'Nota de la planilla: aclarar los faltantes habilitan la venta sin requerimiento de listas'),
-  ('CEREALES DESYUNO', 'subrubro', 'Cereales para desayuno', 14, 'min', 10, 'unidad', 'linea', true, 'Nota de la planilla: aclarar los faltantes habilitan la venta sin requerimiento de listas'),
-  ('CEREALES DESYUNO', 'subrubro', 'Cereales para desayuno', 15, 'min', 30, 'unidad', 'linea', true, 'Nota de la planilla: aclarar los faltantes habilitan la venta sin requerimiento de listas'),
+  ('CEREALES DESYUNO', 'subrubro', 'Cereales para desayuno', 12, 'libre', null, null, null, true, 'Nota de la planilla: aclarar los faltantes habilitan la venta sin requerimiento de listas Si el producto estaba faltante se respeta el mejor precio aunque no llegue a la cantidad: el sistema no puede verificarlo y va a marcarlo igual.'),
+  ('CEREALES DESYUNO', 'subrubro', 'Cereales para desayuno', 13, 'min', 5, 'unidad', 'linea', true, 'Nota de la planilla: aclarar los faltantes habilitan la venta sin requerimiento de listas Si el producto estaba faltante se respeta el mejor precio aunque no llegue a la cantidad: el sistema no puede verificarlo y va a marcarlo igual.'),
+  ('CEREALES DESYUNO', 'subrubro', 'Cereales para desayuno', 14, 'min', 10, 'unidad', 'linea', true, 'Nota de la planilla: aclarar los faltantes habilitan la venta sin requerimiento de listas Si el producto estaba faltante se respeta el mejor precio aunque no llegue a la cantidad: el sistema no puede verificarlo y va a marcarlo igual.'),
+  ('CEREALES DESYUNO', 'subrubro', 'Cereales para desayuno', 15, 'min', 30, 'unidad', 'linea', true, 'Nota de la planilla: aclarar los faltantes habilitan la venta sin requerimiento de listas Si el producto estaba faltante se respeta el mejor precio aunque no llegue a la cantidad: el sistema no puede verificarlo y va a marcarlo igual.'),
   ('ALPISTE', 'articulo', '400', 12, 'max', 20, 'kg', 'articulo', true, null),
   ('ALPISTE', 'articulo', '400', 13, 'min', 20, 'kg', 'articulo', true, null),
   ('ALPISTE', 'articulo', '400', 14, 'promo_general', 10, 'bulto', 'pedido', true, null),
@@ -319,6 +319,6 @@ insert into listas_reglas (nombre, match_tipo, match_valor, cod_lista, condicion
   ('MAIZ CUARENTIN', 'articulo', '461', 13, 'min', 20, 'kg', 'articulo', true, '⚠️ HEREDADA: la línea no figura en la planilla del 08/09/2026. Se conserva para no dejarla sin control; confirmar con Mati.');
 
 insert into descuentos_reglas (nombre, match_tipo, match_valor, desde_cantidad, ambito, porcentaje_max, requiere_lista, requiere_mejor_lista, aviso, activo) values
-  ('EXACT CRIADORES', 'subrubro', 'Exact Criadores', 1, 'articulo', 5, 12, false, null, true)
+  ('EXACT CRIADORES', 'subrubro', 'Exact Criadores', 1, 'articulo', 5, 14, false, null, true)
 on conflict (tenant_id, match_tipo, match_valor, desde_cantidad, coalesce(requiere_lista, -1)) do update set
   porcentaje_max = excluded.porcentaje_max, ambito = excluded.ambito, activo = excluded.activo;
