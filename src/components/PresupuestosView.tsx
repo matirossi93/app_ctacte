@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle, Check, CircleAlert, Loader2, RefreshCw, ChevronRight, X, Save, Package,
-    Trash2, RotateCcw,
+    Trash2, RotateCcw, MessageSquare,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import './PresupuestosView.css';
@@ -29,6 +29,8 @@ interface Presupuesto {
     im_numero: number | null;
     fecha: string | null;
     de_otro_dia: boolean;
+    /** Lo que escribió el vendedor en el pedido, tal como está en InfoManager. */
+    observaciones: string | null;
     cod_cliente: number;
     cliente_nombre: string;
     cod_zona: number | null;
@@ -322,7 +324,14 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                             <span className="pr-sinpeso" title="Renglones sin peso en el catálogo: los kilos son un mínimo"> · {p.renglones_sin_peso} sin peso</span>
                                         )}
                                     </div>
-                                    {rev?.observacion && <div className="pr-obs">“{rev.observacion}”</div>}
+                                    {/* 🔑 Dos observaciones distintas y no se pueden confundir: ésta es la
+                                        del VENDEDOR y viaja en el presupuesto de InfoManager — es la que
+                                        Jorgelina lee antes de facturar. La de abajo es la nuestra, la de
+                                        la revisión. */}
+                                    {p.observaciones && (
+                                        <div className="pr-obs-im"><MessageSquare size={12} /> <span>{p.observaciones}</span></div>
+                                    )}
+                                    {rev?.observacion && <div className="pr-obs">Revisión: “{rev.observacion}”</div>}
                                 </div>
                             </button>
 

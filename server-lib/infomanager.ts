@@ -108,6 +108,13 @@ export interface VentaRaw {
   anulada?: 'S' | 'N';
   punto_de_venta?: number;
   numero?: number;
+  /**
+   * Lo que escribió el vendedor en el pedido. Es un campo de TRABAJO de la oficina, no un
+   * comentario de color: Mati (01/09/2026) *"habría que dejar libre el campo observación porque
+   * eso lo utilizamos acá a la hora de facturar"*, y el 08/09 *"es muy importante que la podamos
+   * ver en el panel"*. Ahí van cosas como "facturar a nombre de la SRL" o "entregar el jueves".
+   */
+  observaciones?: string;
 }
 
 /**
@@ -853,23 +860,26 @@ export function parsePrecioLista(data: any, codArticulo: number): PrecioLista | 
  */
 export async function cabeceraComprobante(
   idComprobante: string | number,
-): Promise<{ fecha: string | null; anulada: boolean | null; existe: boolean | null }> {
+): Promise<{ fecha: string | null; anulada: boolean | null; existe: boolean | null; observaciones: string | null }> {
   try {
     const cli = await imClient();
     const { data } = await imGetRetry(() => cli.get(`/ventas/${idComprobante}`), `ventas/${idComprobante} cabecera`);
     const f = data?.fecha ?? data?.results?.fecha ?? data?.venta?.fecha;
     const a = data?.anulada ?? data?.results?.anulada ?? data?.venta?.anulada;
+    const o = data?.observaciones ?? data?.results?.observaciones ?? data?.venta?.observaciones;
     return {
       fecha: typeof f === 'string' && f.length >= 10 ? f.slice(0, 10) : null,
       anulada: a == null ? null : String(a).trim().toUpperCase() === 'S',
       existe: true,
+      // Lo que escribió el vendedor: la oficina lo usa para facturar.
+      observaciones: typeof o === 'string' && o.trim() ? o.trim() : null,
     };
   } catch (err: any) {
     // 🔑 404 = el comprobante YA NO ESTÁ en IM. No es lo mismo que "no pude preguntar":
     // los anulados se borran a mano seguido, así que un pedido puede quedar apuntando a un
     // id muerto — y por el camino barato eso termina en un 500 sin explicación.
     // `existe: null` es "no sé" (IM no contestó) y no habilita a nadie a asumir nada.
-    return { fecha: null, anulada: null, existe: err?.response?.status === 404 ? false : null };
+    return { fecha: null, anulada: null, existe: err?.response?.status === 404 ? false : null, observaciones: null };
   }
 }
 

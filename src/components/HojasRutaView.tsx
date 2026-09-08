@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle, Truck, Plus, Loader2, X, Wand2, MapPin, Package,
     ChevronRight, RefreshCw, Trash2, Printer, CheckCircle2, Store, Lock, Unlock, FileMinus,
+    MessageSquare,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import { ImprimirHoja } from './ImprimirHoja';
@@ -40,6 +41,8 @@ interface Pendiente {
     fecha: string | null;
     /** Vigente de un día anterior: se quedó sin salir y hay que mirarlo. */
     de_otro_dia: boolean;
+    /** Lo que escribió el vendedor: puede cambiar cómo o cuándo se entrega. */
+    observaciones: string | null;
     hoja_id: string | null;
 }
 
@@ -523,6 +526,12 @@ export function HojasRutaView() {
                                                 </span>
                                             )}
                                         </div>
+                                        {/* 🔑 Lo que escribió el vendedor. Acá decide en qué camión va y en
+                                            qué orden, y ahí puede decir "entregar el jueves temprano" o
+                                            "avisar antes de ir" (Mati, 08/09/2026). */}
+                                        {p.observaciones && (
+                                            <div className="hr-obs-im"><MessageSquare size={12} /> <span>{p.observaciones}</span></div>
+                                        )}
                                     </div>
                                     <div className="hr-ped-kg">{kilos(p.kg)}</div>
                                 </label>

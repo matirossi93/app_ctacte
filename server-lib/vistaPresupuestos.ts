@@ -205,6 +205,15 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
         // Un pedido de un día anterior que sigue vigente es arrastre: se quedó sin salir.
         // Se marca para que salte a la vista y no se mezcle con los del día.
         de_otro_dia: String(p.fecha ?? '').slice(0, 10) !== hasta,
+        /**
+         * 🔑 Lo que escribió el vendedor en el pedido. Mati (08/09/2026): *"las observaciones que
+         * están en los presupuestos es muy importante que las podamos ver en el panel"*, y ya
+         * había avisado el 01/09 que es *"el campo que utilizamos acá a la hora de facturar"*.
+         * Ahí van cosas que cambian la factura o la entrega: "facturar a nombre de la SRL",
+         * "entregar el jueves temprano", "avisar antes de ir".
+         */
+        observaciones: typeof p.observaciones === 'string' && p.observaciones.trim()
+          ? p.observaciones.trim() : null,
         cod_cliente: Number(p.cod_cliente),
         cliente_nombre: c?.razon_social ?? c?.nombre ?? `Cliente ${p.cod_cliente}`,
         cod_zona: z.cod_zona,

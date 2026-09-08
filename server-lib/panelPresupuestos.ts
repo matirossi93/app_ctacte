@@ -199,7 +199,11 @@ export async function detallePresupuesto(req: Request & { user?: JwtPayload }, r
 
     res.json({
       ok: true,
-      comprobante: { im_comprobante_id: id, fecha: cab.fecha, anulada: cab.anulada },
+      comprobante: {
+        im_comprobante_id: id, fecha: cab.fecha, anulada: cab.anulada,
+        // Lo que escribió el vendedor: la oficina lo lee justo antes de facturar.
+        observaciones: cab.observaciones,
+      },
       stock_consultado: !!stock,
       items: items.map(it => {
         const art = cat.get(Number(it.cod_articulo));
