@@ -127,3 +127,8 @@
     font-size: 0.78rem; line-height: 1.4;
     display: flex; flex-direction: column; gap: 0.15rem;
 }
+
+/* El bloque de avisos en rojo: la cantidad que no cierra con el formato del producto. */
+.pr-avisos.grave { background: #fbe9e7; color: #a33b26; border-color: #d98b7a; }
+/* Stock que no alcanza para lo que se pide. */
+.pr-tabla .pr-falta { color: #a33b26; font-weight: 700; }

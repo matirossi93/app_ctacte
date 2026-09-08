@@ -285,6 +285,39 @@ export async function fetchArticulosDeDeposito(codDeposito: number): Promise<Set
 }
 
 /**
+ * Cuánto hay de cada artículo en UN depósito.
+ *
+ * Verificado contra IM el 08/09/2026: `/depositos/stock_por_deposito/1` devuelve 563 filas con
+ * `{ cod_articulo, descripcion, stock, cod_rubro }`. El `stock` viene en la MISMA unidad en que
+ * se carga el renglón (bultos para lo que va en bolsa, kilos para el granel), así que se puede
+ * comparar directo contra la cantidad pedida.
+ *
+ * 🪤 Hay stock negativo (el primer artículo de la lista tenía -5). Mati: *"de todas formas a
+ * veces tenemos dif de inventario"* ⇒ el número sirve para avisar, no para bloquear una venta.
+ *
+ * TTL corto: a diferencia del catálogo, esto cambia con cada venta.
+ */
+const STOCK_TTL_MS = 10 * 60 * 1000;
+const _stockCache = new Map<number, { stock: Map<number, number>; fetchedAt: number }>();
+
+export async function fetchStockPorDeposito(codDeposito: number, force = false): Promise<Map<number, number>> {
+  const hit = _stockCache.get(codDeposito);
+  if (!force && hit && Date.now() - hit.fetchedAt < STOCK_TTL_MS) return hit.stock;
+  const cli = await imClient();
+  const { data } = await imGetRetry(
+    () => cli.get(`/depositos/stock_por_deposito/${codDeposito}`), `stock_por_deposito/${codDeposito}`);
+  const rows: any[] = data?.stocks ?? data?.results ?? (Array.isArray(data) ? data : []);
+  const stock = new Map<number, number>();
+  for (const r of rows) {
+    const c = Number(r.cod_articulo);
+    const q = Number(r.stock ?? r.existencia ?? r.cantidad);
+    if (Number.isFinite(c) && Number.isFinite(q)) stock.set(c, q);
+  }
+  _stockCache.set(codDeposito, { stock, fetchedAt: Date.now() });
+  return stock;
+}
+
+/**
  * POST /api/v1/recibo — emitir recibo en InfoManager.
  * Shape exacto del swagger (todos strings, patterns obligatorios).
  */

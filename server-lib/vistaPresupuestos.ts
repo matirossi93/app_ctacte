@@ -13,9 +13,14 @@
 import { sb, TENANT_ID } from './supabase.js';
 import {
   fetchVentas, fetchVentasItems, fetchArticulosCatalogo, fetchClientesIMCached,
+  fetchStockPorDeposito,
 } from './infomanager.js';
 import { pesoDeRenglones } from './pesoComprobante.js';
 import { zonaDeCliente } from './zonaCliente.js';
+import { revisarCantidades } from './controlCantidades.js';
+
+/** Depósito contra el que se controla el stock. 1 = Depósito General (Casa Central). */
+const DEPOSITO_CONTROL = Number(process.env.PEDIDO_DEPOSITO || 1);
 
 /** Tope de días para los que se piden renglones. Cada día es ~1,2 s contra IM. */
 const MAX_DIAS_ITEMS = 12;
@@ -51,10 +56,12 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
     // comprobante para reordenar los despachos, así que un pedido fechado para el 10 existe
     // desde antes. Un pedido que no aparece en la pantalla no entra en ninguna hoja y nadie
     // se entera hasta que llama el cliente.
-    const [ventas, cat, clientes] = await Promise.all([
+    const [ventas, cat, clientes, stock] = await Promise.all([
       fetchVentas(desde, hasta),
       fetchArticulosCatalogo(),
       fetchClientesIMCached().catch(() => []),
+      // Sin stock la pantalla igual sirve: se avisa que no se pudo consultar, no se inventa.
+      fetchStockPorDeposito(DEPOSITO_CONTROL).catch(() => null),
     ]);
 
     const porCliente = new Map(clientes.map((c: any) => [Number(c.cod_cliente), c]));
@@ -72,7 +79,7 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
     const fechasConPedidos = [...new Set(presupuestos
       .map((p: any) => String(p.fecha ?? '').slice(0, 10))
       .filter(Boolean))].sort().slice(-MAX_DIAS_ITEMS);
-    const renglones = new Map<string, Array<{ cantidad: any; equivalencia_um: number | null | undefined }>>();
+    const renglones = new Map<string, Array<{ cod_articulo: number; cantidad: any; equivalencia_um: number | null | undefined }>>();
     for (let i = 0; i < fechasConPedidos.length; i += 4) {
       const tanda = fechasConPedidos.slice(i, i + 4);
       const resultados = await Promise.all(tanda.map(f =>
@@ -86,6 +93,7 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
           const k = String((it as any).id_comprobante);
           if (!renglones.has(k)) renglones.set(k, []);
           renglones.get(k)!.push({
+            cod_articulo: Number((it as any).cod_articulo),
             cantidad: (it as any).cantidad,
             equivalencia_um: cat.get(Number((it as any).cod_articulo))?.equivalencia_um,
           });
@@ -141,8 +149,21 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
     const filas = presupuestos.map((p: any) => {
       const c = porCliente.get(Number(p.cod_cliente));
       const z = zonaDeCliente(c);
-      const peso = pesoDeRenglones(renglones.get(String(p.id)) ?? []);
+      const rs = renglones.get(String(p.id)) ?? [];
+      const peso = pesoDeRenglones(rs);
       const propio = mio.get(String(p.id));
+
+      // Lo que se pide y no está en el depósito. `stock === null` = no se pudo consultar, que
+      // NO es lo mismo que "no hay": en ese caso no se marca nada.
+      const faltantes = stock
+        ? rs.map(r => {
+            const hay = stock.get(Number(r.cod_articulo));
+            const pide = Number(r.cantidad);
+            return { cod_articulo: Number(r.cod_articulo), descripcion: cat.get(Number(r.cod_articulo))?.descripcion ?? `Artículo ${r.cod_articulo}`, pedido: pide, disponible: hay ?? null };
+          }).filter(f => f.disponible != null && f.disponible < f.pedido)
+        : [];
+      // Y la cantidad que no cierra con el formato del producto (kilos donde van bultos).
+      const avisosCantidad = revisarCantidades(rs, cat);
       return {
         im_comprobante_id: String(p.id),
         im_numero: p.numero ?? null,
@@ -170,6 +191,10 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
         hoja_id: enHoja.get(String(p.id)) ?? null,
         // La etapa 1: aprobado / observado / null (sin revisar).
         revision: revisionPor.get(String(p.id)) ?? null,
+        // Los dos controles que pidió Mati además de las listas.
+        faltantes,
+        avisos_cantidad: avisosCantidad.map(a => a.texto),
+        stock_consultado: !!stock,
       };
     });
 
@@ -184,6 +209,8 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
       cobra_de_mas: filas.filter(f => f.gravedad.cobra_de_mas > 0).length,
       sin_zona: filas.filter(f => f.cod_zona == null).length,
       // Lo que decide si la etapa 1 está terminada: qué falta mirar y qué quedó observado.
+      sin_stock: filas.filter(f => f.faltantes.length > 0).length,
+      con_cantidad_rara: filas.filter(f => f.avisos_cantidad.length > 0).length,
       sin_revisar: filas.filter(f => !f.revision).length,
       aprobados: filas.filter(f => f.revision?.estado === 'aprobado').length,
       observados: filas.filter(f => f.revision?.estado === 'observado').length,

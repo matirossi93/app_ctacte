@@ -20,7 +20,7 @@ import type { JwtPayload } from './auth.js';
 import { puedeArmarHojasDeRuta } from './permisos.js';
 import {
   fechaArgentina, fetchArticulosCatalogo, fetchVentasItems, getItemsComprobante,
-  cabeceraComprobante, actualizarPresupuestoCantidades,
+  cabeceraComprobante, actualizarPresupuestoCantidades, fetchStockPorDeposito,
 } from './infomanager.js';
 import { vistaDeRango, invalidarVista } from './vistaPresupuestos.js';
 import { armarFraccionado, totalesFraccionado } from './fraccionado.js';
@@ -83,6 +83,8 @@ export async function listarPresupuestos(req: Request & { user?: JwtPayload }, r
       observados: vista.observados,
       pierde_margen: vista.pierde_margen,
       cobra_de_mas: vista.cobra_de_mas,
+      sin_stock: vista.sin_stock,
+      con_cantidad_rara: vista.con_cantidad_rara,
     });
   } catch (err: any) {
     console.error('[listarPresupuestos]', err?.message);
@@ -151,10 +153,12 @@ export async function detallePresupuesto(req: Request & { user?: JwtPayload }, r
   if (frenaSiNoPuede(req, res)) return;
   try {
     const id = String(req.params.comprobanteId);
-    const [cab, items, cat] = await Promise.all([
+    const [cab, items, cat, stock] = await Promise.all([
       cabeceraComprobante(id),
       getItemsComprobante(id),
       fetchArticulosCatalogo(),
+      // 🪤 `null` = no se pudo consultar, que no es "no hay stock". La pantalla no marca nada.
+      fetchStockPorDeposito(Number(process.env.PEDIDO_DEPOSITO || 1)).catch(() => null),
     ]);
     if (cab.existe === false) { res.status(404).json({ error: 'El presupuesto ya no está en InfoManager.' }); return; }
 
@@ -173,6 +177,7 @@ export async function detallePresupuesto(req: Request & { user?: JwtPayload }, r
     res.json({
       ok: true,
       comprobante: { im_comprobante_id: id, fecha: cab.fecha, anulada: cab.anulada },
+      stock_consultado: !!stock,
       items: items.map(it => {
         const art = cat.get(Number(it.cod_articulo));
         const p = precios.get(Number(it.cod_articulo));
@@ -187,6 +192,9 @@ export async function detallePresupuesto(req: Request & { user?: JwtPayload }, r
           cod_lista_precios: it.cod_lista_precios,
           precio: p?.precio ?? null,
           importe: p ? Math.round(p.precio * it.cantidad * 100) / 100 : null,
+          // Cuánto hay en el depósito, en la misma unidad que la cantidad. Puede ser negativo:
+          // hay diferencias de inventario y el número sirve para avisar, no para bloquear.
+          stock: stock ? (stock.get(Number(it.cod_articulo)) ?? null) : null,
         };
       }),
     });

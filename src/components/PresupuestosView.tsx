@@ -42,6 +42,11 @@ interface Presupuesto {
     gravedad: { pierde_margen: number; cobra_de_mas: number };
     hoja_id: string | null;
     revision: Revision | null;
+    /** Renglones que piden más de lo que hay en el depósito. */
+    faltantes: Array<{ cod_articulo: number; descripcion: string; pedido: number; disponible: number | null }>;
+    /** Cantidades que no cierran con el formato del producto (kilos donde van bultos). */
+    avisos_cantidad: string[];
+    stock_consultado: boolean;
 }
 
 interface ItemDetalle {
@@ -54,6 +59,8 @@ interface ItemDetalle {
     cod_lista_precios: number | null;
     precio: number | null;
     importe: number | null;
+    /** Cuánto hay en el depósito, en la misma unidad. Negativo = diferencia de inventario. */
+    stock: number | null;
 }
 
 type Filtro = 'sin_revisar' | 'aprobados' | 'observados' | 'todos';
@@ -191,6 +198,16 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                             {resumen.cobra_de_mas} le cobran de más
                         </span>
                     )}
+                    {(resumen?.con_cantidad_rara ?? 0) > 0 && (
+                        <span className="pr-chip grave" title="La cantidad coincide con los kilos del bulto: puede que hayan cargado kilos donde van bultos">
+                            <AlertTriangle size={13} /> {resumen.con_cantidad_rara} con cantidad rara
+                        </span>
+                    )}
+                    {(resumen?.sin_stock ?? 0) > 0 && (
+                        <span className="pr-chip" title="Piden más de lo que hay en el depósito">
+                            {resumen.sin_stock} sin stock
+                        </span>
+                    )}
                 </div>
             </div>
 
@@ -232,6 +249,16 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                         )}
                                         {p.gravedad?.pierde_margen === 0 && p.avisos.length > 0 && (
                                             <span className="pr-badge aviso">revisar</span>
+                                        )}
+                                        {p.avisos_cantidad?.length > 0 && (
+                                            <span className="pr-badge grave" title={p.avisos_cantidad.join(' · ')}>
+                                                <AlertTriangle size={11} /> cantidad
+                                            </span>
+                                        )}
+                                        {p.faltantes?.length > 0 && (
+                                            <span className="pr-badge aviso" title={p.faltantes.map(f => `${f.descripcion}: piden ${f.pedido}, hay ${f.disponible}`).join(' · ')}>
+                                                sin stock ({p.faltantes.length})
+                                            </span>
                                         )}
                                         {rev?.estado === 'aprobado' && <span className="pr-badge ok"><Check size={11} /> aprobado</span>}
                                         {rev?.estado === 'observado' && <span className="pr-badge obs"><CircleAlert size={11} /> observado</span>}
@@ -284,13 +311,27 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                         {p.avisos.map((a, i) => <div key={i}>· {a}</div>)}
                                     </div>
                                 )}
+                                {/* La cantidad que no cierra con el formato: es el control que más
+                                    plata mueve (30 bolsas de 30 kg son 900 kg, no 30). */}
+                                {!!p.avisos_cantidad?.length && (
+                                    <div className="pr-avisos grave">
+                                        {p.avisos_cantidad.map((a, i) => <div key={i}>· {a}</div>)}
+                                    </div>
+                                )}
+                                {!!p.faltantes?.length && (
+                                    <div className="pr-avisos">
+                                        {p.faltantes.map(f => (
+                                            <div key={f.cod_articulo}>· {f.descripcion}: piden <b>{f.pedido}</b> y en el depósito hay <b>{f.disponible}</b></div>
+                                        ))}
+                                    </div>
+                                )}
                                 {!items && <div className="pr-cargando chico"><Loader2 className="spin" size={16} /> Trayendo los renglones…</div>}
                                 {items && !items.length && <div className="pr-cargando chico">Este presupuesto no tiene renglones.</div>}
                                 {items && !!items.length && (
                                     <>
                                         <table className="pr-tabla">
                                             <thead>
-                                                <tr><th>Producto</th><th className="n">Cantidad</th><th className="n">Precio</th><th className="n">Importe</th><th>Lista</th></tr>
+                                                <tr><th>Producto</th><th className="n">Cantidad</th><th className="n">Stock</th><th className="n">Precio</th><th className="n">Importe</th><th>Lista</th></tr>
                                             </thead>
                                             <tbody>
                                                 {items.map(it => (
@@ -309,6 +350,10 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                                                 value={editado[it.id] ?? String(it.cantidad)}
                                                                 onChange={e => setEditado(v => ({ ...v, [it.id]: e.target.value }))}
                                                             />
+                                                        </td>
+                                                        {/* Rojo cuando no alcanza. Puede ser negativo: hay diferencias de inventario. */}
+                                                        <td className={`n${it.stock != null && it.stock < it.cantidad ? ' pr-falta' : ''}`}>
+                                                            {it.stock != null ? it.stock.toLocaleString('es-AR', { maximumFractionDigits: 2 }) : '—'}
                                                         </td>
                                                         <td className="n">{it.precio != null ? money(it.precio) : '—'}</td>
                                                         <td className="n">{it.importe != null ? money(it.importe) : '—'}</td>
