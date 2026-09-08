@@ -111,7 +111,12 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
                         {/* 🪤 Cada cliente es su propio <tbody>: así el navegador NO parte un
                             cliente entre dos páginas al imprimir, y las filas no se cruzan.
                             Antes iban todas en un <tbody> con fragments sin key. */}
-                        {datos.clientes.map(c => (
+                        {datos.clientes.map(c => {
+                            // 🪤 Con UN solo comprobante la fila "Total" repetía exactamente los
+                            // mismos números y duplicaba el largo de la hoja al pedo. El subtotal
+                            // sólo aparece cuando el cliente lleva varios.
+                            const varios = c.comprobantes.length > 1;
+                            return (
                             <tbody className="imp-grupo" key={c.cod_cliente}>
                                 {c.comprobantes.map((x, i) => (
                                     <tr key={c.cod_cliente + '-' + (x.im_numero ?? i)}>
@@ -121,20 +126,26 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
                                         <td className="n">{num(x.kg)}</td>
                                         <td className="n">{money(x.total)}</td>
                                         <td className="n escribir"></td>
-                                        <td className="n escribir"></td>
+                                        {/* El saldo anterior YA IMPRESO: es lo que hoy escriben a
+                                            mano. Va en la última fila del cliente. */}
+                                        <td className="n saldo">
+                                            {!varios ? (c.saldo_anterior != null ? money(c.saldo_anterior) : '—') : ''}
+                                        </td>
                                     </tr>
                                 ))}
-                                <tr className="imp-total-cli">
-                                    <td colSpan={2}>{c.comprobantes.length > 1 ? `Total (${c.comprobantes.length} comprobantes)` : 'Total'}</td>
-                                    <td className="n">{num(c.bultos)}</td>
-                                    <td className="n">{num(c.kg)}</td>
-                                    <td className="n">{money(c.total)}</td>
-                                    <td className="n escribir"></td>
-                                    {/* El saldo anterior YA IMPRESO: es lo que hoy escriben a mano. */}
-                                    <td className="n saldo">{c.saldo_anterior != null ? money(c.saldo_anterior) : '—'}</td>
-                                </tr>
+                                {varios && (
+                                    <tr className="imp-total-cli">
+                                        <td colSpan={2}>Total · {c.comprobantes.length} comprobantes</td>
+                                        <td className="n">{num(c.bultos)}</td>
+                                        <td className="n">{num(c.kg)}</td>
+                                        <td className="n">{money(c.total)}</td>
+                                        <td className="n escribir"></td>
+                                        <td className="n saldo">{c.saldo_anterior != null ? money(c.saldo_anterior) : '—'}</td>
+                                    </tr>
+                                )}
                             </tbody>
-                        ))}
+                            );
+                        })}
                         <tfoot>
                             <tr>
                                 <td colSpan={2}>TOTAL · {datos.totales.clientes} clientes</td>

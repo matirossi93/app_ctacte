@@ -101,7 +101,10 @@
     /* Con .imp-print-active en el body, todo lo que no sea este overlay desaparece: si no,
        el navegador imprime también el panel de atrás. */
     body.imp-print-active > *:not(.imp-overlay) { display: none !important; }
-    .imp-overlay { position: static !important; overflow: visible !important; }
+    .imp-overlay { position: static !important; overflow: visible !important; background: #fff !important; }
+    /* 🪤 El body de la app tiene fondo crema y se imprimía como un bloque de color ocupando
+       media página. El papel va blanco. */
+    html, body { background: #fff !important; }
     .imp-no-print, .imp-toolbar { display: none !important; }
     .imp-hoja { padding: 0 !important; max-width: none !important; }
     .imp-tabla { font-size: 9pt; }
