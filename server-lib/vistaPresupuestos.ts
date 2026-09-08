@@ -18,6 +18,7 @@ import {
 import { pesoDeRenglones } from './pesoComprobante.js';
 import { zonaDeCliente } from './zonaCliente.js';
 import { revisarCantidades } from './controlCantidades.js';
+import { formatosDeBolsa } from './formatosBolsa.js';
 
 /** Depósito contra el que se controla el stock. 1 = Depósito General (Casa Central). */
 const DEPOSITO_CONTROL = Number(process.env.PEDIDO_DEPOSITO || 1);
@@ -65,6 +66,8 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
     ]);
 
     const porCliente = new Map(clientes.map((c: any) => [Number(c.cod_cliente), c]));
+    // El formato de bolsa de cada producto a granel: lo que haya cacheado, sin esperar.
+    const formatos = formatosDeBolsa();
 
     const presupuestos = ventas.filter((v: any) =>
       String(v.tipo_comprobante ?? '').trim() === 'PR' &&
@@ -163,7 +166,7 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
           }).filter(f => f.disponible != null && f.disponible < f.pedido)
         : [];
       // Y la cantidad que no cierra con el formato del producto (kilos donde van bultos).
-      const avisosCantidad = revisarCantidades(rs, cat);
+      const avisosCantidad = revisarCantidades(rs, cat, formatos);
       return {
         im_comprobante_id: String(p.id),
         im_numero: p.numero ?? null,

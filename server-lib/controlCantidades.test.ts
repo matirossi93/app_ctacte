@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { revisarCantidades } from './controlCantidades.js';
+
+// `formatosBolsa` arrastra el cliente de InfoManager, que aborta sin credenciales. Acá sólo se
+// prueba la parte pura (de qué cantidades sale el formato de bolsa).
+vi.hoisted(() => { process.env.INFOMANAGER_CLIENT_SECRET = 'test-secret'; });
+const { formatoDominante } = await import('./formatosBolsa.js');
 
 /**
  * El control que pidió Mati: que las cantidades se correspondan con el formato del producto.
@@ -52,6 +57,29 @@ describe('revisarCantidades', () => {
     expect(revisarCantidades([{ cod_articulo: 999, cantidad: 30 }], CAT)).toHaveLength(0);
   });
 
+  it('🔴 granel: 25 kg de una mezcla cuya bolsa es de 30 se marca', () => {
+    // El caso que describió Mati, con el formato confirmado por él el 08/09/2026. En IM el
+    // artículo dice `equivalencia_um: 1`, así que el formato sale del histórico de pedidos.
+    const FORMATOS = new Map([[4, 30]]);            // ALPISTE: bolsa de 30 kg
+    const r = revisarCantidades([{ cod_articulo: 4, cantidad: 25 }], CAT, FORMATOS);
+    expect(r).toHaveLength(1);
+    expect(r[0].tipo).toBe('no_es_la_bolsa');
+    expect(r[0].texto).toMatch(/la bolsa es de 30/);
+  });
+
+  it('🔴 pero NO marca la bolsa entera, ni varias bolsas, ni el fraccionado chico', () => {
+    const FORMATOS = new Map([[4, 30]]);
+    for (const cant of [30, 60, 90, 150, 210, 5, 10]) {
+      expect(revisarCantidades([{ cod_articulo: 4, cantidad: cant }], CAT, FORMATOS)).toHaveLength(0);
+    }
+  });
+
+  it('🔴 sin formato conocido el granel no se controla: no se inventa una bolsa', () => {
+    // El cache de formatos arranca vacío y se llena en segundo plano; hasta entonces, nada.
+    expect(revisarCantidades([{ cod_articulo: 4, cantidad: 25 }], CAT, null)).toHaveLength(0);
+    expect(revisarCantidades([{ cod_articulo: 4, cantidad: 25 }], CAT, new Map())).toHaveLength(0);
+  });
+
   it('revisa todos los renglones del pedido, no sólo el primero', () => {
     const r = revisarCantidades([
       { cod_articulo: 3, cantidad: 5 },
@@ -59,5 +87,26 @@ describe('revisarCantidades', () => {
       { cod_articulo: 2, cantidad: 40 },
     ], CAT);
     expect(r.map(x => x.cod_articulo)).toEqual([1, 2]);
+  });
+});
+
+describe('formatoDominante — de dónde sale la bolsa', () => {
+  it('🔴 saca 30 de las cantidades reales del alpiste (30 días de IM)', () => {
+    // 5×19 · 10×8 · 25×6 · 30×23 · 60 · 90 · 150 · 210, y Mati confirmó que la bolsa es de 30.
+    const cants = [
+      ...Array(19).fill(5), ...Array(8).fill(10), ...Array(6).fill(25),
+      ...Array(23).fill(30), 60, 60, 90, 150, 210,
+    ];
+    expect(formatoDominante(cants)).toBe(30);
+  });
+
+  it('🔴 ignora el fraccionado chico: la bolsa no es de 5 kg aunque sea lo más pedido', () => {
+    const cants = [...Array(40).fill(5), ...Array(25).fill(25), ...Array(5).fill(50)];
+    expect(formatoDominante(cants)).toBe(25);
+  });
+
+  it('🔴 sin repetición no inventa un formato', () => {
+    expect(formatoDominante([...Array(25).fill(3), 40, 55])).toBeNull();   // dos ventas sueltas
+    expect(formatoDominante([25, 25, 25])).toBeNull();                     // poca historia
   });
 });

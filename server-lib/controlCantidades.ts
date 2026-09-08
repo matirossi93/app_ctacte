@@ -21,9 +21,14 @@
  * ⚠️ Es un AVISO, no un bloqueo: 900 kg de maíz puede ser un pedido real de un cliente grande.
  * Lo que hace es ponerlo adelante de los ojos de quien revisa.
  *
- * 📌 Lo que NO se puede controlar así: los productos a **granel** (alpiste, avena, mezclas).
- * Ahí la cantidad son kilos sueltos y el "formato de bolsa" no existe en InfoManager — el
- * catálogo dice `equivalencia_um: 1`. Para eso haría falta cargar el formato de cada producto.
+ * 📌 EL GRANEL VA POR OTRO LADO. Ahí la cantidad son kilos sueltos y el formato de bolsa no
+ * existe en InfoManager (`equivalencia_um: 1`), así que se deduce de lo que se pide todos los
+ * días (ver `formatosBolsa.ts`) y se marca lo que está CERCA de la bolsa sin serla: 25 kg de
+ * una mezcla cuya bolsa es de 30, que es el error que describió Mati. Medido sobre los mismos
+ * 30 días: 35 renglones, ~1 por día.
+ * 🪤 No alcanza con "no es múltiplo del formato": así saltaban 86 renglones y la mitad eran
+ * ventas grandes legítimas (500 kg de mezcla gruesa a un mayorista). El corte es la CERCANÍA:
+ * si pidió una bolsa y puso mal el peso, el número queda pegado al formato.
  */
 
 export interface RenglonControlado {
@@ -41,10 +46,18 @@ export interface AvisoCantidad {
   cod_articulo: number;
   descripcion: string;
   cantidad: number;
+  /** `kilos_en_bultos` es el grave (900 kg en vez de 30); `no_es_la_bolsa`, el del granel. */
+  tipo: 'kilos_en_bultos' | 'no_es_la_bolsa';
   kg_por_bulto: number;
   kg_total: number;
   texto: string;
 }
+
+/**
+ * Cuánto se puede alejar la cantidad del formato para que siga siendo "quiso pedir una bolsa".
+ * Con 25% quedan 35 avisos en 30 días; con 40%, 50 y ya entran fraccionados normales.
+ */
+const CERCA_DEL_FORMATO = 0.25;
 
 /**
  * Desde cuántos kilos un renglón "cantidad = kilos por bulto" pasa a ser sospechoso.
@@ -57,24 +70,42 @@ const KG_SOSPECHOSO = Number(process.env.CONTROL_CANTIDAD_KG || 300);
 export function revisarCantidades(
   renglones: RenglonControlado[],
   catalogo: Map<number, ArticuloControlado>,
+  /** Formato de bolsa por artículo para el granel. Vacío = ese control no corre. */
+  formatos?: Map<number, number> | null,
 ): AvisoCantidad[] {
   const avisos: AvisoCantidad[] = [];
   for (const r of renglones ?? []) {
     const cod = Number(r.cod_articulo);
     const cant = Number(r.cantidad);
     const art = catalogo.get(cod);
-    const eq = Number(art?.equivalencia_um);
-    if (!art || !Number.isFinite(cant) || !Number.isFinite(eq) || eq <= 1) continue;
-    if (cant !== eq) continue;                       // la cantidad no coincide con el formato
-    const kg = cant * eq;
-    if (kg < KG_SOSPECHOSO) continue;                // 10 bolsas de 10 kg es una venta normal
+    if (!art || !Number.isFinite(cant) || cant <= 0) continue;
+    const eq = Number(art.equivalencia_um);
+
+    // ── Lo que viene en bulto: ¿cargaron los kilos donde van las bolsas? ──────
+    if (Number.isFinite(eq) && eq > 1) {
+      if (cant !== eq) continue;                     // la cantidad no coincide con el formato
+      const kg = cant * eq;
+      if (kg < KG_SOSPECHOSO) continue;              // 10 bolsas de 10 kg es una venta normal
+      avisos.push({
+        cod_articulo: cod, descripcion: art.descripcion, cantidad: cant,
+        tipo: 'kilos_en_bultos',
+        kg_por_bulto: eq, kg_total: Math.round(kg * 100) / 100,
+        texto: `${art.descripcion}: dice ${cant} y el bulto es de ${eq} kg, o sea ${Math.round(kg)} kg. ¿No querían ${cant} kilos (${Math.round(cant / eq * 100) / 100} bultos)?`,
+      });
+      continue;
+    }
+
+    // ── El granel: ¿quiso pedir una bolsa y puso otro peso? ──────────────────
+    const formato = formatos?.get(cod);
+    if (!formato) continue;
+    if (cant === formato) continue;                  // es la bolsa
+    if (cant % formato === 0) continue;              // son varias bolsas enteras
+    if (Math.abs(cant - formato) > formato * CERCA_DEL_FORMATO) continue;   // fraccionado normal
     avisos.push({
-      cod_articulo: cod,
-      descripcion: art.descripcion,
-      cantidad: cant,
-      kg_por_bulto: eq,
-      kg_total: Math.round(kg * 100) / 100,
-      texto: `${art.descripcion}: dice ${cant} y el bulto es de ${eq} kg, o sea ${Math.round(kg)} kg. ¿No querían ${cant} kilos (${Math.round(cant / eq * 100) / 100} bultos)?`,
+      cod_articulo: cod, descripcion: art.descripcion, cantidad: cant,
+      tipo: 'no_es_la_bolsa',
+      kg_por_bulto: formato, kg_total: cant,
+      texto: `${art.descripcion}: dice ${cant} kg y la bolsa es de ${formato} kg. ¿Querían una bolsa?`,
     });
   }
   return avisos;
