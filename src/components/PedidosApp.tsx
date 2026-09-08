@@ -1148,8 +1148,13 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                         </div>
                                     )}
                                     {av && av.lista_sugerida != null && (
+                                        /* 🔑 Mati, 08/09: vender MÁS CARO de lo que corresponde es decisión
+                                           del vendedor, no un incumplimiento — "dejáselo solo como
+                                           comentario". Lo que se marca en rojo es vender por DEBAJO del
+                                           precio que pone la empresa. El aviso sigue estando porque le
+                                           sirve para no perder la venta, pero no grita. */
                                         <div className={`ped-aviso ${av.severidad}`}>
-                                            <AlertTriangle size={14} />
+                                            {av.severidad === 'cliente' ? <AlertCircle size={14} /> : <AlertTriangle size={14} />}
                                             <span>{av.mensaje}</span>
                                             {/* Botón y no :hover: las sucursales cargan desde el celular. */}
                                             <button onClick={() => setLista(i.uid, i.cod_articulo, av.lista_sugerida!)}>

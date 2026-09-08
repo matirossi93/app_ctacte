@@ -175,7 +175,10 @@
 /* Le vende más barato de lo que corresponde: se pierde margen. */
 .ped-aviso.margen { background: var(--color-danger-bg); color: var(--color-danger); }
 /* Le cobra de más al cliente teniendo derecho a mejor precio. */
-.ped-aviso.cliente { background: var(--color-warning-bg); color: var(--color-warning); }
+/* 🔑 "Le estás cobrando de más" es un COMENTARIO, no una alerta (Mati, 08/09): vender más
+   caro es decisión del vendedor. Va en gris, como las notas, para que el rojo quede reservado
+   a lo único que sí es un incumplimiento — vender por debajo del precio de la empresa. */
+.ped-aviso.cliente { background: var(--color-surface-hover, #f2f2f2); color: var(--color-text-muted); }
 .ped-aviso svg { flex-shrink: 0; }
 .ped-aviso span { flex: 1; }
 .ped-aviso button {
@@ -265,8 +268,8 @@
 /* El aviso ámbar es el único que NO frena, así que es el único que el vendedor tiene que
    leer sí o sí. En el dorado de marca daba 1,68:1 de contraste sobre el crema (WCAG pide
    4,5:1). Se usa un ámbar sólo-para-texto y se deja el de marca para el borde y el ícono. */
-.ped-aviso.cliente { color: #8A5A12; }
-.ped-aviso.cliente svg { color: var(--color-warning, #E59B33); }
+.ped-aviso.cliente { color: var(--color-text-muted, #6b6b6b); }
+.ped-aviso.cliente svg { color: var(--color-text-muted, #8a8a8a); }
 .ped-cat-opt:disabled { opacity: 0.6; }
 
 /* Descuento % por renglón. Va pegado a la lista y comparte alto con el resto de los
