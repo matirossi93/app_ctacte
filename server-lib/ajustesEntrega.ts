@@ -16,12 +16,26 @@
  * 🪤 La API de IM no relaciona la NC con su factura (verificado el 08/09/2026). El vínculo lo
  * guarda esta tabla. Y en las observaciones va `SEGUN HR <nº>`, que es lo que la oficina ya
  * escribe a mano: de 724 NC en 90 días, 287 lo tienen.
+ *
+ * 🔴 **HOY EL CAMINO ES VINCULAR, NO EMITIR.** InfoManager NO deja emitir notas de crédito por
+ * API en el punto de venta 777: su validación de unicidad del número **no incluye el tipo de
+ * comprobante**, y como cada tipo lleva su propia serie, el número que le toca a la NC ya lo usó
+ * una factura hace tiempo (*"Ya existe una factura con... numero = 30059"*). Probado el
+ * 08/09/2026, y probado también que **el payload está bien**: la misma nota se creó sin problemas
+ * en el punto 999, que no tiene serie de facturas encima. Ver
+ * `reference_im_nc_numeracion_bloqueada_20260908` en la memoria.
+ *
+ * ⇒ La oficina emite la NC en IM como siempre y el panel **la vincula** a la hoja, que es lo
+ * único que hace falta para el número final. La emisión queda escrita y detrás de un
+ * interruptor (`IM_NC_EMISION_HABILITADA`) para el día que Sistec arregle la validación.
  */
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
 import type { JwtPayload } from './auth.js';
 import { puedeArmarHojasDeRuta } from './permisos.js';
-import { fetchClientesIMCached, fetchVentasItems, cabeceraComprobante } from './infomanager.js';
+import {
+  fetchClientesIMCached, fetchVentasItems, cabeceraComprobante, fetchVentas, fechaArgentina, imClient,
+} from './infomanager.js';
 import { emitirNotaCredito } from './facturarIM.js';
 import { usuarioIM } from './pedidos.js';
 
@@ -39,6 +53,13 @@ const EMPRESA_DEFAULT = Number(process.env.PEDIDO_EMPRESA_DEFAULT || 1);
 const LISTA_FALLBACK = Number(process.env.PEDIDO_LISTA_FALLBACK || 12);
 /** Igual que en la facturación: un reclamo sin emitir vence a los 5 minutos. */
 const RECLAMO_VENCE_MS = 5 * 60_000;
+/**
+ * Emitir la NC desde el panel está APAGADO: IM la rechaza en el punto 777 (ver la cabecera).
+ * Se prende cuando Sistec arregle la validación de unicidad.
+ */
+const emisionHabilitada = () => process.env.IM_NC_EMISION_HABILITADA === '1';
+/** Cuántos días después de la hoja se buscan notas de crédito del cliente. */
+const DIAS_CANDIDATAS = 30;
 
 /**
  * GET /api/hojas-ruta/:id/ajustes — los ajustes de la hoja y el número final.
@@ -96,6 +117,12 @@ export function totalesConAjustes(hoja: any, ajustes: any[]) {
  */
 export async function crearAjuste(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
+  if (!emisionHabilitada()) {
+    res.status(501).json({
+      error: 'InfoManager no acepta notas de crédito por API en el punto 777 (su validación de números no distingue el tipo de comprobante). Hacela en IM y después vinculala acá.',
+    });
+    return;
+  }
   try {
     const hojaId = String(req.params.id);
     const b = req.body ?? {};
@@ -305,4 +332,166 @@ export async function borrarAjuste(req: Request & { user?: JwtPayload }, res: Re
     return;
   }
   res.json({ ok: true });
+}
+
+/**
+ * GET /api/hojas-ruta/:id/ajustes/candidatas?im_comprobante_id= — qué notas de crédito de
+ * InfoManager podrían corresponder a este pedido.
+ *
+ * Trae las NC del cliente desde la fecha de la hoja en adelante, saca las que ya están
+ * vinculadas, y marca las que mencionan el número de la hoja en las observaciones — que es
+ * justo lo que la oficina ya escribe (`SEGUN HR 3210`, en 287 de 724 notas).
+ */
+export async function candidatasAVincular(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  try {
+    const hojaId = String(req.params.id);
+    const comprobanteId = String(req.query.im_comprobante_id ?? '').trim();
+    const { data: hoja, error: errHoja } = await sb().from('hojas_ruta')
+      .select('id, numero, fecha, hojas_ruta_pedidos(im_comprobante_id, cod_cliente, cliente_nombre, total)')
+      .eq('id', hojaId).eq('tenant_id', TENANT_ID).maybeSingle();
+    if (errHoja) { res.status(502).json({ error: errHoja.message }); return; }
+    if (!hoja) { res.status(404).json({ error: 'Hoja de ruta no encontrada' }); return; }
+
+    const pedidos = (hoja as any).hojas_ruta_pedidos ?? [];
+    const pedido = comprobanteId ? pedidos.find((p: any) => String(p.im_comprobante_id) === comprobanteId) : null;
+    if (comprobanteId && !pedido) { res.status(409).json({ error: 'Ese pedido no está en esta hoja.' }); return; }
+    // Sin pedido puntual, se buscan las de todos los clientes de la hoja.
+    const clientes = new Set((pedido ? [pedido] : pedidos).map((p: any) => Number(p.cod_cliente)));
+
+    const desde = String((hoja as any).fecha).slice(0, 10);
+    const hasta = fechaArgentina(new Date(desde + 'T12:00:00Z').getTime() + DIAS_CANDIDATAS * 864e5);
+    const ventas = await fetchVentas(desde, hasta > fechaArgentina() ? fechaArgentina() : hasta);
+    const ncs = ventas.filter((v: any) =>
+      String(v.tipo_comprobante ?? '').trim() === 'NC' &&
+      String(v.anulada ?? '').trim().toUpperCase() !== 'S' &&
+      clientes.has(Number(v.cod_cliente)));
+
+    // Las que ya están atadas a algún ajuste no se ofrecen de nuevo.
+    const { data: usadas, error: errUsadas } = await sb().from('hojas_ruta_ajustes')
+      .select('im_ajuste_id').eq('tenant_id', TENANT_ID).not('im_ajuste_id', 'is', null);
+    if (errUsadas) { res.status(502).json({ error: `No pude ver qué notas ya están vinculadas: ${errUsadas.message}` }); return; }
+    const yaUsadas = new Set((usadas ?? []).map((u: any) => String(u.im_ajuste_id)));
+
+    const numeroHoja = String((hoja as any).numero);
+    const candidatas = ncs
+      .filter((v: any) => !yaUsadas.has(String(v.id)))
+      .map((v: any) => {
+        const obs = String(v.observaciones ?? '');
+        return {
+          im_ajuste_id: String(v.id),
+          numero: v.numero ?? null,
+          tipo: `NC ${String(v.tipo_factura ?? '').trim()}`.trim(),
+          fecha: String(v.fecha ?? '').slice(0, 10),
+          cod_cliente: Number(v.cod_cliente),
+          importe: Math.abs(Number(v.total ?? 0)),
+          observaciones: obs,
+          // 🔑 La convención que ya usa la oficina: "SEGUN HR 3210".
+          menciona_esta_hoja: new RegExp(`(hr|hoja)\\s*${numeroHoja}\\b`, 'i').test(obs),
+        };
+      })
+      .sort((a, b) => Number(b.menciona_esta_hoja) - Number(a.menciona_esta_hoja) || b.fecha.localeCompare(a.fecha));
+
+    res.json({ ok: true, hoja: { numero: (hoja as any).numero, fecha: (hoja as any).fecha }, candidatas });
+  } catch (err: any) {
+    console.error('[candidatasAVincular]', err?.message);
+    res.status(502).json({ error: `No pude traer las notas de crédito de InfoManager: ${err?.message ?? 'sin respuesta'}` });
+  }
+}
+
+/**
+ * POST /api/hojas-ruta/:id/ajustes/vincular — ata una NC ya emitida en IM a un pedido de la hoja.
+ *
+ * Body: `{ im_comprobante_id, im_ajuste_id, motivo? }`.
+ *
+ * 🔑 El importe y el número salen de la NC REAL leída de InfoManager, nunca del body: si viniera
+ * de la pantalla, el número final de la hoja —y el pago del chofer— dependería de lo que alguien
+ * tipeó.
+ */
+export async function vincularAjuste(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  try {
+    const hojaId = String(req.params.id);
+    const b = req.body ?? {};
+    const comprobanteId = String(b.im_comprobante_id ?? '').trim();
+    const ajusteId = String(b.im_ajuste_id ?? '').trim();
+    if (!comprobanteId || !ajusteId) { res.status(400).json({ error: 'Falta el pedido o la nota de crédito.' }); return; }
+
+    const { data: hoja, error: errHoja } = await sb().from('hojas_ruta')
+      .select('id, numero, estado, hojas_ruta_pedidos(im_comprobante_id, cod_cliente, cliente_nombre, total, facturado_at, im_factura_numero)')
+      .eq('id', hojaId).eq('tenant_id', TENANT_ID).maybeSingle();
+    if (errHoja) { res.status(502).json({ error: errHoja.message }); return; }
+    if (!hoja) { res.status(404).json({ error: 'Hoja de ruta no encontrada' }); return; }
+    if (String((hoja as any).estado) === 'cerrada') {
+      res.status(409).json({ error: `La hoja ${(hoja as any).numero} está cerrada: ya se liquidó. Reabrila si de verdad hay que ajustarla.` });
+      return;
+    }
+    const pedido = ((hoja as any).hojas_ruta_pedidos ?? []).find((p: any) => String(p.im_comprobante_id) === comprobanteId);
+    if (!pedido) { res.status(409).json({ error: 'Ese pedido no está en esta hoja.' }); return; }
+
+    // ── La nota, leída de InfoManager ────────────────────────────────────────
+    const nc = await comprobanteCompleto(ajusteId);
+    if (!nc) { res.status(404).json({ error: 'No encontré esa nota de crédito en InfoManager.' }); return; }
+    if (String(nc.tipo_comprobante ?? '').trim() !== 'NC') {
+      res.status(409).json({ error: `El comprobante ${nc.numero} no es una nota de crédito (es ${nc.tipo_comprobante}).` });
+      return;
+    }
+    if (String(nc.anulada ?? '').trim().toUpperCase() === 'S') {
+      res.status(409).json({ error: `Esa nota de crédito (${nc.numero}) está ANULADA en InfoManager.` });
+      return;
+    }
+    // 🔴 Del mismo cliente: si no, se le estaría descontando a la hoja algo de otra persona.
+    if (Number(nc.cod_cliente) !== Number(pedido.cod_cliente)) {
+      res.status(409).json({ error: `Esa nota de crédito es del cliente ${nc.cod_cliente} y el pedido es del ${pedido.cod_cliente}.` });
+      return;
+    }
+
+    const importe = Math.abs(Number(nc.total ?? 0));
+    if (!(importe > 0)) { res.status(409).json({ error: 'Esa nota de crédito tiene importe cero.' }); return; }
+
+    const fila = {
+      tenant_id: TENANT_ID, hoja_id: hojaId, im_comprobante_id: comprobanteId,
+      cod_cliente: Number(pedido.cod_cliente), cliente_nombre: pedido.cliente_nombre ?? null,
+      tipo: 'nc', importe, items: [],
+      motivo: String(b.motivo ?? nc.observaciones ?? 'Diferencia de entrega').slice(0, 200),
+      im_ajuste_id: String(nc.id), im_ajuste_numero: nc.numero != null ? Number(nc.numero) : null,
+      im_ajuste_tipo: `NC ${String(nc.tipo_factura ?? '').trim()}`.trim(),
+      // Ya está emitida en IM: por eso cuenta para el número final desde el momento en que se ata.
+      emitido_at: new Date().toISOString(),
+      created_by: req.user?.sub ?? null,
+    };
+    const { error } = await sb().from('hojas_ruta_ajustes').insert(fila);
+    if (error) {
+      const dup = String((error as any).code ?? '') === '23505';
+      res.status(dup ? 409 : 500).json({
+        error: dup ? 'Esa nota de crédito ya está vinculada a un pedido.' : `No pude vincularla: ${error.message}`,
+      });
+      return;
+    }
+
+    // Aviso, no bloqueo: una NC puede cubrir más de un pedido y el dato de IM es el que manda.
+    const total = Number(pedido.total ?? 0);
+    res.json({
+      ok: true,
+      ajuste: { importe, numero: fila.im_ajuste_numero, tipo: fila.im_ajuste_tipo },
+      advertencia: importe > total
+        ? `La nota de crédito (${importe}) es MAYOR que el pedido (${total}): revisá que corresponda a este pedido y no a varios.`
+        : null,
+    });
+  } catch (err: any) {
+    console.error('[vincularAjuste]', err?.message);
+    res.status(500).json({ error: err?.message ?? 'error' });
+  }
+}
+
+/** La cabecera completa de un comprobante de IM, con cliente e importe. */
+async function comprobanteCompleto(id: string): Promise<any | null> {
+  try {
+    const cli = await imClient();
+    const { data } = await cli.get(`/ventas/${id}`);
+    return data?.results ?? data?.venta ?? data ?? null;
+  } catch (err: any) {
+    if (err?.response?.status === 404) return null;
+    throw err;
+  }
 }

@@ -55,7 +55,7 @@ import { pendientesDelDia, arrastreDelDia, impresionHoja, sugerenciaDelDia, list
 import { tableroFacturacion, previsualizarFacturacion, facturarSeleccion, liberarReclamo } from './server-lib/facturarPresupuestos.js';
 import { marcarRetiro, quitarRetiro, marcarRetirado, listarRetiros, resumenRetiros } from './server-lib/retirosSucursal.js';
 import { listarChoferes, liquidacionMensual } from './server-lib/liquidacionChoferes.js';
-import { listarAjustes, crearAjuste, borrarAjuste } from './server-lib/ajustesEntrega.js';
+import { listarAjustes, crearAjuste, borrarAjuste, candidatasAVincular, vincularAjuste } from './server-lib/ajustesEntrega.js';
 import { listarPresupuestos, revisarPresupuesto, borrarRevision, detallePresupuesto, corregirCantidades, fraccionadoDelRango } from './server-lib/panelPresupuestos.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -701,6 +701,9 @@ app.get('/api/hojas-ruta/:id/impresion', requireJwt, (req: any, res) => impresio
 // Lo que se ajusta cuando vuelve el repartidor: emite notas de crédito REALES en InfoManager.
 app.get('/api/hojas-ruta/:id/ajustes', requireJwt, (req: any, res) => listarAjustes(req, res));
 app.post('/api/hojas-ruta/:id/ajustes', requireJwt, (req: any, res) => crearAjuste(req, res));
+// 🔑 El camino de hoy: la NC se hace en IM y acá se vincula (IM no la deja emitir por API).
+app.get('/api/hojas-ruta/:id/ajustes/candidatas', requireJwt, (req: any, res) => candidatasAVincular(req, res));
+app.post('/api/hojas-ruta/:id/ajustes/vincular', requireJwt, (req: any, res) => vincularAjuste(req, res));
 app.put('/api/hojas-ruta/:id', requireJwt, (req: any, res) => editarHoja(req, res));
 app.delete('/api/hojas-ruta/:id', requireJwt, (req: any, res) => borrarHoja(req, res));
 

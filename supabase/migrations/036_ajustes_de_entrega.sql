@@ -63,6 +63,11 @@ create unique index if not exists hojas_ruta_ajustes_reclamo_uidx
 create unique index if not exists hojas_ruta_ajustes_numero_uidx
   on hojas_ruta_ajustes (tenant_id, im_ajuste_tipo, im_ajuste_numero) where im_ajuste_numero is not null;
 
+-- Una nota de crédito de InfoManager se vincula a UN pedido: si se atara a dos, se descontaría
+-- dos veces del número final y el chofer cobraría de menos.
+create unique index if not exists hojas_ruta_ajustes_im_uidx
+  on hojas_ruta_ajustes (tenant_id, im_ajuste_id) where im_ajuste_id is not null;
+
 -- ── Row Level Security ───────────────────────────────────────────────────────
 alter table hojas_ruta_ajustes enable row level security;
 drop policy if exists hojas_ruta_ajustes_service on hojas_ruta_ajustes;
