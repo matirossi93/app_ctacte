@@ -59,7 +59,7 @@ function fakeSb() {
         update: (v: any) => { escrituras.push({ tabla: t, op: 'update', valor: v }); return q; },
         delete: () => { escrituras.push({ tabla: t, op: 'delete', valor: null }); return q; },
       };
-      for (const k of ['select', 'eq', 'in', 'order', 'limit', 'not', 'is']) q[k] = () => q;
+      for (const k of ['select', 'eq', 'in', 'order', 'limit', 'not', 'is', 'or']) q[k] = () => q;
       return q;
     },
   }));

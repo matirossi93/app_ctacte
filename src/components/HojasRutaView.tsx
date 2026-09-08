@@ -22,8 +22,14 @@ import './HojasRutaView.css';
  * puede mover a mano después.
  */
 
+/**
+ * Un REMITO listo para salir. 🔄 Antes eran presupuestos: Mati (08/09/2026) pidió que la hoja se
+ * arme con los comprobantes definitivos, y el remito es el que viaja con la mercadería.
+ */
 interface Pendiente {
+    /** El id del remito en InfoManager: es lo que identifica la entrega. */
     im_comprobante_id: string;
+    /** Número de REMITO. */
     im_numero: number | null;
     cod_cliente: number;
     cliente_nombre: string;
@@ -34,15 +40,17 @@ interface Pendiente {
     bultos: number;
     kg: number;
     renglones_sin_peso: number;
-    de_la_app: boolean;
-    avisos: string[];
-    /** Para qué lado está el error de lista. Es lo que decide si urge mirarlo. */
-    gravedad: { pierde_margen: number; cobra_de_mas: number };
     fecha: string | null;
-    /** Vigente de un día anterior: se quedó sin salir y hay que mirarlo. */
+    /** De un día anterior y todavía sin salir: hay que mirarlo. */
     de_otro_dia: boolean;
     /** Lo que escribió el vendedor: puede cambiar cómo o cuándo se entrega. */
     observaciones: string | null;
+    /** La factura del remito. InfoManager no guarda esa relación: se deduce (ver aparearFactura). */
+    im_factura_id: string | null;
+    im_factura_numero: number | null;
+    im_factura_tipo: string | null;
+    /** Cómo se supo cuál era: 'vinculo' | 'unica' | 'elegida' | 'ninguna'. */
+    factura_origen: 'vinculo' | 'unica' | 'elegida' | 'ninguna';
     hoja_id: string | null;
 }
 
@@ -100,8 +108,6 @@ export function HojasRutaView() {
     const [sel, setSel] = useState<Set<string>>(new Set());
     const [trabajando, setTrabajando] = useState(false);
     const [aviso, setAviso] = useState<string | null>(null);
-    /** Qué pedido tiene los avisos desplegados. En tablet no hay hover: hay que poder tocarlo. */
-    const [detalle, setDetalle] = useState<string | null>(null);
     /** Días hacia atrás que se están mirando. 0 = sólo el día elegido, que es lo rápido. */
     const [dias, setDias] = useState(0);
     /** Cuántos pedidos vigentes quedaron de días anteriores. null = todavía no se sabe. */
@@ -213,8 +219,13 @@ export function HojasRutaView() {
     const kgSel = seleccionados.reduce((s, p) => s + p.kg, 0);
     // 🔑 Separados a propósito: "36 para revisar" sobre 59 no dice nada y se deja de mirar.
     // Uno es plata que la empresa pierde, el otro es un cliente al que le cobran de más.
-    const pierdeMargen = pendientes.filter(p => p.gravedad?.pierde_margen > 0).length;
-    const cobraDeMas = pendientes.filter(p => p.gravedad?.cobra_de_mas > 0).length;
+    /**
+     * 🔄 Los chips del control de listas se fueron con el cambio a remitos, y está bien: acá ya
+     * está todo facturado y la lista no se puede corregir. Ese control vive en Presupuestos,
+     * que es donde todavía se puede hacer algo. Lo que sí importa acá es si falta la factura.
+     */
+    const sinFactura = pendientes.filter(p => p.im_factura_numero == null).length;
+    const facturaDeducida = pendientes.filter(p => p.factura_origen === 'elegida').length;
 
     function toggle(id: string) {
         setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -267,7 +278,10 @@ export function HojasRutaView() {
     async function mandarAHoja(hojaId: string, pedidos: Pendiente[], mover = false): Promise<boolean> {
         const r = await fetch(`/api/hojas-ruta/${hojaId}/pedidos`, {
             method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pedidos, mover }),
+            // 🔑 `tipo: 'RE'` le dice al server que el comprobante que llega es el REMITO, así
+            // que puede guardarlo como tal sin ir a buscarlo. Las hojas viejas se armaron con
+            // presupuestos y por eso el server sigue aceptando las dos formas.
+            body: JSON.stringify({ pedidos: pedidos.map(p => ({ ...p, tipo: 'RE' })), mover }),
         });
         const d = await r.json().catch(() => null);
         if (!r.ok) {
@@ -418,16 +432,14 @@ export function HojasRutaView() {
                 <div className="hr-resumen">
                     <span><b>{pendientes.length}</b> sin asignar</span>
                     <span><b>{kilos(pendientes.reduce((s, p) => s + p.kg, 0))}</b></span>
-                    {pierdeMargen > 0 && (
-                        <span className="hr-chip-aviso grave" title="El vendedor usó una lista más barata de la que corresponde por la cantidad: la empresa pierde margen">
-                            <AlertTriangle size={13} /> {pierdeMargen} por debajo de lista
+                    {sinFactura > 0 && (
+                        <span className="hr-chip-aviso grave" title="No se encontró la factura de estos remitos. Salen igual en el camión, pero conviene mirarlos.">
+                            <AlertTriangle size={13} /> {sinFactura} sin factura
                         </span>
                     )}
-                    {/* Comentario, no alerta: vender más caro es decisión del vendedor
-                        (Mati, 08/09/2026). Mismo criterio que Presupuestos y la app de vendedores. */}
-                    {cobraDeMas > 0 && (
-                        <span className="hr-chip-aviso nota" title="Se les cobró más caro de lo que habilita la cantidad. No es un error: es decisión del vendedor.">
-                            {cobraDeMas} más caro que la lista
+                    {facturaDeducida > 0 && (
+                        <span className="hr-chip-aviso nota" title="El cliente tenía más de una factura por el mismo importe ese día: se tomó la más cercana en el tiempo. Verificá si el número importa.">
+                            {facturaDeducida} con factura deducida
                         </span>
                     )}
                 </div>
@@ -474,7 +486,7 @@ export function HojasRutaView() {
                         const k = String(g.cod_zona ?? 'sin');
                         const abierta = zonasAbiertas.has(k);
                         const elegidos = g.filas.filter(f => sel.has(f.im_comprobante_id)).length;
-                        const conAviso = g.filas.filter(f => f.gravedad?.pierde_margen > 0).length;
+                        const conAviso = g.filas.filter(f => f.im_factura_numero == null).length;
                         return (
                         <div className={`hr-zona${abierta ? ' abierta' : ''}`} key={k}>
                             <div className="hr-zona-head">
@@ -506,20 +518,26 @@ export function HojasRutaView() {
                                                     {String(p.fecha ?? '').slice(8, 10)}/{String(p.fecha ?? '').slice(5, 7)}
                                                 </span>
                                             )}
-                                            {p.avisos.length > 0 && (
-                                                <button
-                                                    type="button"
-                                                    className={`hr-badge ${p.gravedad?.pierde_margen > 0 ? 'grave' : 'aviso'}`}
-                                                    onClick={e => { e.preventDefault(); e.stopPropagation(); setDetalle(d => d === p.im_comprobante_id ? null : p.im_comprobante_id); }}
-                                                >
-                                                    <AlertTriangle size={11} />
-                                                    {p.gravedad?.pierde_margen > 0 ? 'por debajo de lista' : 'revisar'}
-                                                </button>
+                                            {/* La factura del remito. `elegida` = el cliente tenía más de una
+                                                por el mismo importe ese día y se tomó la más cercana en el
+                                                tiempo: se avisa, porque el número puede no ser el correcto. */}
+                                            {p.im_factura_numero != null ? (
+                                                <span className={`hr-badge ${p.factura_origen === 'elegida' ? 'aviso' : 'facturada'}`}
+                                                      title={p.factura_origen === 'elegida'
+                                                          ? 'Había más de una factura del cliente por el mismo importe: se tomó la más cercana en el tiempo. Verificala si el número importa.'
+                                                          : 'La factura de este remito'}>
+                                                    <CheckCircle2 size={11} /> {p.im_factura_tipo ?? 'FA'} {p.im_factura_numero}
+                                                    {p.factura_origen === 'elegida' && ' ?'}
+                                                </span>
+                                            ) : (
+                                                <span className="hr-badge grave" title="No se encontró la factura de este remito. Sale igual, pero conviene mirarlo.">
+                                                    <AlertTriangle size={11} /> sin factura
+                                                </span>
                                             )}
                                             {p.zona_origen === 'nombre' && <span className="hr-badge tenue" title="La zona se dedujo del nombre del cliente, no está cargada en InfoManager">zona estimada</span>}
                                         </div>
                                         <div className="hr-ped-meta">
-                                            PR {p.im_numero ?? '—'} · {money(p.total)} · {p.bultos} bultos
+                                            RE {p.im_numero ?? '—'} · {money(p.total)} · {p.bultos} bultos
                                             {p.renglones_sin_peso > 0 && (
                                                 <span className="hr-sinpeso" title="Estos renglones no tienen peso cargado en el catálogo: los kilos de este pedido son un mínimo, puede pesar más">
                                                     · {p.renglones_sin_peso} sin peso
@@ -535,11 +553,6 @@ export function HojasRutaView() {
                                     </div>
                                     <div className="hr-ped-kg">{kilos(p.kg)}</div>
                                 </label>
-                            ))}
-                            {abierta && g.filas.filter(p => detalle === p.im_comprobante_id).map(p => (
-                                <div className="hr-detalle" key={p.im_comprobante_id + '-det'}>
-                                    {p.avisos.map((a, i) => <div key={i}>· {a}</div>)}
-                                </div>
                             ))}
                         </div>
                         );

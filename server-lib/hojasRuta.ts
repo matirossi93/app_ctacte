@@ -21,6 +21,7 @@ import {
 } from './infomanager.js';
 import { pesoDeRenglones, cargaDelCamion } from './pesoComprobante.js';
 import { vistaDeRango, invalidarVista } from './vistaPresupuestos.js';
+import { vistaRemitos, invalidarRemitos } from './vistaRemitos.js';
 import { armarFraccionado, totalesFraccionado } from './fraccionado.js';
 import { sugerirRepartos } from './sugerirRepartos.js';
 
@@ -96,13 +97,22 @@ export async function pendientesDelDia(req: Request & { user?: JwtPayload }, res
  * de revisión de presupuestos (etapa 1), que trabaja por rango de fechas.
  */
 async function armarVistaDelDia(fecha: string, dias = 0, forzar = false) {
+  /**
+   * 🔄 Antes esto listaba PRESUPUESTOS. Mati (08/09/2026): *"la hoja de ruta debería armarse en
+   * función a las facturas, que ese va a ser el definitivo de los comprobantes, el que manda
+   * junto con el remito"*. Se eligió el REMITO porque es el papel que viaja con la mercadería:
+   * medido contra IM, factura y remito van uno a uno salvo días sueltos (25 FA contra 29 RE el
+   * 05/09), y en esos casos lo que sale en el camión es el remito.
+   * 📌 Y no era un detalle: el 02/09 hubo 39 presupuestos contra 67 facturas. Todo lo que la
+   * oficina factura directo, sin pedido previo, antes no aparecía en esta pantalla.
+   */
   // 🪤 Mirar SÓLO la fecha exacta se perdía la mayoría de los pedidos: el 07/09/2026 había 225
   // presupuestos vigentes y el panel mostraba 59. La oficina MUEVE la fecha del comprobante
   // para reordenar despachos, así que un pedido fechado para el 10 existe desde antes.
   const desde = dias > 0
     ? fechaArgentina(new Date(fecha + 'T12:00:00Z').getTime() - dias * 864e5)
     : fecha;
-  return vistaDeRango(desde, fecha, forzar);
+  return vistaRemitos(desde, fecha, forzar);
 }
 
 /**
@@ -142,8 +152,10 @@ export async function arrastreDelDia(req: Request & { user?: JwtPayload }, res: 
     const fecha = fechaPedida(req);
     const desde = fechaArgentina(new Date(fecha + 'T12:00:00Z').getTime() - VENTANA_DIAS * 864e5);
     const ventas = await fetchVentas(desde, fecha);
+    // 🔄 Cuenta REMITOS, igual que la pantalla: un remito de la semana pasada que no salió es
+    // mercadería facturada esperando el camión, y ése es el aviso que importa.
     const previos = ventas.filter((v: any) =>
-      String(v.tipo_comprobante ?? '').trim() === 'PR' &&
+      String(v.tipo_comprobante ?? '').trim() === 'RE' &&
       String(v.anulada ?? '').trim().toUpperCase() !== 'S' &&
       String(v.fecha ?? '').slice(0, 10) !== fecha);
     const ids = previos.map((p: any) => String(p.id));
@@ -152,6 +164,12 @@ export async function arrastreDelDia(req: Request & { user?: JwtPayload }, res: 
       ? await sb().from('hojas_ruta_pedidos').select('im_comprobante_id').in('im_comprobante_id', ids.slice(0, 400))
       : { data: [] as any[] };
     const yaEn = new Set((asignados ?? []).map((a: any) => String(a.im_comprobante_id)));
+    // Ni los que el cliente pasa a buscar: ésos tampoco esperan un camión.
+    const { data: retiros } = ids.length
+      ? await sb().from('retiros_sucursal').select('im_comprobante_id')
+          .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids.slice(0, 400))
+      : { data: [] as any[] };
+    for (const r of retiros ?? []) yaEn.add(String((r as any).im_comprobante_id));
     const sueltos = previos.filter((p: any) => !yaEn.has(String(p.id)));
     const porFecha: Record<string, number> = {};
     for (const p of sueltos) porFecha[String(p.fecha).slice(0, 10)] = (porFecha[String(p.fecha).slice(0, 10)] ?? 0) + 1;
@@ -176,10 +194,16 @@ export async function listarHojas(req: Request & { user?: JwtPayload }, res: Res
     const idsEnHojas = (hojas ?? []).flatMap((h: any) => (h.hojas_ruta_pedidos ?? []).map((p: any) => String(p.im_comprobante_id)));
     const { data: emitidos } = idsEnHojas.length
       ? await sb().from('presupuestos_facturados')
-          .select('im_comprobante_id, im_factura_numero, im_remito_numero, facturado_at')
-          .eq('tenant_id', TENANT_ID).in('im_comprobante_id', idsEnHojas)
+          .select('im_comprobante_id, im_factura_numero, im_remito_id, im_remito_numero, facturado_at')
+          .eq('tenant_id', TENANT_ID)
+          .or(`im_comprobante_id.in.(${idsEnHojas.join(',')}),im_remito_id.in.(${idsEnHojas.join(',')})`)
       : { data: [] as any[] };
-    const emitidoPor = new Map((emitidos ?? []).map((e: any) => [String(e.im_comprobante_id), e]));
+    // Por los dos caminos: hojas viejas armadas con presupuestos y nuevas armadas con remitos.
+    const emitidoPor = new Map<string, any>();
+    for (const e of emitidos ?? []) {
+      emitidoPor.set(String((e as any).im_comprobante_id), e);
+      if ((e as any).im_remito_id) emitidoPor.set(String((e as any).im_remito_id), e);
+    }
 
     const conCarga = (hojas ?? []).map((h: any) => {
       const ps = (h.hojas_ruta_pedidos ?? []).map((p: any) => {
@@ -480,12 +504,19 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
     // 🔑 Lo que ya se facturó (etapa 2) viaja con el pedido: la hoja de ruta lleva el REMITO,
     // no el presupuesto, y ese vínculo sólo existe de nuestro lado. Sin esto, un pedido
     // facturado entraría en la hoja como si no lo estuviera y alguien lo facturaría de nuevo.
+    // 🔄 Se busca por los DOS caminos: `im_comprobante_id` para las hojas armadas con
+    // presupuestos (las anteriores al 08/09/2026) e `im_remito_id` para las de ahora, que se
+    // arman con el remito. La fila que gana es la misma; sólo cambia por dónde se la encuentra.
     const { data: emitidos, error: errEmitidos } = await sb().from('presupuestos_facturados')
       .select('im_comprobante_id, im_factura_id, im_factura_numero, im_remito_id, im_remito_numero, facturado_at')
-      .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
+      .eq('tenant_id', TENANT_ID).or(`im_comprobante_id.in.(${ids.join(',')}),im_remito_id.in.(${ids.join(',')})`);
     // Sin esto la hoja se armaría sin los comprobantes emitidos y se imprimiría sin el remito.
     if (errEmitidos) { res.status(502).json({ error: `No pude leer qué comprobantes se emitieron: ${errEmitidos.message}` }); return; }
-    const facturado = new Map((emitidos ?? []).map((e: any) => [String(e.im_comprobante_id), e]));
+    const facturado = new Map<string, any>();
+    for (const e of emitidos ?? []) {
+      facturado.set(String((e as any).im_comprobante_id), e);
+      if ((e as any).im_remito_id) facturado.set(String((e as any).im_remito_id), e);
+    }
 
     // 🔑 El peso se RECALCULA acá contra IM; no se guarda el que mandó el navegador. Los kilos
     // deciden en qué camión entra la mercadería: si la pantalla quedó abierta desde ayer, o
@@ -537,11 +568,18 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
         // array, postgrest manda la UNIÓN de las claves de todas las filas y completa con NULL
         // las que falten: con claves distintas por fila, un pedido que ya tenía su remito
         // copiado se pisaba con NULL al reasignarlo (auditoría del 08/09/2026).
-        im_factura_id: emitido?.im_factura_id ?? null,
-        im_factura_numero: emitido?.im_factura_numero ?? null,
-        im_remito_id: emitido?.im_remito_id ?? null,
-        im_remito_numero: emitido?.im_remito_numero ?? null,
-        facturado_at: emitido?.facturado_at ?? null,
+        /**
+         * 🔑 Desde que la hoja se arma con remitos, el comprobante que llega YA ES el remito: no
+         * hay que ir a buscarlo a ningún lado. La factura viene de `presupuestos_facturados`
+         * cuando la emitimos nosotros, y si no, del apareo que hizo la vista (`aparearFactura`),
+         * que es informativo — el importe de la hoja sale del remito, que es lo que viaja.
+         */
+        im_factura_id: emitido?.im_factura_id ?? (p.im_factura_id ? String(p.im_factura_id) : null),
+        im_factura_numero: emitido?.im_factura_numero ?? (p.im_factura_numero != null ? Number(p.im_factura_numero) : null),
+        im_remito_id: emitido?.im_remito_id ?? (p.tipo === 'RE' ? String(p.im_comprobante_id) : null),
+        im_remito_numero: emitido?.im_remito_numero
+          ?? (p.tipo === 'RE' && p.im_numero != null ? Number(p.im_numero) : null),
+        facturado_at: emitido?.facturado_at ?? (p.tipo === 'RE' ? new Date().toISOString() : null),
       };
     });
     let { error } = await sb().from('hojas_ruta_pedidos').upsert(filas, { onConflict: 'im_comprobante_id' });
@@ -554,7 +592,7 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
       ({ error } = await sb().from('hojas_ruta_pedidos').upsert(sinTotal, { onConflict: 'im_comprobante_id' }));
     }
     if (error) { res.status(500).json({ error: error.message }); return; }
-    invalidarVista();
+    invalidarVista(); invalidarRemitos();
     res.json({
       ok: true, agregados: filas.length,
       sin_saldo: filas.filter(f => f.saldo_anterior == null).length,
@@ -679,7 +717,7 @@ export async function borrarHoja(req: Request & { user?: JwtPayload }, res: Resp
   if (e1) { res.status(500).json({ error: e1.message }); return; }
   const { error } = await sb().from('hojas_ruta').delete().eq('id', id).eq('tenant_id', TENANT_ID);
   if (error) { res.status(500).json({ error: error.message }); return; }
-  invalidarVista();   // los pedidos volvieron a estar libres
+  invalidarVista(); invalidarRemitos();   // los pedidos volvieron a estar libres
   res.json({ ok: true });
 }
 
@@ -716,6 +754,6 @@ export async function quitarPedido(req: Request & { user?: JwtPayload }, res: Re
   const { error } = await sb().from('hojas_ruta_pedidos')
     .delete().eq('im_comprobante_id', comprobanteId);
   if (error) { res.status(500).json({ error: error.message }); return; }
-  invalidarVista();   // el pedido volvió a estar libre y la lista quedó vieja
+  invalidarVista(); invalidarRemitos();   // el pedido volvió a estar libre y la lista quedó vieja
   res.json({ ok: true });
 }

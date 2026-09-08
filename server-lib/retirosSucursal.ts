@@ -18,6 +18,7 @@ import type { JwtPayload } from './auth.js';
 import { puedeArmarHojasDeRuta } from './permisos.js';
 import { fechaArgentina } from './infomanager.js';
 import { invalidarVista } from './vistaPresupuestos.js';
+import { invalidarRemitos } from './vistaRemitos.js';
 
 /** Sólo la oficina. Devuelve true si ya contestó el 403. */
 function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
@@ -84,7 +85,7 @@ export async function marcarRetiro(req: Request & { user?: JwtPayload }, res: Re
 
     const { error } = await sb().from('retiros_sucursal').upsert(filas, { onConflict: 'tenant_id,im_comprobante_id' });
     if (error) { res.status(500).json({ error: error.message }); return; }
-    invalidarVista();
+    invalidarVista(); invalidarRemitos();
     res.json({ ok: true, agregados: filas.length, sin_facturar: filas.filter(f => !f.im_remito_numero).length });
   } catch (err: any) {
     console.error('[marcarRetiro]', err?.message);
@@ -113,7 +114,7 @@ export async function quitarRetiro(req: Request & { user?: JwtPayload }, res: Re
   const { error } = await sb().from('retiros_sucursal')
     .delete().eq('im_comprobante_id', id).eq('tenant_id', TENANT_ID);
   if (error) { res.status(500).json({ error: error.message }); return; }
-  invalidarVista();
+  invalidarVista(); invalidarRemitos();
   res.json({ ok: true });
 }
 

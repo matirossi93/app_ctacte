@@ -55,7 +55,7 @@ function fakeSb() {
         update: (v: any) => { escrituras.push({ tabla: t, op: 'update', valor: v, filtros }); return q; },
         delete: () => { escrituras.push({ tabla: t, op: 'delete', valor: null, filtros }); return q; },
       };
-      for (const k of ['select', 'eq', 'in', 'gte', 'lte', 'order', 'limit', 'not']) {
+      for (const k of ['select', 'eq', 'in', 'gte', 'lte', 'order', 'limit', 'not', 'or']) {
         q[k] = (...a: any[]) => { filtros.push(`${k}:${a.join(',')}`); return q; };
       }
       q.is = (col: string, v: any) => { filtros.push(`is:${col},${v}`); return q; };
@@ -213,5 +213,65 @@ describe('retiros en sucursal', () => {
     };
     const r = await llamar(listarRetiros, { query: { desde: '2026-09-01', hasta: '2026-09-30' } });
     expect(r.body.retiros[0]).toMatchObject({ im_factura_numero: 50380, im_remito_numero: 77310 });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('la hoja se arma con REMITOS', () => {
+  /**
+   * 🔄 Mati (08/09/2026): *"la hoja de ruta debería armarse en función a las facturas, que ese va
+   * a ser el definitivo de los comprobantes, el que manda junto con el remito"*. Se eligió el
+   * remito porque es el papel que viaja: medido contra IM, el 05/09 hubo 25 facturas y 29
+   * remitos, y lo que sale en el camión son los 29.
+   */
+  it('🔑 guarda el remito como tal: el comprobante que llega YA ES el remito', async () => {
+    tablas['hojas_ruta'] = { data: { id: 'h1', numero: 3395, fecha: '2026-09-08', estado: 'abierta' }, error: null };
+    tablas['hojas_ruta_pedidos'] = { data: [], error: null };
+    tablas['retiros_sucursal'] = { data: [], error: null };
+    tablas['presupuestos_facturados'] = { data: [], error: null };
+    const r = await llamar(asignarPedidos, {
+      params: { id: 'h1' },
+      body: {
+        pedidos: [{
+          im_comprobante_id: '58800100', im_numero: 76818, cod_cliente: 1011,
+          cliente_nombre: 'PET SHOP', total: 324155.07, bultos: 10, kg: 300,
+          tipo: 'RE', im_factura_id: '58800099', im_factura_numero: 50358,
+        }],
+      },
+    });
+    expect(r.status).toBe(200);
+    const fila = escrituras.find(e => e.tabla === 'hojas_ruta_pedidos' && e.op === 'upsert')?.valor?.[0];
+    expect(fila).toMatchObject({
+      im_comprobante_id: '58800100',
+      im_remito_id: '58800100',      // el propio comprobante
+      im_remito_numero: 76818,
+      im_factura_numero: 50358,      // la que dedujo la vista
+    });
+  });
+
+  it('🔑 el vínculo GUARDADO le gana a lo que manda la pantalla', async () => {
+    // Lo que emitimos nosotros es el dato cierto; lo del body salió de un apareo.
+    tablas['hojas_ruta'] = { data: { id: 'h1', numero: 3395, fecha: '2026-09-08', estado: 'abierta' }, error: null };
+    tablas['hojas_ruta_pedidos'] = { data: [], error: null };
+    tablas['retiros_sucursal'] = { data: [], error: null };
+    tablas['presupuestos_facturados'] = {
+      data: [{
+        im_comprobante_id: '58700637', im_remito_id: '58800100', im_remito_numero: 76818,
+        im_factura_id: 'f-real', im_factura_numero: 99999, facturado_at: '2026-09-08T10:00:00Z',
+      }],
+      error: null,
+    };
+    const r = await llamar(asignarPedidos, {
+      params: { id: 'h1' },
+      body: {
+        pedidos: [{
+          im_comprobante_id: '58800100', im_numero: 76818, cod_cliente: 1011,
+          cliente_nombre: 'PET SHOP', total: 1000, tipo: 'RE', im_factura_numero: 11111,
+        }],
+      },
+    });
+    expect(r.status).toBe(200);
+    const fila = escrituras.find(e => e.tabla === 'hojas_ruta_pedidos' && e.op === 'upsert')?.valor?.[0];
+    expect(fila.im_factura_numero).toBe(99999);
   });
 });

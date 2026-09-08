@@ -35,7 +35,7 @@ function fakeSb() {
         upsert: (v: any) => { insertados.push([t, v]); return q; },
         delete: () => q,
       };
-      for (const k of ['select', 'eq', 'in', 'order', 'limit', 'not']) q[k] = () => q;
+      for (const k of ['select', 'eq', 'in', 'order', 'limit', 'not', 'or']) q[k] = () => q;
       return q;
     },
   }));
