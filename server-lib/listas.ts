@@ -404,9 +404,13 @@ export function evaluarPedido(
     const cumple = misReglas.filter((g) => {
       if (g.condicion === 'libre') return true;
       if (g.condicion === 'promo_general') return promoGeneral;
-      // "BOLSA": el artículo se vende en bulto y se lleva al menos uno entero. El granel
-      // suelto no cuenta por más kilos que sume — no es una bolsa cerrada.
-      if (g.condicion === 'bulto_cerrado') return Boolean(art?.es_bulto) && propio.bultos >= 1;
+      // "BOLSA": se lleva al menos una bolsa entera.
+      // 🪤 Ojo con exigir `art.es_bulto`: en IM el 100% de Legumbres y el 93% de Mezclas están
+      // cargados por kilo (unidad "Kilos", equivalencia 1), así que la condición no se cumplía
+      // NUNCA y marcaba 692 renglones de 4 semanas como si vendieran bajo la lista. La bolsa
+      // se mide con el mismo criterio que el resto del módulo: el bulto entero si viene en
+      // bolsa, o KG_PARA_CONTAR_BULTO kilos si se despacha a granel.
+      if (g.condicion === 'bulto_cerrado') return propio.bultos >= 1;
       const umbral = Number(g.umbral ?? 0);
       const base = g.ambito === 'linea' ? linea : propio;
       const valor = g.unidad === 'kg' ? base.kilos : base.bultos;

@@ -49,9 +49,17 @@ describe('"BOLSA" — la bolsa cerrada habilita la lista', () => {
     expect(r.avisos[0].lista_sugerida).toBe(13);
   });
 
-  it('el granel suelto NO es bolsa cerrada', () => {
+  it('unos kilos sueltos no son una bolsa', () => {
     const r = evaluarPedido([{ cod_articulo: 2, cantidad: 5, cod_lista: 13 }], catalogo, reglas);
     expect(r.avisos[0].severidad).toBe('margen');
+  });
+
+  it('🔴 pero el producto que se despacha A GRANEL igual llega a la bolsa por kilos', () => {
+    // 🪤 En IM, Legumbres y Mezclas están cargados por kilo (unidad "Kilos", equivalencia 1):
+    // ninguno es "bulto". Exigir es_bulto hacía que la condición no se cumpliera nunca y
+    // marcaba 692 renglones reales como si vendieran por debajo de la lista.
+    const r = evaluarPedido([{ cod_articulo: 2, cantidad: 25, cod_lista: 13 }], catalogo, reglas);
+    expect(r.avisos[0].severidad).toBe('ok');
   });
 });
 

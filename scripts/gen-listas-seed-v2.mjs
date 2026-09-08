@@ -66,7 +66,15 @@ const MAPEO = {
   'PRALINE':           { arts: [656, 2009, 10671, 10680] },
   'MANI TOSTADO SALADO': { arts: [653, 10672] },
   'MANI TOSTADO SIN SAL': { arts: [10640, 10670], activo: false, nota: '⚠️ SIN CONFIRMAR: en IM no hay ningún artículo que diga "sin sal". Se asume que son MANI TOSTADO KING x KG y x 10 KG. Confirmar con Mati.' },
-  'LABORATORIO GRAL':  { arts: [], activo: false, nota: '⚠️ SIN MAPEAR: no hay subrubro ni artículos "laboratorio" en IM. Falta que Mati diga qué abarca.' },
+  // Mati, 08/09: "laboratorio general es la parte de accesorios y venenos". Son los 10
+  // subrubros que hasta hoy estaban cargados como la línea ACCESORIOS Y VENENOS, con todas
+  // las listas libres. La planilla les pone condición: 10+1 para L2 y hasta L3.
+  // Los productos con regla propia (collar antipulgas, pipetas, shampoo, talquera, piedras,
+  // shulet) viven dentro de estos subrubros, pero la regla por artículo le gana a la de línea.
+  'LABORATORIO GRAL':  { sub: ['Accesorios Perros y Gatos', 'Accesorios Plantas', 'Accesorios Aves',
+                               'Accesorios Peces', 'Accesorios Hamsters', 'Accesorios Animales Granja',
+                               'Venenos Insectos', 'Venenos Ratas', 'Venenos Hormigas',
+                               'Venenos Moscas y Cucarachas'] },
   'RATISADA ULTRA JERINGA': { arts: [1959, 1960], activo: false, nota: '⚠️ SIN CONFIRMAR: en IM están RATISADA LIQ. x 1 LT y x 500 CC, no una "ultra jeringa". Las jeringas que hay son CUCAXAN y GERMANI GEL.' },
   'PELLET':            { arts: [471] },
   'PELLET ALFA':       { arts: [485] },
