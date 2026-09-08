@@ -118,7 +118,7 @@ let _reglasCache: { reglas: ReglaLista[]; fetchedAt: number } | null = null;
 async function reglasActivas(): Promise<ReglaLista[]> {
   if (_reglasCache && Date.now() - _reglasCache.fetchedAt < REGLAS_TTL_MS) return _reglasCache.reglas;
   const { data, error } = await sb().from('listas_reglas')
-    .select('nombre, match_tipo, match_valor, cod_lista, condicion, umbral, unidad, ambito, opcional, bonificacion')
+    .select('nombre, match_tipo, match_valor, cod_lista, condicion, umbral, unidad, ambito')
     .eq('tenant_id', TENANT_ID).eq('activo', true);
   if (error) throw new Error(`listas_reglas: ${error.message}`);
   const reglas = (data ?? []) as ReglaLista[];
