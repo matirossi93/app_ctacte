@@ -87,7 +87,11 @@ export async function liquidacionMensual(req: Request & { user?: JwtPayload }, r
 
       // 🔴 Sólo se liquida lo cerrado: una hoja abierta todavía puede cambiar.
       if (h.estado !== 'cerrada') {
-        if (h.estado !== 'anulada') { abiertas += 1; importeAbierto += importe; }
+        // 🪤 Una hoja VACÍA no es algo que falte cerrar: es una hoja creada por error, y el panel
+        // ni siquiera ofrece cerrarla (no tiene nada que entregar). Contarla dejaba un aviso de
+        // "quedan 3 hojas sin cerrar por $0" que pedía una acción imposible — lo que corresponde
+        // es borrarla. Auditoría del 08/09/2026.
+        if (h.estado !== 'anulada' && pedidos.length) { abiertas += 1; importeAbierto += importe; }
         continue;
       }
 

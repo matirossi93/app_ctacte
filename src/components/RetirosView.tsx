@@ -35,6 +35,12 @@ interface PorCliente {
     pedidos: number; importe: number; kg: number; bultos: number;
 }
 
+interface TotalesRetiros {
+    pedidos: number; clientes: number; importe: number; kg: number; bultos: number;
+    /** Los que todavía no pasaron a buscar: mercadería preparada ocupando lugar. */
+    sin_retirar: number;
+}
+
 const money = (n: number) => '$' + Math.round(n).toLocaleString('es-AR');
 const kilos = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 0 }) + ' kg';
 const mesActual = () => new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 7);
@@ -43,24 +49,36 @@ export function RetirosView() {
     const [mes, setMes] = useState(mesActual());
     const [clientes, setClientes] = useState<PorCliente[]>([]);
     const [retiros, setRetiros] = useState<Retiro[]>([]);
-    const [totales, setTotales] = useState<any>(null);
+    const [totales, setTotales] = useState<TotalesRetiros | null>(null);
     const [cargando, setCargando] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [trabajando, setTrabajando] = useState(false);
 
+    /**
+     * 🪤 Las dos consultas van juntas y se pintan juntas.
+     *
+     * Antes el detalle se hacía en un `if (l.ok)` sin `else`: si fallaba, la pantalla mostraba
+     * los totales del mes ("12 pedidos · $X") y abajo el cartel "No hay retiros en sucursal este
+     * mes" — dos afirmaciones contrarias, las dos presentadas como dato. Y al cambiar de mes
+     * quedaban listadas las filas del mes anterior, clickeables. Auditoría del 08/09/2026.
+     */
     const cargar = useCallback(async () => {
+        if (!/^\d{4}-\d{2}$/.test(mes)) { setCargando(false); return; }
         setCargando(true); setError(null);
+        setClientes([]); setTotales(null); setRetiros([]);
         try {
             const r = await fetch(`/api/retiros/resumen?mes=${mes}`, { headers: authHeaders() });
             const d = await r.json().catch(() => null);
             if (!r.ok) throw new Error(d?.error ?? 'No se pudo traer el resumen');
-            setClientes(d.clientes ?? []);
-            setTotales(d.totales ?? null);
 
             // El detalle del mismo rango, para poder marcar cada uno.
             const l = await fetch(`/api/retiros?desde=${d.desde}&hasta=${d.hasta}`, { headers: authHeaders() });
             const dl = await l.json().catch(() => null);
-            if (l.ok) setRetiros(dl?.retiros ?? []);
+            if (!l.ok) throw new Error(dl?.error ?? 'No se pudo traer el detalle de los retiros');
+
+            setClientes(d.clientes ?? []);
+            setTotales(d.totales ?? null);
+            setRetiros(dl?.retiros ?? []);
         } catch (e: any) {
             setError(e?.message ?? 'Error de conexión');
         } finally {
@@ -135,7 +153,7 @@ export function RetirosView() {
                 </div>
             )}
 
-            {!cargando && !retiros.length && (
+            {!cargando && !error && !retiros.length && (
                 <div className="rt-vacio">
                     <Store size={26} />
                     <span>No hay retiros en sucursal este mes.</span>

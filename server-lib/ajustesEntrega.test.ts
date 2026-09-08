@@ -230,15 +230,29 @@ describe('el número final de la hoja', () => {
 });
 
 describe('borrar un ajuste', () => {
-  it('🔴 lo YA EMITIDO no se borra: existe en InfoManager', async () => {
-    tablas['hojas_ruta_ajustes'] = { data: [], error: null };   // el filtro `is emitido_at null` no devolvió nada
+  /**
+   * 🔄 La regla cambió con la auditoría del 08/09/2026. Antes se filtraba por `emitido_at is
+   * null`, y como vincular escribe `emitido_at`, el borrado no matcheaba NUNCA. Ahora lo que
+   * decide es **quién emitió la nota**, y eso se sabe por `items`: emitir desde el panel exige
+   * renglones, vincular los deja vacíos. Los casos completos están en `etapa3Auditoria.test.ts`.
+   */
+  it('🔴 lo que EMITIMOS NOSOTROS no se borra: esta fila es el único registro del vínculo', async () => {
+    tablas['hojas_ruta_ajustes'] = {
+      data: { id: 'aj1', items: [{ cod_articulo: 1, cantidad: 1, precio: 10 }], emitido_at: 'x', im_ajuste_numero: 30058 },
+      error: null,
+    };
     const r = await llamar(borrarAjuste, { params: { id: 'aj1' } });
     expect(r.status).toBe(409);
     expect(r.body.error).toMatch(/anular/i);
   });
 
-  it('uno que no llegó a emitirse sí', async () => {
-    tablas['hojas_ruta_ajustes'] = { data: [{ id: 'aj1' }], error: null };
+  it('una nota VINCULADA se suelta: sigue existiendo en InfoManager', async () => {
+    tablas['hojas_ruta_ajustes'] = { data: { id: 'aj1', items: [], emitido_at: 'x' }, error: null };
+    expect((await llamar(borrarAjuste, { params: { id: 'aj1' } })).status).toBe(200);
+  });
+
+  it('uno que no llegó a emitirse también', async () => {
+    tablas['hojas_ruta_ajustes'] = { data: { id: 'aj1', items: [], emitido_at: null }, error: null };
     expect((await llamar(borrarAjuste, { params: { id: 'aj1' } })).status).toBe(200);
   });
 });

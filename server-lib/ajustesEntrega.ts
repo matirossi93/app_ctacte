@@ -317,20 +317,42 @@ export async function crearAjuste(req: Request & { user?: JwtPayload }, res: Res
 }
 
 /**
- * DELETE /api/hojas-ruta/ajustes/:id — borra un ajuste que NO llegó a emitirse.
+ * DELETE /api/hojas-ruta/ajustes/:id — suelta un ajuste.
  *
- * 🔴 Lo emitido no se borra: existe en InfoManager y bajó una cuenta corriente. Para deshacerlo
- * hay que anular la nota de crédito en IM.
+ * 🔄 ANTES filtraba `emitido_at is null`, y como `vincularAjuste` escribe `emitido_at` en el
+ * mismo insert, el DELETE **no matcheaba nunca**: una nota vinculada al pedido equivocado bajaba
+ * el importe de la hoja —y el pago del chofer— para siempre, y encima dejaba ese pedido preso en
+ * la hoja (no se podía sacar, ni mover, ni borrar la hoja). Auditoría del 08/09/2026.
+ *
+ * 🔑 La distinción que importa no es "emitida o no", es **quién la emitió**:
+ *  · VINCULADA — la nota ya existía en InfoManager y el panel sólo la ató a un pedido. Soltarla
+ *    no toca nada en IM, así que se puede deshacer.
+ *  · EMITIDA POR EL PANEL — la creamos nosotros y esta fila es el único registro de a qué
+ *    factura corresponde (IM no expone esa relación). No se borra: hay que anularla en IM.
+ * Se distinguen por `items`: `crearAjuste` EXIGE renglones para emitir y `vincularAjuste` los
+ * deja vacíos.
  */
 export async function borrarAjuste(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
-  const { data, error } = await sb().from('hojas_ruta_ajustes')
-    .delete().eq('tenant_id', TENANT_ID).eq('id', String(req.params.id)).is('emitido_at', null).select();
-  if (error) { res.status(500).json({ error: error.message }); return; }
-  if (!(data ?? []).length) {
-    res.status(409).json({ error: 'Ese ajuste ya se emitió en InfoManager: para deshacerlo hay que anular la nota de crédito allá.' });
+  const id = String(req.params.id);
+  const { data: fila, error: errFila } = await sb().from('hojas_ruta_ajustes')
+    .select('id, items, im_ajuste_numero, emitido_at').eq('tenant_id', TENANT_ID).eq('id', id).maybeSingle();
+  // 🪤 Sin esto el guard falla ABIERTO: si la consulta se cae, `fila` viene null y se borraría
+  // igual una nota emitida por nosotros.
+  if (errFila) { res.status(502).json({ error: `No pude leer ese ajuste: ${errFila.message}` }); return; }
+  if (!fila) { res.status(404).json({ error: 'Ese ajuste no existe.' }); return; }
+
+  const laEmitimosNosotros = Array.isArray((fila as any).items) && (fila as any).items.length > 0;
+  if (laEmitimosNosotros && (fila as any).emitido_at) {
+    res.status(409).json({
+      error: `La nota de crédito ${(fila as any).im_ajuste_numero ?? ''} se emitió desde el panel: para deshacerla hay que anularla en InfoManager. Esta fila es el único registro de a qué factura corresponde.`,
+    });
     return;
   }
+
+  const { error } = await sb().from('hojas_ruta_ajustes')
+    .delete().eq('tenant_id', TENANT_ID).eq('id', id);
+  if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({ ok: true });
 }
 

@@ -366,9 +366,9 @@ export function HojasRutaView() {
         if (!confirm(`¿Marcar ${seleccionados.length} pedido(s) como retiro en sucursal?\n\nNo salen en ninguna hoja de ruta: quedan en la lista de retiros del mes.`)) return;
         setTrabajando(true); setAviso(null);
         try {
-            const ok = await pedir('/api/retiros', {
+            const r = await fetch('/api/retiros', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { ...authHeaders(), 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     pedidos: seleccionados.map(p => ({
                         im_comprobante_id: p.im_comprobante_id, im_numero: p.im_numero,
@@ -376,12 +376,18 @@ export function HojasRutaView() {
                         fecha: p.fecha, total: p.total, bultos: p.bultos, kg: p.kg,
                     })),
                 }),
-            }, 'No se pudieron marcar como retiro');
-            if (ok) {
-                setSel(new Set());
-                // Salen de pendientes: la lista se rehace contra IM, sin bloquear la pantalla.
-                void cargar();
-            }
+            });
+            const d = await r.json().catch(() => null);
+            if (!r.ok) { setAviso(d?.error ?? 'No se pudieron marcar como retiro'); return; }
+            // 🔑 Sin este aviso la acción no daba NINGUNA señal de haber hecho algo: los pedidos
+            // salen de la lista recién cuando vuelve la consulta a IM, que tarda segundos.
+            const sinFacturar = Number(d?.sin_facturar ?? 0);
+            setAviso(`${d?.agregados ?? seleccionados.length} pedido(s) quedaron como retiro en sucursal.`
+                + (sinFacturar ? ` ${sinFacturar} todavía sin facturar: el cliente no se los puede llevar sin remito.` : '')
+                + ' Se ven en Retiros en sucursal.');
+            setSel(new Set());
+            // Salen de pendientes: la lista se rehace contra IM, sin bloquear la pantalla.
+            void cargar();
         } finally { setTrabajando(false); }
     }
 
@@ -589,6 +595,13 @@ export function HojasRutaView() {
                                 >
                                     <option value="">Sin chofer…</option>
                                     {choferes.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                                    {/* 🪤 /api/choferes devuelve sólo los activos. Si la hoja apunta a uno dado
+                                        de baja, sin esta opción el select se dibuja VACÍO y la tarjeta no dice
+                                        a quién se le está liquidando — mientras la liquidación sí le imputa
+                                        el importe. Se muestra con el nombre que trae la hoja. */}
+                                    {h.chofer_id && !choferes.some(c => c.id === h.chofer_id) && (
+                                        <option value={h.chofer_id}>{h.chofer ?? 'Chofer dado de baja'} (inactivo)</option>
+                                    )}
                                 </select>
                             </div>
                             {/* Hojas viejas cargadas con transporte a mano: el dato no se pierde. */}
@@ -635,9 +648,9 @@ export function HojasRutaView() {
                                     </div>
                                     <button
                                         className="hr-icono"
-                                        title="Sacar de la hoja"
+                                        title={cerrada ? 'La hoja está cerrada: reabrila para sacar pedidos' : 'Sacar de la hoja'}
                                         onClick={() => void quitar(p.im_comprobante_id)}
-                                        disabled={trabajando}
+                                        disabled={trabajando || cerrada}
                                     >
                                         <X size={14} />
                                     </button>

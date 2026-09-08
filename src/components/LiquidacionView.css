@@ -72,3 +72,20 @@
     .lq-top { display: none; }
     .lq-chofer { break-inside: avoid; }
 }
+
+/* El título con el mes: sólo existe en el papel. En pantalla el mes ya está en el selector. */
+.lq-titulo-impreso { display: none; }
+
+@media print {
+    /* Con .lq-print-active en el body se imprime SOLO la liquidación. */
+    body.lq-print-active .of-header,
+    body.lq-print-active .of-rango,
+    body.lq-print-active .en-subtabs { display: none !important; }
+    /* 🪤 Sin esto el impreso se recorta a lo que entraba en pantalla (mismo remedio que en
+       FraccionadoView.css, donde se perdían 97 de 120 filas sin aviso). */
+    html, body, .of-root { height: auto !important; overflow: visible !important; }
+    .of-body { overflow: visible !important; height: auto !important; }
+    html, body { background: #fff !important; }
+    .lq-titulo-impreso { display: block; font-size: 1rem; margin: 0 0 0.6rem; }
+    .lq-chofer { border: 1px solid #ccc !important; background: #fff !important; }
+}

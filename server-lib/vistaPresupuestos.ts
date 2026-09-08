@@ -149,6 +149,17 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
       .select('im_comprobante_id, hoja_id').in('im_comprobante_id', ids);
     const enHoja = new Map((asignados ?? []).map((a: any) => [String(a.im_comprobante_id), String(a.hoja_id)]));
 
+    /**
+     * Y cuáles los pasa a buscar el cliente: ésos ya tienen destino, igual que los de una hoja.
+     *
+     * 🔄 Sin esto seguían apareciendo en "pedidos sin asignar" después de marcarlos, así que la
+     * pantalla no daba ninguna señal de que la acción hubiera hecho algo — y se los podía mandar
+     * a una hoja igual, quedando en el camión Y en el mostrador (auditoría del 08/09/2026).
+     */
+    const { data: retiros } = await sb().from('retiros_sucursal')
+      .select('im_comprobante_id').eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
+    const enRetiro = new Set((retiros ?? []).map((r: any) => String(r.im_comprobante_id)));
+
     const filas = presupuestos.map((p: any) => {
       const c = porCliente.get(Number(p.cod_cliente));
       const z = zonaDeCliente(c);
@@ -192,6 +203,8 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
         gravedad: propio ? (gravedadPorPedido.get(String(propio.id)) ?? { pierde_margen: 0, cobra_de_mas: 0 }) : { pierde_margen: 0, cobra_de_mas: 0 },
         im_error: propio?.im_error ?? null,
         hoja_id: enHoja.get(String(p.id)) ?? null,
+        // Lo pasa a buscar el cliente: no sale en ninguna hoja.
+        en_retiro: enRetiro.has(String(p.id)),
         // La etapa 1: aprobado / observado / null (sin revisar).
         revision: revisionPor.get(String(p.id)) ?? null,
         // Los dos controles que pidió Mati además de las listas.
@@ -202,8 +215,10 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
     });
 
     const datos = {
-      pendientes: filas.filter(f => !f.hoja_id),
+      // 🔑 "Pendiente" es lo que todavía no tiene destino: ni hoja ni retiro en sucursal.
+      pendientes: filas.filter(f => !f.hoja_id && !f.en_retiro),
       asignados: filas.filter(f => f.hoja_id),
+      en_retiro: filas.filter(f => f.en_retiro).length,
       // Para que la pantalla pueda mostrar "3 pedidos para revisar" sin recorrer todo.
       con_avisos: filas.filter(f => f.avisos.length > 0).length,
       // Los dos números que de verdad importan, separados: uno es plata que se pierde, el

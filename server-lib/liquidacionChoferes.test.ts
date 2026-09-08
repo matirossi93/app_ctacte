@@ -73,6 +73,12 @@ describe('liquidación mensual', () => {
     expect(r.body.sin_cerrar).toMatchObject({ hojas: 1, importe: 150000 });
   });
 
+  it('🔴 una hoja VACÍA no se cuenta como "falta cerrar": hay que borrarla, no cerrarla', async () => {
+    tablas['hojas_ruta'] = { data: [hoja({ estado: 'abierta', hojas_ruta_pedidos: [] })], error: null };
+    const r = await llamar(liquidacionMensual, { query: { mes: '2026-09' } });
+    expect(r.body.sin_cerrar).toMatchObject({ hojas: 0, importe: 0 });
+  });
+
   it('🔴 una hoja ANULADA no se liquida ni se cuenta como pendiente', async () => {
     tablas['hojas_ruta'] = { data: [hoja({ estado: 'anulada' })], error: null };
     const r = await llamar(liquidacionMensual, { query: { mes: '2026-09' } });

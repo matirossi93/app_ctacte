@@ -406,6 +406,25 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
     if (errAsig) { res.status(502).json({ error: `No pude verificar si esos pedidos ya están en otra hoja: ${errAsig.message}` }); return; }
     const enOtra = (yaAsignados ?? []).filter((a: any) => String(a.hoja_id) !== hojaId);
 
+    /**
+     * 🔴 Y tampoco entra a una hoja lo que el cliente pasa a buscar.
+     *
+     * `marcarRetiro` ya frenaba la dirección contraria ("ya está en una hoja → no lo marco"),
+     * pero faltaba el espejo: se podía marcar un pedido como retiro y después mandarlo igual al
+     * camión. Ese importe terminaba contado DOS VECES —en el acumulado mensual de retiros y en
+     * la liquidación del chofer— además de cargar mercadería que el cliente ya se llevó.
+     * Auditoría del 08/09/2026.
+     */
+    const { data: enRetiro, error: errRet } = await sb().from('retiros_sucursal')
+      .select('im_comprobante_id, im_numero').eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
+    if (errRet) { res.status(502).json({ error: `No pude verificar si esos pedidos son retiro en sucursal: ${errRet.message}` }); return; }
+    if ((enRetiro ?? []).length) {
+      res.status(409).json({
+        error: `Estos pedidos están marcados como RETIRO EN SUCURSAL (${(enRetiro ?? []).map((r: any) => r.im_numero ?? r.im_comprobante_id).join(', ')}): los pasa a buscar el cliente. Sacalos de Retiros si van a salir en el camión.`,
+      });
+      return;
+    }
+
     // 🪤 `mover: true` reasigna la fila existente, así que se podía sacar un pedido de una hoja
     // CERRADA sin pasar por `quitarPedido`, que es donde vivía el guard. Una hoja cerrada ya se
     // liquidó: cambiarle la carga cambia el pago del chofer.
@@ -576,6 +595,31 @@ export async function editarHoja(req: Request & { user?: JwtPayload }, res: Resp
       cambios.cerrada_por = e === 'cerrada' ? (req.user?.sub ?? null) : null;
     }
     if (!Object.keys(cambios).length) { res.status(400).json({ error: 'No mandaste nada para cambiar' }); return; }
+
+    /**
+     * 🔴 Una hoja cerrada ya se liquidó. Cambiarle el chofer movería el importe ENTERO de la
+     * hoja de un chofer a otro sin dejar rastro (`cerrada_at`/`cerrada_por` no se tocan), y el
+     * camión, el turno o la zona cambiarían un papel que ya se firmó. Era el último guard de
+     * "cerrada" que faltaba del lado del server — el front lo tapaba deshabilitando los selects,
+     * pero eso es estado que puede estar viejo (dos personas, dos pestañas). Auditoría 08/09/2026.
+     *
+     * 🔑 Lo ÚNICO que se acepta sobre una hoja cerrada es reabrirla: si no, quedaría trabada.
+     */
+    const soloElEstado = Object.keys(cambios).every(k => k === 'estado' || k === 'cerrada_at' || k === 'cerrada_por');
+    if (!soloElEstado) {
+      const { data: actual, error: errActual } = await sb().from('hojas_ruta')
+        .select('numero, estado').eq('id', String(req.params.id)).eq('tenant_id', TENANT_ID).maybeSingle();
+      // 🪤 Fallar abierto acá sería editar una hoja ya pagada porque la consulta se cayó.
+      if (errActual) { res.status(502).json({ error: `No pude verificar si la hoja está cerrada: ${errActual.message}` }); return; }
+      if (!actual) { res.status(404).json({ error: 'Hoja de ruta no encontrada' }); return; }
+      if (String((actual as any).estado) === 'cerrada') {
+        res.status(409).json({
+          error: `La hoja ${(actual as any).numero} está cerrada: ya entró en la liquidación del chofer. Reabrila si de verdad hay que cambiarla.`,
+        });
+        return;
+      }
+    }
+
     const { data, error } = await sb().from('hojas_ruta').update(cambios)
       .eq('id', String(req.params.id)).eq('tenant_id', TENANT_ID).select().maybeSingle();
     if (error) { res.status(500).json({ error: error.message }); return; }

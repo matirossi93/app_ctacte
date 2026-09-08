@@ -55,6 +55,9 @@ interface Totales {
     notas_debito: number;
     final: number;
     pendientes_de_emitir: number;
+    /** 🔑 Con la hoja cerrada el server rechaza vincular y desvincular: hay que decirlo, no
+        dejar que se descubra con un 409 después de esperar la consulta a InfoManager. */
+    hoja: { id: string; numero: number; fecha: string; estado: string };
 }
 
 const money = (n: number) => '$' + Math.round(n).toLocaleString('es-AR');
@@ -168,6 +171,9 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
         }
     }
 
+    // Con la hoja cerrada todo lo que escribe da 409: se muestra en modo lectura.
+    const cerrada = totales?.hoja?.estado === 'cerrada';
+
     const nombrePedido = (id: string) => {
         const p = pedidos.find(x => x.im_comprobante_id === id);
         return p ? `${p.cliente_nombre ?? 'Cliente'} · PR ${p.im_numero ?? '—'}` : id;
@@ -195,6 +201,18 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
                     </div>
                 )}
 
+                {cerrada && (
+                    <div className="aj-aviso">
+                        <AlertTriangle size={14} />
+                        {/* El texto va en un <span>: suelto, cada palabra es un flex item y el
+                            aviso se dibuja en una columna de una palabra de ancho. */}
+                        <span>
+                            Esta hoja está <b>cerrada</b>: ya entró en la liquidación del chofer. Reabrila
+                            desde Hojas de ruta si de verdad hay que ajustarla.
+                        </span>
+                    </div>
+                )}
+
                 {error && <div className="aj-error"><AlertTriangle size={14} /> {error}</div>}
                 {aviso && <div className="aj-aviso"><AlertTriangle size={14} /> {aviso}</div>}
 
@@ -215,9 +233,12 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
                                 </div>
                                 <div className="aj-fila-meta">
                                     {nombrePedido(a.im_comprobante_id)} · {a.motivo}
+                                    {/* Sólo lo emitido baja el número final: uno a medias no bajó
+                                        ninguna cuenta corriente y no se puede contar como entregado. */}
+                                    {!a.emitido_at && <b className="warn"> · sin emitir: no descuenta</b>}
                                 </div>
                             </div>
-                            <button className="aj-icono" title="Desvincular del pedido" onClick={() => void desvincular(a)} disabled={trabajando}>
+                            <button className="aj-icono" title={cerrada ? 'La hoja está cerrada' : 'Desvincular del pedido'} onClick={() => void desvincular(a)} disabled={trabajando || cerrada}>
                                 <Trash2 size={14} />
                             </button>
                         </div>
@@ -228,7 +249,7 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
                 <section className="aj-seccion">
                     <h4>
                         Notas de crédito en InfoManager
-                        <button className="aj-btn chico" onClick={() => void buscarCandidatas()} disabled={buscando}>
+                        <button className="aj-btn chico" onClick={() => void buscarCandidatas()} disabled={buscando || cerrada}>
                             {buscando ? <Loader2 size={13} className="girando" /> : <RefreshCw size={13} />} Buscar
                         </button>
                     </h4>
@@ -268,7 +289,7 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
                                         <div className="aj-fila-meta warn">Ese cliente no tiene pedidos en esta hoja.</div>
                                     )}
                                 </div>
-                                <button className="aj-btn" onClick={() => void vincular(c)} disabled={trabajando || !suyos.length}>
+                                <button className="aj-btn" onClick={() => void vincular(c)} disabled={trabajando || cerrada || !suyos.length}>
                                     <Link2 size={14} /> Vincular
                                 </button>
                             </div>

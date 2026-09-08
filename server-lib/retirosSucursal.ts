@@ -101,8 +101,11 @@ export async function marcarRetiro(req: Request & { user?: JwtPayload }, res: Re
 export async function quitarRetiro(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
   const id = String(req.params.comprobanteId);
-  const { data: fila } = await sb().from('retiros_sucursal')
+  const { data: fila, error: errFila } = await sb().from('retiros_sucursal')
     .select('retirado_at, im_numero').eq('im_comprobante_id', id).eq('tenant_id', TENANT_ID).maybeSingle();
+  // 🪤 Sin esto el guard fallaba ABIERTO: si la consulta se caía, `fila` venía null, parecía que
+  // nadie lo había retirado y se borraba del registro del mes algo que el cliente YA se llevó.
+  if (errFila) { res.status(502).json({ error: `No pude verificar si ya lo retiraron: ${errFila.message}` }); return; }
   if ((fila as any)?.retirado_at) {
     res.status(409).json({ error: `El cliente ya retiró este pedido (${(fila as any).im_numero ?? id}). No se puede borrar del registro del mes.` });
     return;
@@ -137,7 +140,7 @@ export async function listarRetiros(req: Request & { user?: JwtPayload }, res: R
     const { data, error } = await sb().from('retiros_sucursal')
       .select('*').eq('tenant_id', TENANT_ID).gte('fecha', desde).lte('fecha', hasta).order('fecha', { ascending: false });
     if (error) { res.status(500).json({ error: error.message }); return; }
-    const filas = data ?? [];
+    const filas = await conLoEmitido(data ?? []);
     res.json({
       ok: true, desde, hasta, retiros: filas,
       totales: {
@@ -155,6 +158,31 @@ export async function listarRetiros(req: Request & { user?: JwtPayload }, res: R
 }
 
 const redondear = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Cruza los retiros contra `presupuestos_facturados`, que es la FUENTE VIVA de lo emitido.
+ *
+ * 🔄 Los números de factura y remito que guarda `retiros_sucursal` son un snapshot de cuando se
+ * marcó el retiro. Como se puede marcar ANTES de facturar (y es lo normal: primero se sabe que
+ * lo pasa a buscar, después se factura), esas columnas quedaban vacías para siempre y la
+ * pantalla mostraba "sin facturar" sobre un pedido que ya tenía su remito. Es el mismo arreglo
+ * que ya se le hizo a las hojas de ruta (`hojasRuta.ts`, auditoría del 08/09/2026).
+ */
+async function conLoEmitido(filas: any[]): Promise<any[]> {
+  if (!filas.length) return filas;
+  const ids = filas.map(f => String(f.im_comprobante_id));
+  const { data: emitidos } = await sb().from('presupuestos_facturados')
+    .select('im_comprobante_id, im_factura_numero, im_remito_numero, facturado_at')
+    .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
+  // Si la consulta falla se devuelve el snapshot: mostrar el dato viejo es mejor que no mostrar
+  // la lista. Lo que no puede pasar es lo contrario —decir "facturado" sobre algo que no lo está—
+  // y eso no ocurre, porque sólo se pisa cuando InfoManager tiene el comprobante.
+  const vivo = new Map((emitidos ?? []).map((e: any) => [String(e.im_comprobante_id), e]));
+  return filas.map(f => {
+    const e = vivo.get(String(f.im_comprobante_id));
+    return e ? { ...f, im_factura_numero: e.im_factura_numero, im_remito_numero: e.im_remito_numero } : f;
+  });
+}
 
 /**
  * GET /api/retiros/resumen?mes=YYYY-MM — el acumulado del mes, que es para lo que se guarda.
