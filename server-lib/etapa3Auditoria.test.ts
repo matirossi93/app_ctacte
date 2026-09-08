@@ -275,3 +275,52 @@ describe('la hoja se arma con REMITOS', () => {
     expect(fila.im_factura_numero).toBe(99999);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('la misma entrega no puede estar dos veces (presupuesto y remito)', () => {
+  /**
+   * 🔴 Las hojas armadas antes del 08/09/2026 guardan el PRESUPUESTO; las de ahora, el REMITO.
+   * Para la base son dos filas distintas —el índice único es sobre `im_comprobante_id`—, así que
+   * nada impedía que la misma entrega entrara a dos hojas: dos camiones cargando lo mismo, y al
+   * chofer se le pagaba dos veces al cerrar las dos hojas.
+   */
+  it('🔴 no se manda a una hoja un remito cuyo PRESUPUESTO ya está en otra', async () => {
+    tablas['hojas_ruta'] = { data: { id: 'h2', numero: 3396, fecha: '2026-09-08', estado: 'abierta' }, error: null };
+    // El presupuesto 58700637 salió como remito 58800100, y el presupuesto ya está en la hoja h1.
+    tablas['presupuestos_facturados'] = {
+      data: [{ im_comprobante_id: '58700637', im_remito_id: '58800100' }],
+      error: null,
+    };
+    tablas['hojas_ruta_pedidos'] = {
+      data: [{ im_comprobante_id: '58700637', hoja_id: 'h1', im_numero: 58050, hojas_ruta: { numero: 3395, estado: 'abierta' } }],
+      error: null,
+    };
+    tablas['retiros_sucursal'] = { data: [], error: null };
+    const r = await llamar(asignarPedidos, {
+      params: { id: 'h2' },
+      body: { pedidos: [{ im_comprobante_id: '58800100', im_numero: 76818, cod_cliente: 1011, total: 1000, tipo: 'RE' }] },
+    });
+    expect(r.status).toBe(409);
+    expect(escrituras.find(e => e.tabla === 'hojas_ruta_pedidos' && e.op === 'upsert')).toBeFalsy();
+  });
+
+  it('🔴 si no se puede averiguar el otro comprobante, no se asigna a ciegas', async () => {
+    tablas['hojas_ruta'] = { data: { id: 'h2', numero: 3396, fecha: '2026-09-08', estado: 'abierta' }, error: null };
+    tablas['presupuestos_facturados'] = { data: null, error: { message: 'timeout' } };
+    const r = await llamar(asignarPedidos, {
+      params: { id: 'h2' },
+      body: { pedidos: [{ im_comprobante_id: '58800100', im_numero: 76818, cod_cliente: 1011, total: 1000, tipo: 'RE' }] },
+    });
+    expect(r.status).toBe(502);
+    expect(escrituras.find(e => e.tabla === 'hojas_ruta_pedidos' && e.op === 'upsert')).toBeFalsy();
+  });
+
+  it('🪤 un id que no es numérico se rechaza: va interpolado en un filtro que no lo escapa', async () => {
+    tablas['hojas_ruta'] = { data: { id: 'h2', numero: 3396, fecha: '2026-09-08', estado: 'abierta' }, error: null };
+    const r = await llamar(asignarPedidos, {
+      params: { id: 'h2' },
+      body: { pedidos: [{ im_comprobante_id: '588,001)', im_numero: 1, cod_cliente: 1, total: 1 }] },
+    });
+    expect(r.status).toBe(400);
+  });
+});

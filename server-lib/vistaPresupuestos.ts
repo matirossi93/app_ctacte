@@ -149,10 +149,27 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
       .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
     const revisionPor = new Map((revisiones ?? []).map((r: any) => [String(r.im_comprobante_id), r]));
 
-    // Dónde está ya asignado cada comprobante.
+    /**
+     * Dónde está ya asignado cada comprobante.
+     *
+     * 🔄 Desde el 08/09/2026 la hoja se arma con REMITOS, así que buscar el presupuesto en
+     * `hojas_ruta_pedidos` no encuentra nada y el badge "en una hoja" no se mostraba nunca más.
+     * Se busca el presupuesto **y** el remito que salió de él.
+     */
+    const { data: emitidos } = await sb().from('presupuestos_facturados')
+      .select('im_comprobante_id, im_remito_id').eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
+    const remitoDe = new Map((emitidos ?? [])
+      .filter((e: any) => e.im_remito_id)
+      .map((e: any) => [String(e.im_comprobante_id), String(e.im_remito_id)]));
+    const aBuscar = [...new Set([...ids, ...remitoDe.values()])];
     const { data: asignados } = await sb().from('hojas_ruta_pedidos')
-      .select('im_comprobante_id, hoja_id').in('im_comprobante_id', ids);
-    const enHoja = new Map((asignados ?? []).map((a: any) => [String(a.im_comprobante_id), String(a.hoja_id)]));
+      .select('im_comprobante_id, hoja_id').in('im_comprobante_id', aBuscar);
+    const hojaPorId = new Map((asignados ?? []).map((a: any) => [String(a.im_comprobante_id), String(a.hoja_id)]));
+    const enHoja = new Map<string, string>();
+    for (const id of ids) {
+      const h = hojaPorId.get(id) ?? (remitoDe.has(id) ? hojaPorId.get(remitoDe.get(id)!) : undefined);
+      if (h) enHoja.set(id, h);
+    }
 
     /**
      * Y cuáles los pasa a buscar el cliente: ésos ya tienen destino, igual que los de una hoja.
@@ -162,8 +179,10 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
      * a una hoja igual, quedando en el camión Y en el mostrador (auditoría del 08/09/2026).
      */
     const { data: retiros } = await sb().from('retiros_sucursal')
-      .select('im_comprobante_id').eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
-    const enRetiro = new Set((retiros ?? []).map((r: any) => String(r.im_comprobante_id)));
+      .select('im_comprobante_id').eq('tenant_id', TENANT_ID).in('im_comprobante_id', aBuscar);
+    const retiroPorId = new Set((retiros ?? []).map((r: any) => String(r.im_comprobante_id)));
+    const enRetiro = new Set<string>(ids.filter((id: string) =>
+      retiroPorId.has(id) || (remitoDe.has(id) && retiroPorId.has(remitoDe.get(id)!))));
 
     /**
      * 🔑 Y cuáles ya SALIERON del depósito, que es cosa distinta de "está en una hoja".

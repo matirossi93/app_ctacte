@@ -64,19 +64,37 @@ export function aparearFacturas(
     porClienteImporte.get(k)!.push(f);
   }
 
+  /**
+   * 🔴 Una factura le corresponde a UN remito. Sin esto, dos remitos del mismo cliente por el
+   * mismo importe se llevaban la misma factura, los dos marcados como 'unica' — o sea con tilde
+   * verde y sin ninguna señal de duda — y el contador "N sin factura" daba 0 justo el día en que
+   * faltaba una (el 05/09 hubo 29 remitos y 25 facturas). Auditoría del 08/09/2026.
+   */
+  const usadas = new Set<string>();
+
   const salida = new Map<string, FacturaDeRemito>();
+
+  // 🔑 Primero TODOS los vínculos guardados: son los únicos que no se dedujeron, así que reservan
+  // su factura antes de que ningún apareo se la pueda llevar.
   for (const r of remitos) {
     const id = String(r.id);
-
-    // 1. El vínculo real: lo emitimos nosotros y lo guardamos al emitirlo.
     const guardado = vinculados.get(id);
     if (guardado && (guardado.im_factura_numero != null || guardado.im_factura_id)) {
       salida.set(id, { ...guardado, origen: 'vinculo' });
-      continue;
+      if (guardado.im_factura_id) usadas.add(String(guardado.im_factura_id));
     }
+  }
 
-    // 2. Deducido. Sólo hace falta para lo facturado a mano en InfoManager.
-    const candidatas = porClienteImporte.get(`${Number(r.cod_cliente)}|${centavos(r.total)}`) ?? [];
+  // 🪤 Con varios remitos peleando por las mismas facturas, el resultado no puede depender del
+  // orden en que IM los devolvió: se recorren por número de remito.
+  const enOrden = [...remitos].sort((a, b) => Number(a.numero ?? 0) - Number(b.numero ?? 0));
+  for (const r of enOrden) {
+    const id = String(r.id);
+    if (salida.has(id)) continue;                       // ya resuelto por el vínculo guardado
+
+    // Deducido. Sólo hace falta para lo facturado a mano en InfoManager.
+    const candidatas = (porClienteImporte.get(`${Number(r.cod_cliente)}|${centavos(r.total)}`) ?? [])
+      .filter(f => !usadas.has(String(f.id)));
     if (!candidatas.length) {
       salida.set(id, { im_factura_id: null, im_factura_numero: null, im_factura_tipo: null, origen: 'ninguna' });
       continue;
@@ -105,6 +123,7 @@ export function aparearFacturas(
       }
     }
 
+    usadas.add(String(elegida.id));
     salida.set(id, {
       im_factura_id: String(elegida.id),
       im_factura_numero: elegida.numero != null ? Number(elegida.numero) : null,

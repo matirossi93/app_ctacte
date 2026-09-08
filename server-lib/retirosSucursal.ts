@@ -44,6 +44,10 @@ export async function marcarRetiro(req: Request & { user?: JwtPayload }, res: Re
     // Tope explícito: truncar la consulta de abajo dejaría pasar un pedido que ya está en una hoja.
     if (entrada.length > 300) { res.status(400).json({ error: 'Máximo 300 pedidos por vez.' }); return; }
     const ids = entrada.map(p => String(p.im_comprobante_id));
+    // Los ids van interpolados en un `.or()`, que no escapa como `.in()`. Los de IM son enteros.
+    if (ids.some(id => !/^[0-9]+$/.test(id))) {
+      res.status(400).json({ error: 'Hay un comprobante con un identificador inválido.' }); return;
+    }
 
     // 🪤 Si ya está en una hoja, no puede además retirarlo el cliente. Y si la consulta falla,
     // no se marca nada: quedaría en la hoja Y en retiros, o sea cargado en el camión y retirado.
@@ -57,11 +61,21 @@ export async function marcarRetiro(req: Request & { user?: JwtPayload }, res: Re
       return;
     }
 
-    // Lo emitido viaja con el pedido: es el comprobante que se lleva el cliente.
+    /**
+     * Lo emitido viaja con el pedido: es el comprobante que se lleva el cliente.
+     * 🔄 Se busca por los DOS caminos desde que la pantalla manda REMITOS (08/09/2026): antes
+     * cruzaba sólo por `im_comprobante_id` y con un remito no encontraba nada, así que TODOS los
+     * retiros quedaban marcados "sin facturar"… sobre un remito. Decía lo contrario de la verdad.
+     */
     const { data: emitidos } = await sb().from('presupuestos_facturados')
       .select('im_comprobante_id, im_factura_id, im_factura_numero, im_remito_id, im_remito_numero')
-      .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
-    const facturado = new Map((emitidos ?? []).map((e: any) => [String(e.im_comprobante_id), e]));
+      .eq('tenant_id', TENANT_ID)
+      .or(`im_comprobante_id.in.(${ids.join(',')}),im_remito_id.in.(${ids.join(',')})`);
+    const facturado = new Map<string, any>();
+    for (const e of emitidos ?? []) {
+      facturado.set(String((e as any).im_comprobante_id), e);
+      if ((e as any).im_remito_id) facturado.set(String((e as any).im_remito_id), e);
+    }
 
     const filas = entrada.map((p) => {
       const e = facturado.get(String(p.im_comprobante_id));
@@ -75,10 +89,11 @@ export async function marcarRetiro(req: Request & { user?: JwtPayload }, res: Re
         total: Number(p.total) || 0,
         bultos: p.bultos != null ? Number(p.bultos) : null,
         kg: p.kg != null ? Number(p.kg) : null,
-        im_factura_id: e?.im_factura_id ?? null,
-        im_factura_numero: e?.im_factura_numero ?? null,
-        im_remito_id: e?.im_remito_id ?? null,
-        im_remito_numero: e?.im_remito_numero ?? null,
+        im_factura_id: e?.im_factura_id ?? (p.im_factura_id ? String(p.im_factura_id) : null),
+        im_factura_numero: e?.im_factura_numero ?? (p.im_factura_numero != null ? Number(p.im_factura_numero) : null),
+        // 🔑 Si lo que llega es un remito, el remito es el propio comprobante.
+        im_remito_id: e?.im_remito_id ?? (p.tipo === 'RE' ? String(p.im_comprobante_id) : null),
+        im_remito_numero: e?.im_remito_numero ?? (p.tipo === 'RE' && p.im_numero != null ? Number(p.im_numero) : null),
         created_by: req.user?.sub ?? null,
       };
     });

@@ -94,3 +94,49 @@ describe('aparear factura con remito', () => {
     expect(aparearFacturas([], [], new Map()).size).toBe(0);
   });
 });
+
+describe('una factura no puede ser de dos remitos', () => {
+  /**
+   * 🔴 El índice de candidatas no consumía nada, así que dos remitos del mismo cliente por el
+   * mismo importe se llevaban LA MISMA factura, los dos con `origen: 'unica'` — o sea con tilde
+   * verde y sin marca de duda. Y el contador "N sin factura" de la pantalla daba 0 justo el día
+   * en que faltaba una: el 05/09 hubo 29 remitos y 25 facturas. Auditoría del 08/09/2026.
+   */
+  it('🔴 dos remitos iguales y UNA factura: sólo uno se la queda', async () => {
+    const r = aparearFacturas(
+      [{ id: 'r1', numero: 1, cod_cliente: 1011, total: 100000 },
+       { id: 'r2', numero: 2, cod_cliente: 1011, total: 100000 }],
+      [{ id: 'f1', numero: 50358, cod_cliente: 1011, total: 100000, tipo_factura: 'B' }],
+      new Map(),
+    );
+    const numeros = [r.get('r1')!.im_factura_numero, r.get('r2')!.im_factura_numero];
+    expect(numeros.filter(n => n === 50358)).toHaveLength(1);
+    expect(numeros.filter(n => n === null)).toHaveLength(1);
+    expect([...r.values()].filter(f => f.origen === 'ninguna')).toHaveLength(1);
+  });
+
+  it('🔴 tres remitos y tres facturas iguales: una para cada uno, ninguna repetida', async () => {
+    const r = aparearFacturas(
+      [{ id: 'r1', numero: 1, cod_cliente: 1, total: 500 },
+       { id: 'r2', numero: 2, cod_cliente: 1, total: 500 },
+       { id: 'r3', numero: 3, cod_cliente: 1, total: 500 }],
+      [{ id: 'f1', numero: 901, cod_cliente: 1, total: 500, tipo_factura: 'B' },
+       { id: 'f2', numero: 902, cod_cliente: 1, total: 500, tipo_factura: 'B' },
+       { id: 'f3', numero: 903, cod_cliente: 1, total: 500, tipo_factura: 'B' }],
+      new Map(),
+    );
+    const numeros = [...r.values()].map(f => f.im_factura_numero).sort();
+    expect(numeros).toEqual([901, 902, 903]);
+  });
+
+  it('🔑 la factura del vínculo guardado no se la puede robar otro remito', async () => {
+    const r = aparearFacturas(
+      [{ id: 'r1', numero: 1, cod_cliente: 1, total: 500 },
+       { id: 'r2', numero: 2, cod_cliente: 1, total: 500 }],
+      [{ id: 'f1', numero: 901, cod_cliente: 1, total: 500, tipo_factura: 'B' }],
+      new Map([['r2', { im_factura_id: 'f1', im_factura_numero: 901, im_factura_tipo: 'FA B' }]]),
+    );
+    expect(r.get('r2')).toMatchObject({ im_factura_numero: 901, origen: 'vinculo' });
+    expect(r.get('r1')!.origen).toBe('ninguna');
+  });
+});

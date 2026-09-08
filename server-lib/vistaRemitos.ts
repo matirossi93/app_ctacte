@@ -30,8 +30,16 @@ import { pesoDeRenglones } from './pesoComprobante.js';
 import { zonaDeCliente } from './zonaCliente.js';
 import { aparearFacturas } from './aparearFactura.js';
 
-/** Mismo tope que la vista de presupuestos: cada día de renglones cuesta ~1,2 s contra IM. */
-const MAX_DIAS_ITEMS = 12;
+/**
+ * Tope de días para los que se piden renglones: cada uno cuesta ~1,2 s contra IM.
+ *
+ * 🪤 Estaba en 12 contra una ventana de 15 (`VENTANA_DIAS` en hojasRuta.ts), así que con el
+ * arrastre completo los 4 días más viejos NO se pedían: esos remitos salían con 0 kg y 0 bultos
+ * —indistinguibles de uno liviano de verdad, porque `renglones_sin_peso` también daba 0— y los
+ * kilos del camión mentían por abajo sin ninguna señal. Ahora cubre la ventana entera y, si
+ * igual queda alguno afuera, se avisa. Auditoría del 08/09/2026.
+ */
+const MAX_DIAS_ITEMS = 16;
 const VISTA_TTL_MS = 90_000;
 const _cache = new Map<string, { at: number; datos: any }>();
 
@@ -57,10 +65,12 @@ export async function vistaRemitos(desde: string, hasta: string, forzar = false)
   const facturas = ventas.filter(v => esTipo(v, 'FA') && vigente(v));
 
   // Los renglones, sólo de los días que de verdad tienen remitos (ver vistaPresupuestos.ts).
-  const fechas = [...new Set(remitos.map((r: any) => String(r.fecha ?? '').slice(0, 10)).filter(Boolean))]
-    .sort().slice(-MAX_DIAS_ITEMS);
+  const todasLasFechas = [...new Set(remitos.map((r: any) => String(r.fecha ?? '').slice(0, 10)).filter(Boolean))].sort();
+  const fechas = todasLasFechas.slice(-MAX_DIAS_ITEMS);
+  // Los que quedaron fuera del tope: sus remitos van a salir sin peso y hay que decirlo.
+  const fechasSinPedir = todasLasFechas.slice(0, Math.max(0, todasLasFechas.length - MAX_DIAS_ITEMS));
   const renglones = new Map<string, Array<{ cod_articulo: number; cantidad: any; equivalencia_um: number | null | undefined }>>();
-  const diasSinItems: string[] = [];
+  const diasSinItems: string[] = [...fechasSinPedir];
   for (let i = 0; i < fechas.length; i += 4) {
     const tanda = fechas.slice(i, i + 4);
     const resultados = await Promise.all(tanda.map(f =>
@@ -86,11 +96,32 @@ export async function vistaRemitos(desde: string, hasta: string, forzar = false)
 
   const ids = remitos.map((r: any) => String(r.id));
 
-  // El vínculo REAL de lo que emitimos desde el panel: no hay que deducir nada.
-  const { data: nuestros } = await sb().from('presupuestos_facturados')
-    .select('im_remito_id, im_factura_id, im_factura_numero, im_factura_tipo')
-    .eq('tenant_id', TENANT_ID).in('im_remito_id', ids);
-  const vinculados = new Map((nuestros ?? [])
+  /**
+   * 🪤 Tope explícito. Estas consultas mandan los ids en la URL (`in.(...)`), y con `dias=15` son
+   * ~800: medido, 19.887 caracteres, muy por encima de los 8 KB que acepta el proxy. Un 414 haría
+   * que `enHoja` viniera vacío y **todos los remitos ya asignados volvieran a la columna de
+   * pendientes**. Se parte en tandas, igual que el resto del módulo. Auditoría del 08/09/2026.
+   */
+  const enTandas = async <T>(fn: (tanda: string[]) => PromiseLike<{ data: T[] | null; error: any }>) => {
+    const filas: T[] = [];
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await fn(ids.slice(i, i + 200));
+      // 🔴 "No pude preguntar" NO es "no hay": si esto fallara en silencio, la pantalla ofrecería
+      // volver a cargar en un camión lo que ya está cargado.
+      if (error) throw new Error(error.message);
+      filas.push(...(data ?? []));
+    }
+    return filas;
+  };
+
+  /**
+   * El vínculo REAL de lo que emitimos desde el panel. Se pide también el presupuesto de origen
+   * (`im_comprobante_id`): hace falta para el guard de más abajo.
+   */
+  const nuestros = await enTandas<any>(t => sb().from('presupuestos_facturados')
+    .select('im_comprobante_id, im_remito_id, im_factura_id, im_factura_numero, im_factura_tipo')
+    .eq('tenant_id', TENANT_ID).in('im_remito_id', t));
+  const vinculados = new Map(nuestros
     .filter((f: any) => f.im_remito_id)
     .map((f: any) => [String(f.im_remito_id), {
       im_factura_id: f.im_factura_id ?? null,
@@ -99,13 +130,45 @@ export async function vistaRemitos(desde: string, hasta: string, forzar = false)
     }]));
   const facturaDe = aparearFacturas(remitos as any, facturas as any, vinculados);
 
+  /**
+   * 🔴 El presupuesto del que salió cada remito. Sin esto, una hoja armada ANTES del cambio a
+   * remitos guarda el presupuesto, y su remito aparecía igual como pendiente: la misma mercadería
+   * terminaba en dos hojas —dos camiones— y el chofer cobraba dos veces por una sola entrega.
+   * El índice único es sobre `im_comprobante_id`, así que la base no lo frena: son dos filas
+   * distintas para la misma entrega. Auditoría del 08/09/2026.
+   */
+  const presuDelRemito = new Map<string, string>();
+  for (const f of nuestros) {
+    if (f.im_remito_id && f.im_comprobante_id) presuDelRemito.set(String(f.im_remito_id), String(f.im_comprobante_id));
+  }
+  const idsAmirar = [...new Set([...ids, ...presuDelRemito.values()])];
+
   // Dónde está cada uno: en una hoja, o el cliente lo pasa a buscar.
-  const { data: asignados } = await sb().from('hojas_ruta_pedidos')
-    .select('im_comprobante_id, hoja_id').in('im_comprobante_id', ids);
-  const enHoja = new Map((asignados ?? []).map((a: any) => [String(a.im_comprobante_id), String(a.hoja_id)]));
-  const { data: retiros } = await sb().from('retiros_sucursal')
-    .select('im_comprobante_id').eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
-  const enRetiro = new Set((retiros ?? []).map((r: any) => String(r.im_comprobante_id)));
+  const buscarEn = async (tabla: string, extra?: (q: any) => any) => {
+    const filas: any[] = [];
+    for (let i = 0; i < idsAmirar.length; i += 200) {
+      let q = sb().from(tabla).select(tabla === 'hojas_ruta_pedidos' ? 'im_comprobante_id, hoja_id' : 'im_comprobante_id');
+      if (extra) q = extra(q);
+      const { data, error } = await q.in('im_comprobante_id', idsAmirar.slice(i, i + 200));
+      if (error) throw new Error(error.message);
+      filas.push(...(data ?? []));
+    }
+    return filas;
+  };
+  const asignados = await buscarEn('hojas_ruta_pedidos');
+  const retiros = await buscarEn('retiros_sucursal', (q: any) => q.eq('tenant_id', TENANT_ID));
+
+  const enHojaPorId = new Map(asignados.map((a: any) => [String(a.im_comprobante_id), String(a.hoja_id)]));
+  const enRetiroPorId = new Set(retiros.map((r: any) => String(r.im_comprobante_id)));
+  /** Está tomado si lo está el remito **o** el presupuesto del que salió. */
+  const enHoja = new Map<string, string>();
+  const enRetiro = new Set<string>();
+  for (const id of ids) {
+    const presu = presuDelRemito.get(id);
+    const hoja = enHojaPorId.get(id) ?? (presu ? enHojaPorId.get(presu) : undefined);
+    if (hoja) enHoja.set(id, hoja);
+    if (enRetiroPorId.has(id) || (presu && enRetiroPorId.has(presu))) enRetiro.add(id);
+  }
 
   const filas = remitos.map((r: any) => {
     const c = porCliente.get(Number(r.cod_cliente));

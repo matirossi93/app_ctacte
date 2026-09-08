@@ -112,6 +112,8 @@ export function HojasRutaView() {
     const [dias, setDias] = useState(0);
     /** Cuántos pedidos vigentes quedaron de días anteriores. null = todavía no se sabe. */
     const [arrastre, setArrastre] = useState<number | null>(null);
+    /** Días cuyos renglones no se pudieron traer: los kilos de esos remitos van en 0. */
+    const [diasSinPeso, setDiasSinPeso] = useState<string[]>([]);
     /**
      * Qué zonas están desplegadas. Arrancan CERRADAS: con 59 pedidos en 6 zonas había que
      * scrollear media pantalla para llegar a las hojas de ruta (Mati, 07/09/2026, desde el
@@ -161,6 +163,10 @@ export function HojasRutaView() {
             const dp = await p.json().catch(() => null);
             if (!p.ok) throw new Error(dp?.error ?? 'No se pudieron traer los pedidos');
             setPendientes(dp.pendientes ?? []);
+            // 🔑 Los días de los que no se pudieron traer los renglones: esos remitos salen con
+            // 0 kg y la hoja parece entrar en el camión cuando puede no entrar. El server lo
+            // calculaba y nadie lo leía (auditoría del 08/09/2026).
+            setDiasSinPeso(Array.isArray(dp.dias_sin_items) ? dp.dias_sin_items : []);
             setSel(new Set());
         } catch (e: any) {
             setError(e?.message ?? 'Error de conexión');
@@ -459,6 +465,19 @@ export function HojasRutaView() {
                 </div>
             )}
             {aviso && <div className="hr-aviso"><AlertTriangle size={15} /><span>{aviso}</span><button onClick={() => setAviso(null)}><X size={14} /></button></div>}
+            {/* 🔴 Los kilos mienten POR ABAJO: una hoja puede parecer que entra en el camión y no
+                entrar. Es lo único que no se puede deducir mirando la pantalla. */}
+            {diasSinPeso.length > 0 && (
+                <div className="hr-aviso">
+                    <AlertTriangle size={15} />
+                    <span>
+                        No se pudieron traer los renglones de {diasSinPeso.length} día(s)
+                        ({diasSinPeso.join(', ')}): esos remitos van con <b>0 kg</b>, así que el peso
+                        del camión está calculado <b>de menos</b>. Probá con menos días o volvé a actualizar.
+                    </span>
+                </div>
+            )}
+
             {error && <div className="hr-aviso error"><AlertTriangle size={15} /><span>{error}</span></div>}
 
             {/* En el celular las dos columnas quedan una abajo de la otra y hay que scrollear

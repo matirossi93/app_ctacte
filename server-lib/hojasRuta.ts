@@ -159,17 +159,24 @@ export async function arrastreDelDia(req: Request & { user?: JwtPayload }, res: 
       String(v.anulada ?? '').trim().toUpperCase() !== 'S' &&
       String(v.fecha ?? '').slice(0, 10) !== fecha);
     const ids = previos.map((p: any) => String(p.id));
-    // Los que ya están en una hoja no son arrastre: alguien se ocupó.
-    const { data: asignados } = ids.length
-      ? await sb().from('hojas_ruta_pedidos').select('im_comprobante_id').in('im_comprobante_id', ids.slice(0, 400))
-      : { data: [] as any[] };
-    const yaEn = new Set((asignados ?? []).map((a: any) => String(a.im_comprobante_id)));
-    // Ni los que el cliente pasa a buscar: ésos tampoco esperan un camión.
-    const { data: retiros } = ids.length
-      ? await sb().from('retiros_sucursal').select('im_comprobante_id')
-          .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids.slice(0, 400))
-      : { data: [] as any[] };
-    for (const r of retiros ?? []) yaEn.add(String((r as any).im_comprobante_id));
+    /**
+     * 🪤 Esto truncaba en 400 ids. Con remitos son ~55-67 por día contra ~39 presupuestos, así
+     * que sobre 15 días son ~800: los 400 restantes no se chequeaban contra nada y se contaban
+     * TODOS como arrastre — el aviso mostraba un número inflado. Se pide en tandas.
+     * Auditoría del 08/09/2026.
+     */
+    const yaEn = new Set<string>();
+    for (let i = 0; i < ids.length; i += 200) {
+      const tanda = ids.slice(i, i + 200);
+      // Los que ya están en una hoja no son arrastre: alguien se ocupó.
+      const { data: asignados } = await sb().from('hojas_ruta_pedidos')
+        .select('im_comprobante_id').in('im_comprobante_id', tanda);
+      for (const a of asignados ?? []) yaEn.add(String((a as any).im_comprobante_id));
+      // Ni los que el cliente pasa a buscar: ésos tampoco esperan un camión.
+      const { data: retiros } = await sb().from('retiros_sucursal')
+        .select('im_comprobante_id').eq('tenant_id', TENANT_ID).in('im_comprobante_id', tanda);
+      for (const r of retiros ?? []) yaEn.add(String((r as any).im_comprobante_id));
+    }
     const sueltos = previos.filter((p: any) => !yaEn.has(String(p.id)));
     const porFecha: Record<string, number> = {};
     for (const p of sueltos) porFecha[String(p.fecha).slice(0, 10)] = (porFecha[String(p.fecha).slice(0, 10)] ?? 0) + 1;
@@ -256,7 +263,33 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
     if (error) { res.status(500).json({ error: error.message }); return; }
     if (!hoja) { res.status(404).json({ error: 'Hoja de ruta no encontrada' }); return; }
 
-    const pedidos = [...((hoja as any).hojas_ruta_pedidos ?? [])].sort((a: any, b: any) => a.orden - b.orden);
+    const pedidosCrudos = [...((hoja as any).hojas_ruta_pedidos ?? [])].sort((a: any, b: any) => a.orden - b.orden);
+
+    /**
+     * 🪤 El mismo cruce vivo que hace `listarHojas`: los comprobantes copiados en la fila son de
+     * cuando se armó la hoja, y si se facturó DESPUÉS quedaron vacíos. Sin esto, una hoja armada
+     * antes del cambio a remitos se imprimía con el número de PRESUPUESTO y el repartidor llevaba
+     * un papel que no coincide con el remito. Auditoría del 08/09/2026.
+     */
+    const idsImpresos = pedidosCrudos.map((p: any) => String(p.im_comprobante_id))
+      .filter((id: string) => /^[0-9]+$/.test(id));
+    const { data: emitidosImp } = idsImpresos.length
+      ? await sb().from('presupuestos_facturados')
+          .select('im_comprobante_id, im_remito_id, im_remito_numero, im_factura_numero, facturado_at')
+          .eq('tenant_id', TENANT_ID)
+          .or(`im_comprobante_id.in.(${idsImpresos.join(',')}),im_remito_id.in.(${idsImpresos.join(',')})`)
+      : { data: [] as any[] };
+    const vivoPor = new Map<string, any>();
+    for (const e of emitidosImp ?? []) {
+      vivoPor.set(String((e as any).im_comprobante_id), e);
+      if ((e as any).im_remito_id) vivoPor.set(String((e as any).im_remito_id), e);
+    }
+    const pedidos = pedidosCrudos.map((p: any) => {
+      const e = vivoPor.get(String(p.im_comprobante_id));
+      return e
+        ? { ...p, im_remito_numero: p.im_remito_numero ?? e.im_remito_numero, facturado_at: p.facturado_at ?? e.facturado_at }
+        : p;
+    });
 
     // Agrupado por cliente, como la hoja impresa: un cliente puede tener varios comprobantes
     // y abajo el "Total por cliente".
@@ -291,7 +324,11 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
     try {
       const cat = await fetchArticulosCatalogo();
       const ids = new Set(pedidos.map((p: any) => String(p.im_comprobante_id)));
-      const dias = [...new Set(pedidos.map((p: any) => String((hoja as any).fecha).slice(0, 10)))];
+      // 🪤 Esto mapeaba cada pedido a la fecha de LA HOJA, así que siempre daba un solo día y los
+    // renglones de un comprobante de otra fecha no entraban: el galpón preparaba de menos.
+    // `asignarPedidos` ya lo hacía bien (`p.fecha ?? hoja.fecha`). Auditoría del 08/09/2026.
+    const dias = [...new Set(pedidos.map((p: any) =>
+      String(p.fecha ?? (hoja as any).fecha ?? '').slice(0, 10)).filter(Boolean))];
       const renglones: Array<{ cod_articulo: number; cantidad: number }> = [];
       for (const f of dias.slice(0, 6)) {
         for (const it of await fetchVentasItems(f, f).catch(() => [] as any[])) {
@@ -423,8 +460,35 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
     // ¿Alguno ya está en otra hoja? Se avisa antes de tocar nada: un comprobante en dos hojas
     // se carga en dos camiones.
     const ids = entrada.map(p => String(p.im_comprobante_id));
+    if (ids.some(id => !/^[0-9]+$/.test(id))) {
+      // 🪤 Los ids van interpolados en el `.or()` de más abajo, y `.or()` NO escapa como `.in()`:
+      // una coma o un paréntesis rompen el filtro entero de PostgREST. Los ids de IM son enteros.
+      res.status(400).json({ error: 'Hay un comprobante con un identificador inválido.' }); return;
+    }
+    if (ids.length > 300) { res.status(400).json({ error: 'Máximo 300 comprobantes por vez.' }); return; }
+
+    /**
+     * 🔴 El presupuesto del que salió cada remito (y al revés). La hoja se armaba con
+     * presupuestos hasta el 08/09/2026 y ahora con remitos, así que la MISMA entrega puede
+     * existir con dos identificadores distintos. El índice único es sobre `im_comprobante_id`:
+     * son dos filas para la base, y sin este cruce la mercadería termina en dos camiones y el
+     * chofer cobra dos veces. Auditoría del 08/09/2026.
+     */
+    const { data: paresRaw, error: errPares } = await sb().from('presupuestos_facturados')
+      .select('im_comprobante_id, im_remito_id').eq('tenant_id', TENANT_ID)
+      .or(`im_comprobante_id.in.(${ids.join(',')}),im_remito_id.in.(${ids.join(',')})`);
+    if (errPares) { res.status(502).json({ error: `No pude verificar el otro comprobante de estos pedidos: ${errPares.message}` }); return; }
+    /** El "gemelo" de cada id: el remito de un presupuesto, o el presupuesto de un remito. */
+    const gemelo = new Map<string, string>();
+    for (const f of paresRaw ?? []) {
+      const pr = (f as any).im_comprobante_id ? String((f as any).im_comprobante_id) : null;
+      const re = (f as any).im_remito_id ? String((f as any).im_remito_id) : null;
+      if (pr && re) { gemelo.set(pr, re); gemelo.set(re, pr); }
+    }
+    const idsYGemelos = [...new Set([...ids, ...ids.map(i => gemelo.get(i)).filter(Boolean) as string[]])];
+
     const { data: yaAsignados, error: errAsig } = await sb().from('hojas_ruta_pedidos')
-      .select('im_comprobante_id, hoja_id, im_numero, hojas_ruta(numero, estado)').in('im_comprobante_id', ids);
+      .select('im_comprobante_id, hoja_id, im_numero, hojas_ruta(numero, estado)').in('im_comprobante_id', idsYGemelos);
     // Si no se puede consultar, no se asigna: el aviso de "ya está en otra hoja" es lo único que
     // evita que la misma mercadería salga en dos camiones.
     if (errAsig) { res.status(502).json({ error: `No pude verificar si esos pedidos ya están en otra hoja: ${errAsig.message}` }); return; }
@@ -440,7 +504,7 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
      * Auditoría del 08/09/2026.
      */
     const { data: enRetiro, error: errRet } = await sb().from('retiros_sucursal')
-      .select('im_comprobante_id, im_numero').eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
+      .select('im_comprobante_id, im_numero').eq('tenant_id', TENANT_ID).in('im_comprobante_id', idsYGemelos);
     if (errRet) { res.status(502).json({ error: `No pude verificar si esos pedidos son retiro en sucursal: ${errRet.message}` }); return; }
     if ((enRetiro ?? []).length) {
       res.status(409).json({
@@ -509,7 +573,7 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
     // arman con el remito. La fila que gana es la misma; sólo cambia por dónde se la encuentra.
     const { data: emitidos, error: errEmitidos } = await sb().from('presupuestos_facturados')
       .select('im_comprobante_id, im_factura_id, im_factura_numero, im_remito_id, im_remito_numero, facturado_at')
-      .eq('tenant_id', TENANT_ID).or(`im_comprobante_id.in.(${ids.join(',')}),im_remito_id.in.(${ids.join(',')})`);
+      .eq('tenant_id', TENANT_ID).or(`im_comprobante_id.in.(${ids.join(',')}),im_remito_id.in.(${ids.join(',')})`);   // ids validados como numéricos arriba
     // Sin esto la hoja se armaría sin los comprobantes emitidos y se imprimiría sin el remito.
     if (errEmitidos) { res.status(502).json({ error: `No pude leer qué comprobantes se emitieron: ${errEmitidos.message}` }); return; }
     const facturado = new Map<string, any>();
@@ -564,6 +628,9 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
         kg: peso ? peso.kg : (Number(p.kg) || 0),
         // El importe sale impreso en la hoja ("Imp. Total" y "Total por cliente").
         total: Number(p.total) || 0,
+        // 🔑 La fecha del comprobante, no la de la hoja: una hoja puede llevar arrastre de días
+        // anteriores y el fraccionado necesita saber a qué día pedirle los renglones a IM.
+        fecha: /^\d{4}-\d{2}-\d{2}/.test(String(p.fecha ?? '')) ? String(p.fecha).slice(0, 10) : null,
         // 🪤 TODAS las filas llevan las mismas claves, aunque vayan en null. En un upsert de
         // array, postgrest manda la UNIÓN de las claves de todas las filas y completa con NULL
         // las que falten: con claves distintas por fila, un pedido que ya tenía su remito
@@ -590,6 +657,13 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
       console.warn('[asignarPedidos] sin columna `total` (¿falta la migración 033?), guardo sin el importe');
       const sinTotal = filas.map(({ total, ...resto }) => resto);
       ({ error } = await sb().from('hojas_ruta_pedidos').upsert(sinTotal, { onConflict: 'im_comprobante_id' }));
+    }
+    // Mismo criterio para `fecha`, que la agrega la migración 037: sin ella se pierde que el
+    // fraccionado cubra el arrastre, pero la hoja se arma igual.
+    if (error && /fecha/i.test(error.message) && /column|schema/i.test(error.message)) {
+      console.warn('[asignarPedidos] sin columna `fecha` (¿falta la migración 037?), guardo sin ella');
+      const sinFecha = filas.map(({ fecha, ...resto }) => resto);
+      ({ error } = await sb().from('hojas_ruta_pedidos').upsert(sinFecha, { onConflict: 'im_comprobante_id' }));
     }
     if (error) { res.status(500).json({ error: error.message }); return; }
     invalidarVista(); invalidarRemitos();

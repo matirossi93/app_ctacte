@@ -29,13 +29,19 @@ vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSup
 const { impresionHoja } = await import('./hojasRuta.js');
 
 let hojaDevuelta: any = null;
+/** Lo que devuelve `presupuestos_facturados`: el cruce vivo que hace la impresión. */
+let facturadosDevueltos: any[] = [];
 
 function fakeSb() {
   m.sbMock.mockImplementation(() => ({
-    from: () => {
-      const res = { data: hojaDevuelta, error: null };
+    // Cada tabla devuelve lo suyo: `presupuestos_facturados` es una LISTA, y devolverle el objeto
+    // de la hoja hacía que el cruce vivo del impreso reventara al recorrerlo.
+    from: (tabla: string) => {
+      const res = tabla === 'hojas_ruta'
+        ? { data: hojaDevuelta, error: null }
+        : { data: facturadosDevueltos, error: null };
       const q: any = { then: (r: any, j: any) => Promise.resolve(res).then(r, j), maybeSingle: () => Promise.resolve(res) };
-      for (const k of ['select', 'eq', 'in', 'order', 'limit', 'not', 'is']) q[k] = () => q;
+      for (const k of ['select', 'eq', 'in', 'order', 'limit', 'not', 'is', 'or']) q[k] = () => q;
       return q;
     },
   }));
@@ -62,7 +68,7 @@ function hoja(over: Record<string, any> = {}) {
   };
 }
 
-beforeEach(() => { hojaDevuelta = null; vi.clearAllMocks(); fakeSb(); });
+beforeEach(() => { hojaDevuelta = null; facturadosDevueltos = []; vi.clearAllMocks(); fakeSb(); });
 
 describe('cabecera impresa de la hoja', () => {
   it('🔴 imprime el CHOFER asignado como transporte: es el mismo dato', async () => {
@@ -83,6 +89,23 @@ describe('cabecera impresa de la hoja', () => {
     const r = await llamar();
     expect(r.body.hoja.transporte).toBe('FLETE PEPE');
     expect(r.body.hoja.chofer).toBeNull();
+  });
+
+  it('🔴 el remito sale del cruce VIVO: una hoja armada antes de facturar no puede imprimir el presupuesto', async () => {
+    // Se armó la hoja con el presupuesto y se facturó después: el snapshot quedó sin remito.
+    hojaDevuelta = hoja({
+      hojas_ruta_pedidos: [{
+        im_comprobante_id: '58700637', im_numero: 58050, cod_cliente: 1093, cliente_nombre: 'ARON',
+        total: 1000, bultos: 1, kg: 30, orden: 0, saldo_anterior: 0,
+        im_remito_numero: null, facturado_at: null,
+      }],
+    });
+    facturadosDevueltos = [{
+      im_comprobante_id: '58700637', im_remito_id: '58800100', im_remito_numero: 77289,
+      im_factura_numero: 50358, facturado_at: '2026-09-08T12:00:00Z',
+    }];
+    const r = await llamar();
+    expect(r.body.clientes[0].comprobantes[0]).toMatchObject({ im_remito_numero: 77289, facturado: true });
   });
 
   it('sin chofer ni transporte va en blanco, no rompe', async () => {

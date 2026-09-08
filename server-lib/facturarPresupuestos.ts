@@ -34,6 +34,8 @@ import { emitirFactura, emitirRemito, letraDeFactura, proximoNumeroFactura } fro
 import type { DatosComprobante } from './facturarIM.js';
 import { usuarioIM } from './pedidos.js';
 import { vistaDeRango, invalidarVista } from './vistaPresupuestos.js';
+// Emitir crea los remitos: la pantalla de hojas los tiene que ver ya mismo.
+import { invalidarRemitos } from './vistaRemitos.js';
 
 /** Sólo la oficina. Devuelve true si ya contestó el 403. */
 function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
@@ -544,7 +546,7 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
       hechos.push({ cliente: f.cliente_nombre, factura: facturaNumero, remito: re.numero, tipo: tipoFactura });
     }
 
-    invalidarVista();
+    invalidarVista(); invalidarRemitos();
     res.json({
       ok: !fallados.length && !cortado,
       facturados: hechos.length, hechos, fallados, cortado,
