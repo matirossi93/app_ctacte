@@ -118,13 +118,16 @@ describe('emitirFactura', () => {
         expect(n).toBe(3);
     });
 
-    it('🔴 después de tres choques se rinde en vez de seguir probando', async () => {
+    // Eran 3 intentos y no alcanzaban: el 09/09/2026 había 4 facturas seguidas fechadas para
+    // el día siguiente y PASTERIS se quedó sin facturar. Ahora son 10, pero sigue habiendo tope:
+    // cada intento es una request y probar sin fin colgaría la pantalla.
+    it('🔴 después de 10 choques se rinde en vez de seguir probando para siempre', async () => {
         const post = vi.fn(async () => ({ data: { mensaje: 'Ya existe una factura con los siguientes datos' } }));
         vi.mocked(axios.create).mockReturnValue({ post, get: vi.fn(), put: vi.fn(), interceptors: { request: { use: vi.fn() } } } as any);
         vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
         const r = await emitirFactura({ ...DATOS, numero: 50360 } as any);
         expect(r.ok).toBe(false);
-        expect(post).toHaveBeenCalledTimes(3);
+        expect(post).toHaveBeenCalledTimes(10);
     });
 
     it('lleva el presupuesto de origen en cod_compatibilidad', async () => {
@@ -306,5 +309,92 @@ describe('emitirRemitoMasivo — choque de numeración', () => {
     const r = await emitirRemitoMasivo(DATOS);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/n[úu]mero/i);
+  });
+});
+
+/**
+ * 🔴 EL VENDEDOR VA TAMBIÉN EN CADA RENGLÓN.
+ *
+ * Mati (09/09/2026): *"tiene que figurar ítem por ítem el vendedor, eso es importantísimo porque
+ * después la aplicación toma quién es el que hizo la venta"*. Verificado contra IM ese día: las
+ * facturas y remitos que hace la oficina desde IM traen el vendedor repetido en cada renglón
+ * (FA 50362 → `cod_vendedor: 12` en cabecera Y en los items), y los nuestros traían 0 — el
+ * campo existe en el schema `VentasItemsCrear` y no lo mandábamos.
+ */
+describe('el vendedor viaja en cada renglón, no sólo en la cabecera', () => {
+  it('🔴 la FACTURA lleva cod_vendedor en cada item', async () => {
+    const post = mockIM({ isCreated: true, venta: { id: 1, numero: 50360 } });
+    await emitirFactura({ ...DATOS, cod_vendedor: 3, items: [
+      { cod_articulo: 661, cantidad: 1, precio: 100 },
+      { cod_articulo: 662, cantidad: 2, precio: 200 },
+    ] });
+    const body = (post.mock.calls[0] as any[])[1];
+    expect(body.cod_vendedor).toBe(3);
+    for (const it of body.items) expect(it.cod_vendedor).toBe('3');
+  });
+
+  it('🔴 el REMITO lleva cod_vendedor en cada item', async () => {
+    const post = mockIM({ isCreated: true, remito: { id: 7, numero: 77300 } });
+    await emitirRemito({ ...DATOS, cod_vendedor: 12 });
+    const body = (post.mock.calls[0] as any[])[1];
+    expect(body.cod_vendedor).toBe(12);
+    for (const it of body.items) expect(it.cod_vendedor).toBe('12');
+  });
+
+  it('🔴 el REMITO MASIVO lleva el vendedor en la cabecera y en cada item', async () => {
+    const post = vi.fn(async () => ({ data: '' }));
+    vi.mocked(axios.create).mockReturnValue({
+      post,
+      get: vi.fn(async () => ({ data: { results: [{ id: '1', numero: 77373, tipo_comprobante: 'RE', punto_de_venta: 7, cod_cliente: 1093 }] } })),
+      put: vi.fn(), interceptors: { request: { use: vi.fn() } },
+    } as any);
+    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+    await emitirRemitoMasivo({ ...DATOS, cod_vendedor: 4 });
+    const body = (post.mock.calls[0] as any[])[1];
+    expect(body.cabecera[0].cod_vendedor).toBe(4);
+    for (const it of body.items) expect(it.cod_vendedor).toBe('4');
+  });
+});
+
+/**
+ * 🔴 EL MISMO BUG QUE EL REMITO, EN LAS FACTURAS. Bloqueó a PASTERIS el 09/09/2026.
+ *
+ * La oficina factura hoy el reparto de MAÑANA, así que el panel emite facturas fechadas mañana
+ * — y después no las ve, porque la ventana terminaba hoy. Verificado contra IM: las facturas B
+ * 50403 a 50406 del punto 777 estaban fechadas el 10/09, `proximoNumeroFactura` proponía la
+ * 50403 y los tres intentos (50403, 50404, 50405) chocaban todos. El mensaje que veía Jorgelina
+ * —"Ya existe una factura ... numero: [50405]"— era el del tercer intento.
+ */
+describe('proximoNumeroFactura — la numeración no sigue a la fecha', () => {
+  it('🔴 la ventana mira ADELANTE: la oficina factura hoy el reparto de mañana', async () => {
+    const get = vi.fn(async () => ({ data: { results: [] } }));
+    vi.mocked(axios.create).mockReturnValue({
+      post: vi.fn(), get, put: vi.fn(), interceptors: { request: { use: vi.fn() } },
+    } as any);
+    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+    const { proximoNumeroFactura } = await import('./facturarIM.js');
+    await proximoNumeroFactura('B', 777);
+    const params = (get.mock.calls[0] as any[])[1].params;
+    expect(params.fechaHasta > new Date().toISOString().slice(0, 10)).toBe(true);
+  });
+
+  it('🔴 no se rinde a los 3 números: la oficina puede tener varios adelantados', async () => {
+    // IM contesta 200 con el error adentro, que es como llega este rechazo de verdad.
+    const post = vi.fn(async () => ({ data: {
+      mensaje: 'Ocurrió un error al grabar información.',
+      detalles: 'Ya existe una factura con los siguientes datos: tipo_factura [B], punto_de_venta [777], numero: [50405]',
+    } }));
+    vi.mocked(axios.create).mockReturnValue({
+      post, get: vi.fn(async () => ({ data: { results: [] } })),
+      put: vi.fn(), interceptors: { request: { use: vi.fn() } },
+    } as any);
+    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+    const r = await emitirFactura({ ...DATOS, numero: 50403 });
+    expect(post.mock.calls.length).toBeGreaterThanOrEqual(8);
+    // Y cada intento va con el número siguiente, no con el mismo.
+    const nums = post.mock.calls.map((c: any) => c[1].numero);
+    expect(nums).toEqual([...nums].sort((a, b) => a - b));
+    expect(new Set(nums).size).toBe(nums.length);
+    expect(r.ok).toBe(false);
   });
 });

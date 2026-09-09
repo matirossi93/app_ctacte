@@ -115,7 +115,7 @@ beforeEach(() => {
     { cod_cliente: 500, categoria_iva: 'RI' },
     { cod_cliente: 777, categoria_iva: null },
   ]);
-  m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-08', anulada: false, existe: true });
+  m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-08', anulada: false, existe: true });
   m.fetchVentasItems.mockResolvedValue([RENGLON]);
   m.proximoNumeroFactura.mockResolvedValue(50360);
   m.emitirFactura.mockResolvedValue({ ok: true, id: 'f1', numero: 50360, tipo: 'FA B' });
@@ -175,7 +175,7 @@ describe('previsualizar', () => {
   });
 
   it('🔴 un presupuesto anulado en IM no se factura', async () => {
-    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-08', anulada: true, existe: true });
+    m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-08', anulada: true, existe: true });
     const r = await llamar(previsualizarFacturacion, { method: 'GET', query: { ids: '10' } });
     expect(r.body.pedidos[0].estado).toBe('no_se_puede');
     expect(r.body.pedidos[0].motivo).toMatch(/anulad/i);
@@ -236,7 +236,7 @@ describe('no emitir dos veces lo mismo', () => {
   });
 
   it('🔴 el pedido de OTRO DÍA se factura igual: los renglones van por su fecha real', async () => {
-    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-04', anulada: false, existe: true });
+    m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-04', anulada: false, existe: true });
     m.fetchVentasItems.mockImplementation(async (d: string) => (d === '2026-09-04' ? [RENGLON] : []));
     const r = await llamar(facturarSeleccion, { body: { ids: ['10'], desde: '2026-09-01', hasta: '2026-09-08' } });
     expect(r.body.fallados).toHaveLength(0);
@@ -336,7 +336,7 @@ describe('cuando InfoManager no contesta la cabecera', () => {
     // `cabeceraComprobante` devuelve null en los tres campos cuando IM falla. La oficina anula
     // presupuestos en IM todo el tiempo: emitir sin poder verificarlo deja una factura sin
     // respaldo.
-    m.cabeceraComprobante.mockResolvedValue({ fecha: null, anulada: null, existe: null });
+    m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: null, anulada: null, existe: null });
     const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
     expect(m.emitirFactura).not.toHaveBeenCalled();
     expect(r.body.fallados[0]).toMatch(/verificar|InfoManager/i);
@@ -451,7 +451,7 @@ describe('no facturar dos veces lo mismo', () => {
    */
   it('🔴 un presupuesto que ya tiene factura en IM no se factura de nuevo', async () => {
     tablas['presupuestos_facturados'] = { data: [], error: null };
-    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-08', anulada: false, existe: true, observaciones: null });
+    m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-08', anulada: false, existe: true, observaciones: null });
     m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 297, categoria_iva: 'CF' }]);
     m.fetchVentasItems.mockResolvedValue([{ id_comprobante: '58727292', cod_articulo: 1, cantidad: 1, precio: 155430.72 }]);
     // La factura que ya existe en InfoManager, del mismo cliente y por el mismo importe.
@@ -472,7 +472,7 @@ describe('no facturar dos veces lo mismo', () => {
 
   it('sin factura que le calce, se factura normalmente', async () => {
     tablas['presupuestos_facturados'] = { data: [], error: null };
-    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-08', anulada: false, existe: true, observaciones: null });
+    m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-08', anulada: false, existe: true, observaciones: null });
     m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 297, categoria_iva: 'CF' }]);
     m.fetchVentasItems.mockResolvedValue([{ id_comprobante: '58727292', cod_articulo: 1, cantidad: 1, precio: 155430.72 }]);
     // Una factura de OTRO cliente: no tiene nada que ver.
@@ -490,7 +490,7 @@ describe('no facturar dos veces lo mismo', () => {
 
   it('🪤 una factura ANULADA no cuenta: ésa justamente hay que rehacerla', async () => {
     tablas['presupuestos_facturados'] = { data: [], error: null };
-    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-08', anulada: false, existe: true, observaciones: null });
+    m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-08', anulada: false, existe: true, observaciones: null });
     m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 297, categoria_iva: 'CF' }]);
     m.fetchVentasItems.mockResolvedValue([{ id_comprobante: '58727292', cod_articulo: 1, cantidad: 1, precio: 155430.72 }]);
     m.fetchVentas.mockResolvedValue([
@@ -517,7 +517,7 @@ describe('el descuento no se puede aplicar dos veces', () => {
    */
   it('🔴 con descuento se manda el precio BRUTO, no el neto', async () => {
     tablas['presupuestos_facturados'] = { data: [], error: null };
-    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-09', anulada: false, existe: true, observaciones: null });
+    m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-09', anulada: false, existe: true, observaciones: null });
     m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 233, categoria_iva: 'CF' }]);
     m.fetchVentas.mockResolvedValue([]);
     // Los números reales del PR 58288: bruto 22473.67, 35% de descuento, neto 14607.8855.
@@ -537,7 +537,7 @@ describe('el descuento no se puede aplicar dos veces', () => {
 
   it('sin descuento, el precio va tal cual', async () => {
     tablas['presupuestos_facturados'] = { data: [], error: null };
-    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-09', anulada: false, existe: true, observaciones: null });
+    m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-09', anulada: false, existe: true, observaciones: null });
     m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 233, categoria_iva: 'CF' }]);
     m.fetchVentas.mockResolvedValue([]);
     m.fetchVentasItems.mockResolvedValue([{
@@ -554,7 +554,7 @@ describe('el descuento no se puede aplicar dos veces', () => {
 
   it('🪤 si IM no manda `precio_orig`, se usa el neto: es mejor que mandar cero', async () => {
     tablas['presupuestos_facturados'] = { data: [], error: null };
-    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-09', anulada: false, existe: true, observaciones: null });
+    m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-09', anulada: false, existe: true, observaciones: null });
     m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 233, categoria_iva: 'CF' }]);
     m.fetchVentas.mockResolvedValue([]);
     m.fetchVentasItems.mockResolvedValue([{
@@ -611,5 +611,47 @@ describe('el remito falla por stock (09/09/2026)', () => {
     expect(articulosSinStockDelError('HTTP 500: Talonario manual no válido', new Map() as any)).toBeNull();
     expect(articulosSinStockDelError('sin stock pero sin el detalle en JSON', new Map() as any)).toBeNull();
     expect(articulosSinStockDelError('Artículos sin stock suficiente: [roto', new Map() as any)).toBeNull();
+  });
+});
+
+/**
+ * 🔴 DE QUIÉN ES LA VENTA.
+ *
+ * Mati (09/09/2026): *"tanto en la factura como en el remito todo tiene que decir ítem por ítem
+ * el vendedor, y no un vendedor erróneo"*. Salía siempre el 1 (FEDERICO): el vendedor se tomaba
+ * del renglón (`items[0].cod_vendedor`), y los renglones de un presupuesto vienen SIN vendedor
+ * —verificado contra IM: los 544 renglones de los 45 presupuestos del 09/09 tenían 0—, así que
+ * el `|| 1` de respaldo se activaba SIEMPRE. Las facturas 50401 y 50402 salieron con el
+ * vendedor 1 cuando sus presupuestos eran del 3 (MARCELO) y del 2 (SEBASTIAN).
+ */
+describe('el vendedor de la factura es el del presupuesto', () => {
+  const armar = (extra: any = {}) => {
+    tablas['presupuestos_facturados'] = { data: [], error: null };
+    m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 233, categoria_iva: 'CF' }]);
+    m.fetchVentasItems.mockResolvedValue([
+      // Como los devuelve IM de verdad: sin cod_vendedor en el renglón.
+      { id_comprobante: '58777277', cod_articulo: 661, cantidad: 1, precio: 100, cod_lista_precios: 13 },
+    ]);
+    m.fetchVentas.mockResolvedValue([]);
+    m.cabeceraComprobante.mockResolvedValue({
+      fecha: '2026-09-08', anulada: false, existe: true, observaciones: null, ...extra,
+    });
+    return prepararFacturacion(
+      [{ im_comprobante_id: '58777277', im_numero: 58288, cod_cliente: 233,
+         cliente_nombre: 'BIANCONI', total: 100, fecha: '2026-09-08' } as any],
+      'jorgelina',
+    );
+  };
+
+  it('🔴 sale el vendedor de la CABECERA del presupuesto, no un 1 de respaldo', async () => {
+    const r = await armar({ cod_vendedor: '3' });
+    expect(r[0].estado).toBe('listo');
+    expect(r[0].datos!.cod_vendedor).toBe(3);
+  });
+
+  it('🔴 sin vendedor NO se inventa uno: la comisión iría a la persona equivocada', async () => {
+    const r = await armar({ cod_vendedor: null });
+    expect(r[0].estado).toBe('no_se_puede');
+    expect(r[0].motivo).toMatch(/vendedor/i);
   });
 });

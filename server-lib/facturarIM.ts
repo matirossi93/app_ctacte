@@ -124,7 +124,9 @@ const UNIDAD_NEGOCIO = Number(process.env.IM_UNIDAD_NEGOCIO || 1);
 export async function proximoNumeroFactura(
   letra: 'A' | 'B', puntoDeVenta: number, dias = 30, tipo: 'FA' | 'NC' | 'ND' = 'FA',
 ): Promise<number | null> {
-  const hasta = fechaArgentina();
+  // 🪤 `hasta` mira ADELANTE (ver DIAS_ADELANTE_REMITO): la oficina factura hoy el reparto de
+  // mañana, y esas facturas ya tienen número.
+  const hasta = fechaArgentina(Date.now() + DIAS_ADELANTE_REMITO * 864e5);
   const desde = fechaArgentina(Date.now() - dias * 864e5);
   const ventas = await fetchVentas(desde, hasta);
   const nums = ventas
@@ -194,8 +196,19 @@ function cabecera(d: DatosComprobante, fecha: string) {
   };
 }
 
-function renglones(items: ItemAFacturar[]) {
+/**
+ * 🔴 EL VENDEDOR VA EN CADA RENGLÓN, no sólo en la cabecera.
+ *
+ * Mati (09/09/2026): *"tiene que figurar ítem por ítem el vendedor, eso es importantísimo porque
+ * después la aplicación toma quién es el que hizo la venta"*. Verificado contra IM ese día: lo
+ * que factura la oficina desde las pantallas de IM trae el vendedor repetido en cada renglón
+ * (FA 50362 y RE 77298 → `cod_vendedor: 12` arriba Y en los items), y lo nuestro traía 0.
+ *
+ * 🪤 Va como STRING: así lo declara `VentasItemsCrear` en el swagger de IM.
+ */
+function renglones(items: ItemAFacturar[], codVendedor: number) {
   return items.map((it) => ({
+    cod_vendedor: String(codVendedor),
     // 🔴 Siempre un artículo del catálogo: `cod_articulo` es int64 obligatorio en el schema de
     // facturas y remitos. `""` no deserializa y `0` no existe (probado el 09/09/2026). Los
     // renglones sin artículo se filtran ANTES, en facturarPresupuestos.
@@ -232,10 +245,17 @@ export async function emitirFactura(d: DatosComprobante): Promise<ResultadoEmisi
 
   const fecha = fechaPedida(d);
   const cli = await imClient();
-  // 🔑 Hasta 3 intentos subiendo el número. La oficina puede estar facturando desde IM al
-  // mismo tiempo y quedarse con el correlativo; IM valida la unicidad y contesta "Ya existe
-  // una factura...", así que un choque se resuelve con el siguiente número, no duplicando.
-  for (let intento = 0; intento < 3; intento++) {
+  /**
+   * 🔑 Hasta 10 intentos subiendo el número. La oficina puede estar facturando desde IM al mismo
+   * tiempo y quedarse con el correlativo; IM valida la unicidad y contesta "Ya existe una
+   * factura...", así que un choque se resuelve con el siguiente número, no duplicando.
+   *
+   * 🪤 Eran 3 y NO ALCANZARON: el 09/09/2026 había 4 facturas seguidas fechadas para mañana y
+   * PASTERIS se quedó sin facturar. Cada intento es una request, así que el tope existe — pero
+   * tiene que cubrir un día entero de reparto adelantado.
+   */
+  const INTENTOS = 10;
+  for (let intento = 0; intento < INTENTOS; intento++) {
     const payload = {
       ...cabecera(d, fecha),
       tipo_comprobante: 'FA',
@@ -245,21 +265,21 @@ export async function emitirFactura(d: DatosComprobante): Promise<ResultadoEmisi
       condicion_venta_tipo: 2,        // 2 = cuenta corriente
       no_grabado: 0,
       cod_deposito: d.cod_deposito ?? 1,
-      items: renglones(d.items),
+      items: renglones(d.items, d.cod_vendedor),
     };
     try {
       const { data } = await cli.post('/ventas', payload);
       const r = interpretar(data, `FA ${letra}`);
       // 🪤 El "ya existe" viene como 200 con el error adentro: hay que leerlo del texto.
-      if (!r.ok && /ya existe una factura/i.test(r.error) && intento < 2) { numero += 1; continue; }
+      if (!r.ok && esChoqueDeNumero(r.error) && intento < INTENTOS - 1) { numero += 1; continue; }
       return r.ok ? { ...r, numero: r.numero ?? numero } : r;
     } catch (err: any) {
       const e = comoError(err);
-      if (!e.ok && /ya existe una factura/i.test(e.error) && intento < 2) { numero += 1; continue; }
+      if (!e.ok && esChoqueDeNumero(e.error) && intento < INTENTOS - 1) { numero += 1; continue; }
       return e;
     }
   }
-  return { ok: false, error: `No se pudo emitir la factura ${letra}: el número ${numero} y los dos siguientes ya estaban usados.` };
+  return { ok: false, error: `No se pudo emitir la factura ${letra}: los ${INTENTOS} números desde el ${numero - INTENTOS + 1} ya estaban usados.` };
 }
 
 /**
@@ -289,7 +309,7 @@ export async function emitirRemito(d: DatosComprobante): Promise<ResultadoEmisio
     iva_importe: 0, importe_iva_10_5: 0, importe_iva_27: 0,
     cod_unidad_negocio_cab: 0, numero_cai: 0,
     cod_jurisdiccion: 0, cod_jurisdiccion_comerc: 0, genero_re_auto: 'N',
-    items: renglones(d.items),
+    items: renglones(d.items, d.cod_vendedor),
   };
   try {
     const cli = await imClient();
@@ -301,13 +321,20 @@ export async function emitirRemito(d: DatosComprobante): Promise<ResultadoEmisio
 }
 
 /**
- * Cuántos días HACIA ADELANTE mira la búsqueda del próximo número de remito.
+ * Cuántos días HACIA ADELANTE mira la búsqueda del próximo número, de facturas y de remitos.
  *
- * 🔴 LA NUMERACIÓN NO SIGUE A LA FECHA. La oficina fecha los remitos del reparto de mañana con
- * la fecha de mañana, así que una ventana que termina hoy no los ve y devuelve un número YA
- * USADO. El 09/09/2026 los remitos 77377 y 77378 estaban fechados el 10/09: el masivo salió con
- * el 77377, IM contestó *"El número de comprobante [77377] ya existe para el punto de venta [7]
- * y empresa [1]"*, y LEAL y DIAZ se quedaron con la factura emitida y sin remito.
+ * 🔴 LA NUMERACIÓN NO SIGUE A LA FECHA, y esto rompió LAS DOS COSAS el 09/09/2026. La oficina
+ * factura hoy el reparto de MAÑANA, así que los comprobantes salen con la fecha de mañana y una
+ * ventana que termina hoy no los ve: devuelve un número ya usado.
+ *
+ *  · Remitos: el 77377 y el 77378 estaban fechados el 10/09. El masivo salió con el 77377, IM
+ *    contestó *"El número de comprobante [77377] ya existe para el punto de venta [7] y empresa
+ *    [1]"* y LEAL y DIAZ quedaron con la factura emitida y sin remito.
+ *  · Facturas: las B 50403 a 50406 del punto 777 también estaban fechadas el 10/09 — las había
+ *    emitido este mismo panel. Se proponía la 50403 y los tres intentos chocaban; PASTERIS no se
+ *    pudo facturar y el mensaje era *"Ya existe una factura ... numero: [50405]"*.
+ *
+ * O sea que cada comprobante que emitíamos para mañana se escondía de nuestro propio contador.
  */
 const DIAS_ADELANTE_REMITO = Number(process.env.IM_DIAS_ADELANTE_REMITO || 30);
 
@@ -384,6 +411,12 @@ export async function emitirRemitoMasivo(d: DatosComprobante): Promise<Resultado
       cod_empresa: d.cod_empresa,
       cod_transporte: 0,
       cod_origen_sistema: 0,
+      /**
+       * 🪤 NO está en el schema `VentasRemitosMasivo` del swagger, igual que el `cod_vendedor` de
+       * los renglones. Se manda porque el remito tiene que decir de quién es la venta y IM ignora
+       * lo que no conoce: sin esto, todo remito forzado por stock negativo salía sin vendedor.
+       */
+      cod_vendedor: d.cod_vendedor,
     }],
     items: d.items.map((it) => {
       // 🪤 NETO: este endpoint no aplica el descuento (ver arriba).
@@ -391,6 +424,7 @@ export async function emitirRemitoMasivo(d: DatosComprobante): Promise<Resultado
       const neto = Number(it.precio) * (1 - desc / 100);
       return {
         id_comprobante_aux: 1,
+        cod_vendedor: String(d.cod_vendedor),
         cod_articulo: it.cod_articulo,
         cantidad: it.cantidad,
         cant_uni_venta: 0,
@@ -495,7 +529,7 @@ export async function emitirNotaCredito(
       // IM rechaza un código repetido incluso contra comprobantes anulados. El vínculo con la
       // hoja vive en `hojas_ruta_ajustes` y, para leerlo desde IM, en las observaciones.
       cod_compatibilidad: '',
-      items: renglones(d.items),
+      items: renglones(d.items, d.cod_vendedor),
     };
     try {
       const { data } = await cli.post('/ventas', payload);

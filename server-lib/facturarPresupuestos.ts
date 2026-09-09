@@ -142,7 +142,11 @@ export async function prepararFacturacion(
 
   const aRevisar = filas.filter(f => !f.facturado_at);
 
-  const cabeceras = new Map<string, { fecha: string | null; anulada: boolean | null; existe: boolean | null }>();
+  const cabeceras = new Map<string, {
+    fecha: string | null; anulada: boolean | null; existe: boolean | null;
+    // De quién es la venta. Va a la factura y al remito, arriba y en cada renglón.
+    cod_vendedor?: string | null;
+  }>();
   await Promise.all(aRevisar.map(async (f) => {
     const k = String(f.im_comprobante_id);
     try { cabeceras.set(k, await cabeceraComprobante(k)); }
@@ -297,6 +301,25 @@ export async function prepararFacturacion(
       return no(`${quien}: no se sabe qué letra de factura le corresponde (condición de IVA: ${cliente?.categoria_iva ?? 'sin cargar'}). Facturalo a mano.`);
     }
 
+    /**
+     * 🔴 DE QUIÉN ES LA VENTA. Sale de la CABECERA del presupuesto.
+     *
+     * 🪤 Salía de `items[0].cod_vendedor`, y los renglones de un presupuesto vienen SIN vendedor:
+     * verificado contra IM el 09/09/2026, los 544 renglones de los 45 presupuestos del día
+     * tenían 0. O sea que el `|| 1` de respaldo se activaba SIEMPRE y todo se facturaba a nombre
+     * del vendedor 1 (FEDERICO): las facturas 50401 y 50402 salieron así, cuando sus
+     * presupuestos eran del 3 (MARCELO) y del 2 (SEBASTIAN).
+     *
+     * Sin vendedor NO se emite. Es el mismo criterio que la letra de la factura: la comisión se
+     * calcula con este número, y adivinarlo se la paga a la persona equivocada en silencio. Los
+     * 337 presupuestos vivos del 31/08 al 12/09 tienen todos vendedor en la cabecera, así que
+     * esto no frena nada real.
+     */
+    const codVendedor = Number(cab?.cod_vendedor ?? 0);
+    if (!(codVendedor > 0)) {
+      return no(`${quien}: el presupuesto no tiene vendedor cargado en InfoManager, y sin eso la venta quedaría a nombre de otro. Asignale el vendedor en InfoManager y volvé a apretar Facturar.`);
+    }
+
     return {
       fila: f,
       estado: yaTieneFactura ? 'falta_remito' : 'listo',
@@ -306,7 +329,7 @@ export async function prepararFacturacion(
       datos: {
         cod_empresa: Number(f.cod_empresa) || PEDIDO_EMPRESA_DEFAULT,
         cod_cliente: Number(f.cod_cliente),
-        cod_vendedor: Number(items[0]?.cod_vendedor ?? 0) || 1,
+        cod_vendedor: codVendedor,
         categoria_iva: cliente?.categoria_iva,
         cod_lista_precios: Number(items[0]?.cod_lista_precios) || PEDIDO_LISTA_FALLBACK,
         usuario,
