@@ -568,6 +568,41 @@ export async function liberarReclamo(req: Request & { user?: JwtPayload }, res: 
   res.json({ ok: true, liberado: id });
 }
 
+/**
+ * Los renglones de una factura YA EMITIDA, en el formato que espera el remito.
+ *
+ * `null` = no se pudieron leer. Quien llama NO emite: un remito armado con otra cosa que la
+ * factura es mercadería que sale sin facturar (ver el bloque del remito).
+ *
+ * 🪤 El precio va BRUTO, igual que al facturar: `/ventas/items` devuelve `precio` YA NETO y
+ * mezclarlos fue lo que hizo salir una factura $73.064 por debajo el 09/09/2026.
+ */
+async function itemsDeLaFactura(idFactura: string): Promise<DatosComprobante['items'] | null> {
+  try {
+    const cab = await cabeceraComprobante(idFactura);
+    const fecha = cab.fecha ?? fechaArgentina();
+    const rs = (await fetchVentasItems(fecha, fecha))
+      .filter((it: any) => String(it.id_comprobante) === String(idFactura) && Number(it.cod_articulo) > 0);
+    if (!rs.length) return null;
+    return rs.map((it: any) => {
+      const desc = it.descuento_porc ? Number(it.descuento_porc) : null;
+      const bruto = Number(it.precio_orig ?? 0);
+      const neto = Number(it.precio ?? 0);
+      return {
+        cod_articulo: Number(it.cod_articulo),
+        cantidad: Number(it.cantidad),
+        precio: desc && bruto > 0 ? bruto : neto,
+        iva_por: Number(it.iva_por ?? 0),
+        cod_lista_precios: it.cod_lista_precios != null ? Number(it.cod_lista_precios) : null,
+        descuento_porc: desc,
+      };
+    });
+  } catch (e: any) {
+    console.error(`[itemsDeLaFactura] no pude leer los renglones de la factura ${idFactura}:`, e?.message);
+    return null;
+  }
+}
+
 /** Suelta el reclamo cuando la emisión falló, para poder reintentar sin esperar los 5 minutos. */
 async function soltarReclamo(f: PresupuestoAFacturar): Promise<void> {
   const { error } = await sb().from('presupuestos_facturados')
@@ -733,7 +768,33 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
        * 🪤 `f.im_factura_id` es el caso "la factura ya estaba y falta sólo el remito"; `fa.id`
        * es el de la factura que se acaba de emitir en este mismo paso.
        */
-      const datosRemito = { ...(p.datos as any), im_factura_id: f.im_factura_id ?? facturaId };
+      /**
+       * 🔴 EL REMITO SE ARMA CON LOS RENGLONES DE LA FACTURA, NO CON LOS DEL PRESUPUESTO.
+       *
+       * Cuando la factura ya estaba emitida y falta sólo el remito, los renglones de `p.datos`
+       * salen de leer el PRESUPUESTO **ahora**. Si alguien lo editó entre la factura y el
+       * reintento, el remito sale por otra cosa que la factura: mercadería que salió del depósito
+       * sin facturar.
+       *
+       * Pasó de verdad el 09/09/2026, en los dos pedidos cuyo remito había fallado por stock:
+       *  · DIAZ PAZ  — RE 77388 $320.544,40 contra FA 50410 $274.981,52: salieron 4 CEREAL SIN
+       *    AZUCAR X 2.5 KG por $45.562,88 sin facturar.
+       *  · EL CEBILAR — RE 77392 $501.102,57 contra FA 18353 $453.410,90: 4 GRANOLA x 1,5 kg por
+       *    $46.302,67, más $1.389 de diferencia en el costo de distribución.
+       *
+       * Con la factura ya emitida ella es la verdad: es el comprobante fiscal y lo que el cliente
+       * va a pagar. El remito tiene que decir exactamente lo mismo.
+       */
+      let itemsRemito = (p.datos as any).items;
+      if (f.im_factura_id) {
+        const dela = await itemsDeLaFactura(String(f.im_factura_id));
+        if (!dela) {
+          fallados.push(`${quien}: la factura ${f.im_factura_numero ?? ''} ya está emitida pero no pude leer sus renglones en InfoManager, y el remito tiene que decir lo mismo que ella. Probá de nuevo en un rato.`);
+          continue;
+        }
+        itemsRemito = dela;
+      }
+      const datosRemito = { ...(p.datos as any), items: itemsRemito, im_factura_id: f.im_factura_id ?? facturaId };
       let re = await emitirRemito(datosRemito);
       /**
        * 🔑 LA MERCADERÍA SE REMITE AUNQUE EL STOCK ESTÉ EN NEGATIVO.

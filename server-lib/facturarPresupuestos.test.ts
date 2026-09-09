@@ -104,6 +104,13 @@ function presu(over: Record<string, any> = {}) {
 }
 const VISTA_BASE = { asignados: [], con_avisos: 0, pierde_margen: 0, cobra_de_mas: 0, sin_zona: 0, de_otros_dias: 0, sin_revisar: 0, aprobados: 1, observados: 0, sin_stock: 0, con_cantidad_rara: 0 };
 const RENGLON = { id_comprobante: '10', cod_articulo: 661, cantidad: 1, precio: 29771.58, iva_por: 0, cod_vendedor: 2, cod_lista_precios: 13 };
+/**
+ * El mismo renglón, pero de la FACTURA ya emitida ('f1').
+ *
+ * 🔑 Cuando falta sólo el remito, se arma con los renglones de la FACTURA y no con los del
+ * presupuesto: si alguien lo editó en el medio, saldría mercadería sin facturar.
+ */
+const RENGLON_FA = { ...RENGLON, id_comprobante: 'f1' };
 
 beforeEach(() => {
   tablas = {}; escrituras = []; errorAlEscribir = null; errorAlReclamar = null;
@@ -116,7 +123,7 @@ beforeEach(() => {
     { cod_cliente: 777, categoria_iva: null },
   ]);
   m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-08', anulada: false, existe: true });
-  m.fetchVentasItems.mockResolvedValue([RENGLON]);
+  m.fetchVentasItems.mockResolvedValue([RENGLON, RENGLON_FA]);
   m.proximoNumeroFactura.mockResolvedValue(50360);
   m.emitirFactura.mockResolvedValue({ ok: true, id: 'f1', numero: 50360, tipo: 'FA B' });
   m.emitirRemito.mockResolvedValue({ ok: true, id: 'r1', numero: 77291, tipo: 'RE' });
@@ -653,5 +660,48 @@ describe('el vendedor de la factura es el del presupuesto', () => {
     const r = await armar({ cod_vendedor: null });
     expect(r[0].estado).toBe('no_se_puede');
     expect(r[0].motivo).toMatch(/vendedor/i);
+  });
+});
+
+/**
+ * 🔴 EL REMITO TIENE QUE DECIR LO MISMO QUE LA FACTURA.
+ *
+ * Cuando la factura ya está emitida y falta sólo el remito, los renglones salían de leer el
+ * PRESUPUESTO en ese momento. Si alguien lo editó entre la factura y el reintento, el remito sale
+ * por otra cosa: mercadería que sale del depósito sin facturar.
+ *
+ * Pasó el 09/09/2026 en los dos pedidos cuyo remito había fallado por stock: DIAZ PAZ remitió
+ * $45.562,88 de más que su factura y EL CEBILAR $47.691,67.
+ */
+describe('con la factura ya emitida, el remito se arma con SUS renglones', () => {
+  /** La factura ya salió: falta el remito. Es el estado en el que estaban los dos pedidos. */
+  const faltaElRemito = () => {
+    tablas['presupuestos_facturados'] = {
+      data: [{ im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null }],
+      error: null,
+    };
+  };
+
+  it('🔴 el remito lleva SÓLO lo que dice la factura, aunque el presupuesto tenga más', async () => {
+    faltaElRemito();
+    // El presupuesto tiene un renglón MÁS que la factura: alguien lo editó en el medio.
+    m.fetchVentasItems.mockResolvedValue([
+      RENGLON,
+      { ...RENGLON, cod_articulo: 332, cantidad: 4, precio: 11390.72 },
+      RENGLON_FA,
+    ]);
+    await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    const enviados = (m.emitirRemito.mock.calls[0]?.[0] as any)?.items ?? [];
+    expect(enviados.map((i: any) => i.cod_articulo)).toEqual([661]);
+    // 🔴 El 332 está en el presupuesto y NO en la factura: no puede salir del depósito.
+    expect(enviados.some((i: any) => i.cod_articulo === 332)).toBe(false);
+  });
+
+  it('🔴 si no puede leer los renglones de la factura, NO emite el remito', async () => {
+    faltaElRemito();
+    m.fetchVentasItems.mockResolvedValue([RENGLON]);   // la factura no devuelve ninguno
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(m.emitirRemito).not.toHaveBeenCalled();
+    expect(String(r.body.fallados ?? '')).toMatch(/renglones/i);
   });
 });
