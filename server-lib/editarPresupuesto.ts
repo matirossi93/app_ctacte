@@ -31,7 +31,7 @@ import { puedeArmarHojasDeRuta } from './permisos.js';
 import {
   cabeceraComprobante, getItemsComprobante, actualizarPresupuestoCantidades,
   crearPresupuesto, anularComprobante, fetchArticulosCatalogo, fechaArgentina,
-  fetchClientesIMCached,
+  fetchClientesIMCached, actualizarObservaciones,
 } from './infomanager.js';
 import { invalidarVista } from './vistaPresupuestos.js';
 import { invalidarRemitos } from './vistaRemitos.js';
@@ -47,16 +47,16 @@ function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): bo
 /** Las listas mayoristas que la oficina puede elegir. 12 = Lista 1 … 15 = Lista 4. */
 const LISTAS_VALIDAS = new Set([12, 13, 14, 15]);
 
+/** El artículo del catálogo con el que se carga el costo de distribución (Mati, 09/09/2026). */
+export const COD_COSTO_DISTRIBUCION = Number(process.env.IM_ART_COSTO_DISTRIBUCION || 13819);
+
 export interface RenglonEditado {
-  /** `0` = renglón libre, sin artículo del catálogo (el costo de distribución). */
   cod_articulo: number;
   cantidad: number;
   cod_lista_precios: number;
   descuento_porc: number;
   /** El precio BRUTO de lista. IM le aplica el descuento encima. */
   precio?: number;
-  /** Obligatorio en los renglones libres: es lo único que los describe. */
-  detalle?: string;
 }
 
 /**
@@ -115,20 +115,29 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
         cod_lista_precios: LISTAS_VALIDAS.has(Number(i.cod_lista_precios)) ? Number(i.cod_lista_precios) : 0,
         descuento_porc: Math.min(Math.max(Number(i.descuento_porc) || 0, 0), 100),
         precio: i.precio != null ? Number(i.precio) : undefined,
-        detalle: i.detalle ? String(i.detalle).trim().slice(0, 200) : undefined,
       }))
       /**
-       * 🔑 Entra el renglón con artículo del catálogo Y el renglón LIBRE (`cod_articulo: 0` con
-       * detalle): así carga la oficina el costo de distribución, que no es un producto (Mati,
-       * 09/09/2026). Sin artículo el precio es obligatorio — no hay lista de dónde sacarlo.
+       * 🔴 Todos con artículo del catálogo. La API de IM NO tiene renglones libres: `cod_articulo`
+       * es int64 obligatorio, y con `""` o `0` rechaza el presupuesto entero (probado el
+       * 09/09/2026 — era por esto que no guardaba). El costo de distribución va con su artículo,
+       * el 13819, y el precio a mano: es un importe que escribe la oficina, no sale de una lista.
        */
-      .filter(i => i.cantidad > 0 && (i.cod_articulo > 0 || (!!i.detalle && Number.isFinite(i.precio))));
+      .filter(i => i.cod_articulo > 0 && i.cantidad > 0);
     if (!items.length) {
       res.status(400).json({ error: 'El presupuesto tiene que quedar con al menos un producto. Si hay que darlo de baja, anulalo en InfoManager.' });
       return;
     }
     if (items.some(i => !i.cod_lista_precios)) {
       res.status(400).json({ error: 'Hay un renglón sin lista de precios válida.' });
+      return;
+    }
+    /**
+     * 🪤 Sin `precio` IM guarda el renglón en $0 — no lo busca en la lista (probado el
+     * 09/09/2026). El editor manda siempre el precio; si falta, se frena antes de recrear.
+     */
+    const sinPrecio = items.find(i => !(Number(i.precio) > 0));
+    if (sinPrecio) {
+      res.status(400).json({ error: `El renglón del artículo ${sinPrecio.cod_articulo} no tiene precio. Ponelo antes de guardar: InfoManager lo grabaría en $0.` });
       return;
     }
 
@@ -153,12 +162,26 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
 
     const imItems = await getItemsComprobante(id);
     /**
-     * 🪤 Con renglones LIBRES (`cod_articulo: 0`) el camino barato no sirve: `emparejarParaPut`
-     * empareja por artículo y todos los libres comparten el código 0, así que dos de ellos se
-     * confundirían entre sí. Con uno solo en juego se recrea, que siempre es correcto.
+     * 🪤 Si el presupuesto trae renglones SIN artículo (notas que escribe la oficina desde el
+     * sistema de IM, con `cod_articulo: ""`), recrearlo los perdería: la API no los puede volver
+     * a escribir. Se deja corregir cantidades —que no los toca— y se frena lo demás, en vez de
+     * borrarle una nota sin avisar.
      */
-    const hayLibres = items.some(i => !(i.cod_articulo > 0)) || (imItems as any[]).some(i => !(Number(i.cod_articulo) > 0));
-    const mismoSurtido = !hayLibres && firmaDelSurtido(items) === firmaDelSurtido(imItems as any);
+    const notasIM = imItems.filter(i => !(i.cod_articulo > 0));
+    const mismoSurtido = firmaDelSurtido(items) === firmaDelSurtido(imItems.filter(i => i.cod_articulo > 0));
+    /**
+     * 🔑 Las observaciones son el campo que la oficina lee justo antes de facturar ("facturar a
+     * nombre de la SRL", "entregar el jueves"). Mati (09/09/2026) pidió poder escribirlas desde
+     * el panel. `undefined` = la pantalla no las mandó: no se tocan.
+     */
+    const obsNueva = req.body?.observaciones != null ? String(req.body.observaciones).trim().slice(0, 500) : undefined;
+    const cambiaObs = obsNueva != null && obsNueva !== (cab.observaciones ?? '');
+    if (!mismoSurtido && notasIM.length) {
+      res.status(409).json({
+        error: `Este presupuesto tiene ${notasIM.length} renglón(es) sin código escritos en InfoManager (${notasIM.map(n => `"${n.detalle ?? 'sin texto'}"`).join(', ')}). Rehacerlo los borraría, y la API de InfoManager no los puede volver a cargar. Cambiá sólo cantidades acá, o hacé el cambio en InfoManager.`,
+      });
+      return;
+    }
 
     // ── Camino barato: sólo cambiaron cantidades ──────────────────────────────
     if (mismoSurtido) {
@@ -169,9 +192,22 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
       }
       const r = await actualizarPresupuestoCantidades(id, payload);
       if (!r.ok) { res.status(502).json({ error: `InfoManager rechazó el cambio: ${r.error}` }); return; }
+      /**
+       * Las observaciones van por otro PUT: el de presupuestos no las tiene en el schema (las
+       * ignora en silencio). Se hace DESPUÉS de las cantidades y no frena: si falla, el cambio
+       * de cantidades ya está hecho y lo que corresponde es avisarlo, no fingir que no pasó.
+       */
+      let avisoObs: string | null = null;
+      if (cambiaObs && cab.numero != null && cab.punto_de_venta != null && cab.fecha) {
+        const o = await actualizarObservaciones({
+          id, numero: cab.numero, punto_de_venta: cab.punto_de_venta, fecha: cab.fecha,
+          observaciones: obsNueva!,
+        });
+        if (!o.ok) avisoObs = `Se guardaron las cantidades, pero NO las observaciones: ${o.error}`;
+      }
       await limpiarRevision(id);
       invalidarVista(); invalidarRemitos();
-      res.json({ ok: true, modo: 'cantidades', im_comprobante_id: id, im_numero: cab.numero });
+      res.json({ ok: true, modo: 'cantidades', im_comprobante_id: id, im_numero: cab.numero, aviso: avisoObs });
       return;
     }
 
@@ -195,7 +231,7 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
       cod_lista_precios: cab.cod_lista_precios ?? items[0].cod_lista_precios,
       usuario: cab.usuario || String(req.body?.usuario_im ?? 'jorgelina'),
       punto_de_venta: cab.punto_de_venta ?? 1,
-      observaciones: req.body?.observaciones != null ? String(req.body.observaciones) : (cab.observaciones ?? ''),
+      observaciones: obsNueva ?? cab.observaciones ?? '',
       // La fecha manda en qué día de reparto entra: se conserva la del original.
       fecha: cab.fecha ?? fechaArgentina(),
       fecha_entrega: cab.fecha_entrega ?? cab.fecha ?? fechaArgentina(),
@@ -205,8 +241,7 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
         cantidad: i.cantidad,
         cod_lista_precios: i.cod_lista_precios,
         descuento_porc: i.descuento_porc,
-        ...(i.precio != null ? { precio: i.precio } : {}),
-        ...(i.detalle ? { detalle: i.detalle } : {}),
+        precio: i.precio,
       })),
     });
     if (!creado.ok) {

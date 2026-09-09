@@ -28,6 +28,8 @@ vi.mock('./infomanager.js', () => ({
   fetchVentas: m.fetchVentas,
   fetchVentasItems: m.fetchVentasItems,
   fetchArticulosCatalogo: vi.fn(async () => new Map()),
+  // El remito valida stock: la preparación lo consulta para avisar antes de facturar.
+  fetchStockPorDeposito: vi.fn(async () => new Map()),
   fetchClientesIMCached: m.fetchClientesIMCached,
   cabeceraComprobante: m.cabeceraComprobante,
   desconfirmarPresupuesto: m.desconfirmarPresupuesto,
@@ -44,7 +46,7 @@ vi.mock('./pedidos.js', () => ({ usuarioIM: vi.fn(async () => 'jorgelina') }));
 vi.mock('./vistaPresupuestos.js', () => ({ vistaDeRango: m.vistaDeRango, invalidarVista: vi.fn() }));
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
 
-const { facturarSeleccion, previsualizarFacturacion, tableroFacturacion, liberarReclamo, prepararFacturacion } = await import('./facturarPresupuestos.js');
+const { facturarSeleccion, previsualizarFacturacion, tableroFacturacion, liberarReclamo, prepararFacturacion, articulosSinStockDelError } = await import('./facturarPresupuestos.js');
 
 let tablas: Record<string, any> = {};
 let escrituras: Array<{ tabla: string; op: string; valor: any }> = [];
@@ -564,5 +566,49 @@ describe('el descuento no se puede aplicar dos veces', () => {
       'jorgelina',
     );
     expect(r[0].datos!.items[0].precio).toBe(100);
+  });
+});
+
+
+describe('el remito falla por stock (09/09/2026)', () => {
+  /**
+   * 🔴 `POST /remitos` VALIDA STOCK y la factura no. Verificado contra IM con el pedido de
+   * Carrizo, que quedó con la factura 50402 emitida y sin remito: InfoManager contestó
+   * *"Artículos sin stock suficiente: [{cod_articulo:470, cantidad:5, stock_disponible:-570}]"*.
+   *
+   * El JSON crudo en pantalla no le dice nada a Jorgelina: hay que nombrar el producto.
+   */
+  it('🔑 traduce el rechazo de IM al nombre del producto', () => {
+    const cat = new Map([[470, { descripcion: 'MEZCLA P/PAJARO' }]]);
+    const txt = articulosSinStockDelError(
+      'HTTP 500: Validaciones: \n\n• No se puede crear el presupuesto. Artículos sin stock suficiente: [{"cod_articulo":470,"cantidad":5,"stock_disponible":-570.00000}]\n',
+      cat as any);
+    expect(txt).toBe('MEZCLA P/PAJARO (piden 5, hay -570)');
+  });
+
+  it('nombra todos los que rechazó, no sólo el primero', () => {
+    const cat = new Map([[470, { descripcion: 'MEZCLA P/PAJARO' }], [1, { descripcion: 'ALPISTE' }]]);
+    const txt = articulosSinStockDelError(
+      'Artículos sin stock suficiente: [{"cod_articulo":470,"cantidad":5,"stock_disponible":-570},{"cod_articulo":1,"cantidad":2,"stock_disponible":0}]',
+      cat as any);
+    expect(txt).toBe('MEZCLA P/PAJARO (piden 5, hay -570) · ALPISTE (piden 2, hay 0)');
+  });
+
+  it('un artículo que no está en el catálogo igual se nombra por su código', () => {
+    const txt = articulosSinStockDelError(
+      'Artículos sin stock suficiente: [{"cod_articulo":9999,"cantidad":1,"stock_disponible":0}]',
+      new Map() as any);
+    expect(txt).toBe('artículo 9999 (piden 1, hay 0)');
+  });
+
+  /**
+   * 🪤 Si el error es otro, devuelve null y quien llama muestra el mensaje crudo de IM. Inventar
+   * una explicación de stock para un error que no es de stock manda a Jorgelina a mirar el
+   * depósito por nada.
+   */
+  it('🔴 si el error NO es de stock devuelve null, no adivina', () => {
+    expect(articulosSinStockDelError('HTTP 500: Talonario manual no válido', new Map() as any)).toBeNull();
+    expect(articulosSinStockDelError('sin stock pero sin el detalle en JSON', new Map() as any)).toBeNull();
+    expect(articulosSinStockDelError('Artículos sin stock suficiente: [roto', new Map() as any)).toBeNull();
   });
 });

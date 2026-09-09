@@ -631,14 +631,14 @@ export function invalidateClientesIMCache(): void { clientesIMCache = null; }
 
 export interface PresupuestoItemInput {
   /**
-   * 🔑 `0` = renglón LIBRE, sin artículo del catálogo. Es como la oficina carga el **costo de
-   * distribución** (Mati, 09/09/2026): no tiene código, se le escribe el detalle y el precio.
-   * El sistema propio de InfoManager lo hace así, y se verificó en presupuestos reales.
+   * 🔴 SIEMPRE un artículo del catálogo. La API de IM NO acepta renglones libres: `cod_articulo`
+   * es `int64` obligatorio en el schema, `""` no deserializa y `0` contesta *"No se encontró un
+   * artículo válido para cod_articulo = 0"* (probado el 09/09/2026 con las dos variantes). Los
+   * renglones sin código que se ven en los presupuestos de la oficina los carga el sistema
+   * propio de IM por adentro. Para el costo de distribución existe el artículo 13819.
    */
   cod_articulo: number;
   cantidad: number;
-  /** El texto del renglón. Obligatorio cuando `cod_articulo` es 0: es lo único que lo describe. */
-  detalle?: string;
   /** BRUTO, el de la lista. IM le aplica `descuento_porc` encima: NO mandar el ya rebajado. */
   precio?: string | number;
   cod_cuenta?: string;        // cuenta contable de venta (default IM_CUENTA_VENTA)
@@ -727,19 +727,12 @@ export async function crearPresupuesto(input: CrearPresupuestoInput): Promise<Pr
       // — probado el 28/08: 21.141,16 con 25% quedó en 11.891,90 en vez de 15.855,87.
       const bruto = it.precio != null ? Number(it.precio) : null;
       const cuenta = Number(it.cod_cuenta || cuentaDefault);
-      /**
-       * 🪤 Un renglón LIBRE va con `cod_articulo` en **texto vacío**, no en 0. Verificado contra
-       * los 30 renglones sin artículo que la oficina cargó el 08 y 09/09/2026 desde su sistema:
-       * todos tienen `cod_articulo: ""`, `cod_cuenta: 4100002` e `iva_por: 0`. Mandando `0` IM
-       * lo rechaza, porque el artículo cero no existe en el catálogo.
-       */
-      const libre = !(Number(it.cod_articulo) > 0);
       return {
-        cod_articulo: libre ? '' : it.cod_articulo,
+        cod_articulo: it.cod_articulo,
         cantidad: it.cantidad,
         iva_por: it.iva_por ?? 21,
-        // Sin artículo del catálogo, el detalle es lo único que dice qué es ese renglón.
-        ...(it.detalle ? { detalle: String(it.detalle).slice(0, 200) } : {}),
+        // 🪤 Sin `precio` IM NO lo saca de la lista: guarda el renglón en $0 (probado el
+        // 09/09/2026 con el PR 58307, anulado). Quien llama tiene que resolverlo antes.
         ...(bruto != null && Number.isFinite(bruto) ? { precio: bruto, precio_orig: bruto, precio_con_iva: bruto } : {}),
         ...(Number.isFinite(cuenta) ? { cod_cuenta: cuenta } : {}),
         ...(it.descuento_porc != null ? { descuento_porc: it.descuento_porc } : {}),
@@ -762,6 +755,19 @@ export async function crearPresupuesto(input: CrearPresupuestoInput): Promise<Pr
     // Éxito real = isCreated. IM puede responder 200 con {mensaje:"Ocurrió un
     // error..."} y sin isCreated cuando rechaza por reglas de negocio.
     const venta = data?.venta ?? data;
+    /**
+     * 🔴 `isCreated: false` CON un id adentro = IM NO creó nada: devolvió el presupuesto que YA
+     * tenía ese `cod_compatibilidad`. Este endpoint no contesta 400 por código repetido como el
+     * viejo: contesta 200 con el comprobante existente (probado el 09/09/2026). Tomarlo por
+     * creado hizo que el panel "editara" un presupuesto sin cambiar nada, dijera "Listo"... y
+     * anulara el original, o —peor— que un script anulara un pedido real creyendo que era el
+     * suyo (PR 58304, restaurado a los 3 minutos).
+     */
+    if (data?.isCreated === false) {
+      const num = venta?.numero ?? data?.numero ?? '?';
+      console.error(`[crearPresupuesto] isCreated=false: IM devolvió el presupuesto existente nº ${num} en vez de crear uno (cod_compatibilidad ${payload.cod_compatibilidad} repetido)`);
+      return { ok: false, error: `InfoManager no creó el presupuesto: devolvió el nº ${num}, que ya existía (código de compatibilidad ${payload.cod_compatibilidad} repetido).`, raw: data };
+    }
     if (data?.isCreated === true || venta?.id) {
       const id = String(venta?.id ?? data?.id ?? '');
       const numero = venta?.numero ?? data?.numero ?? null;
@@ -832,6 +838,55 @@ export async function anularComprobante(input: {
     // proximo intento sale con la misma credencial muerta y vuelve a fallar igual.
     if (status === 401) invalidateImToken();
     return { ok: false, error: `HTTP ${status ?? '?'}: ${raw?.detalles ?? raw?.mensaje ?? err?.message ?? 'unknown'}`, raw, sinRespuesta: !err?.response };
+  }
+}
+
+/**
+ * Cambiar las OBSERVACIONES de un comprobante vivo (Mati, 09/09/2026: *"necesito que podamos
+ * agregar observaciones en el presupuesto"*).
+ *
+ * 🪤 NO va por `PUT /presupuestos/{id}`: ese schema (`VentasPresupuestosActualizar`) sólo tiene
+ * `tipo_presupuesto` e `items`, así que las observaciones se ignoran en silencio. Va por
+ * `PUT /ventas/{id}`, el mismo camino que usa `anularComprobante` — con `anulada: 'N'`, porque
+ * el campo tiene default y omitirlo dejaría el comprobante en un estado que no elegimos.
+ * Verificado contra IM el 09/09/2026.
+ */
+export async function actualizarObservaciones(input: {
+  id: number | string;
+  numero: number;
+  punto_de_venta: number;
+  fecha: string;
+  observaciones: string;
+  tipo_comprobante?: string;
+}): Promise<{ ok: true; raw: any } | { ok: false; error: string; raw?: any }> {
+  const body = {
+    fecha: input.fecha,
+    tipo_comprobante: input.tipo_comprobante || 'PR',
+    tipo_factura: 'X',
+    numero: input.numero,
+    punto_de_venta: input.punto_de_venta,
+    tag: 'S',
+    condicion_venta_tipo: 0,
+    observaciones: String(input.observaciones ?? '').slice(0, 500),
+    fac_electronica: 0,
+    anulada: 'N',
+  };
+  try {
+    const cli = await imClient();
+    const { data } = await cli.put(`/ventas/${input.id}`, body);
+    // La regla de oro: 200 con el error adentro.
+    if (data?.error != null && Number(data.error) !== 0) {
+      return { ok: false, error: String(data.detalles ?? data.mensaje ?? 'IM rechazó el cambio'), raw: data };
+    }
+    if (data?.mensaje && !data?.isUpdated && !data?.venta && !data?.id && !/correctamente/i.test(String(data.mensaje))) {
+      return { ok: false, error: String(data.detalles ?? data.mensaje), raw: data };
+    }
+    return { ok: true, raw: data };
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 401) invalidateImToken();
+    const raw = err?.response?.data;
+    return { ok: false, error: `HTTP ${status ?? '?'}: ${raw?.detalles ?? raw?.mensaje ?? err?.message ?? 'unknown'}`, raw };
   }
 }
 
@@ -1009,15 +1064,37 @@ export async function fechaComprobante(idComprobante: string | number): Promise<
 }
 
 /** Renglones de un comprobante en IM, con el id que necesita el PUT de presupuestos. */
-export async function getItemsComprobante(idComprobante: string | number): Promise<Array<{ id: number; cod_articulo: number; cantidad: number; cod_lista_precios: number | null }>> {
+export interface ItemComprobante {
+  id: number;
+  /** `0` = renglón sin artículo (IM lo guarda con `cod_articulo: ""`): una nota de la oficina. */
+  cod_articulo: number;
+  cantidad: number;
+  cod_lista_precios: number | null;
+  /** NETO: ya con el descuento adentro. Es lo que IM multiplica por la cantidad. */
+  precio: number;
+  /** BRUTO, el de la lista. Es el que hay que volver a mandar si se recrea el comprobante. */
+  precio_orig: number;
+  descuento_porc: number;
+  iva_por: number;
+  /** El texto del renglón. En los que no tienen artículo es lo único que dice qué son. */
+  detalle: string | null;
+}
+
+export async function getItemsComprobante(idComprobante: string | number): Promise<ItemComprobante[]> {
   const cli = await imClient();
   const { data } = await imGetRetry(() => cli.get(`/ventas/${idComprobante}`), `ventas/${idComprobante}`);
   const items: any[] = data?.items ?? data?.results?.items ?? [];
   return items.map((it) => ({
     id: Number(it.id),
-    cod_articulo: Number(it.cod_articulo),
+    cod_articulo: Number(it.cod_articulo) || 0,
     cantidad: Number(it.cantidad),
     cod_lista_precios: it.cod_lista_precios != null ? Number(it.cod_lista_precios) : null,
+    precio: Number(it.precio ?? 0) || 0,
+    // 🪤 Sin descuento IM a veces manda `precio_orig` en 0 o no lo manda: ahí el bruto es el precio.
+    precio_orig: Number(it.precio_orig ?? 0) || Number(it.precio ?? 0) || 0,
+    descuento_porc: Number(it.descuento_porc ?? 0) || 0,
+    iva_por: Number(it.iva_por ?? 0) || 0,
+    detalle: typeof it.detalle === 'string' && it.detalle.trim() ? it.detalle.trim() : null,
   }));
 }
 

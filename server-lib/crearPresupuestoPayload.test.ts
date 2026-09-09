@@ -98,3 +98,42 @@ describe('crearPresupuesto — el payload que ve InfoManager', () => {
     expect(body.anulada).toBe('N');
   });
 });
+
+/** Igual que `postDe`, pero devolviendo el resultado en vez del body: acá importa qué contesta. */
+async function crearConRespuesta(data: any, codCompatibilidad: string) {
+  const post = vi.fn().mockResolvedValue({ data });
+  vi.mocked(axios.create).mockReturnValue({
+    post, get: vi.fn(), put: vi.fn(),
+    interceptors: { request: { use: vi.fn() } },
+  } as any);
+  vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+  return crearPresupuesto({
+    cod_empresa: 1, cod_cliente: 34, cod_vendedor: 4, cod_lista_precios: 12, usuario: 'susana',
+    cod_compatibilidad: codCompatibilidad,
+    items: [{ cod_articulo: 400, cantidad: 1, precio: 100, cod_lista_precios: 12 }],
+  });
+}
+
+describe('isCreated: false — IM devuelve el que YA existía', () => {
+  /**
+   * 🔴 Con un `cod_compatibilidad` repetido, `POST /presupuestos/UnidadDeVenta` NO contesta 400:
+   * contesta 200 con `{isCreated: false}` y **el comprobante que ya tenía ese código adentro**.
+   * Verificado contra IM el 09/09/2026.
+   *
+   * Tomar eso por éxito es grave: el editor daría "guardado", no habría creado nada, y acto
+   * seguido anularía el presupuesto original — dejando al cliente sin nada que facturar.
+   */
+  it('🔴 no es un éxito: se devuelve error y NO se toma el id ajeno', async () => {
+    const r = await crearConRespuesta(
+      { isCreated: false, venta: { id: 58730160, numero: 58162 }, items: [] },
+      '0d4d9a98');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/58162|ya existía|repetido/i);
+  });
+
+  it('con isCreated true sigue siendo éxito', async () => {
+    const r = await crearConRespuesta({ isCreated: true, venta: { id: 7, numero: 8 } }, 'abc12345');
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.numero).toBe(8);
+  });
+});

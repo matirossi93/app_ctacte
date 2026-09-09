@@ -71,7 +71,11 @@ interface ItemDetalle {
     cod_lista_precios: number | null;
     /** "Lista 2" en vez de 13: el código de IM no le dice nada a nadie en la oficina. */
     lista_nombre: string | null;
+    /** BRUTO, el de lista: es el que hay que reenviarle a IM al editar. */
     precio: number | null;
+    /** Con el descuento ya aplicado: es lo que se factura. */
+    precio_neto: number | null;
+    descuento_porc: number;
     importe: number | null;
     /** Cuánto hay en el depósito, en la misma unidad. Negativo = diferencia de inventario. */
     stock: number | null;
@@ -94,6 +98,8 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
     /** Qué presupuesto tiene el detalle abierto, y sus renglones. */
     const [abierto, setAbierto] = useState<string | null>(null);
     const [items, setItems] = useState<ItemDetalle[] | null>(null);
+    /** Las observaciones del comprobante abierto, para poder editarlas. */
+    const [obsAbierto, setObsAbierto] = useState<string | null>(null);
     /** Cantidades tocadas a mano: id de renglón → cantidad nueva. */
     /** A quién se le está escribiendo el motivo de la observación. */
     const [observando, setObservando] = useState<string | null>(null);
@@ -182,6 +188,7 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
             const d = await r.json().catch(() => null);
             if (!r.ok) throw new Error(d?.error ?? 'No se pudo abrir el detalle');
             setItems(d.items ?? []);
+            setObsAbierto(d.comprobante?.observaciones ?? '');
         } catch (e: any) {
             // 🪤 Sin esto, un fetch que fallaba dejaba `items` en null y el spinner giraba para
             // siempre, sin un solo mensaje.
@@ -409,24 +416,25 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                         <EditorPresupuesto
                                             comprobanteId={p.im_comprobante_id}
                                             numero={p.im_numero}
+                                            observacionesOriginales={obsAbierto}
                                             itemsOriginales={items.map(it => ({
                                                 id: it.id,
                                                 cod_articulo: it.cod_articulo,
                                                 descripcion: it.descripcion,
                                                 cantidad: Number(it.cantidad),
                                                 cod_lista_precios: it.cod_lista_precios,
-                                                descuento_porc: (it as any).descuento_porc ?? 0,
+                                                descuento_porc: it.descuento_porc ?? 0,
                                                 precio: it.precio,
                                                 equivalencia_um: it.equivalencia_um,
                                                 unidad_de_medida: it.unidad_de_medida,
                                                 stock: it.stock,
                                             }))}
-                                            onCancelar={() => { setAbierto(null); setItems(null); }}
+                                            onCancelar={() => { setAbierto(null); setItems(null); setObsAbierto(null); }}
                                             onGuardado={(r) => {
                                                 setAviso(r.aviso ?? (r.modo === 'recreado'
                                                     ? `Listo: se rehizo el presupuesto y ahora es el ${r.im_numero ?? ''}. Como cambió, quedó sin revisar.`
                                                     : 'Listo: cantidades corregidas en InfoManager.'));
-                                                setAbierto(null); setItems(null);
+                                                setAbierto(null); setItems(null); setObsAbierto(null);
                                                 void cargar(true);
                                             }}
                                         />

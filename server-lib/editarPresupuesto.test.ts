@@ -15,6 +15,7 @@ const m = vi.hoisted(() => ({
   actualizarPresupuestoCantidades: vi.fn(),
   crearPresupuesto: vi.fn(),
   anularComprobante: vi.fn(),
+  actualizarObservaciones: vi.fn(),
 }));
 
 vi.mock('./infomanager.js', () => ({
@@ -23,6 +24,7 @@ vi.mock('./infomanager.js', () => ({
   actualizarPresupuestoCantidades: m.actualizarPresupuestoCantidades,
   crearPresupuesto: m.crearPresupuesto,
   anularComprobante: m.anularComprobante,
+  actualizarObservaciones: m.actualizarObservaciones,
   fetchArticulosCatalogo: vi.fn(async () => new Map([[1, { descripcion: 'ALPISTE X 30 KG' }]])),
   fechaArgentina: () => '2026-09-09',
 }));
@@ -64,8 +66,8 @@ const CAB_OK = {
 };
 /** Los renglones que hoy tiene el presupuesto en IM. */
 const ITEMS_IM = [
-  { id: 101, cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0 },
-  { id: 102, cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0 },
+  { id: 101, cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100, precio_orig: 100, iva_por: 0, detalle: 'ALPISTE X 30 KG' },
+  { id: 102, cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 200, precio_orig: 200, iva_por: 0, detalle: 'MIJO' },
 ];
 
 beforeEach(() => {
@@ -82,8 +84,8 @@ beforeEach(() => {
 describe('cambiar sólo cantidades', () => {
   it('🔑 usa el camino barato y CONSERVA el número de presupuesto', async () => {
     const r = await llamar({ items: [
-      { cod_articulo: 1, cantidad: 20, cod_lista_precios: 13, descuento_porc: 0 },
-      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0 },
+      { cod_articulo: 1, cantidad: 20, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
+      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
     ] });
     expect(r.status).toBe(200);
     expect(r.body.modo).toBe('cantidades');
@@ -103,7 +105,7 @@ describe('cambiar el surtido obliga a recrear', () => {
    */
   it('🔴 SACAR un producto recrea: no queda ningún renglón en cantidad 0', async () => {
     // Mati rechazó el 07/09/2026 la salida de dejarlo en 0: "no es viable que se vea cantidad 0".
-    const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0 }] });
+    const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 }] });
     expect(r.body.modo).toBe('recreado');
     const enviados = m.crearPresupuesto.mock.calls[0][0].items;
     expect(enviados).toHaveLength(1);
@@ -112,8 +114,8 @@ describe('cambiar el surtido obliga a recrear', () => {
 
   it('🔴 AGREGAR un producto recrea', async () => {
     const r = await llamar({ items: [
-      ...ITEMS_IM.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista_precios: 13, descuento_porc: 0 })),
-      { cod_articulo: 9, cantidad: 3, cod_lista_precios: 13, descuento_porc: 0 },
+      ...ITEMS_IM.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista_precios: 13, descuento_porc: 0, precio: i.precio })),
+      { cod_articulo: 9, cantidad: 3, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
     ] });
     expect(r.body.modo).toBe('recreado');
     expect(m.crearPresupuesto.mock.calls[0][0].items).toHaveLength(3);
@@ -121,8 +123,8 @@ describe('cambiar el surtido obliga a recrear', () => {
 
   it('🔴 cambiar la LISTA de un renglón recrea: el PUT la ignora en silencio', async () => {
     const r = await llamar({ items: [
-      { cod_articulo: 1, cantidad: 10, cod_lista_precios: 14, descuento_porc: 0 },
-      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0 },
+      { cod_articulo: 1, cantidad: 10, cod_lista_precios: 14, descuento_porc: 0, precio: 100 },
+      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
     ] });
     expect(r.body.modo).toBe('recreado');
     expect(m.crearPresupuesto.mock.calls[0][0].items[0].cod_lista_precios).toBe(14);
@@ -130,14 +132,14 @@ describe('cambiar el surtido obliga a recrear', () => {
 
   it('🔴 cambiar el DESCUENTO también recrea', async () => {
     const r = await llamar({ items: [
-      { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 10 },
-      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0 },
+      { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 10, precio: 100 },
+      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
     ] });
     expect(r.body.modo).toBe('recreado');
   });
 
   it('🔑 se conservan cliente, empresa, fecha y observaciones del original', async () => {
-    await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 14, descuento_porc: 0 }] });
+    await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 14, descuento_porc: 0, precio: 100 }] });
     expect(m.crearPresupuesto.mock.calls[0][0]).toMatchObject({
       cod_cliente: 297, cod_empresa: 1, cod_vendedor: '2', usuario: 'jorgelina',
       fecha: '2026-09-09', observaciones: 'entregar el jueves',
@@ -153,7 +155,7 @@ describe('el orden de las operaciones', () => {
    */
   it('🔴 si la creación FALLA, el original NO se anula', async () => {
     m.crearPresupuesto.mockResolvedValue({ ok: false, error: 'artículo inexistente' });
-    const r = await llamar({ items: [{ cod_articulo: 999, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0 }] });
+    const r = await llamar({ items: [{ cod_articulo: 999, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0, precio: 100 }] });
     expect(r.status).toBe(502);
     expect(m.anularComprobante).not.toHaveBeenCalled();
     expect(r.body.error).toMatch(/sigue como estaba/i);
@@ -161,7 +163,7 @@ describe('el orden de las operaciones', () => {
 
   it('🔴 si la anulación falla, se avisa FUERTE: quedan dos presupuestos vivos', async () => {
     m.anularComprobante.mockResolvedValue({ ok: false, error: 'IM rechazó la anulación' });
-    const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 14, descuento_porc: 0 }] });
+    const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 14, descuento_porc: 0, precio: 100 }] });
     expect(r.status).toBe(200);
     expect(r.body.aviso).toMatch(/dos vivos|no se pudo anular/i);
     expect(r.body.aviso).toMatch(/58158/);
@@ -171,7 +173,7 @@ describe('el orden de las operaciones', () => {
     const orden: string[] = [];
     m.crearPresupuesto.mockImplementation(async () => { orden.push('crear'); return { ok: true, id: 'x', numero: 1, raw: {} }; });
     m.anularComprobante.mockImplementation(async () => { orden.push('anular'); return { ok: true, raw: {} }; });
-    await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 14, descuento_porc: 0 }] });
+    await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 14, descuento_porc: 0, precio: 100 }] });
     expect(orden).toEqual(['crear', 'anular']);
   });
 });
@@ -179,7 +181,7 @@ describe('el orden de las operaciones', () => {
 describe('lo que no se puede editar', () => {
   it('🔴 un presupuesto YA FACTURADO no se toca', async () => {
     tablas['presupuestos_facturados'] = { data: { im_factura_numero: 50370, facturado_at: 'x' }, error: null };
-    const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0 }] });
+    const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 }] });
     expect(r.status).toBe(409);
     expect(r.body.error).toMatch(/nota de crédito/i);
     expect(m.crearPresupuesto).not.toHaveBeenCalled();
@@ -187,20 +189,20 @@ describe('lo que no se puede editar', () => {
 
   it('🔴 si no se puede verificar si está facturado, no se edita a ciegas', async () => {
     tablas['presupuestos_facturados'] = { data: null, error: { message: 'timeout' } };
-    const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0 }] });
+    const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 }] });
     expect(r.status).toBe(502);
     expect(m.crearPresupuesto).not.toHaveBeenCalled();
   });
 
   it('🔴 uno ANULADO en InfoManager tampoco', async () => {
     m.cabeceraComprobante.mockResolvedValue({ ...CAB_OK, anulada: true });
-    const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0 }] });
+    const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 }] });
     expect(r.status).toBe(409);
   });
 
   it('🔴 si no se pudo leer el presupuesto, no se escribe nada', async () => {
     m.cabeceraComprobante.mockResolvedValue({ ...CAB_OK, existe: null, anulada: null });
-    const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0 }] });
+    const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 }] });
     expect(r.status).toBe(502);
     expect(m.actualizarPresupuestoCantidades).not.toHaveBeenCalled();
     expect(m.crearPresupuesto).not.toHaveBeenCalled();
@@ -213,7 +215,7 @@ describe('lo que no se puede editar', () => {
   });
 
   it('un renglón con lista inválida se rechaza, no se corrige solo', async () => {
-    const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 99, descuento_porc: 0 }] });
+    const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 99, descuento_porc: 0, precio: 100 }] });
     expect(r.status).toBe(400);
   });
 
@@ -253,55 +255,135 @@ describe('emparejarParaPut', () => {
   });
 });
 
-describe('el ítem sin código (costo de distribución)', () => {
+describe('el costo de distribución', () => {
   /**
-   * 🔑 Mati (09/09/2026): *"a algunos pedidos les cargamos el costo de distribución. Es un ítem
-   * aparte que no tiene código, le ponemos el precio"*. InfoManager lo soporta con
-   * `cod_articulo: 0` y detalle libre — se verificó en presupuestos reales cargados por la
-   * oficina desde su sistema.
+   * 🔴 Mati (09/09/2026): *"a algunos pedidos les cargamos el costo de distribución. Es un ítem
+   * aparte que no tiene código, le ponemos el precio"*, y después: *"al querer guardar no hace
+   * nada"*.
+   *
+   * La causa: se mandaba como renglón LIBRE, y la API de InfoManager no los tiene. `cod_articulo`
+   * es `int64` obligatorio en el schema; con `""` contesta *"The JSON value could not be
+   * converted to System.Int64"* y con `0` *"No se encontró un artículo válido para
+   * cod_articulo = 0"*. Las dos probadas contra IM ese día. Va con el artículo 13819, que existe
+   * en el catálogo justamente para esto.
    */
-  it('🔑 entra un renglón sin artículo, con su texto y su precio', async () => {
+  it('🔑 va como un artículo más, con su precio escrito a mano', async () => {
     const r = await llamar({ items: [
-      { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0 },
-      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0 },
-      { cod_articulo: 0, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0, precio: 15000, detalle: 'COSTO DE DISTRIBUCION' },
+      { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
+      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
+      { cod_articulo: 13819, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0, precio: 15000 },
     ] });
     expect(r.status).toBe(200);
+    expect(r.body.modo).toBe('recreado');
     const enviados = m.crearPresupuesto.mock.calls[0][0].items;
-    expect(enviados[2]).toMatchObject({ cod_articulo: 0, precio: 15000, detalle: 'COSTO DE DISTRIBUCION' });
+    expect(enviados).toHaveLength(3);
+    expect(enviados[2]).toMatchObject({ cod_articulo: 13819, cantidad: 1, precio: 15000 });
+    // Ni rastro de renglones sin código: IM rechazaría el presupuesto entero.
+    expect(enviados.every((i: any) => Number(i.cod_articulo) > 0)).toBe(true);
   });
 
-  it('🔴 sin precio no entra: no hay lista de dónde sacarlo', async () => {
+  it('🔴 un renglón SIN artículo no se manda: IM rechaza el presupuesto entero', async () => {
     const r = await llamar({ items: [
-      { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0 },
-      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0 },
-      { cod_articulo: 0, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0, detalle: 'FLETE' },
+      { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
+      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
+      { cod_articulo: 0, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0, precio: 15000, detalle: 'FLETE' },
     ] });
-    // El renglón incompleto se descarta y queda sólo el producto: no se recrea por él.
-    expect(m.crearPresupuesto).not.toHaveBeenCalled();
+    // Se descarta y el resto sigue igual, así que alcanza con el camino barato.
     expect(r.body.modo).toBe('cantidades');
-  });
-
-  it('🔴 sin detalle tampoco: nadie sabría qué es ese renglón', async () => {
-    await llamar({ items: [
-      { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0 },
-      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0 },
-      { cod_articulo: 0, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0, precio: 15000 },
-    ] });
     expect(m.crearPresupuesto).not.toHaveBeenCalled();
   });
 
-  it('🪤 con un renglón libre SIEMPRE se recrea: dos libres comparten el código 0', async () => {
-    // `emparejarParaPut` empareja por artículo, así que dos renglones sin código se
-    // confundirían entre sí y el PUT le pondría la cantidad de uno al otro.
+  it('🔴 sin precio no se guarda: InfoManager lo grabaría en $0', async () => {
+    // Probado el 09/09/2026 (PR 58307, anulado): sin `precio` IM NO lo busca en la lista.
+    const r = await llamar({ items: [
+      { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
+      { cod_articulo: 13819, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0 },
+    ] });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/precio/i);
+    expect(m.crearPresupuesto).not.toHaveBeenCalled();
+    expect(m.actualizarPresupuestoCantidades).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 Los renglones sin artículo que YA están en InfoManager son notas que escribió la oficina
+   * desde su propio sistema ("QUEBRADO GRUESO PENDIENTE"). Rehacer el presupuesto las borraría y
+   * la API no las puede volver a cargar, así que se frena y se dice por qué.
+   */
+  it('🔴 si el presupuesto tiene notas sin código, no se rehace: se perderían', async () => {
     m.getItemsComprobante.mockResolvedValue([
-      { id: 101, cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0 },
-      { id: 103, cod_articulo: 0, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0 },
+      { id: 101, cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100, precio_orig: 100, iva_por: 0, detalle: 'ALPISTE X 30 KG' },
+      { id: 103, cod_articulo: 0, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0, precio: 0, precio_orig: 0, iva_por: 0, detalle: 'QUEBRADO GRUESO PENDIENTE' },
     ]);
     const r = await llamar({ items: [
-      { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0 },
-      { cod_articulo: 0, cantidad: 2, cod_lista_precios: 13, descuento_porc: 0, precio: 15000, detalle: 'COSTO DE DISTRIBUCION' },
+      { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
+      { cod_articulo: 13819, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0, precio: 15000 },
     ] });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/QUEBRADO GRUESO PENDIENTE/);
+    expect(m.crearPresupuesto).not.toHaveBeenCalled();
+    expect(m.anularComprobante).not.toHaveBeenCalled();
+  });
+
+  it('con notas sin código SÍ se pueden corregir cantidades: eso no las toca', async () => {
+    m.getItemsComprobante.mockResolvedValue([
+      { id: 101, cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100, precio_orig: 100, iva_por: 0, detalle: 'ALPISTE X 30 KG' },
+      { id: 103, cod_articulo: 0, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0, precio: 0, precio_orig: 0, iva_por: 0, detalle: 'NOTA' },
+    ]);
+    const r = await llamar({ items: [
+      { cod_articulo: 1, cantidad: 25, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
+    ] });
+    expect(r.status).toBe(200);
+    expect(r.body.modo).toBe('cantidades');
+    expect(m.actualizarPresupuestoCantidades).toHaveBeenCalledWith('58727292', [{ id: 101, cantidad: 25 }]);
+  });
+});
+
+describe('las observaciones', () => {
+  /**
+   * 🔑 Mati (09/09/2026): *"necesito que podamos agregar observaciones en el presupuesto"*. Es el
+   * campo que la oficina lee antes de facturar ("facturar a nombre de la SRL", "entregar el
+   * jueves"), y hasta ahora sólo se podía escribir desde InfoManager.
+   */
+  it('🔑 cambiarlas solas no rehace el presupuesto: va por PUT y el número no cambia', async () => {
+    m.actualizarObservaciones.mockResolvedValue({ ok: true, raw: {} });
+    const r = await llamar({
+      observaciones: 'FACTURAR A NOMBRE DE LA SRL',
+      items: ITEMS_IM.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista_precios: 13, descuento_porc: 0, precio: i.precio })),
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.modo).toBe('cantidades');
+    expect(m.actualizarObservaciones).toHaveBeenCalledWith(expect.objectContaining({
+      id: '58727292', numero: 58158, punto_de_venta: 1, observaciones: 'FACTURAR A NOMBRE DE LA SRL',
+    }));
+    expect(m.crearPresupuesto).not.toHaveBeenCalled();
+  });
+
+  it('🪤 si las observaciones no se pudieron guardar se avisa: las cantidades YA se guardaron', async () => {
+    m.actualizarObservaciones.mockResolvedValue({ ok: false, error: 'IM caído' });
+    const r = await llamar({
+      observaciones: 'OTRA COSA',
+      items: ITEMS_IM.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista_precios: 13, descuento_porc: 0, precio: i.precio })),
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.aviso).toMatch(/NO las observaciones/);
+  });
+
+  it('si no cambiaron, no se le pide nada a InfoManager', async () => {
+    const r = await llamar({
+      observaciones: 'entregar el jueves',   // las mismas que ya tiene
+      items: ITEMS_IM.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista_precios: 13, descuento_porc: 0, precio: i.precio })),
+    });
+    expect(r.status).toBe(200);
+    expect(m.actualizarObservaciones).not.toHaveBeenCalled();
+  });
+
+  it('🔑 al rehacer el presupuesto viajan las nuevas, no las viejas', async () => {
+    const r = await llamar({
+      observaciones: 'ENTREGAR EL VIERNES',
+      items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 }],
+    });
     expect(r.body.modo).toBe('recreado');
+    expect(m.crearPresupuesto.mock.calls[0][0].observaciones).toBe('ENTREGAR EL VIERNES');
   });
 });

@@ -29,7 +29,7 @@ import type { JwtPayload } from './auth.js';
 import { puedeArmarHojasDeRuta } from './permisos.js';
 import {
   fetchVentasItems, fetchClientesIMCached, cabeceraComprobante, desconfirmarPresupuesto,
-  fetchVentas, fechaArgentina,
+  fetchVentas, fechaArgentina, fetchStockPorDeposito, fetchArticulosCatalogo,
 } from './infomanager.js';
 import { buscarFacturasYaEmitidas } from './facturaYaEmitida.js';
 import { emitirFactura, emitirRemito, letraDeFactura, proximoNumeroFactura } from './facturarIM.js';
@@ -38,6 +38,30 @@ import { usuarioIM } from './pedidos.js';
 import { vistaDeRango, invalidarVista } from './vistaPresupuestos.js';
 // Emitir crea los remitos: la pantalla de hojas los tiene que ver ya mismo.
 import { invalidarRemitos } from './vistaRemitos.js';
+
+/**
+ * Traduce el rechazo por stock del remito a nombres de productos.
+ *
+ * IM contesta: `Artículos sin stock suficiente: [{"cod_articulo":470,"cantidad":5,
+ * "stock_disponible":-570.00000}]`. Devuelve `null` si el error es otro — así quien llama sabe
+ * que tiene que mostrar el mensaje crudo en vez de inventar una explicación.
+ */
+export function articulosSinStockDelError(
+  error: string, catalogo: Map<number, { descripcion?: string }>,
+): string | null {
+  if (!/stock/i.test(String(error))) return null;
+  const bloque = String(error).match(/\[.*\]/s);
+  if (!bloque) return null;
+  let lista: any[];
+  try { lista = JSON.parse(bloque[0]); } catch { return null; }
+  if (!Array.isArray(lista) || !lista.length) return null;
+  return lista.map((x: any) => {
+    const cod = Number(x.cod_articulo);
+    const nombre = catalogo.get(cod)?.descripcion ?? `artículo ${cod}`;
+    const hay = Number(x.stock_disponible);
+    return `${nombre} (piden ${Number(x.cantidad)}, hay ${Number.isFinite(hay) ? hay : '?'})`;
+  }).join(' · ');
+}
 
 /** Sólo la oficina. Devuelve true si ya contestó el 403. */
 function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
@@ -52,6 +76,8 @@ const PEDIDO_EMPRESA_DEFAULT = Number(process.env.PEDIDO_EMPRESA_DEFAULT || 1);
 const PEDIDO_LISTA_FALLBACK = Number(process.env.PEDIDO_LISTA_FALLBACK || 12);
 /** Tope de días de renglones que se piden de una vez. Cada día es una consulta a IM. */
 const MAX_DIAS_FACTURA = 6;
+/** El depósito del que sale la mercadería: es contra el que el remito valida stock. */
+const DEPOSITO_REMITO = Number(process.env.PEDIDO_DEPOSITO || 1);
 
 /** Lo que le pasa a cada presupuesto cuando se apriete Facturar. */
 export type EstadoFacturacion = 'listo' | 'falta_remito' | 'facturado' | 'no_se_puede';
@@ -85,6 +111,11 @@ export interface Preparado {
   motivo: string | null;
   letra: 'A' | 'B' | null;
   datos: DatosComprobante | null;
+  /**
+   * Artículos que InfoManager va a rechazar al pedirle el REMITO por falta de stock. No impide
+   * facturar: avisa antes de que la factura salga y el remito no.
+   */
+  sin_stock?: Array<{ cod_articulo: number; descripcion: string; pedido: number; disponible: number | null }>;
 }
 
 /**
@@ -129,6 +160,22 @@ export async function prepararFacturacion(
       renglonesPorComp.get(k)!.push(it);
     }
   }
+
+  /**
+   * 🔴 EL REMITO VALIDA STOCK Y EL PANEL TIENE QUE SABERLO ANTES DE FACTURAR.
+   *
+   * `POST /remitos` contesta *"No se puede crear el presupuesto. Artículos sin stock suficiente:
+   * [{cod_articulo, cantidad, stock_disponible}]"* y no emite nada. La factura, en cambio, no
+   * valida stock: sale igual. Resultado, el 09/09/2026: pedidos con la factura emitida y sin
+   * remito, que es el estado que no sirve para nada — la mercadería no puede salir y la hoja de
+   * ruta se arma con remitos.
+   *
+   * Casi siempre el faltante es una diferencia de inventario (MEZCLA P/PAJARO figuraba en −570),
+   * no que no haya mercadería. Por eso NO frena la facturación: la marca, para que se decida con
+   * el dato a la vista en vez de descubrirlo con la factura ya emitida.
+   */
+  const stock = await fetchStockPorDeposito(DEPOSITO_REMITO).catch(() => null);
+  const catalogo = await fetchArticulosCatalogo().catch(() => new Map());
 
   /**
    * 🔴 ¿Alguno de estos presupuestos YA está facturado en InfoManager?
@@ -207,8 +254,36 @@ export async function prepararFacturacion(
         : `${quien}: parece que YA ESTÁ FACTURADO en InfoManager — hay una ${ya.tipo} ${ya.numero ?? ''} del mismo cliente por el mismo importe${ya.fecha ? ` del ${ya.fecha}` : ''}. Verificalo antes de emitir: si facturás igual, el cliente queda con dos facturas.`);
     }
 
-    const items = renglonesPorComp.get(String(f.im_comprobante_id)) ?? [];
-    if (!items.length) return no(`No pude traer los renglones del ${quien}. Facturalo a mano.`);
+    const todos = renglonesPorComp.get(String(f.im_comprobante_id)) ?? [];
+    if (!todos.length) return no(`No pude traer los renglones del ${quien}. Facturalo a mano.`);
+    /**
+     * 🔴 Los renglones SIN artículo no se pueden facturar por la API: `cod_articulo` es int64
+     * obligatorio en facturas y remitos, y `""` (como los guarda IM) o `0` se rechazan (probado
+     * el 09/09/2026). La oficina los usa de dos formas:
+     *  · como NOTA en $0 ("QUEBRADO GRUESO PENDIENTE"): no cambia el total, se saltea.
+     *  · con importe (un costo de distribución escrito a mano): NO se puede emitir, porque
+     *    saltearlo facturaría de menos. Se frena y se dice cómo cargarlo.
+     */
+    const sinArticulo = todos.filter((it: any) => !(Number(it.cod_articulo) > 0));
+    const conPlata = sinArticulo.find((it: any) => Math.abs(Number(it.precio ?? 0) * Number(it.cantidad ?? 0)) >= 0.005);
+    if (conPlata) {
+      return no(`${quien}: tiene un renglón sin artículo con importe ("${String(conPlata.detalle ?? '').trim() || 'sin texto'}"), y la API de InfoManager no lo acepta en la factura. Cargalo con el artículo 13819 COSTO DE DISTRIBUCION (desde el panel: editar → "Agregar costo de distribución") y volvé a facturar.`);
+    }
+    const items = todos.filter((it: any) => Number(it.cod_articulo) > 0);
+    if (!items.length) return no(`${quien}: no tiene ningún renglón con artículo, sólo notas. No hay qué facturar.`);
+
+    // Lo que InfoManager va a rechazar cuando le pidamos el remito. `null` = no se pudo consultar
+    // el stock, y ahí no se marca nada: no es lo mismo que "no hay".
+    const sinStock = stock
+      ? items
+          .map((it: any) => ({
+            cod_articulo: Number(it.cod_articulo),
+            descripcion: (catalogo.get(Number(it.cod_articulo)) as any)?.descripcion ?? String(it.detalle ?? `Artículo ${it.cod_articulo}`),
+            pedido: Number(it.cantidad),
+            disponible: stock.get(Number(it.cod_articulo)) ?? null,
+          }))
+          .filter((x: any) => x.disponible != null && x.disponible < x.pedido)
+      : [];
 
     // 🔴 Con la factura ya emitida NO se vuelve a emitir: falta sólo el remito, que es X y no
     // depende de la condición de IVA.
@@ -221,6 +296,7 @@ export async function prepararFacturacion(
       fila: f,
       estado: yaTieneFactura ? 'falta_remito' : 'listo',
       motivo: null,
+      sin_stock: sinStock,
       letra,
       datos: {
         cod_empresa: Number(f.cod_empresa) || PEDIDO_EMPRESA_DEFAULT,
@@ -259,8 +335,6 @@ export async function prepararFacturacion(
             iva_por: Number(it.iva_por ?? 0),
             cod_lista_precios: it.cod_lista_precios != null ? Number(it.cod_lista_precios) : null,
             descuento_porc: desc,
-            // El detalle libre de los renglones sin artículo del catálogo.
-            ...(it.detalle && !(Number(it.cod_articulo) > 0) ? { detalle: String(it.detalle) } : {}),
           };
         }),
       },
@@ -522,6 +596,9 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
     const hechos: any[] = [];
     const fallados: string[] = [];
     let cortado: string | null = null;
+    // Para poder decir QUÉ producto rechazó IM cuando el remito falla por stock. Ya está
+    // cacheado (lo usó prepararFacturacion), así que no cuesta una llamada más.
+    const catalogoEmision = await fetchArticulosCatalogo().catch(() => new Map());
 
     // 🔑 El número de factura se calcula UNA vez y después se incrementa: IM no lo asigna y
     // averiguarlo cuesta ~6 s. Si otro lo tomó mientras tanto, `emitirFactura` sube al siguiente.
@@ -567,6 +644,8 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
         const fa = await emitirFactura({ ...p.datos, numero: numeros[letra] } as any);
         if (fa.ok && fa.numero != null) numeros[letra] = Number(fa.numero) + 1;
         if (!fa.ok) {
+          // Al log también: en pantalla se pierde, y es lo único que dice POR QUÉ IM la rechazó.
+          console.error(`[facturarSeleccion] FACTURA rechazada · ${quien}: ${fa.error}`, JSON.stringify(fa.raw ?? null).slice(0, 600));
           fallados.push(`${quien}: ${fa.error}`);
           // El reclamo se suelta para que se pueda reintentar; si no se puede soltar, queda y
           // vence solo a los 5 minutos.
@@ -609,7 +688,16 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
       }
       const re = await emitirRemito(p.datos as any);
       if (!re.ok) {
-        fallados.push(`${quien}: la FACTURA ${facturaNumero} se emitió, pero el remito falló (${re.error}). Hacé el remito a mano.`);
+        console.error(`[facturarSeleccion] REMITO rechazado · ${quien} (factura ${facturaNumero}): ${re.error}`, JSON.stringify(re.raw ?? null).slice(0, 600));
+        /**
+         * 🔑 El motivo real casi siempre es stock: IM contesta *"Artículos sin stock suficiente:
+         * [{cod_articulo, cantidad, stock_disponible}]"*. Ese JSON crudo en pantalla no le dice
+         * nada a nadie, así que se traduce a los nombres de los productos.
+         */
+        const faltantes = articulosSinStockDelError(re.error, catalogoEmision);
+        fallados.push(faltantes
+          ? `${quien}: la FACTURA ${facturaNumero} se emitió, pero el REMITO no: InfoManager dice que no hay stock de ${faltantes}. Ajustá el stock en InfoManager y volvé a apretar Facturar (va a hacer sólo el remito), o hacelo a mano.`
+          : `${quien}: la FACTURA ${facturaNumero} se emitió, pero el remito falló (${re.error}). Hacé el remito a mano.`);
         if (re.sinRespuesta) cortado = `InfoManager no contestó al emitir el remito de ${quien}. La factura ${facturaNumero} SÍ se emitió. Revisalo en IM. Se frenó el resto.`;
         continue;
       }

@@ -104,3 +104,14 @@
 }
 .ed-tag.libre { background: var(--color-accent); color: #4a3600; }
 .ed-libre-btn { align-self: flex-start; }
+
+/* Las observaciones del presupuesto: lo que lee quien factura y quien entrega. */
+.ed-obs {
+    display: flex; flex-direction: column; gap: 0.2rem;
+    margin-top: 0.5rem; font-size: 0.78rem; color: var(--color-text-muted);
+}
+.ed-obs textarea {
+    width: 100%; resize: vertical;
+    border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text);
+    font-family: inherit; font-size: 0.83rem; padding: 0.3rem 0.4rem; border-radius: var(--radius-sm);
+}

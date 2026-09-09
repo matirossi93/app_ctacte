@@ -21,8 +21,8 @@ export interface ItemEditable {
     /** El id del renglón en IM. Los que se agregan acá todavía no tienen. */
     id?: number;
     /**
-     * `0` = renglón LIBRE, sin artículo del catálogo. Es como la oficina carga el **costo de
-     * distribución** (Mati, 09/09/2026): no tiene código, se le escribe el texto y el precio.
+     * Siempre un artículo del catálogo. El **costo de distribución** también: es el 13819, y lo
+     * único que se le escribe es el precio (Mati, 09/09/2026).
      */
     cod_articulo: number;
     descripcion: string;
@@ -43,6 +43,15 @@ interface ArticuloBuscado {
     precio_venta: number | null;
 }
 
+/**
+ * 🔑 El costo de distribución es un ARTÍCULO del catálogo, no un renglón suelto.
+ *
+ * La API de InfoManager no acepta renglones sin código: `cod_articulo` es obligatorio y con `0`
+ * o vacío rechaza el presupuesto entero — por eso "no hacía nada" al guardar. El 13819 existe
+ * justamente para esto y no tiene precio de lista: se escribe a mano.
+ */
+const COD_COSTO_DISTRIBUCION = 13819;
+
 /** Las cuatro listas mayoristas, con el nombre que usa la oficina. */
 const LISTAS: Array<[number, string]> = [[12, 'Lista 1'], [13, 'Lista 2'], [14, 'Lista 3'], [15, 'Lista 4']];
 
@@ -51,15 +60,18 @@ const money = (n: number) => '$' + Math.round(n).toLocaleString('es-AR');
 const firma = (rs: ItemEditable[]) =>
     rs.map(r => `${r.cod_articulo}:${Number(r.cod_lista_precios)}:${Number(r.descuento_porc) || 0}`).join('|');
 
-export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, onGuardado, onCancelar }: {
+export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, observacionesOriginales, onGuardado, onCancelar }: {
     comprobanteId: string;
     numero: number | null;
     itemsOriginales: ItemEditable[];
+    /** Lo que escribió el vendedor en InfoManager. Es lo que la oficina lee antes de facturar. */
+    observacionesOriginales: string | null;
     /** Se llama con el comprobante resultante: puede ser otro si hubo que recrearlo. */
     onGuardado: (r: { modo: string; im_numero: number | null; aviso?: string | null }) => void;
     onCancelar: () => void;
 }) {
     const [items, setItems] = useState<ItemEditable[]>(() => itemsOriginales.map(i => ({ ...i })));
+    const [observaciones, setObservaciones] = useState(observacionesOriginales ?? '');
     const [busqueda, setBusqueda] = useState('');
     const [resultados, setResultados] = useState<ArticuloBuscado[] | null>(null);
     const [buscando, setBuscando] = useState(false);
@@ -71,7 +83,10 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, onGu
      * NÚMERO. Se avisa antes, no después: la oficina anota ese número.
      */
     const seRecrea = firma(items) !== firma(itemsOriginales);
-    const hayCambios = seRecrea || items.some((it, i) => Number(it.cantidad) !== Number(itemsOriginales[i]?.cantidad));
+    const cambiaObs = observaciones.trim() !== (observacionesOriginales ?? '').trim();
+    const hayCambios = seRecrea || cambiaObs
+        || items.some((it, i) => Number(it.cantidad) !== Number(itemsOriginales[i]?.cantidad))
+        || items.some((it, i) => Number(it.precio) !== Number(itemsOriginales[i]?.precio));
 
     const total = useMemo(() => items.reduce((s, i) =>
         s + (Number(i.precio ?? 0) * Number(i.cantidad) * (1 - (Number(i.descuento_porc) || 0) / 100)), 0), [items]);
@@ -114,9 +129,9 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, onGu
     async function guardar() {
         if (!items.length) { setError('Tiene que quedar al menos un producto.'); return; }
         if (items.some(i => !(Number(i.cantidad) > 0))) { setError('Hay un renglón con cantidad cero o vacía. Sacalo con el tacho o poné una cantidad.'); return; }
-        // Un renglón sin código necesita las dos cosas: qué es y cuánto sale.
-        const libreIncompleto = items.find(i => i.cod_articulo === 0 && (!String(i.descripcion ?? '').trim() || !(Number(i.precio) > 0)));
-        if (libreIncompleto) { setError('El ítem sin código necesita una descripción y un precio.'); return; }
+        // 🪤 Sin precio InfoManager graba el renglón en $0 — no lo busca en la lista.
+        const sinPrecio = items.find(i => !(Number(i.precio) > 0));
+        if (sinPrecio) { setError(`"${sinPrecio.descripcion}" no tiene precio. Ponelo antes de guardar: InfoManager lo grabaría en $0.`); return; }
         if (seRecrea && !confirm(
             `Este cambio no se puede hacer sobre el mismo presupuesto: InfoManager sólo deja corregir cantidades.\n\n` +
             `Se va a crear un presupuesto NUEVO con estos datos y se va a anular el ${numero ?? ''}.\n\n` +
@@ -128,14 +143,15 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, onGu
                 method: 'PUT',
                 headers: { ...authHeaders(), 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    observaciones,
                     items: items.map(i => ({
                         cod_articulo: i.cod_articulo,
                         cantidad: Number(i.cantidad),
                         cod_lista_precios: Number(i.cod_lista_precios),
                         descuento_porc: Number(i.descuento_porc) || 0,
-                        ...(i.precio != null ? { precio: Number(i.precio) } : {}),
-                        // Sin artículo, el detalle es lo único que dice qué es ese renglón.
-                        ...(i.cod_articulo === 0 ? { detalle: i.descripcion } : {}),
+                        // 🔑 BRUTO, el de lista: IM le aplica el descuento encima. Mandarle el ya
+                        // rebajado lo descuenta dos veces (rompió la factura 50401 el 09/09/2026).
+                        precio: Number(i.precio),
                     })),
                 }),
             });
@@ -180,17 +196,11 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, onGu
                     {items.map((it, idx) => (
                         <tr key={`${it.cod_articulo}-${it.id ?? 'nuevo'}-${idx}`} className={it.id == null ? 'ed-nuevo' : ''}>
                             <td>
-                                {/* Un renglón libre no tiene ficha: la descripción se escribe. */}
-                                {it.cod_articulo > 0 ? it.descripcion : (
-                                    <input className="ed-libre" type="text" value={it.descripcion}
-                                           placeholder="Ej: COSTO DE DISTRIBUCION"
-                                           onChange={e => cambiar(idx, 'descripcion', e.target.value)} />
-                                )}
+                                {it.descripcion}
                                 {it.equivalencia_um != null && it.equivalencia_um !== 1 && (
                                     <span className="ed-um"> · {it.equivalencia_um} kg c/u</span>
                                 )}
-                                {it.cod_articulo === 0 && <span className="ed-tag libre">sin código</span>}
-                                {it.id == null && it.cod_articulo > 0 && <span className="ed-tag">nuevo</span>}
+                                {it.id == null && <span className="ed-tag">nuevo</span>}
                                 {/* Rojo cuando no alcanza el stock. Puede ser negativo: hay diferencias de inventario. */}
                                 {it.stock != null && it.stock < Number(it.cantidad) && (
                                     <span className="ed-falta"> · hay {it.stock}</span>
@@ -212,17 +222,16 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, onGu
                                        onChange={e => cambiar(idx, 'descuento_porc', e.target.value.replace(',', '.'))} />
                             </td>
                             <td className="n">
-                                {it.cod_articulo > 0
-                                    ? (it.precio != null
-                                        ? money(Number(it.precio) * Number(it.cantidad) * (1 - (Number(it.descuento_porc) || 0) / 100))
-                                        : '—')
-                                    : (
-                                        // Sin artículo no hay lista de dónde sacar el precio: se pone a mano.
-                                        <input className="ed-precio" type="text" inputMode="decimal"
-                                               placeholder="Precio"
-                                               value={it.precio != null ? String(it.precio) : ''}
-                                               onChange={e => cambiar(idx, 'precio', e.target.value.replace(',', '.'))} />
-                                    )}
+                                {/* El costo de distribución no tiene precio de lista: se escribe.
+                                    El resto muestra el importe ya calculado. */}
+                                {it.cod_articulo === COD_COSTO_DISTRIBUCION ? (
+                                    <input className="ed-precio" type="text" inputMode="decimal"
+                                           placeholder="Precio"
+                                           value={it.precio != null ? String(it.precio) : ''}
+                                           onChange={e => cambiar(idx, 'precio', e.target.value.replace(',', '.'))} />
+                                ) : it.precio != null
+                                    ? money(Number(it.precio) * Number(it.cantidad) * (1 - (Number(it.descuento_porc) || 0) / 100))
+                                    : '—'}
                             </td>
                             <td className="n">
                                 {/* Sacar de verdad: el renglón desaparece. No queda en cantidad 0. */}
@@ -252,14 +261,16 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, onGu
                         </button>
                     )}
                 </div>
-                {/* 🔑 El costo de distribución no es un producto del catálogo: va como renglón
-                    libre, con el texto y el precio a mano (Mati, 09/09/2026). */}
-                <button className="ed-btn ghost chico ed-libre-btn" onClick={() => setItems(xs => [...xs, {
-                    cod_articulo: 0, descripcion: 'COSTO DE DISTRIBUCION', cantidad: 1,
-                    cod_lista_precios: xs[xs.length - 1]?.cod_lista_precios ?? 12,
-                    descuento_porc: 0, precio: null,
-                }])}>
-                    <Plus size={13} /> Agregar un ítem sin código (costo de distribución)
+                {/* 🔑 El costo de distribución es el artículo 13819 y su precio se escribe a mano:
+                    no sale de ninguna lista (Mati, 09/09/2026). */}
+                <button className="ed-btn ghost chico ed-libre-btn"
+                        disabled={items.some(i => i.cod_articulo === COD_COSTO_DISTRIBUCION)}
+                        onClick={() => setItems(xs => [...xs, {
+                            cod_articulo: COD_COSTO_DISTRIBUCION, descripcion: 'COSTO DE DISTRIBUCION', cantidad: 1,
+                            cod_lista_precios: xs[xs.length - 1]?.cod_lista_precios ?? 12,
+                            descuento_porc: 0, precio: null,
+                        }])}>
+                    <Plus size={13} /> Agregar costo de distribución
                 </button>
                 {resultados && (
                     <div className="ed-resultados">
@@ -274,6 +285,15 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, onGu
                     </div>
                 )}
             </div>
+
+            {/* 🔑 Las observaciones son lo que la oficina lee justo antes de facturar: "facturar a
+                nombre de la SRL", "entregar el jueves temprano" (Mati, 09/09/2026). */}
+            <label className="ed-obs">
+                <span>Observaciones del presupuesto</span>
+                <textarea value={observaciones} rows={2} maxLength={500}
+                          placeholder="Lo que tiene que ver quien factura y quien entrega"
+                          onChange={e => setObservaciones(e.target.value)} />
+            </label>
 
             <div className="ed-pie">
                 <span className="ed-total">Total estimado <b>{money(total)}</b></span>

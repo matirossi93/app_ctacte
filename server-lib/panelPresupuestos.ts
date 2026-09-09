@@ -187,17 +187,15 @@ export async function detallePresupuesto(req: Request & { user?: JwtPayload }, r
     ]);
     if (cab.existe === false) { res.status(404).json({ error: 'El presupuesto ya no está en InfoManager.' }); return; }
 
-    // El precio sale de `/ventas/items` del día del comprobante: es el mismo camino que usa la
-    // facturación, así que muestra exactamente lo que se va a facturar.
-    const precios = new Map<number, { precio: number; iva_por: number }>();
-    if (cab.fecha) {
-      for (const it of await fetchVentasItems(cab.fecha, cab.fecha).catch(() => [] as any[])) {
-        if (String((it as any).id_comprobante) !== id) continue;
-        precios.set(Number((it as any).cod_articulo), {
-          precio: Number((it as any).precio ?? 0), iva_por: Number((it as any).iva_por ?? 0),
-        });
-      }
-    }
+    /**
+     * 🔄 El precio sale del PROPIO renglón (`getItemsComprobante`), no de un mapa por artículo
+     * armado con los renglones del día.
+     *
+     * Aquel mapa indexaba por `cod_articulo`, así que el mismo producto en dos renglones —el
+     * caso normal cuando van en listas distintas— tomaba las dos veces el precio del último. Y
+     * además no traía ni el descuento ni el precio bruto, que es justo lo que hace falta para
+     * poder rehacer el presupuesto sin descontar dos veces (09/09/2026).
+     */
 
     res.json({
       ok: true,
@@ -209,11 +207,11 @@ export async function detallePresupuesto(req: Request & { user?: JwtPayload }, r
       stock_consultado: !!stock,
       items: items.map(it => {
         const art = cat.get(Number(it.cod_articulo));
-        const p = precios.get(Number(it.cod_articulo));
         return {
           id: it.id,
           cod_articulo: it.cod_articulo,
-          descripcion: art?.descripcion ?? `Artículo ${it.cod_articulo}`,
+          // Un renglón sin artículo del catálogo (una nota escrita en IM) sólo tiene su texto.
+          descripcion: art?.descripcion ?? it.detalle ?? `Artículo ${it.cod_articulo}`,
           unidad_de_medida: art?.unidad_de_medida ?? null,
           // Kilos por bulto: es lo que dice si "30" son 30 kilos o 30 bolsas.
           equivalencia_um: art?.equivalencia_um ?? null,
@@ -221,8 +219,13 @@ export async function detallePresupuesto(req: Request & { user?: JwtPayload }, r
           cod_lista_precios: it.cod_lista_precios,
           // El código crudo (13, 14, 15) no le dice nada a nadie en la oficina.
           lista_nombre: it.cod_lista_precios != null ? nombreListaLargo(Number(it.cod_lista_precios)) : null,
-          precio: p?.precio ?? null,
-          importe: p ? Math.round(p.precio * it.cantidad * 100) / 100 : null,
+          // 🪤 `precio` viene NETO (con el descuento adentro) y `precio_orig` bruto. Para EDITAR
+          // hace falta el bruto: mandarle a IM el neto con el descuento al lado lo descuenta dos
+          // veces (es lo que rompió la factura 50401 de BIANCONI el 09/09/2026).
+          precio: it.precio_orig || null,
+          precio_neto: it.precio || null,
+          descuento_porc: it.descuento_porc || 0,
+          importe: Math.round(it.precio * it.cantidad * 100) / 100,
           // Cuánto hay en el depósito, en la misma unidad que la cantidad. Puede ser negativo:
           // hay diferencias de inventario y el número sirve para avisar, no para bloquear.
           stock: stock ? (stock.get(Number(it.cod_articulo)) ?? null) : null,
