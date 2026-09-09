@@ -47,12 +47,15 @@ function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): bo
 const LISTAS_VALIDAS = new Set([12, 13, 14, 15]);
 
 export interface RenglonEditado {
+  /** `0` = renglón libre, sin artículo del catálogo (el costo de distribución). */
   cod_articulo: number;
   cantidad: number;
   cod_lista_precios: number;
   descuento_porc: number;
   /** El precio BRUTO de lista. IM le aplica el descuento encima. */
   precio?: number;
+  /** Obligatorio en los renglones libres: es lo único que los describe. */
+  detalle?: string;
 }
 
 /**
@@ -111,8 +114,14 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
         cod_lista_precios: LISTAS_VALIDAS.has(Number(i.cod_lista_precios)) ? Number(i.cod_lista_precios) : 0,
         descuento_porc: Math.min(Math.max(Number(i.descuento_porc) || 0, 0), 100),
         precio: i.precio != null ? Number(i.precio) : undefined,
+        detalle: i.detalle ? String(i.detalle).trim().slice(0, 200) : undefined,
       }))
-      .filter(i => i.cod_articulo > 0 && i.cantidad > 0);
+      /**
+       * 🔑 Entra el renglón con artículo del catálogo Y el renglón LIBRE (`cod_articulo: 0` con
+       * detalle): así carga la oficina el costo de distribución, que no es un producto (Mati,
+       * 09/09/2026). Sin artículo el precio es obligatorio — no hay lista de dónde sacarlo.
+       */
+      .filter(i => i.cantidad > 0 && (i.cod_articulo > 0 || (!!i.detalle && Number.isFinite(i.precio))));
     if (!items.length) {
       res.status(400).json({ error: 'El presupuesto tiene que quedar con al menos un producto. Si hay que darlo de baja, anulalo en InfoManager.' });
       return;
@@ -142,7 +151,13 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
     if (cab.anulada === true) { res.status(409).json({ error: 'El presupuesto está ANULADO en InfoManager.' }); return; }
 
     const imItems = await getItemsComprobante(id);
-    const mismoSurtido = firmaDelSurtido(items) === firmaDelSurtido(imItems as any);
+    /**
+     * 🪤 Con renglones LIBRES (`cod_articulo: 0`) el camino barato no sirve: `emparejarParaPut`
+     * empareja por artículo y todos los libres comparten el código 0, así que dos de ellos se
+     * confundirían entre sí. Con uno solo en juego se recrea, que siempre es correcto.
+     */
+    const hayLibres = items.some(i => !(i.cod_articulo > 0)) || (imItems as any[]).some(i => !(Number(i.cod_articulo) > 0));
+    const mismoSurtido = !hayLibres && firmaDelSurtido(items) === firmaDelSurtido(imItems as any);
 
     // ── Camino barato: sólo cambiaron cantidades ──────────────────────────────
     if (mismoSurtido) {
@@ -190,6 +205,7 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
         cod_lista_precios: i.cod_lista_precios,
         descuento_porc: i.descuento_porc,
         ...(i.precio != null ? { precio: i.precio } : {}),
+        ...(i.detalle ? { detalle: i.detalle } : {}),
       })),
     });
     if (!creado.ok) {

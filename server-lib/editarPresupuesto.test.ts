@@ -252,3 +252,56 @@ describe('emparejarParaPut', () => {
     expect(emparejarParaPut([{ cod_articulo: 9, cantidad: 1 }], [{ id: 10, cod_articulo: 1 }])).toBeNull();
   });
 });
+
+describe('el ítem sin código (costo de distribución)', () => {
+  /**
+   * 🔑 Mati (09/09/2026): *"a algunos pedidos les cargamos el costo de distribución. Es un ítem
+   * aparte que no tiene código, le ponemos el precio"*. InfoManager lo soporta con
+   * `cod_articulo: 0` y detalle libre — se verificó en presupuestos reales cargados por la
+   * oficina desde su sistema.
+   */
+  it('🔑 entra un renglón sin artículo, con su texto y su precio', async () => {
+    const r = await llamar({ items: [
+      { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0 },
+      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0 },
+      { cod_articulo: 0, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0, precio: 15000, detalle: 'COSTO DE DISTRIBUCION' },
+    ] });
+    expect(r.status).toBe(200);
+    const enviados = m.crearPresupuesto.mock.calls[0][0].items;
+    expect(enviados[2]).toMatchObject({ cod_articulo: 0, precio: 15000, detalle: 'COSTO DE DISTRIBUCION' });
+  });
+
+  it('🔴 sin precio no entra: no hay lista de dónde sacarlo', async () => {
+    const r = await llamar({ items: [
+      { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0 },
+      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0 },
+      { cod_articulo: 0, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0, detalle: 'FLETE' },
+    ] });
+    // El renglón incompleto se descarta y queda sólo el producto: no se recrea por él.
+    expect(m.crearPresupuesto).not.toHaveBeenCalled();
+    expect(r.body.modo).toBe('cantidades');
+  });
+
+  it('🔴 sin detalle tampoco: nadie sabría qué es ese renglón', async () => {
+    await llamar({ items: [
+      { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0 },
+      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0 },
+      { cod_articulo: 0, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0, precio: 15000 },
+    ] });
+    expect(m.crearPresupuesto).not.toHaveBeenCalled();
+  });
+
+  it('🪤 con un renglón libre SIEMPRE se recrea: dos libres comparten el código 0', async () => {
+    // `emparejarParaPut` empareja por artículo, así que dos renglones sin código se
+    // confundirían entre sí y el PUT le pondría la cantidad de uno al otro.
+    m.getItemsComprobante.mockResolvedValue([
+      { id: 101, cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0 },
+      { id: 103, cod_articulo: 0, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0 },
+    ]);
+    const r = await llamar({ items: [
+      { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0 },
+      { cod_articulo: 0, cantidad: 2, cod_lista_precios: 13, descuento_porc: 0, precio: 15000, detalle: 'COSTO DE DISTRIBUCION' },
+    ] });
+    expect(r.body.modo).toBe('recreado');
+  });
+});

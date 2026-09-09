@@ -20,6 +20,10 @@ import './EditorPresupuesto.css';
 export interface ItemEditable {
     /** El id del renglón en IM. Los que se agregan acá todavía no tienen. */
     id?: number;
+    /**
+     * `0` = renglón LIBRE, sin artículo del catálogo. Es como la oficina carga el **costo de
+     * distribución** (Mati, 09/09/2026): no tiene código, se le escribe el texto y el precio.
+     */
     cod_articulo: number;
     descripcion: string;
     cantidad: number;
@@ -110,6 +114,9 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, onGu
     async function guardar() {
         if (!items.length) { setError('Tiene que quedar al menos un producto.'); return; }
         if (items.some(i => !(Number(i.cantidad) > 0))) { setError('Hay un renglón con cantidad cero o vacía. Sacalo con el tacho o poné una cantidad.'); return; }
+        // Un renglón sin código necesita las dos cosas: qué es y cuánto sale.
+        const libreIncompleto = items.find(i => i.cod_articulo === 0 && (!String(i.descripcion ?? '').trim() || !(Number(i.precio) > 0)));
+        if (libreIncompleto) { setError('El ítem sin código necesita una descripción y un precio.'); return; }
         if (seRecrea && !confirm(
             `Este cambio no se puede hacer sobre el mismo presupuesto: InfoManager sólo deja corregir cantidades.\n\n` +
             `Se va a crear un presupuesto NUEVO con estos datos y se va a anular el ${numero ?? ''}.\n\n` +
@@ -126,7 +133,9 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, onGu
                         cantidad: Number(i.cantidad),
                         cod_lista_precios: Number(i.cod_lista_precios),
                         descuento_porc: Number(i.descuento_porc) || 0,
-                        ...(i.precio != null ? { precio: i.precio } : {}),
+                        ...(i.precio != null ? { precio: Number(i.precio) } : {}),
+                        // Sin artículo, el detalle es lo único que dice qué es ese renglón.
+                        ...(i.cod_articulo === 0 ? { detalle: i.descripcion } : {}),
                     })),
                 }),
             });
@@ -171,11 +180,17 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, onGu
                     {items.map((it, idx) => (
                         <tr key={`${it.cod_articulo}-${it.id ?? 'nuevo'}-${idx}`} className={it.id == null ? 'ed-nuevo' : ''}>
                             <td>
-                                {it.descripcion}
+                                {/* Un renglón libre no tiene ficha: la descripción se escribe. */}
+                                {it.cod_articulo > 0 ? it.descripcion : (
+                                    <input className="ed-libre" type="text" value={it.descripcion}
+                                           placeholder="Ej: COSTO DE DISTRIBUCION"
+                                           onChange={e => cambiar(idx, 'descripcion', e.target.value)} />
+                                )}
                                 {it.equivalencia_um != null && it.equivalencia_um !== 1 && (
                                     <span className="ed-um"> · {it.equivalencia_um} kg c/u</span>
                                 )}
-                                {it.id == null && <span className="ed-tag">nuevo</span>}
+                                {it.cod_articulo === 0 && <span className="ed-tag libre">sin código</span>}
+                                {it.id == null && it.cod_articulo > 0 && <span className="ed-tag">nuevo</span>}
                                 {/* Rojo cuando no alcanza el stock. Puede ser negativo: hay diferencias de inventario. */}
                                 {it.stock != null && it.stock < Number(it.cantidad) && (
                                     <span className="ed-falta"> · hay {it.stock}</span>
@@ -197,9 +212,17 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, onGu
                                        onChange={e => cambiar(idx, 'descuento_porc', e.target.value.replace(',', '.'))} />
                             </td>
                             <td className="n">
-                                {it.precio != null
-                                    ? money(Number(it.precio) * Number(it.cantidad) * (1 - (Number(it.descuento_porc) || 0) / 100))
-                                    : '—'}
+                                {it.cod_articulo > 0
+                                    ? (it.precio != null
+                                        ? money(Number(it.precio) * Number(it.cantidad) * (1 - (Number(it.descuento_porc) || 0) / 100))
+                                        : '—')
+                                    : (
+                                        // Sin artículo no hay lista de dónde sacar el precio: se pone a mano.
+                                        <input className="ed-precio" type="text" inputMode="decimal"
+                                               placeholder="Precio"
+                                               value={it.precio != null ? String(it.precio) : ''}
+                                               onChange={e => cambiar(idx, 'precio', e.target.value.replace(',', '.'))} />
+                                    )}
                             </td>
                             <td className="n">
                                 {/* Sacar de verdad: el renglón desaparece. No queda en cantidad 0. */}
@@ -229,6 +252,15 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, onGu
                         </button>
                     )}
                 </div>
+                {/* 🔑 El costo de distribución no es un producto del catálogo: va como renglón
+                    libre, con el texto y el precio a mano (Mati, 09/09/2026). */}
+                <button className="ed-btn ghost chico ed-libre-btn" onClick={() => setItems(xs => [...xs, {
+                    cod_articulo: 0, descripcion: 'COSTO DE DISTRIBUCION', cantidad: 1,
+                    cod_lista_precios: xs[xs.length - 1]?.cod_lista_precios ?? 12,
+                    descuento_porc: 0, precio: null,
+                }])}>
+                    <Plus size={13} /> Agregar un ítem sin código (costo de distribución)
+                </button>
                 {resultados && (
                     <div className="ed-resultados">
                         {!resultados.length && <div className="ed-sinres">No encontré nada con eso.</div>}

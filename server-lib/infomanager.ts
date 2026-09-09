@@ -618,8 +618,15 @@ export function invalidateClientesIMCache(): void { clientesIMCache = null; }
 //   5. total/neto/IVA se autocalculan si se envían en 0.
 
 export interface PresupuestoItemInput {
+  /**
+   * 🔑 `0` = renglón LIBRE, sin artículo del catálogo. Es como la oficina carga el **costo de
+   * distribución** (Mati, 09/09/2026): no tiene código, se le escribe el detalle y el precio.
+   * El sistema propio de InfoManager lo hace así, y se verificó en presupuestos reales.
+   */
   cod_articulo: number;
   cantidad: number;
+  /** El texto del renglón. Obligatorio cuando `cod_articulo` es 0: es lo único que lo describe. */
+  detalle?: string;
   /** BRUTO, el de la lista. IM le aplica `descuento_porc` encima: NO mandar el ya rebajado. */
   precio?: string | number;
   cod_cuenta?: string;        // cuenta contable de venta (default IM_CUENTA_VENTA)
@@ -712,6 +719,8 @@ export async function crearPresupuesto(input: CrearPresupuestoInput): Promise<Pr
         cod_articulo: it.cod_articulo,
         cantidad: it.cantidad,
         iva_por: it.iva_por ?? 21,
+        // Sin artículo del catálogo, el detalle es lo único que dice qué es ese renglón.
+        ...(it.detalle ? { detalle: String(it.detalle).slice(0, 200) } : {}),
         ...(bruto != null && Number.isFinite(bruto) ? { precio: bruto, precio_orig: bruto, precio_con_iva: bruto } : {}),
         ...(Number.isFinite(cuenta) ? { cod_cuenta: cuenta } : {}),
         ...(it.descuento_porc != null ? { descuento_porc: it.descuento_porc } : {}),
