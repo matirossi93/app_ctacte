@@ -58,6 +58,37 @@ function fechaPedida(req: Request): string {
 }
 
 /**
+ * Tope del rango de la hoja de ruta. Mismo criterio que la etapa 1: cada día que se agrega es
+ * una consulta más de renglones contra IM, así que un rango sin techo cuelga la pantalla.
+ */
+const MAX_RANGO_DIAS = 31;
+
+/**
+ * `?desde=&hasta=` — el rango que se está mirando.
+ *
+ * 🔑 Mati (09/09/2026): *"en la parte de hoja de ruta también el selector de fecha tiene que ser
+ * por rango"*. Antes esta pantalla trabajaba por DÍA (`?fecha=`) con un `?dias=N` para estirar
+ * hacia atrás; las otras tres etapas ya iban por rango y el rango del header no llegaba acá.
+ *
+ * 🪤 Se siguen aceptando `fecha` y `dias`: los usa el sugeridor y cualquier pantalla vieja que
+ * haya quedado abierta. Si vienen los dos, gana el rango explícito.
+ */
+export function rangoPedido(req: Request): { desde: string; hasta: string } {
+  const ok = (v: unknown) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) ? String(v) : null);
+  const q: any = req.query ?? {};
+  const hasta = ok(q.hasta) ?? ok(q.fecha) ?? fechaArgentina();
+  // Sin `desde`, se respeta el `?dias=N` de siempre (0 = sólo ese día).
+  const dias = Math.min(Math.max(Number(q.dias) || 0, 0), VENTANA_DIAS);
+  let desde = ok(q.desde)
+    ?? (dias > 0 ? fechaArgentina(new Date(hasta + 'T12:00:00Z').getTime() - dias * 864e5) : hasta);
+  if (desde > hasta) desde = hasta;
+  // El tope se aplica RECORTANDO POR ATRÁS: lo más nuevo es lo que se está por despachar.
+  const piso = fechaArgentina(new Date(hasta + 'T12:00:00Z').getTime() - MAX_RANGO_DIAS * 864e5);
+  if (desde < piso) desde = piso;
+  return { desde, hasta };
+}
+
+/**
  * GET /api/hojas-ruta/pendientes?fecha= — los comprobantes del día para armar las hojas.
  *
  * Trae de IM los presupuestos vigentes de esa fecha, y de cada uno: cliente, zona, bultos,
@@ -70,12 +101,11 @@ function fechaPedida(req: Request): string {
 export async function pendientesDelDia(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
   try {
-    const fecha = fechaPedida(req);
-    // `?dias=N` para incluir los vigentes de días anteriores. El default es 0 porque la
-    // pantalla tiene que abrir rápido; el aviso de que hay pedidos viejos lo da /arrastre.
-    const dias = Math.min(Math.max(Number(req.query.dias) || 0, 0), VENTANA_DIAS);
-    const armado = await armarVistaDelDia(fecha, dias, req.query.refrescar === '1');
-    res.json({ ok: true, fecha, dias, ...armado });
+    const { desde, hasta } = rangoPedido(req);
+    const armado = await vistaRemitos(desde, hasta, req.query.refrescar === '1');
+    // `fecha` y `dias` siguen saliendo para no romper una pantalla vieja que los lea.
+    const dias = Math.round((Date.parse(hasta) - Date.parse(desde)) / 864e5);
+    res.json({ ok: true, desde, hasta, fecha: hasta, dias, ...armado });
   } catch (err: any) {
     console.error('[pendientesDelDia]', err?.message);
     res.status(502).json({ error: `No se pudieron traer los pedidos del día: ${err?.message ?? 'sin respuesta de IM'}` });
@@ -124,9 +154,10 @@ async function armarVistaDelDia(fecha: string, dias = 0, forzar = false) {
 export async function sugerenciaDelDia(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
   try {
-    const fecha = fechaPedida(req);
+    const rango = rangoPedido(req);
+    const fecha = rango.hasta;
     const [{ pendientes }, { data: camiones }] = await Promise.all([
-      armarVistaDelDia(fecha, Math.min(Math.max(Number(req.query.dias) || 0, 0), VENTANA_DIAS)),
+      vistaRemitos(rango.desde, rango.hasta),
       sb().from('hojas_ruta_camiones').select('id, nombre, capacidad_kg')
         .eq('tenant_id', TENANT_ID).eq('activo', true),
     ]);
@@ -150,15 +181,17 @@ export async function sugerenciaDelDia(req: Request & { user?: JwtPayload }, res
 export async function arrastreDelDia(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
   try {
-    const fecha = fechaPedida(req);
-    const desde = fechaArgentina(new Date(fecha + 'T12:00:00Z').getTime() - VENTANA_DIAS * 864e5);
+    // 🔑 "Anterior" es anterior al INICIO del rango que se está mirando, no al día de hoy: con un
+    // rango de tres días, los remitos de esos tres días ya están en pantalla y no son arrastre.
+    const { desde: inicio, hasta: fecha } = rangoPedido(req);
+    const desde = fechaArgentina(new Date(inicio + 'T12:00:00Z').getTime() - VENTANA_DIAS * 864e5);
     const ventas = await fetchVentas(desde, fecha);
     // 🔄 Cuenta REMITOS, igual que la pantalla: un remito de la semana pasada que no salió es
     // mercadería facturada esperando el camión, y ése es el aviso que importa.
     const previos = ventas.filter((v: any) =>
       String(v.tipo_comprobante ?? '').trim() === 'RE' &&
       String(v.anulada ?? '').trim().toUpperCase() !== 'S' &&
-      String(v.fecha ?? '').slice(0, 10) !== fecha);
+      String(v.fecha ?? '').slice(0, 10) < inicio);
     const ids = previos.map((p: any) => String(p.id));
     /**
      * 🪤 Esto truncaba en 400 ids. Con remitos son ~55-67 por día contra ~39 presupuestos, así
@@ -191,10 +224,12 @@ export async function arrastreDelDia(req: Request & { user?: JwtPayload }, res: 
 export async function listarHojas(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
   try {
-    const fecha = fechaPedida(req);
+    // 🔑 Por RANGO, igual que los pendientes: si la pantalla muestra tres días de pedidos y las
+    // hojas de un solo día, los pedidos ya asignados aparecen como si nadie los hubiera tocado.
+    const { desde, hasta } = rangoPedido(req);
     const { data: hojas, error } = await sb().from('hojas_ruta')
       .select('*, hojas_ruta_camiones(nombre, capacidad_kg), choferes(nombre), hojas_ruta_pedidos(*)')
-      .eq('tenant_id', TENANT_ID).eq('fecha', fecha).order('numero');
+      .eq('tenant_id', TENANT_ID).gte('fecha', desde).lte('fecha', hasta).order('fecha').order('numero');
     if (error) { res.status(500).json({ error: error.message }); return; }
     // 🔑 Lo emitido se cruza contra `presupuestos_facturados`, que es la fuente viva: los campos
     // copiados en `hojas_ruta_pedidos` son de cuando se armó la hoja, y si el pedido se facturó
@@ -234,7 +269,7 @@ export async function listarHojas(req: Request & { user?: JwtPayload }, res: Res
         carga: cargaDelCamion(kg, cap),
       };
     });
-    res.json({ ok: true, fecha, hojas: conCarga });
+    res.json({ ok: true, desde, hasta, fecha: hasta, hojas: conCarga });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'error' });
   }

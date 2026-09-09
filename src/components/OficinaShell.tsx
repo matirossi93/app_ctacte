@@ -41,7 +41,12 @@ export function OficinaShell() {
     const [desde, setDesde] = useState(hoyISO());
     const [hasta, setHasta] = useState(hoyISO());
 
-    const conRango = tab !== 'hojas';
+    /**
+     * 🔑 El rango vale para LAS CUATRO etapas. Hasta el 09/09/2026 la hoja de ruta quedaba afuera
+     * y tenía su propio selector de un día: Mati pidió que también fuera por rango, porque la
+     * hoja se arma con pedidos de varios días.
+     */
+    const conRango = true;
 
     return (
         <div className="of-root">
@@ -81,8 +86,8 @@ export function OficinaShell() {
                 </div>
             </header>
 
-            {/* El rango vale para las tres primeras etapas: lo que se revisa es lo que se fracciona y
-        lo que se factura. La hoja se arma por día y tiene su propio selector. */}
+            {/* El rango vale para las cuatro etapas: lo que se revisa es lo que se fracciona, lo que
+        se factura y lo que sale en el camión. */}
             {conRango && (
                 <div className="of-rango">
                     <label>
@@ -107,7 +112,7 @@ export function OficinaShell() {
                 {tab === 'presupuestos' && <PresupuestosShell desde={desde} hasta={hasta} />}
                 {tab === 'fraccionado' && <FraccionadoView desde={desde} hasta={hasta} />}
                 {tab === 'facturacion' && <FacturacionView desde={desde} hasta={hasta} />}
-                {tab === 'hojas' && <EntregasView />}
+                {tab === 'hojas' && <EntregasView desde={desde} hasta={hasta} />}
             </main>
         </div>
     );

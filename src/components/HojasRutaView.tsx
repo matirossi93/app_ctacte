@@ -90,15 +90,18 @@ interface Hoja {
 interface Camion { id: string; nombre: string; capacidad_kg: number }
 interface Chofer { id: string; nombre: string }
 
-const hoyISO = () => {
-    const d = new Date(Date.now() - 3 * 60 * 60 * 1000);   // Argentina es UTC-3 fija
-    return d.toISOString().slice(0, 10);
-};
 const money = (n: number) => '$' + Math.round(n).toLocaleString('es-AR');
 const kilos = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 0 }) + ' kg';
 
-export function HojasRutaView() {
-    const [fecha, setFecha] = useState(hoyISO());
+/**
+ * 🔑 El rango baja del header, igual que en Presupuestos, Fraccionado y Facturación. Mati
+ * (09/09/2026): *"en la parte de hoja de ruta también el selector de fecha tiene que ser por
+ * rango"*. Antes esta pantalla tenía su propio selector de UN día y su propio `?dias=N` para
+ * estirar hacia atrás, así que el rango que elegía la oficina arriba no llegaba hasta acá.
+ */
+export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }) {
+    /** La fecha con la que se crea una hoja nueva: el final del rango, o sea el día de despacho. */
+    const fecha = hasta;
     const [pendientes, setPendientes] = useState<Pendiente[]>([]);
     const [hojas, setHojas] = useState<Hoja[]>([]);
     const [camiones, setCamiones] = useState<Camion[]>([]);
@@ -109,8 +112,6 @@ export function HojasRutaView() {
     const [sel, setSel] = useState<Set<string>>(new Set());
     const [trabajando, setTrabajando] = useState(false);
     const [aviso, setAviso] = useState<string | null>(null);
-    /** Días hacia atrás que se están mirando. 0 = sólo el día elegido, que es lo rápido. */
-    const [dias, setDias] = useState(0);
     /** Cuántos pedidos vigentes quedaron de días anteriores. null = todavía no se sabe. */
     const [arrastre, setArrastre] = useState<number | null>(null);
     /** Días cuyos renglones no se pudieron traer: los kilos de esos remitos van en 0. */
@@ -137,10 +138,10 @@ export function HojasRutaView() {
      * (Mati, 07/09/2026: "revisar y pulir la velocidad al interactuar con la página").
      */
     const cargarHojas = useCallback(async () => {
-        const h = await fetch(`/api/hojas-ruta?fecha=${fecha}`, { headers: authHeaders() });
+        const h = await fetch(`/api/hojas-ruta?desde=${desde}&hasta=${hasta}`, { headers: authHeaders() });
         const d = await h.json().catch(() => null);
         if (h.ok) setHojas(d?.hojas ?? []);
-    }, [fecha]);
+    }, [desde, hasta]);
 
     /**
      * Los pendientes: esto sí va a IM y tarda unos segundos.
@@ -159,7 +160,7 @@ export function HojasRutaView() {
             .catch(() => { /* sin la flota igual se puede armar la hoja */ });
         try {
             const p = await fetch(
-                `/api/hojas-ruta/pendientes?fecha=${fecha}&dias=${dias}${refrescar ? '&refrescar=1' : ''}`,
+                `/api/hojas-ruta/pendientes?desde=${desde}&hasta=${hasta}${refrescar ? '&refrescar=1' : ''}`,
                 { headers: authHeaders() });
             const dp = await p.json().catch(() => null);
             if (!p.ok) throw new Error(dp?.error ?? 'No se pudieron traer los pedidos');
@@ -174,7 +175,7 @@ export function HojasRutaView() {
         } finally {
             setCargando(false);
         }
-    }, [fecha, dias, cargarHojas]);
+    }, [desde, hasta, cargarHojas]);
 
     useEffect(() => { void cargar(); }, [cargar]);
 
@@ -202,12 +203,12 @@ export function HojasRutaView() {
     useEffect(() => {
         let vivo = true;
         setArrastre(null);
-        fetch(`/api/hojas-ruta/arrastre?fecha=${fecha}`, { headers: authHeaders() })
+        fetch(`/api/hojas-ruta/arrastre?desde=${desde}&hasta=${hasta}`, { headers: authHeaders() })
             .then(r => r.ok ? r.json() : null)
             .then(d => { if (vivo && d?.ok) setArrastre(d.cantidad ?? 0); })
             .catch(() => { /* el aviso es opcional: si no se puede contar, no se muestra */ });
         return () => { vivo = false; };
-    }, [fecha]);
+    }, [desde, hasta]);
 
     /** Agrupados por zona: es como se arma la hoja y como los mira la oficina. */
     const porZona = useMemo(() => {
@@ -432,10 +433,13 @@ export function HojasRutaView() {
     return (
         <div className="hr-root">
             <div className="hr-top">
-                <label className="hr-fecha">
-                    Fecha
-                    <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} />
-                </label>
+                {/* La fecha la elige el rango del header. Acá se dice con cuál queda la hoja nueva,
+                    que es el final del rango: el día en que sale el camión. */}
+                <span className="hr-fecha-rango">
+                    {desde === hasta
+                        ? <>Día <b>{desde.slice(8, 10)}/{desde.slice(5, 7)}</b></>
+                        : <>Del <b>{desde.slice(8, 10)}/{desde.slice(5, 7)}</b> al <b>{hasta.slice(8, 10)}/{hasta.slice(5, 7)}</b></>}
+                </span>
                 <button className="hr-btn ghost" onClick={() => void cargar(true)} disabled={cargando}>
                     <RefreshCw size={15} className={cargando ? 'spin' : ''} /> Actualizar
                 </button>
@@ -455,17 +459,13 @@ export function HojasRutaView() {
                 </div>
             </div>
 
-            {dias === 0 && !!arrastre && (
+            {!!arrastre && (
                 <div className="hr-aviso">
                     <AlertTriangle size={15} />
-                    <span>Hay <b>{arrastre}</b> pedidos de días anteriores que siguen sin salir.</span>
-                    <button className="hr-btn chico" onClick={() => setDias(15)} disabled={cargando}>Traerlos</button>
-                </div>
-            )}
-            {dias > 0 && (
-                <div className="hr-aviso">
-                    <span>Mostrando también los pedidos de los últimos {dias} días.</span>
-                    <button className="hr-btn chico" onClick={() => setDias(0)} disabled={cargando}>Ver sólo el día</button>
+                    <span>
+                        Hay <b>{arrastre}</b> pedidos anteriores al {desde.slice(8, 10)}/{desde.slice(5, 7)} que
+                        siguen sin salir. Estirá el <b>Desde</b> de arriba para verlos.
+                    </span>
                 </div>
             )}
             {aviso && <div className="hr-aviso"><AlertTriangle size={15} /><span>{aviso}</span><button onClick={() => setAviso(null)}><X size={14} /></button></div>}

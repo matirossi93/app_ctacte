@@ -11,6 +11,13 @@
     border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text);
     font-family: inherit; font-size: 0.88rem; padding: 0.4rem 0.6rem; border-radius: var(--radius-sm);
 }
+/* El rango lo elige el header; acá sólo se recuerda cuál es. */
+.hr-fecha-rango {
+    font-size: 0.82rem; color: var(--color-text-muted);
+    border: 1px solid var(--color-border); background: var(--color-surface);
+    padding: 0.35rem 0.6rem; border-radius: var(--radius-sm);
+}
+.hr-fecha-rango b { color: var(--color-text); }
 .hr-resumen { display: flex; align-items: center; gap: 0.9rem; margin-left: auto; font-size: 0.85rem; color: var(--color-text-muted); }
 .hr-resumen b { color: var(--color-text); }
 .hr-chip-aviso {

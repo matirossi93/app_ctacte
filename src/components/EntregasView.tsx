@@ -22,7 +22,7 @@ import './EntregasView.css';
 
 type Seccion = 'hojas' | 'retiros' | 'liquidacion';
 
-export function EntregasView() {
+export function EntregasView({ desde, hasta }: { desde: string; hasta: string }) {
     const [seccion, setSeccion] = useState<Seccion>('hojas');
 
     return (
@@ -39,7 +39,7 @@ export function EntregasView() {
                 </button>
             </nav>
 
-            {seccion === 'hojas' && <HojasRutaView />}
+            {seccion === 'hojas' && <HojasRutaView desde={desde} hasta={hasta} />}
             {seccion === 'retiros' && <RetirosView />}
             {seccion === 'liquidacion' && <LiquidacionView />}
         </div>
