@@ -4,6 +4,7 @@ import {
     Trash2, RotateCcw, MessageSquare,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
+import { useRecargarAlVolver } from '../utils/recargarAlVolver';
 import './PresupuestosView.css';
 
 /**
@@ -115,6 +116,19 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
     }, [desde, hasta]);
 
     useEffect(() => { void cargar(); }, [cargar]);
+
+
+    /**
+
+     * 🔑 Al volver de InfoManager, recargar. Jorgelina edita allá y vuelve acá, y la pantalla
+
+     * mostraba lo de antes (Mati, 09/09/2026). Va con `true` para saltear el cache del server:
+
+     * justamente lo que cambió es lo que está guardado.
+
+     */
+
+    useRecargarAlVolver(() => { void cargar(true); });
 
     const visibles = useMemo(() => filas.filter(p => {
         if (filtro === 'todos') return true;

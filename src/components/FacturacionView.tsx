@@ -3,6 +3,7 @@ import {
     AlertTriangle, Loader2, RefreshCw, Receipt, CheckCircle2, X, FileWarning,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
+import { useRecargarAlVolver } from '../utils/recargarAlVolver';
 import { FacturarModal } from './FacturarModal';
 import './FacturacionView.css';
 
@@ -69,6 +70,11 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
     }, [desde, hasta]);
 
     useEffect(() => { void cargar(); }, [cargar]);
+
+
+    // 🔴 La más sensible de las tres: emitir sobre datos viejos factura lo que ya no es.
+
+    useRecargarAlVolver(() => { void cargar(true); });
 
     const elegidos = useMemo(() => pendientes.filter(p => sel.has(p.im_comprobante_id)), [pendientes, sel]);
     const importeElegido = elegidos.reduce((s, p) => s + Number(p.total ?? 0), 0);

@@ -5,6 +5,7 @@ import {
     MessageSquare,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
+import { useRecargarAlVolver } from '../utils/recargarAlVolver';
 import { ImprimirHoja } from './ImprimirHoja';
 import { AjustesHojaModal } from './AjustesHojaModal';
 import './HojasRutaView.css';
@@ -176,6 +177,9 @@ export function HojasRutaView() {
     }, [fecha, dias, cargarHojas]);
 
     useEffect(() => { void cargar(); }, [cargar]);
+
+    // Al volver de InfoManager: si allá se facturó o se anuló algo, acá tiene que verse.
+    useRecargarAlVolver(() => { void cargar(true); });
 
     /**
      * Los choferes. Se piden UNA sola vez: son seis y no cambian de un día para el otro, así que

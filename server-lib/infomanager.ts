@@ -858,28 +858,69 @@ export function parsePrecioLista(data: any, codArticulo: number): PrecioLista | 
  * `anulada: null` es "no sé" (IM no contestó, o no mandó el campo) y NO es lo mismo que
  * false: quien llama lo tiene que tratar distinto.
  */
+/** Lo que se sabe de la cabecera de un comprobante de IM. */
+export interface CabeceraComprobante {
+  fecha: string | null;
+  /** `null` = no se pudo preguntar. NO es lo mismo que "no está anulada". */
+  anulada: boolean | null;
+  /** `false` = IM contestó 404 (los anulados se borran a mano seguido). `null` = no se sabe. */
+  existe: boolean | null;
+  observaciones: string | null;
+  numero: number | null;
+  cod_cliente: number | null;
+  cod_vendedor: string | null;
+  cod_empresa: number | null;
+  cod_lista_precios: number | null;
+  punto_de_venta: number | null;
+  usuario: string | null;
+  /** 'C' = confirmado · 'NC' = no confirmado. NO dice si está facturado (medido el 09/09/2026). */
+  tipo_presupuesto: string | null;
+  fecha_entrega: string | null;
+}
+
 export async function cabeceraComprobante(
   idComprobante: string | number,
-): Promise<{ fecha: string | null; anulada: boolean | null; existe: boolean | null; observaciones: string | null }> {
+): Promise<CabeceraComprobante> {
   try {
     const cli = await imClient();
     const { data } = await imGetRetry(() => cli.get(`/ventas/${idComprobante}`), `ventas/${idComprobante} cabecera`);
-    const f = data?.fecha ?? data?.results?.fecha ?? data?.venta?.fecha;
-    const a = data?.anulada ?? data?.results?.anulada ?? data?.venta?.anulada;
-    const o = data?.observaciones ?? data?.results?.observaciones ?? data?.venta?.observaciones;
+    const c = data?.results ?? data?.venta ?? data ?? {};
+    const f = c.fecha;
+    const a = c.anulada;
+    const o = c.observaciones;
+    const num = (v: unknown) => (v == null || v === '' ? null : Number(v));
     return {
       fecha: typeof f === 'string' && f.length >= 10 ? f.slice(0, 10) : null,
       anulada: a == null ? null : String(a).trim().toUpperCase() === 'S',
       existe: true,
       // Lo que escribió el vendedor: la oficina lo usa para facturar.
       observaciones: typeof o === 'string' && o.trim() ? o.trim() : null,
+      /**
+       * 🔑 Lo que hace falta para RECREAR el comprobante. Editar de verdad no se puede por la
+       * API (sólo cambia `cantidad`), así que cambiar una lista o agregar un producto obliga a
+       * crear uno nuevo y anular el viejo — y para eso hay que saber de quién era, de qué
+       * empresa y con qué lista se armó.
+       */
+      numero: num(c.numero),
+      cod_cliente: num(c.cod_cliente),
+      cod_vendedor: c.cod_vendedor != null ? String(c.cod_vendedor) : null,
+      cod_empresa: num(c.cod_empresa),
+      cod_lista_precios: num(c.cod_lista_precios),
+      punto_de_venta: num(c.punto_de_venta),
+      usuario: c.usuario != null ? String(c.usuario) : null,
+      tipo_presupuesto: c.tipo_presupuesto != null ? String(c.tipo_presupuesto) : null,
+      fecha_entrega: typeof c.fecha_entrega === 'string' && c.fecha_entrega.length >= 10 ? c.fecha_entrega.slice(0, 10) : null,
     };
   } catch (err: any) {
     // 🔑 404 = el comprobante YA NO ESTÁ en IM. No es lo mismo que "no pude preguntar":
     // los anulados se borran a mano seguido, así que un pedido puede quedar apuntando a un
     // id muerto — y por el camino barato eso termina en un 500 sin explicación.
     // `existe: null` es "no sé" (IM no contestó) y no habilita a nadie a asumir nada.
-    return { fecha: null, anulada: null, existe: err?.response?.status === 404 ? false : null, observaciones: null };
+    return {
+      fecha: null, anulada: null, existe: err?.response?.status === 404 ? false : null, observaciones: null,
+      numero: null, cod_cliente: null, cod_vendedor: null, cod_empresa: null,
+      cod_lista_precios: null, punto_de_venta: null, usuario: null, tipo_presupuesto: null, fecha_entrega: null,
+    };
   }
 }
 
