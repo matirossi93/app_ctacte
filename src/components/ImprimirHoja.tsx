@@ -102,9 +102,16 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
 
                     <table className="imp-tabla">
                         <thead>
+                            {/* 🔄 09/09/2026. Salía una columna de BULTOS que al repartidor no le sirve
+                                (Mati: *"no es relevante para el reparto"*), y el importe de cada
+                                comprobante sin el total del cliente al lado: con dos pedidos del mismo
+                                cliente en la hoja no se sabía cuál era cuál ni cuánto había que cobrar.
+                                Ahora va el importe de cada pedido y, al lado, LO QUE SE LE COBRA a ese
+                                cliente — una sola celda para todas sus filas. */}
                             <tr>
-                                <th>Cliente</th><th className="c">Comprob.</th><th className="n">Bultos</th>
+                                <th>Cliente</th><th className="c">Comprob.</th>
                                 <th className="n">Kilos</th><th className="n">Importe</th>
+                                <th className="n">Total cliente</th>
                                 <th className="n">Cobrado</th><th className="n">Saldo anterior</th>
                             </tr>
                         </thead>
@@ -112,45 +119,44 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
                             cliente entre dos páginas al imprimir, y las filas no se cruzan.
                             Antes iban todas en un <tbody> con fragments sin key. */}
                         {datos.clientes.map(c => {
-                            // 🪤 Con UN solo comprobante la fila "Total" repetía exactamente los
-                            // mismos números y duplicaba el largo de la hoja al pedo. El subtotal
-                            // sólo aparece cuando el cliente lleva varios.
-                            const varios = c.comprobantes.length > 1;
+                            const filas = c.comprobantes.length;
                             return (
                             <tbody className="imp-grupo" key={c.cod_cliente}>
                                 {c.comprobantes.map((x, i) => (
                                     <tr key={c.cod_cliente + '-' + (x.im_numero ?? i)}>
                                         <td>{i === 0 ? <b>{c.cliente_nombre}</b> : ''}</td>
                                         <td className="c">{x.im_remito_numero ?? x.im_numero ?? '—'}</td>
-                                        <td className="n">{num(x.bultos)}</td>
                                         <td className="n">{num(x.kg)}</td>
                                         <td className="n">{money(x.total)}</td>
+                                        {/* 🔑 Una sola celda para TODAS las filas del cliente: es la plata
+                                            que el repartidor tiene que cobrar en esa puerta, sin sumar
+                                            nada de cabeza. Con `rowSpan` no se puede repetir por error. */}
+                                        {i === 0 && (
+                                            <td className="n total-cli" rowSpan={filas}>
+                                                {money(c.total)}
+                                                {filas > 1 && <span className="imp-cuantos"> ({filas} pedidos)</span>}
+                                            </td>
+                                        )}
                                         <td className="n escribir"></td>
-                                        {/* El saldo anterior YA IMPRESO: es lo que hoy escriben a
-                                            mano. Va en la última fila del cliente. */}
-                                        <td className="n saldo">
-                                            {!varios ? (c.saldo_anterior != null ? money(c.saldo_anterior) : '—') : ''}
-                                        </td>
+                                        {/* El saldo anterior YA IMPRESO: es lo que hoy escriben a mano
+                                            antes de que salga el camión. Uno por cliente, como el total. */}
+                                        {i === 0 && (
+                                            <td className="n saldo" rowSpan={filas}>
+                                                {c.saldo_anterior != null ? money(c.saldo_anterior) : '—'}
+                                            </td>
+                                        )}
                                     </tr>
                                 ))}
-                                {varios && (
-                                    <tr className="imp-total-cli">
-                                        <td colSpan={2}>Total · {c.comprobantes.length} comprobantes</td>
-                                        <td className="n">{num(c.bultos)}</td>
-                                        <td className="n">{num(c.kg)}</td>
-                                        <td className="n">{money(c.total)}</td>
-                                        <td className="n escribir"></td>
-                                        <td className="n saldo">{c.saldo_anterior != null ? money(c.saldo_anterior) : '—'}</td>
-                                    </tr>
-                                )}
                             </tbody>
                             );
                         })}
                         <tfoot>
                             <tr>
                                 <td colSpan={2}>TOTAL · {datos.totales.clientes} clientes</td>
-                                <td className="n">{num(datos.totales.bultos)}</td>
                                 <td className="n">{num(datos.totales.kg)}</td>
+                                {/* El total va UNA vez, bajo "Total cliente", que es la columna que se
+                                    lee. Repetirlo en las dos parece un error de la planilla. */}
+                                <td className="n"></td>
                                 <td className="n">{money(datos.totales.total)}</td>
                                 <td className="n escribir"></td>
                                 <td className="n escribir"></td>

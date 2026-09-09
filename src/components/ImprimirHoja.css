@@ -80,6 +80,10 @@
 .imp-tabla .escribir { min-width: 88px; background: #fffdf9; }
 /* El saldo anterior SÍ va impreso: es lo que hoy escriben a mano antes de que salga el camión. */
 .imp-tabla .saldo { font-weight: 700; color: #06652F; background: #fff; }
+/* Lo que hay que cobrarle a ese cliente, sumando todos sus pedidos. Es el número que mira el
+   repartidor en la puerta, así que se lee más fuerte que el importe de cada comprobante. */
+.imp-tabla .total-cli { font-weight: 700; background: #FAF4EA; vertical-align: middle; }
+.imp-tabla .imp-cuantos { display: block; font-weight: 500; font-size: 0.86em; color: #7a6a55; }
 .imp-tabla tfoot td { background: #F0DFCB; font-weight: 700; border-top: 2px solid #06652F; }
 
 /* Fraccionado: cada cantidad es un paquete y va en su caja, para tildarlas al preparar. */
