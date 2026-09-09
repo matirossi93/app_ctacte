@@ -15,7 +15,16 @@ import './FraccionadoView.css';
  * es lo que seguro se va a entregar.
  */
 
-interface Linea { descripcion: string; cantidades: number[]; paquetes: number; kg: number }
+interface Linea {
+    descripcion: string; cantidades: number[]; paquetes: number; kg: number;
+    /**
+     * 🔑 Bolsas cerradas que NO hay que fraccionar: la cantidad pedida era un múltiplo exacto
+     * del formato (Mati, 09/09/2026: *"si dice 60 kilos, son 2 bolsas de 30"*). Se informan
+     * para que el sector sepa que se contemplaron y no las busque.
+     */
+    bolsas_enteras: number;
+    formato_bolsa: number | null;
+}
 
 const num = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 2 });
 const fechaCorta = (iso: string) => (iso ? iso.slice(0, 10).split('-').reverse().join('/') : '');
@@ -115,6 +124,14 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
                                     <td>
                                         <div className="fr-cajitas">
                                             {l.cantidades.map((c, i) => <span className="fr-cajita" key={i}>{num(c)}</span>)}
+                                            {/* Las bolsas cerradas van marcadas aparte: se agarran del depósito
+                                                y no se abren. Si no se mostraran, el sector las buscaría. */}
+                                            {l.bolsas_enteras > 0 && (
+                                                <span className="fr-bolsas">
+                                                    + {l.bolsas_enteras} bolsa{l.bolsas_enteras === 1 ? '' : 's'} cerrada{l.bolsas_enteras === 1 ? '' : 's'}
+                                                    {l.formato_bolsa ? ` de ${l.formato_bolsa} kg` : ''} (no fraccionar)
+                                                </span>
+                                            )}
                                         </div>
                                     </td>
                                     <td className="n">{l.paquetes}</td>

@@ -200,7 +200,9 @@ describe('el listado de fraccionado', () => {
     const r = await llamar(fraccionadoDelRango, { query: { desde: '2026-09-08', hasta: '2026-09-08' } });
 
     expect(r.body.comprobantes).toBe(1);
-    expect(r.body.fraccionado[0]).toMatchObject({ descripcion: 'MEZCLA FINA', cantidades: [30] });
+    // 🔄 Desde el 09/09/2026 cada renglón se parte en paquetes de 10 kg como máximo (Mati: "no
+    // se fracciona más de 10 kilos"). Sin formato de bolsa conocido, 30 kg son tres paquetes.
+    expect(r.body.fraccionado[0]).toMatchObject({ descripcion: 'MEZCLA FINA', cantidades: [10, 10, 10] });
   });
 
   it('con ?todos=1 se ve todo, para adelantar trabajo antes de terminar la revisión', async () => {
@@ -211,7 +213,7 @@ describe('el listado de fraccionado', () => {
     ]);
     const r = await llamar(fraccionadoDelRango, { query: { todos: '1' } });
     expect(r.body.comprobantes).toBe(2);
-    expect(r.body.fraccionado[0].cantidades).toEqual([30, 20]);
+    expect(r.body.fraccionado[0].cantidades).toEqual([10, 10, 10, 10, 10])   // 30 y 20 kg, en paquetes de 10 (regla del 09/09/2026);
   });
 
   it('sin nada aprobado devuelve vacío sin salir a pedirle renglones a IM', async () => {

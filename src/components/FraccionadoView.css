@@ -85,3 +85,11 @@
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     @page { margin: 11mm 9mm; }
 }
+
+/* Bolsas cerradas: el pedido era múltiplo exacto del formato, así que se agarran del depósito
+   y NO se abren (Mati, 09/09/2026). Se muestran para que el sector no las ande buscando. */
+.fr-bolsas {
+    display: inline-block; margin: 0.1rem 0 0.1rem 0.3rem; padding: 0.1rem 0.4rem;
+    border: 1px dashed #8a5a00; border-radius: 3px;
+    color: #8a5a00; font-size: 0.78rem; font-weight: 600;
+}

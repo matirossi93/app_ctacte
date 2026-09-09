@@ -23,6 +23,7 @@ import { pesoDeRenglones, cargaDelCamion } from './pesoComprobante.js';
 import { vistaDeRango, invalidarVista } from './vistaPresupuestos.js';
 import { vistaRemitos, invalidarRemitos } from './vistaRemitos.js';
 import { armarFraccionado, totalesFraccionado } from './fraccionado.js';
+import { formatosDeBolsa } from './formatosBolsa.js';
 import { sugerirRepartos } from './sugerirRepartos.js';
 
 /** Sólo la oficina. Devuelve true si ya contestó el 403. */
@@ -336,7 +337,7 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
           renglones.push({ cod_articulo: Number((it as any).cod_articulo), cantidad: Number((it as any).cantidad) });
         }
       }
-      fraccionado = armarFraccionado(renglones, cat);
+      fraccionado = armarFraccionado(renglones, cat, formatosDeBolsa());
     } catch (e: any) {
       // Sin el detalle no se puede imprimir el listado de fraccionado, pero la hoja de ruta sí:
       // se devuelve vacío y la pantalla avisa, en vez de fallar entera.

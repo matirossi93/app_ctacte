@@ -25,6 +25,7 @@ import {
 import { vistaDeRango, invalidarVista } from './vistaPresupuestos.js';
 import { nombreListaLargo } from './listas.js';
 import { armarFraccionado, totalesFraccionado } from './fraccionado.js';
+import { formatosDeBolsa } from './formatosBolsa.js';
 
 /** Sólo la oficina (admin, gerente y administrativo). Devuelve true si ya contestó el 403. */
 function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
@@ -360,7 +361,9 @@ export async function fraccionadoDelRango(req: Request & { user?: JwtPayload }, 
       }
     }
 
-    const fraccionado = armarFraccionado(renglones, cat);
+    // 🔑 Los formatos de bolsa: sin ellos no se puede saber si 60 kg son 2 bolsas cerradas o
+    // 6 paquetes de 10 (Mati, 09/09/2026). Se usa lo que haya cacheado, sin esperar.
+    const fraccionado = armarFraccionado(renglones, cat, formatosDeBolsa());
     res.json({
       ok: true, desde, hasta,
       solo_aprobados: soloAprobados,
