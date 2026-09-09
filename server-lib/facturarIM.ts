@@ -267,8 +267,12 @@ export async function emitirFactura(d: DatosComprobante): Promise<ResultadoEmisi
  *
  * ⚠️ `mueve_stock: 'S'` descuenta stock de verdad. Anularlo lo devuelve.
  */
-export async function emitirRemito(d: DatosComprobante): Promise<ResultadoEmision> {
+export async function emitirRemito(
+  d: DatosComprobante,
+  opts: { sinMoverStock?: boolean } = {},
+): Promise<ResultadoEmision> {
   const fecha = fechaPedida(d);
+  const obs = (d.observaciones ?? '').slice(0, 460);
   const payload = {
     ...cabecera(d, fecha),
     fecha_entrega: fecha,
@@ -278,7 +282,22 @@ export async function emitirRemito(d: DatosComprobante): Promise<ResultadoEmisio
     // 🪤 En remitos sólo vale 'A' (automático) o 'M'. Con 'N' —lo que usan los presupuestos—
     // IM contesta "Talonario manual no válido".
     talonario_manual: 'A',
-    mueve_stock: 'S',
+    /**
+     * 🔴 `mueve_stock: 'S'` descuenta stock, y ES LO QUE DISPARA LA VALIDACIÓN: si algún artículo
+     * no llega a la cantidad, IM rechaza el remito entero. Medido el 09/09/2026 probando las
+     * cuatro variantes contra IM con un artículo en −570:
+     *   · `/remitos` con 'S'            -> rechaza por stock, descuenta cuando hay
+     *   · `/remitos` con 'N'            -> SALE SIEMPRE, no descuenta
+     *   · `/ventas` con tipo RE         -> sale siempre, IGNORA mueve_stock, no descuenta
+     *   · talonario 'M' con nº propio   -> rechaza igual (no es el talonario)
+     *
+     * O sea: por la API no hay forma de descontar stock que IM no tiene. Cuando el rechazo es por
+     * stock, quien llama reintenta con `sinMoverStock` — la mercadería sale igual (Mati,
+     * 09/09/2026: *"nosotros desde IM generamos a pesar de que esté sin stock"*) y queda escrito
+     * en el propio remito que el stock no se descontó, para que se ajuste.
+     */
+    mueve_stock: opts.sinMoverStock ? 'N' : 'S',
+    ...(opts.sinMoverStock ? { observaciones: `${obs} · STOCK NO DESCONTADO` } : {}),
     cod_deposito: d.cod_deposito ?? 1,
     total: d.total, neto: d.total,
     iva_importe: 0, importe_iva_10_5: 0, importe_iva_27: 0,

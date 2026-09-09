@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-    AlertTriangle, Loader2, RefreshCw, Receipt, CheckCircle2, X, FileWarning,
+    AlertTriangle, Loader2, RefreshCw, Receipt, CheckCircle2, X, FileWarning, Printer,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
+import { imprimirComprobante } from '../utils/imprimirComprobante';
 import { useRecargarAlVolver } from '../utils/recargarAlVolver';
 import { FacturarModal } from './FacturarModal';
 import './FacturacionView.css';
@@ -30,6 +31,9 @@ interface Fila {
     im_factura_numero: number | null;
     im_factura_tipo: string | null;
     im_remito_numero: number | null;
+    /** Los ids de InfoManager: es lo que hace falta para imprimir cada comprobante. */
+    im_factura_id: string | null;
+    im_remito_id: string | null;
     facturado_at: string | null;
     /** La factura salió y el remito no: el reintento hace SÓLO el remito. */
     falta_remito: boolean;
@@ -132,7 +136,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                 />
                             </th>
                             <th>Cliente</th><th>Pedido</th><th>Fecha</th>
-                            <th className="n">Bultos</th><th className="n">Kilos</th><th className="n">Importe</th><th>Estado</th>
+                            <th className="n">Bultos</th><th className="n">Kilos</th><th className="n">Importe</th><th>Estado</th><th />
                         </tr>
                     </thead>
                     <tbody>
@@ -152,6 +156,15 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                         ? <span className="fc-badge grave">falta el remito (FA {p.im_factura_numero})</span>
                                         : <span className="fc-badge">aprobado</span>}
                                 </td>
+                                {/* 🔑 Imprimir desde acá también: el circuito entero tiene que poder
+                                    sacar el papel sin volver a Presupuestos (Mati, 09/09/2026). */}
+                                <td className="c">
+                                    <button className="fc-imprimir" title="Imprimir el presupuesto"
+                                            onClick={() => imprimirComprobante(p.im_comprobante_id, 'Presupuesto')
+                                                .catch(e => setError(e?.message ?? 'No se pudo imprimir'))}>
+                                        <Printer size={14} />
+                                    </button>
+                                </td>
                             </tr>
                         ))}
                     </tbody>
@@ -163,7 +176,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                 <details className="fc-facturados">
                     <summary>{facturados.length} ya facturados en estos días</summary>
                     <table className="fc-tabla">
-                        <thead><tr><th>Cliente</th><th>Pedido</th><th>Factura</th><th>Remito</th><th className="n">Importe</th></tr></thead>
+                        <thead><tr><th>Cliente</th><th>Pedido</th><th>Factura</th><th>Remito</th><th className="n">Importe</th><th /></tr></thead>
                         <tbody>
                             {facturados.map(p => (
                                 <tr key={p.im_comprobante_id}>
@@ -172,6 +185,27 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                     <td><CheckCircle2 size={12} /> {p.im_factura_tipo ?? 'FA'} {p.im_factura_numero ?? '—'}</td>
                                     <td>RE {p.im_remito_numero ?? '—'}</td>
                                     <td className="n">{money(p.total)}</td>
+                                    <td className="c fc-imprimir-celda">
+                                        <button className="fc-imprimir" title="Imprimir el presupuesto"
+                                                onClick={() => imprimirComprobante(p.im_comprobante_id, 'Presupuesto')
+                                                    .catch(e => setError(e?.message ?? 'No se pudo imprimir'))}>
+                                            <Printer size={14} /> PR
+                                        </button>
+                                        {p.im_factura_id && (
+                                            <button className="fc-imprimir" title={`Imprimir la ${p.im_factura_tipo ?? 'factura'} ${p.im_factura_numero ?? ''}`}
+                                                    onClick={() => imprimirComprobante(String(p.im_factura_id), 'Factura')
+                                                        .catch(e => setError(e?.message ?? 'No se pudo imprimir'))}>
+                                                <Printer size={14} /> FA
+                                            </button>
+                                        )}
+                                        {p.im_remito_id && (
+                                            <button className="fc-imprimir" title={`Imprimir el remito ${p.im_remito_numero ?? ''}`}
+                                                    onClick={() => imprimirComprobante(String(p.im_remito_id), 'Remito')
+                                                        .catch(e => setError(e?.message ?? 'No se pudo imprimir'))}>
+                                                <Printer size={14} /> RE
+                                            </button>
+                                        )}
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>

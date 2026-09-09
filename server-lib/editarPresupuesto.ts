@@ -24,6 +24,7 @@
  * Es el mismo circuito que ya usa `editarPedido` para los pedidos de la app; la diferencia es que
  * acá funciona sobre CUALQUIER presupuesto de InfoManager, que es el 76% de los que llegan.
  */
+import { randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
 import type { JwtPayload } from './auth.js';
@@ -94,8 +95,19 @@ export function emparejarParaPut(
   return payload;
 }
 
-/** Único por intento: IM rechaza un código ya usado, incluso si ese comprobante está anulado. */
-const codCompatibilidad = () => `EDIT-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`.toUpperCase();
+/**
+ * 🔴 ÚNICO POR INTENTO. IM lo rechaza repetido, incluso contra comprobantes anulados.
+ *
+ * 🪤 Iba `EDIT-<timestamp>-<random>` y **`crearPresupuesto` lo trunca a 8 caracteres**, así que
+ * de todo eso sobrevivía `EDIT-` + 3 dígitos del reloj: el mismo código para TODAS las ediciones
+ * de una ventana de ~17 horas. La primera creaba el presupuesto y las siguientes chocaban contra
+ * ella —IM devolvía el que ya existía— y el panel se quedaba sin guardar nada. Pasó en vivo el
+ * 09/09/2026: todas las ediciones de la tarde compartieron `EDIT-MTU`.
+ *
+ * Los 8 caracteres de un UUID son 4.300 millones de combinaciones y es lo que ya usa
+ * `crearPedido` desde agosto. Si aun así colisionara, `crearPresupuesto` lo detecta y lo dice.
+ */
+const codCompatibilidad = () => randomUUID().slice(0, 8);
 
 /**
  * PUT /api/presupuestos/:comprobanteId/editar — guarda el presupuesto editado.

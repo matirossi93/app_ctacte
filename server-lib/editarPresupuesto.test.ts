@@ -387,3 +387,31 @@ describe('las observaciones', () => {
     expect(m.crearPresupuesto.mock.calls[0][0].observaciones).toBe('ENTREGAR EL VIERNES');
   });
 });
+
+describe('el código de compatibilidad', () => {
+  /**
+   * 🔴 09/09/2026, en vivo. `crearPresupuesto` TRUNCA `cod_compatibilidad` a 8 caracteres, y el
+   * que se generaba acá empezaba con `EDIT-` + el reloj en base36: de todo eso sobrevivían tres
+   * dígitos que cambian una vez cada ~17 horas. Resultado: todas las ediciones de la tarde
+   * mandaron `EDIT-MTU`, la primera creó el presupuesto y el resto chocó contra ella — IM
+   * devolvía el que ya existía y el panel no guardaba nada ("el costo de distribución no graba").
+   */
+  it('🔴 dos ediciones seguidas NO pueden compartir el código, ni truncado a 8', async () => {
+    const items = [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 }];
+    await llamar({ items });
+    await llamar({ items });
+    const [a, b] = m.crearPresupuesto.mock.calls.map((c: any) => String(c[0].cod_compatibilidad));
+    expect(a).not.toBe(b);
+    expect(a.slice(0, 8)).not.toBe(b.slice(0, 8));
+    expect(a).toHaveLength(8);
+  });
+
+  it('🔴 si IM contesta que ya existía, NO se anula el original', async () => {
+    m.crearPresupuesto.mockResolvedValue({
+      ok: false, error: 'InfoManager no creó el presupuesto: devolvió el nº 58304, que ya existía.',
+    });
+    const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 }] });
+    expect(r.status).toBe(502);
+    expect(m.anularComprobante).not.toHaveBeenCalled();
+  });
+});

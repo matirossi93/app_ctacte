@@ -352,21 +352,25 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                         <button className="pr-btn ghost chico" onClick={() => { setObservando(p.im_comprobante_id); setMotivo(''); }} disabled={trabajando === p.im_comprobante_id}>
                                             Observar
                                         </button>
-                                        {/* 🔑 Imprimir sin salir del panel (Mati, 09/09/2026). Si ya tiene
-                                            factura, se imprime la factura; si no, el presupuesto. */}
-                                        <button className="pr-btn ghost chico" title="Imprimir el presupuesto"
-                                                onClick={() => imprimirComprobante(p.im_comprobante_id, 'Presupuesto')
-                                                    .catch(e => setAviso(e?.message ?? 'No se pudo imprimir'))}>
-                                            <Printer size={14} /> PR
-                                        </button>
-                                        {p.factura?.numero != null && (
-                                            <button className="pr-btn ghost chico" title={`Imprimir la ${p.factura.tipo} ${p.factura.numero}`}
-                                                    onClick={() => imprimirComprobante(String((p.factura as any).im_factura_id ?? ''), 'Factura')
-                                                        .catch(e => setAviso(e?.message ?? 'No se pudo imprimir'))}>
-                                                <Printer size={14} /> FA
-                                            </button>
-                                        )}
                                     </>}
+                                {/**
+                                 * 🔑 Imprimir está SIEMPRE, revisado o no. Estos botones vivían
+                                 * dentro del bloque de "sin revisar", así que al aprobar un
+                                 * presupuesto desaparecían — justo cuando hace falta imprimirlo
+                                 * (Mati, 09/09/2026: *"tiene que estar en todo el circuito"*).
+                                 */}
+                                <button className="pr-btn ghost chico" title="Imprimir el presupuesto"
+                                        onClick={() => imprimirComprobante(p.im_comprobante_id, 'Presupuesto')
+                                            .catch(e => setAviso(e?.message ?? 'No se pudo imprimir'))}>
+                                    <Printer size={14} /> PR
+                                </button>
+                                {p.factura?.numero != null && (
+                                    <button className="pr-btn ghost chico" title={`Imprimir la ${p.factura.tipo} ${p.factura.numero}`}
+                                            onClick={() => imprimirComprobante(String((p.factura as any).im_factura_id ?? ''), 'Factura')
+                                                .catch(e => setAviso(e?.message ?? 'No se pudo imprimir'))}>
+                                        <Printer size={14} /> FA
+                                    </button>
+                                )}
                             </div>
                         </div>
 

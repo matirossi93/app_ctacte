@@ -686,7 +686,29 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
           .eq('tenant_id', TENANT_ID).eq('im_comprobante_id', String(f.im_comprobante_id));
         if (errMarca) { fallados.push(`${quien}: no pude marcar el intento del remito (${errMarca.message}).`); continue; }
       }
-      const re = await emitirRemito(p.datos as any);
+      let re = await emitirRemito(p.datos as any);
+      /**
+       * 🔑 IM rechaza el remito cuando algún artículo no tiene stock suficiente — y en el depósito
+       * hay diferencias de inventario grandes (MEZCLA P/PAJARO figuraba en −570). Mati
+       * (09/09/2026): *"nosotros desde IM generamos a pesar de que esté sin stock"*.
+       *
+       * La mercadería sale igual, así que el remito se emite SIN mover stock. No es lo ideal —el
+       * stock de esos artículos queda sin descontar— pero es mejor que la alternativa real: la
+       * factura ya emitida, sin remito, y el pedido sin poder entrar a ninguna hoja de ruta.
+       * Queda escrito en el remito y se avisa en pantalla para que se ajuste el inventario.
+       *
+       * 🪤 `sinRespuesta` NO se reintenta: si IM no contestó, el remito puede haber salido igual
+       * y el reintento emitiría un segundo remito por la misma mercadería.
+       */
+      let stockNoDescontado: string | null = null;
+      if (!re.ok && !re.sinRespuesta) {
+        const faltantes = articulosSinStockDelError(re.error, catalogoEmision);
+        if (faltantes) {
+          console.warn(`[facturarSeleccion] ${quien}: IM rechazó el remito por stock (${faltantes}). Reintento sin descontar stock.`);
+          const reintento = await emitirRemito(p.datos as any, { sinMoverStock: true });
+          if (reintento.ok) { re = reintento; stockNoDescontado = faltantes; }
+        }
+      }
       if (!re.ok) {
         console.error(`[facturarSeleccion] REMITO rechazado · ${quien} (factura ${facturaNumero}): ${re.error}`, JSON.stringify(re.raw ?? null).slice(0, 600));
         /**
@@ -714,6 +736,11 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
         fallados.push(`${quien}: salieron la factura ${facturaNumero} y el remito ${re.numero}, pero NO se pudieron registrar (${errRe.message}).`);
         cortado = `Se emitieron la factura ${facturaNumero} y el remito ${re.numero} de ${quien} y no se pudieron guardar en la base (${errRe.message}). ANOTALOS. Se frenó el resto.`;
         continue;
+      }
+
+      // El remito salió pero sin descontar stock: no es un error, pero hay que decirlo.
+      if (stockNoDescontado) {
+        fallados.push(`${quien}: salieron la factura ${facturaNumero} y el remito ${re.numero}, pero el remito NO descontó stock — InfoManager no lo permite con ${stockNoDescontado}. Ajustá el inventario de esos artículos.`);
       }
 
       // 3) El presupuesto sale de la ventana de facturación de la oficina.
@@ -771,6 +798,9 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
         im_factura_numero: e?.im_factura_numero ?? null,
         im_factura_tipo: e?.im_factura_tipo ?? null,
         im_remito_numero: e?.im_remito_numero ?? null,
+        // Los ids son lo que necesita el botón de imprimir de esta pantalla.
+        im_factura_id: e?.im_factura_id ?? null,
+        im_remito_id: e?.im_remito_id ?? null,
         facturado_at: e?.facturado_at ?? null,
         // Con la factura emitida y sin remito: el reintento hace SÓLO el remito.
         falta_remito: !!e?.im_factura_id && !e?.facturado_at,

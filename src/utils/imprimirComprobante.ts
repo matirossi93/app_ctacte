@@ -11,7 +11,7 @@ import { generarPresupuestoPdf } from './pdfPresupuesto';
  * 🔑 Abre el PDF en una pestaña en vez de descargarlo: lo que la oficina quiere es mandarlo a la
  * impresora, no juntar archivos en Descargas.
  */
-export async function imprimirComprobante(id: string, titulo: 'Presupuesto' | 'Factura'): Promise<void> {
+export async function imprimirComprobante(id: string, titulo: 'Presupuesto' | 'Factura' | 'Remito'): Promise<void> {
   const r = await fetch(`/api/comprobantes/${id}/imprimir`, { headers: authHeaders() });
   const d = await r.json().catch(() => null);
   if (!r.ok) throw new Error(d?.error ?? 'No se pudo traer el comprobante');

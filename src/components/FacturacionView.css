@@ -82,3 +82,13 @@
     .fc-tabla { font-size: 0.76rem; }
     .fc-tabla th, .fc-tabla td { padding: 0.35rem 0.3rem; }
 }
+
+/* Imprimir desde facturación: el circuito entero tiene que poder sacar el papel. */
+.fc-imprimir {
+    display: inline-flex; align-items: center; gap: 0.2rem;
+    border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-muted);
+    font-family: inherit; font-size: 0.72rem; padding: 0.15rem 0.35rem;
+    border-radius: var(--radius-sm); cursor: pointer;
+}
+.fc-imprimir:hover { color: var(--color-text); border-color: var(--color-text-muted); }
+.fc-imprimir-celda { display: flex; gap: 0.25rem; justify-content: flex-end; }
