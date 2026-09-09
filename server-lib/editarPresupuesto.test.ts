@@ -35,17 +35,26 @@ vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSup
 const { editarPresupuesto, firmaDelSurtido, emparejarParaPut } = await import('./editarPresupuesto.js');
 
 let tablas: Record<string, any> = {};
+let escrituras: Array<{ tabla: string; op: string; valor: any }> = [];
+/** Si está seteado, toda ESCRITURA contesta este error (Supabase no tira: devuelve `{error}`). */
+let errorEnEscritura: { message: string } | null = null;
 
 function fakeSb() {
   m.sbMock.mockImplementation(() => ({
     from: (t: string) => {
       const res = tablas[t] ?? { data: null, error: null };
+      const escribio = () => (errorEnEscritura ? { data: null, error: errorEnEscritura } : res);
+      const anota = (op: string) => (valor?: any) => { escrituras.push({ tabla: t, op, valor }); return w; };
+      const w: any = {
+        then: (r: any, j: any) => Promise.resolve(escribio()).then(r, j),
+        maybeSingle: () => Promise.resolve(escribio()),
+      };
       const q: any = {
         then: (r: any, j: any) => Promise.resolve(res).then(r, j),
         maybeSingle: () => Promise.resolve(res),
-        delete: () => q, insert: () => q, upsert: () => q, update: () => q,
+        delete: anota('delete'), insert: anota('insert'), upsert: anota('upsert'), update: anota('update'),
       };
-      for (const k of ['select', 'eq', 'in', 'not', 'is', 'or', 'order', 'limit']) q[k] = () => q;
+      for (const k of ['select', 'eq', 'in', 'not', 'is', 'or', 'order', 'limit']) { q[k] = () => q; w[k] = () => w; }
       return q;
     },
   }));
@@ -72,6 +81,8 @@ const ITEMS_IM = [
 
 beforeEach(() => {
   tablas = { presupuestos_facturados: { data: null, error: null }, presupuestos_revision: { data: null, error: null } };
+  escrituras = [];
+  errorEnEscritura = null;
   vi.clearAllMocks();
   fakeSb();
   m.cabeceraComprobante.mockResolvedValue(CAB_OK);
@@ -479,5 +490,37 @@ describe('la fecha del presupuesto', () => {
     const creado = m.crearPresupuesto.mock.calls[0][0];
     expect(creado.fecha).toBe('2026-09-11');
     expect(creado.fecha_entrega).toBe('2026-09-11');
+  });
+});
+
+describe('el pedido del vendedor al rehacer el presupuesto', () => {
+  /**
+   * 🔴 09/09/2026, NAVARRO Andrea. El panel editó el PR 58301 y creó el 58309, pero
+   * `pedidos_vendedor` siguió apuntando al 58301 — el que se acababa de anular. Cuando el
+   * vendedor editó su pedido desde la app, `editarPedido` vio ese comprobante anulado, recreó a
+   * partir de ÉL y anuló el que ya estaba anulado: el 58309 quedó vivo y huérfano.
+   *
+   * Resultado: DOS presupuestos vigentes del mismo pedido, los dos facturables.
+   */
+  it('🔴 el pedido de la app pasa a apuntar al presupuesto NUEVO', async () => {
+    await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 }] });
+    const upd = escrituras.find(e => e.tabla === 'pedidos_vendedor' && e.op === 'update');
+    expect(upd).toBeTruthy();
+    expect(upd!.valor).toMatchObject({ im_presupuesto_id: '58800999', im_numero: 58200 });
+  });
+
+  it('🔴 si no se puede reapuntar, se avisa: el próximo cambio del vendedor duplicaría el pedido', async () => {
+    errorEnEscritura = { message: 'supabase caído' };
+    const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 }] });
+    expect(r.status).toBe(200);
+    expect(r.body.aviso).toMatch(/duplicado/i);
+  });
+
+  it('cambiar sólo cantidades no lo toca: el presupuesto es el mismo', async () => {
+    await llamar({ items: [
+      { cod_articulo: 1, cantidad: 20, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
+      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 200 },
+    ] });
+    expect(escrituras.find(e => e.tabla === 'pedidos_vendedor')).toBeUndefined();
   });
 });

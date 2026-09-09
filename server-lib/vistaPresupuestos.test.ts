@@ -149,3 +149,52 @@ describe('los avisos de lista se recalculan contra InfoManager', () => {
     expect(v.pendientes[0].gravedad.pierde_margen).toBe(0);
   });
 });
+
+
+describe('dos presupuestos vivos del mismo cliente', () => {
+  /**
+   * 🔴 09/09/2026, NAVARRO Andrea. El panel editó el PR 58301 y creó el 58309, pero el pedido de
+   * la app siguió apuntando al 58301. El vendedor editó después desde la app: `editarPedido` vio
+   * ese comprobante anulado, recreó a partir de él y anuló el que ya estaba anulado. Quedaron el
+   * 58309 y el 58317 vivos, los dos facturables — Mati: *"nos están saliendo los dos"*.
+   *
+   * La causa se arregla en `editarPresupuesto` (reapunta el pedido). Esto es la segunda defensa:
+   * que se VEA antes de facturar, porque facturar los dos le manda al cliente el doble.
+   */
+  const otro = { ...PR, id: '1000', numero: 58317, total: 264370.25 };
+
+  it('🔴 cada uno sabe del otro', async () => {
+    m.fetchVentas.mockResolvedValue([PR, otro]);
+    m.fetchVentasItems.mockResolvedValue([...renglon(12), { ...renglon(12)[0], id_comprobante: '1000' }]);
+    const v = await vistaDeRango('2026-09-09', '2026-09-09', true);
+    const a = v.pendientes.find((f: any) => f.im_comprobante_id === '999');
+    const b = v.pendientes.find((f: any) => f.im_comprobante_id === '1000');
+    expect(a.hermanos).toEqual([{ im_comprobante_id: '1000', im_numero: 58317, total: 264370.25 }]);
+    expect(b.hermanos[0].im_numero).toBe(58300);
+    expect(v.duplicados).toBe(2);
+  });
+
+  it('un pedido solo no se marca', async () => {
+    m.fetchVentasItems.mockResolvedValue(renglon(12));
+    const v = await vistaDeRango('2026-09-09', '2026-09-09', true);
+    expect(v.pendientes[0].hermanos).toEqual([]);
+    expect(v.duplicados).toBe(0);
+  });
+
+  /** Dos pedidos del mismo cliente en días distintos son normales: no se marcan. */
+  it('🪤 el mismo cliente en OTRO día no es un duplicado', async () => {
+    m.fetchVentas.mockResolvedValue([PR, { ...otro, fecha: '2026-09-08' }]);
+    m.fetchVentasItems.mockResolvedValue(renglon(12));
+    const v = await vistaDeRango('2026-09-08', '2026-09-09', true);
+    for (const f of v.pendientes) expect(f.hermanos).toEqual([]);
+  });
+
+  /** Y el anulado no cuenta: el filtro de vigentes ya lo dejó afuera. */
+  it('🪤 uno anulado no marca al que quedó vivo', async () => {
+    m.fetchVentas.mockResolvedValue([PR, { ...otro, anulada: 'S' }]);
+    m.fetchVentasItems.mockResolvedValue(renglon(12));
+    const v = await vistaDeRango('2026-09-09', '2026-09-09', true);
+    expect(v.pendientes).toHaveLength(1);
+    expect(v.pendientes[0].hermanos).toEqual([]);
+  });
+});

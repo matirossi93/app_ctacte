@@ -296,6 +296,28 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
     }
 
     /**
+     * 🔴 EL PEDIDO DE LA APP TIENE QUE APUNTAR AL PRESUPUESTO NUEVO.
+     *
+     * Sin esto, `pedidos_vendedor` sigue apuntando al que se acaba de anular, y cuando el
+     * vendedor edita su pedido desde la app, `editarPedido` ve ese comprobante anulado, recrea a
+     * partir de ÉL y anula... el que ya estaba anulado. El que había creado el panel queda vivo y
+     * huérfano: **dos presupuestos vigentes del mismo pedido**.
+     *
+     * Pasó el 09/09/2026 con NAVARRO, Andrea: el panel editó el 58301 y creó el 58309; el
+     * vendedor editó después y salieron el 58312 y el 58317. Quedaron el 58309 y el 58317 vivos,
+     * los dos facturables (Mati: *"nos están saliendo los dos presupuestos"*).
+     */
+    const { error: errPedido } = await sb().from('pedidos_vendedor')
+      .update({ im_presupuesto_id: String(creado.id), im_numero: creado.numero ?? null })
+      .eq('tenant_id', TENANT_ID).eq('im_presupuesto_id', id);
+    if (errPedido) {
+      // No se puede deshacer lo de IM, así que se avisa: es el aviso que evita el duplicado.
+      const aviso = `⚠️ Se rehizo el presupuesto (ahora es el ${creado.numero ?? ''}) pero no pude actualizar el pedido del vendedor (${errPedido.message}). Si el vendedor lo edita desde la app va a quedar un presupuesto duplicado: avisale que no lo toque.`;
+      console.error('[editarPresupuesto] no pude reapuntar el pedido del vendedor:', errPedido.message);
+      avisoAnular = avisoAnular ? `${avisoAnular} · ${aviso}` : aviso;
+    }
+
+    /**
      * La revisión viaja al comprobante nuevo: si el presupuesto estaba aprobado y sólo se le
      * corrigió una lista, no tiene sentido volver a revisarlo desde cero. Pero se deja el rastro
      * de que cambió.

@@ -58,6 +58,11 @@ interface Presupuesto {
     faltantes: Array<{ cod_articulo: number; descripcion: string; pedido: number; disponible: number | null }>;
     /** Cantidades que no cierran con el formato del producto (kilos donde van bultos). */
     avisos_cantidad: string[];
+    /**
+     * 🔴 Otros presupuestos VIGENTES del mismo cliente en el mismo día. Casi siempre es una
+     * edición que dejó los dos vivos, y facturar los dos le manda al cliente el doble.
+     */
+    hermanos: Array<{ im_comprobante_id: string; im_numero: number | null; total: number }>;
     stock_consultado: boolean;
 }
 
@@ -309,6 +314,12 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                             descuentos fuera de tope, que sí son un problema. */}
                                         {p.gravedad?.pierde_margen === 0 && p.gravedad?.cobra_de_mas === 0 && p.avisos.length > 0 && (
                                             <span className="pr-badge aviso">revisar</span>
+                                        )}
+                                        {p.hermanos?.length > 0 && (
+                                            <span className="pr-badge grave"
+                                                  title={`Este cliente tiene otro pedido vigente del mismo día: ${p.hermanos.map(h => `PR ${h.im_numero ?? '—'} (${money(h.total)})`).join(', ')}. Mirá cuál va antes de facturar: si es una edición que quedó a medias, anulá el que no corresponde.`}>
+                                                <AlertTriangle size={11} /> otro pedido igual
+                                            </span>
                                         )}
                                         {p.avisos_cantidad?.length > 0 && (
                                             <span className="pr-badge grave" title={p.avisos_cantidad.join(' · ')}>

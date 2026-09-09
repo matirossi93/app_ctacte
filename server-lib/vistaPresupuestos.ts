@@ -264,6 +264,24 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
       facturasVigentes as any, nuestras,
     );
 
+    /**
+     * 🔴 DOS PRESUPUESTOS VIVOS DEL MISMO CLIENTE EL MISMO DÍA.
+     *
+     * Casi siempre es el rastro de una edición que salió mal: se creó el reemplazo y el original
+     * quedó vivo, o dos personas editaron el mismo pedido por caminos distintos. Los dos se
+     * pueden facturar, y facturar los dos es mandarle al cliente el doble de mercadería.
+     *
+     * Pasó el 09/09/2026 con NAVARRO, Andrea (PR 58309 y 58317, $259.850 y $264.370, los dos del
+     * mismo día). No se bloquea nada —un cliente puede pedir dos veces en el día— pero tiene que
+     * saltar a la vista antes de facturar.
+     */
+    const vivosPorClienteDia = new Map<string, string[]>();
+    for (const p of presupuestos) {
+      const k = `${Number(p.cod_cliente)}|${String(p.fecha ?? '').slice(0, 10)}`;
+      if (!vivosPorClienteDia.has(k)) vivosPorClienteDia.set(k, []);
+      vivosPorClienteDia.get(k)!.push(String(p.id));
+    }
+
     const filas = presupuestos.map((p: any) => {
       const c = porCliente.get(Number(p.cod_cliente));
       const z = zonaDeCliente(c);
@@ -327,6 +345,16 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
          * ya está facturado emite una factura duplicada de verdad: pasó el 09/09/2026.
          */
         factura: facturaDelPresupuesto.get(String(p.id)) ?? null,
+        /**
+         * Los OTROS presupuestos vigentes del mismo cliente en el mismo día. Vacío es lo normal;
+         * con algo adentro hay que mirar cuál va antes de facturar.
+         */
+        hermanos: (vivosPorClienteDia.get(`${Number(p.cod_cliente)}|${String(p.fecha ?? '').slice(0, 10)}`) ?? [])
+          .filter((otro: string) => otro !== String(p.id))
+          .map((otro: string) => {
+            const o = presupuestos.find((x: any) => String(x.id) === otro);
+            return { im_comprobante_id: otro, im_numero: o?.numero ?? null, total: Number(o?.total ?? 0) };
+          }),
         // La etapa 1: aprobado / observado / null (sin revisar).
         revision: revisionPor.get(String(p.id)) ?? null,
         // Los dos controles que pidió Mati además de las listas.
@@ -352,6 +380,8 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
       sin_stock: filas.filter(f => f.faltantes.length > 0).length,
       // Lo que ya está facturado: no hay que volver a emitirlo.
       ya_facturados: filas.filter(f => f.factura).length,
+      // Clientes con más de un presupuesto vivo el mismo día: hay que mirar cuál va.
+      duplicados: filas.filter(f => f.hermanos.length > 0).length,
       con_cantidad_rara: filas.filter(f => f.avisos_cantidad.length > 0).length,
       sin_revisar: filas.filter(f => !f.revision).length,
       aprobados: filas.filter(f => f.revision?.estado === 'aprobado').length,
