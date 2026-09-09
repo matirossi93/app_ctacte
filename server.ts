@@ -57,7 +57,7 @@ import { marcarRetiro, quitarRetiro, marcarRetirado, listarRetiros, resumenRetir
 import { listarChoferes, liquidacionMensual } from './server-lib/liquidacionChoferes.js';
 import { listarAjustes, crearAjuste, borrarAjuste, candidatasAVincular, vincularAjuste } from './server-lib/ajustesEntrega.js';
 import { listarPresupuestos, revisarPresupuesto, borrarRevision, detallePresupuesto, corregirCantidades, fraccionadoDelRango, consolidadoDelRango } from './server-lib/panelPresupuestos.js';
-import { editarPresupuesto, buscarArticulos } from './server-lib/editarPresupuesto.js';
+import { editarPresupuesto, buscarArticulos, comprobanteParaImprimir } from './server-lib/editarPresupuesto.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -694,6 +694,8 @@ app.put('/api/presupuestos/:comprobanteId/cantidades', requireJwt, (req: any, re
 // falta, porque la API de IM sólo acepta cambiar cantidades sobre uno existente.
 app.put('/api/presupuestos/:comprobanteId/editar', requireJwt, (req: any, res) => editarPresupuesto(req, res));
 app.get('/api/articulos/buscar', requireJwt, (req: any, res) => buscarArticulos(req, res));
+// Imprimir un comprobante: sirve para el presupuesto y para la factura.
+app.get('/api/comprobantes/:id/imprimir', requireJwt, (req: any, res) => comprobanteParaImprimir(req, res));
 
 app.get('/api/hojas-ruta/camiones', requireJwt, (req: any, res) => listarCamiones(req, res));
 app.get('/api/hojas-ruta/pendientes', requireJwt, (req: any, res) => pendientesDelDia(req, res));

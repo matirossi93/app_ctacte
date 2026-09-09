@@ -44,6 +44,12 @@ export interface ItemAFacturar {
 }
 
 export interface DatosComprobante {
+  /**
+   * 🔑 Con qué fecha se emite. Mati (09/09/2026): *"necesitamos poder cambiar la fecha cuando se
+   * va a facturar"* — la oficina factura pedidos de días anteriores y el comprobante tiene que
+   * llevar esa fecha, no la de hoy. Sin esto, el reparto del lunes salía facturado el miércoles.
+   */
+  fecha?: string | null;
   cod_empresa: number;
   cod_cliente: number;
   cod_vendedor: number;
@@ -157,6 +163,17 @@ function comoError(err: any): ResultadoEmision {
 }
 
 /** Cabecera común de factura y remito. */
+/**
+ * La fecha con la que se emite: la que mandó la pantalla, o hoy.
+ *
+ * 🪤 Se valida el formato acá y no en el handler: esto lo llaman tres emisiones distintas y una
+ * fecha inventada sale impresa en un comprobante fiscal.
+ */
+function fechaPedida(d: DatosComprobante): string {
+  const f = String(d.fecha ?? '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(f) ? f : fechaArgentina();
+}
+
 function cabecera(d: DatosComprobante, fecha: string) {
   return {
     fecha,
@@ -216,7 +233,7 @@ export async function emitirFactura(d: DatosComprobante): Promise<ResultadoEmisi
     return { ok: false, error: `No pude averiguar el próximo número de factura ${letra} del punto de venta ${PTO_VENTA_FACTURA}: no hay ninguna emitida en los últimos 30 días. Facturá a mano.` };
   }
 
-  const fecha = fechaArgentina();
+  const fecha = fechaPedida(d);
   const cli = await imClient();
   // 🔑 Hasta 3 intentos subiendo el número. La oficina puede estar facturando desde IM al
   // mismo tiempo y quedarse con el correlativo; IM valida la unicidad y contesta "Ya existe
@@ -254,7 +271,7 @@ export async function emitirFactura(d: DatosComprobante): Promise<ResultadoEmisi
  * ⚠️ `mueve_stock: 'S'` descuenta stock de verdad. Anularlo lo devuelve.
  */
 export async function emitirRemito(d: DatosComprobante): Promise<ResultadoEmision> {
-  const fecha = fechaArgentina();
+  const fecha = fechaPedida(d);
   const payload = {
     ...cabecera(d, fecha),
     fecha_entrega: fecha,
@@ -316,7 +333,7 @@ export async function emitirNotaCredito(
     return { ok: false, error: `No pude averiguar el próximo número de nota de crédito ${letra} del punto ${PTO_VENTA_FACTURA}: no hay ninguna emitida en los últimos 30 días. Hacela a mano.` };
   }
 
-  const fecha = fechaArgentina();
+  const fecha = fechaPedida(d);
   const cli = await imClient();
   // Mismo criterio que la factura: si otro tomó el número mientras tanto, se sube al siguiente.
   for (let intento = 0; intento < 3; intento++) {

@@ -233,6 +233,8 @@ export async function prepararFacturacion(
         origen_id: f.im_comprobante_id,
         total: Number(f.total ?? 0),
         cod_deposito: 1,
+        // La fija el handler con lo que mandó la pantalla; si no viene, es hoy.
+        fecha: null as string | null,
         items: items.map((it: any) => {
           /**
            * 🔴 EL DESCUENTO SE APLICABA DOS VECES. `/ventas/items` devuelve `precio` YA NETO
@@ -500,8 +502,21 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
       return;
     }
 
+    /**
+     * 🔑 Con qué fecha se emite. Mati (09/09/2026): *"necesitamos poder cambiar la fecha cuando
+     * se va a facturar"*: la oficina factura pedidos de días anteriores y el comprobante tiene
+     * que llevar esa fecha, no la de hoy.
+     *
+     * 🪤 Se valida el formato acá: una fecha inventada sale impresa en un comprobante fiscal.
+     * Sin fecha válida se usa hoy, que es lo que hacía antes.
+     */
+    const fechaEmision = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.fecha_emision ?? ''))
+      ? String(req.body.fecha_emision) : null;
+
     const usuario = await usuarioIM(req.user);
     const preparados = (await prepararFacturacion(filas, usuario)).filter(p => p.estado !== 'facturado');
+    // La fecha elegida viaja a los tres comprobantes (factura, remito y su reintento).
+    for (const p of preparados) if (p.datos) p.datos.fecha = fechaEmision;
     if (!preparados.length) { res.status(409).json({ error: 'No hay nada para facturar en lo que elegiste.' }); return; }
 
     const hechos: any[] = [];

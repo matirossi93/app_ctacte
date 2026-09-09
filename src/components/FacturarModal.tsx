@@ -1,4 +1,7 @@
 import { useEffect, useState } from 'react';
+
+/** Hoy en Argentina (UTC-3 fija), que es con lo que trabaja la oficina. */
+const hoyISO = () => new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
 import { createPortal } from 'react-dom';
 import { X, AlertTriangle, Loader2, Receipt, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
@@ -77,6 +80,12 @@ export function FacturarModal(
      * dos veces. Después de intentar una vez, la única salida es cerrar y ver qué quedó.
      */
     const [intentado, setIntentado] = useState(false);
+    /**
+     * 🔑 Con qué fecha se emiten los comprobantes. Mati (09/09/2026): *"necesitamos poder cambiar
+     * la fecha cuando se va a facturar"*: la oficina factura pedidos de días anteriores y la
+     * factura tiene que llevar esa fecha, no la de hoy.
+     */
+    const [fechaEmision, setFechaEmision] = useState(hoyISO);
 
     useEffect(() => {
         fetch(`/api/facturacion/previa?${query}`, { headers: authHeaders() })
@@ -103,7 +112,7 @@ export function FacturarModal(
         try {
             const r = await fetch('/api/facturacion', {
                 method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ids, desde, hasta }),
+                body: JSON.stringify({ ids, desde, hasta, fecha_emision: fechaEmision }),
             });
             const d = await r.json().catch(() => null);
             if (!r.ok) throw new Error(d?.error ?? 'No se pudo facturar');
@@ -159,6 +168,17 @@ export function FacturarModal(
                             <div><span className="fac-num">{aEmitir!.remitos}</span> remitos</div>
                             <div><span className="fac-num">{money(aEmitir!.total)}</span> a facturar</div>
                         </div>
+
+                        {/* 🔑 La fecha del comprobante. La oficina factura pedidos de días
+                            anteriores y la factura tiene que llevar ESA fecha (Mati, 09/09/2026). */}
+                        <label className="fac-fecha">
+                            Fecha de los comprobantes
+                            <input type="date" value={fechaEmision} disabled={emitiendo}
+                                   onChange={e => setFechaEmision(e.target.value)} />
+                            {fechaEmision !== hoyISO() && (
+                                <span className="fac-fecha-aviso">no es hoy</span>
+                            )}
+                        </label>
 
                         <table className="fac-tabla">
                             <thead>

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle, Check, CircleAlert, Loader2, RefreshCw, ChevronRight, X, Package,
-    MessageSquare,
+    MessageSquare, Printer,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import { EditorPresupuesto } from './EditorPresupuesto';
+import { imprimirComprobante } from '../utils/imprimirComprobante';
 import { useRecargarAlVolver } from '../utils/recargarAlVolver';
 import './PresupuestosView.css';
 
@@ -38,7 +39,7 @@ interface Presupuesto {
      * `deducida` = hay una del mismo cliente por el mismo importe. Facturar uno que ya está
      * facturado emite una factura duplicada de verdad: pasó el 09/09/2026 con la 50401.
      */
-    factura: { numero: number | null; tipo: string; fecha: string | null; origen: 'nuestra' | 'deducida' } | null;
+    factura: { im_factura_id?: string; numero: number | null; tipo: string; fecha: string | null; origen: 'nuestra' | 'deducida' } | null;
     cod_cliente: number;
     cliente_nombre: string;
     cod_zona: number | null;
@@ -344,6 +345,20 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                         <button className="pr-btn ghost chico" onClick={() => { setObservando(p.im_comprobante_id); setMotivo(''); }} disabled={trabajando === p.im_comprobante_id}>
                                             Observar
                                         </button>
+                                        {/* 🔑 Imprimir sin salir del panel (Mati, 09/09/2026). Si ya tiene
+                                            factura, se imprime la factura; si no, el presupuesto. */}
+                                        <button className="pr-btn ghost chico" title="Imprimir el presupuesto"
+                                                onClick={() => imprimirComprobante(p.im_comprobante_id, 'Presupuesto')
+                                                    .catch(e => setAviso(e?.message ?? 'No se pudo imprimir'))}>
+                                            <Printer size={14} /> PR
+                                        </button>
+                                        {p.factura?.numero != null && (
+                                            <button className="pr-btn ghost chico" title={`Imprimir la ${p.factura.tipo} ${p.factura.numero}`}
+                                                    onClick={() => imprimirComprobante(String((p.factura as any).im_factura_id ?? ''), 'Factura')
+                                                        .catch(e => setAviso(e?.message ?? 'No se pudo imprimir'))}>
+                                                <Printer size={14} /> FA
+                                            </button>
+                                        )}
                                     </>}
                             </div>
                         </div>

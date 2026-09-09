@@ -31,6 +31,7 @@ import { puedeArmarHojasDeRuta } from './permisos.js';
 import {
   cabeceraComprobante, getItemsComprobante, actualizarPresupuestoCantidades,
   crearPresupuesto, anularComprobante, fetchArticulosCatalogo, fechaArgentina,
+  fetchClientesIMCached,
 } from './infomanager.js';
 import { invalidarVista } from './vistaPresupuestos.js';
 import { invalidarRemitos } from './vistaRemitos.js';
@@ -292,5 +293,58 @@ export async function buscarArticulos(req: Request & { user?: JwtPayload }, res:
     res.json({ ok: true, articulos: salida });
   } catch (err: any) {
     res.status(502).json({ error: `No pude traer el catálogo: ${err?.message ?? 'sin respuesta de IM'}` });
+  }
+}
+
+/**
+ * GET /api/comprobantes/:id/imprimir — todo lo que hace falta para imprimir un comprobante.
+ *
+ * Mati (09/09/2026): *"tenemos que tener algún botón para poder imprimir el presupuesto y
+ * también la factura"*. Sirve para los dos: la cabecera y los renglones salen del mismo lugar,
+ * y lo único que cambia es qué dice el papel.
+ */
+export async function comprobanteParaImprimir(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  try {
+    const id = String(req.params.id);
+    const [cab, items, cat, clientes] = await Promise.all([
+      cabeceraComprobante(id),
+      getItemsComprobante(id),
+      fetchArticulosCatalogo(),
+      fetchClientesIMCached().catch(() => [] as any[]),
+    ]);
+    if (cab.existe === false) { res.status(404).json({ error: 'Ese comprobante ya no está en InfoManager.' }); return; }
+    if (cab.existe !== true) { res.status(502).json({ error: 'No pude leer el comprobante en InfoManager.' }); return; }
+
+    const cliente = (clientes as any[]).find(c => Number(c.cod_cliente) === Number(cab.cod_cliente));
+    res.json({
+      ok: true,
+      comprobante: {
+        id, numero: cab.numero, fecha: cab.fecha, observaciones: cab.observaciones,
+        anulada: cab.anulada, cod_cliente: cab.cod_cliente,
+        cliente: cliente?.razon_social ?? cliente?.nombre ?? `Cliente ${cab.cod_cliente ?? ''}`,
+      },
+      items: (items as any[]).map(it => {
+        const art = cat.get(Number(it.cod_articulo));
+        const cant = Number(it.cantidad) || 0;
+        // 🪤 `precio` viene NETO (con el descuento adentro) y `precio_orig` bruto. El papel
+        // muestra el bruto y el descuento aparte, que es como lo lee el cliente.
+        const desc = Number(it.descuento_porc) || 0;
+        const bruto = Number(it.precio_orig ?? it.precio ?? 0) || Number(it.precio ?? 0);
+        const neto = Number(it.precio ?? 0);
+        return {
+          cod_articulo: Number(it.cod_articulo) || 0,
+          // Un renglón libre no está en el catálogo: su texto es lo único que lo describe.
+          descripcion: art?.descripcion ?? (it.detalle ? String(it.detalle) : `Artículo ${it.cod_articulo}`),
+          cantidad: cant,
+          precio_unit: desc > 0 ? bruto : neto,
+          descuento_porc: desc || null,
+          subtotal: Math.round(cant * neto * 100) / 100,
+        };
+      }),
+    });
+  } catch (err: any) {
+    console.error('[comprobanteParaImprimir]', err?.message);
+    res.status(502).json({ error: `No pude traer el comprobante: ${err?.message ?? 'sin respuesta de IM'}` });
   }
 }
