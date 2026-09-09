@@ -205,18 +205,32 @@ function cabecera(d: DatosComprobante, fecha: string) {
 }
 
 /**
- * 🔴 EL VENDEDOR VA EN CADA RENGLÓN, no sólo en la cabecera.
+ * 🔴 EL VENDEDOR VA EN LA CABECERA, **NO** EN LOS RENGLONES. Es contraintuitivo: acá está por qué.
  *
- * Mati (09/09/2026): *"tiene que figurar ítem por ítem el vendedor, eso es importantísimo porque
- * después la aplicación toma quién es el que hizo la venta"*. Verificado contra IM ese día: lo
- * que factura la oficina desde las pantallas de IM trae el vendedor repetido en cada renglón
- * (FA 50362 y RE 77298 → `cod_vendedor: 12` arriba Y en los items), y lo nuestro traía 0.
+ * Mati (09/09/2026) pidió que figurara *"ítem por ítem el vendedor, porque después la aplicación
+ * toma quién es el que hizo la venta"*. Se probó, y por la API de IM **no se puede tener los
+ * dos** — cinco comprobantes de prueba ese día (cliente 1093, todos anulados):
  *
- * 🪤 Va como STRING: así lo declara `VentasItemsCrear` en el swagger de IM.
+ *   · FA con `cod_vendedor` en los renglones -> items ✅ · **cabecera queda en 0** ❌
+ *   · FA sin vendedor en los renglones       -> items ✘ · cabecera ✅
+ *   · FA con vendedor en renglones + `PUT /ventas/{id}` con `cod_vendedor` después
+ *                                            -> el PUT contesta "se actualizó correctamente"
+ *                                               y la cabecera SIGUE en 0 (no está en
+ *                                               `VentasActualizar`) ❌
+ *   · RE con vendedor en los renglones (texto o número) -> lo ignora, items en 0; cabecera ✅
+ *   · RE masivo, vendedor en cabecera        -> lo ignora, queda en 0 ❌ (no hay forma)
+ *
+ * Y el desempate lo da nuestro propio código: `comisiones.ts` arma el vendedor de cada
+ * comprobante desde **la cabecera** (`cabPorId`, línea ~156), y un 0 lo trata como mostrador y lo
+ * descarta. O sea que mandarlo en los renglones dejaba la cabecera en 0 y **la venta sin comisión
+ * para nadie**. Entre "se ve lindo en la pantalla de IM" y "el vendedor cobra", gana la cabecera.
+ *
+ * ⚠️ Lo que hace la oficina desde las pantallas de IM sí tiene las dos cosas (FA 50362 y RE 77298
+ * con `cod_vendedor: 12` arriba y abajo). Esa pantalla escribe la base directo; la API no lo
+ * expone. Para tenerlo por API hay que pedírselo a Sistec.
  */
-function renglones(items: ItemAFacturar[], codVendedor: number) {
+function renglones(items: ItemAFacturar[], _codVendedor: number) {
   return items.map((it) => ({
-    cod_vendedor: String(codVendedor),
     // 🔴 Siempre un artículo del catálogo: `cod_articulo` es int64 obligatorio en el schema de
     // facturas y remitos. `""` no deserializa y `0` no existe (probado el 09/09/2026). Los
     // renglones sin artículo se filtran ANTES, en facturarPresupuestos.
@@ -478,9 +492,11 @@ export async function emitirRemitoMasivo(d: DatosComprobante): Promise<Resultado
       cod_transporte: 0,
       cod_origen_sistema: 0,
       /**
-       * 🪤 NO está en el schema `VentasRemitosMasivo` del swagger, igual que el `cod_vendedor` de
-       * los renglones. Se manda porque el remito tiene que decir de quién es la venta y IM ignora
-       * lo que no conoce: sin esto, todo remito forzado por stock negativo salía sin vendedor.
+       * ⚠️ IM LO IGNORA: no está en el schema `VentasRemitosMasivo` y el remito queda con vendedor
+       * 0 igual (probado el 09/09/2026, remito 77393 anulado). Se manda porque no cuesta nada y
+       * el día que Sistec lo acepte funciona solo. El remito forzado por stock negativo es, por
+       * ahora, el único comprobante del circuito que sale sin vendedor — no afecta comisiones,
+       * que se calculan sobre facturas y notas de crédito.
        */
       cod_vendedor: d.cod_vendedor,
     }],
@@ -490,7 +506,6 @@ export async function emitirRemitoMasivo(d: DatosComprobante): Promise<Resultado
       const neto = Number(it.precio) * (1 - desc / 100);
       return {
         id_comprobante_aux: 1,
-        cod_vendedor: String(d.cod_vendedor),
         cod_articulo: it.cod_articulo,
         cantidad: it.cantidad,
         cant_uni_venta: 0,

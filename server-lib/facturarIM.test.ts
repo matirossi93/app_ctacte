@@ -316,16 +316,20 @@ describe('emitirRemitoMasivo — choque de numeración', () => {
 });
 
 /**
- * 🔴 EL VENDEDOR VA TAMBIÉN EN CADA RENGLÓN.
+ * 🔴 EL VENDEDOR VA EN LA CABECERA. Y NO, no se puede en los dos lados.
  *
- * Mati (09/09/2026): *"tiene que figurar ítem por ítem el vendedor, eso es importantísimo porque
- * después la aplicación toma quién es el que hizo la venta"*. Verificado contra IM ese día: las
- * facturas y remitos que hace la oficina desde IM traen el vendedor repetido en cada renglón
- * (FA 50362 → `cod_vendedor: 12` en cabecera Y en los items), y los nuestros traían 0 — el
- * campo existe en el schema `VentasItemsCrear` y no lo mandábamos.
+ * Mati (09/09/2026): *"tiene que figurar ítem por ítem el vendedor, es importantísimo porque la
+ * aplicación toma quién es el que hizo la venta"* y después *"si puede figurar en los dos lados
+ * mejor"*. Se probó contra IM con cinco comprobantes (cliente 1093, todos anulados) y la API no
+ * lo permite: si los renglones llevan `cod_vendedor`, **IM deja la cabecera en 0**; el
+ * `PUT /ventas/{id}` posterior contesta "se actualizó correctamente" y no la cambia.
+ *
+ * El desempate lo da nuestro propio código: `comisiones.ts` toma el vendedor de la CABECERA y
+ * trata el 0 como mostrador, así que mandarlo en los renglones dejaba la venta **sin comisión
+ * para nadie**. Gana la cabecera.
  */
-describe('el vendedor viaja en cada renglón, no sólo en la cabecera', () => {
-  it('🔴 la FACTURA lleva cod_vendedor en cada item', async () => {
+describe('el vendedor de la venta', () => {
+  it('🔴 la FACTURA lo lleva en la cabecera y NO en los renglones', async () => {
     const post = mockIM({ isCreated: true, venta: { id: 1, numero: 50360 } });
     await emitirFactura({ ...DATOS, cod_vendedor: 3, items: [
       { cod_articulo: 661, cantidad: 1, precio: 100 },
@@ -333,29 +337,24 @@ describe('el vendedor viaja en cada renglón, no sólo en la cabecera', () => {
     ] });
     const body = (post.mock.calls[0] as any[])[1];
     expect(body.cod_vendedor).toBe(3);
-    for (const it of body.items) expect(it.cod_vendedor).toBe('3');
+    // 🪤 Con esto adentro, IM pone la cabecera en 0 y el vendedor pierde la comisión.
+    for (const it of body.items) expect(it.cod_vendedor).toBeUndefined();
   });
 
-  it('🔴 el REMITO lleva cod_vendedor en cada item', async () => {
+  it('🔴 el REMITO también lo lleva en la cabecera', async () => {
     const post = mockIM({ isCreated: true, remito: { id: 7, numero: 77300 } });
     await emitirRemito({ ...DATOS, cod_vendedor: 12 });
     const body = (post.mock.calls[0] as any[])[1];
     expect(body.cod_vendedor).toBe(12);
-    for (const it of body.items) expect(it.cod_vendedor).toBe('12');
+    // IM ignora el del renglón en remitos (probado con texto y con número).
+    for (const it of body.items) expect(it.cod_vendedor).toBeUndefined();
   });
 
-  it('🔴 el REMITO MASIVO lleva el vendedor en la cabecera y en cada item', async () => {
-    const post = vi.fn(async () => ({ data: '' }));
-    vi.mocked(axios.create).mockReturnValue({
-      post,
-      get: vi.fn(async () => ({ data: { results: [{ id: '1', numero: 77373, tipo_comprobante: 'RE', punto_de_venta: 7, cod_cliente: 1093 }] } })),
-      put: vi.fn(), interceptors: { request: { use: vi.fn() } },
-    } as any);
-    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
-    await emitirRemitoMasivo({ ...DATOS, cod_vendedor: 4 });
-    const body = (post.mock.calls[0] as any[])[1];
-    expect(body.cabecera[0].cod_vendedor).toBe(4);
-    for (const it of body.items) expect(it.cod_vendedor).toBe('4');
+  it('la NOTA DE CRÉDITO lo lleva igual: también entra en el cálculo de comisiones', async () => {
+    const post = mockIM({ isCreated: true, venta: { id: 5, numero: 1700 } });
+    const { emitirNotaCredito } = await import('./facturarIM.js');
+    await emitirNotaCredito({ ...DATOS, cod_vendedor: 2, numero: 1700 } as any);
+    expect((post.mock.calls[0] as any[])[1].cod_vendedor).toBe(2);
   });
 });
 
