@@ -21,6 +21,8 @@ import { revisarCantidades } from './controlCantidades.js';
 import { formatosDeBolsa } from './formatosBolsa.js';
 import { armarConsolidado } from './consolidadoArticulos.js';
 import { buscarFacturasYaEmitidas } from './facturaYaEmitida.js';
+import { evaluarPedido } from './listas.js';
+import { reglasActivas, descuentosActivos, catalogoParaListas } from './pedidos.js';
 
 /** Depósito contra el que se controla el stock. 1 = Depósito General (Casa Central). */
 const DEPOSITO_CONTROL = Number(process.env.PEDIDO_DEPOSITO || 1);
@@ -88,7 +90,7 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
     const fechasConPedidos = [...new Set(presupuestos
       .map((p: any) => String(p.fecha ?? '').slice(0, 10))
       .filter(Boolean))].sort().slice(-MAX_DIAS_ITEMS);
-    const renglones = new Map<string, Array<{ cod_articulo: number; cantidad: any; equivalencia_um: number | null | undefined }>>();
+    const renglones = new Map<string, Array<{ cod_articulo: number; cantidad: any; equivalencia_um: number | null | undefined; cod_lista_precios: number; descuento_porc: number }>>();
     for (let i = 0; i < fechasConPedidos.length; i += 4) {
       const tanda = fechasConPedidos.slice(i, i + 4);
       const resultados = await Promise.all(tanda.map(f =>
@@ -105,43 +107,78 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
             cod_articulo: Number((it as any).cod_articulo),
             cantidad: (it as any).cantidad,
             equivalencia_um: cat.get(Number((it as any).cod_articulo))?.equivalencia_um,
+            // Con qué lista y qué descuento quedó el renglón EN INFOMANAGER, ahora mismo.
+            cod_lista_precios: Number((it as any).cod_lista_precios) || 0,
+            descuento_porc: Number((it as any).descuento_porc) || 0,
           });
         }
       }
     }
 
-    // Lo que aporta la app sobre los pedidos que salieron de ella: los avisos del control de
-    // listas, que es lo que le dice a la oficina DÓNDE mirar en vez de revisar todo.
+    // Cuáles de estos presupuestos salieron de la app, para poder mostrar el vendedor y su error.
     const ids = presupuestos.map((p: any) => String(p.id));
     const { data: nuestros } = await sb().from('pedidos_vendedor')
       .select('id, im_presupuesto_id, cod_vendedor, estado, im_error')
       .eq('tenant_id', TENANT_ID).in('im_presupuesto_id', ids);
     const mio = new Map((nuestros ?? []).map((p: any) => [String(p.im_presupuesto_id), p]));
-    const { data: avisos } = await sb().from('pedidos_vendedor_items')
-      .select('pedido_id, aviso_lista, lista_sugerida, cod_lista_precios')
-      .in('pedido_id', (nuestros ?? []).map((p: any) => p.id))
-      .not('aviso_lista', 'is', null);
+
+    /**
+     * 🔄 LOS AVISOS DE LISTA SE RECALCULAN CONTRA INFOMANAGER, EN CADA REFRESCO.
+     *
+     * Mati (09/09/2026): *"las advertencias de precios siguen saliendo a pesar de que se hacen
+     * las modificaciones correspondientes"*. Salían de `pedidos_vendedor_items.aviso_lista`, que
+     * es una FOTO del momento en que el vendedor cargó el pedido: Jorgelina corregía la lista —acá
+     * o en InfoManager— y el cartel seguía ahí para siempre, porque nadie volvía a mirar.
+     *
+     * Ahora se evalúan los renglones que están HOY en el comprobante. Dos consecuencias buenas:
+     * el aviso desaparece cuando se corrige, y ahora vale para TODOS los presupuestos y no sólo
+     * para el 24% que entra por la app.
+     *
+     * No cuesta ninguna llamada más a IM: los renglones ya se trajeron acá arriba, y las reglas y
+     * el catálogo están cacheados.
+     */
     const avisosPorPedido = new Map<string, string[]>();
-    // 🔑 Los avisos NO son todos iguales y mezclarlos hace que no se mire ninguno: el 07/09
-    // había 36 pedidos marcados sobre 59, y así "revisar" deja de querer decir algo.
-    // Las listas de IM van de más cara a más barata según el número (12=L1 … 15=L4), así que
-    // comparando la lista puesta contra la sugerida se sabe para qué lado está el error:
-    //   puesta > sugerida  -> más barata de lo que corresponde  -> PIERDE MARGEN la empresa
-    //   puesta < sugerida  -> más cara                          -> le cobran de más al cliente
-    // Se clasifica con los CÓDIGOS y no leyendo el texto del aviso, que puede cambiar.
     const gravedadPorPedido = new Map<string, { pierde_margen: number; cobra_de_mas: number }>();
-    for (const a of avisos ?? []) {
-      const k = String((a as any).pedido_id);
-      if (!avisosPorPedido.has(k)) avisosPorPedido.set(k, []);
-      avisosPorPedido.get(k)!.push(String((a as any).aviso_lista));
-      const g = gravedadPorPedido.get(k) ?? { pierde_margen: 0, cobra_de_mas: 0 };
-      const puesta = Number((a as any).cod_lista_precios);
-      const sugerida = Number((a as any).lista_sugerida);
-      if (Number.isFinite(puesta) && Number.isFinite(sugerida) && sugerida > 0) {
-        if (puesta > sugerida) g.pierde_margen += 1;
-        else if (puesta < sugerida) g.cobra_de_mas += 1;
+    try {
+      const [reglas, descuentos, catListas] = await Promise.all([
+        reglasActivas(), descuentosActivos(), catalogoParaListas(),
+      ]);
+      for (const p of presupuestos) {
+        const rs = renglones.get(String(p.id)) ?? [];
+        if (!rs.length) continue;
+        const r = evaluarPedido(
+          rs.map(x => ({
+            cod_articulo: x.cod_articulo, cantidad: Number(x.cantidad),
+            cod_lista: x.cod_lista_precios, descuento: x.descuento_porc,
+          })),
+          catListas, reglas, descuentos);
+        const g = { pierde_margen: 0, cobra_de_mas: 0 };
+        const textos: string[] = [];
+        for (const a of r.avisos) {
+          /**
+           * 🪤 "Tiene derecho a L2 y está en L1" es un FALSO POSITIVO cuando el renglón lleva
+           * descuento: un descuento y una lista mejor son dos caminos al mismo precio y el
+           * vendedor elige cuál usar (Mati, 27/08/2026 — L1 con 25% da exactamente L2). El
+           * control en vivo lo resuelve comparando precios contra IM; acá eso serían dos
+           * llamadas por renglón para toda la pantalla, así que se silencia directamente. Se
+           * silencia sólo hacia el lado seguro: acusar de más a un vendedor que hizo bien las
+           * cosas hace que después nadie mire ningún cartel.
+           */
+          const conDescuento = (rs[a.idx]?.descuento_porc ?? 0) > 0;
+          if (a.severidad === 'margen') g.pierde_margen += 1;
+          else if (a.severidad === 'cliente' && !conDescuento) g.cobra_de_mas += 1;
+          else if (a.severidad === 'cliente') continue;
+          if (a.mensaje) textos.push(a.mensaje);
+          // El descuento fuera de tope es otro problema, y ese no depende de la lista.
+          if (a.mensaje_descuento) textos.push(a.mensaje_descuento);
+        }
+        if (textos.length) avisosPorPedido.set(String(p.id), textos);
+        if (g.pierde_margen || g.cobra_de_mas) gravedadPorPedido.set(String(p.id), g);
       }
-      gravedadPorPedido.set(k, g);
+    } catch (e: any) {
+      // Sin reglas la pantalla sirve igual: muestra los pedidos sin los carteles de lista. Lo que
+      // no puede es no abrir por esto.
+      console.warn('[vistaPresupuestos] no pude evaluar las listas:', e?.message);
     }
 
     // En qué quedó la revisión de la oficina. `null` = todavía no la miró nadie.
@@ -274,9 +311,10 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
         de_la_app: !!propio,
         pedido_id: propio?.id ?? null,
         cod_vendedor: propio?.cod_vendedor ?? p.cod_vendedor ?? null,
-        avisos: propio ? (avisosPorPedido.get(String(propio.id)) ?? []) : [],
+        // 🔄 Recalculados contra lo que está HOY en InfoManager, para todos los presupuestos.
+        avisos: avisosPorPedido.get(String(p.id)) ?? [],
         // Para qué lado está el error de lista, que es lo que decide si urge mirarlo.
-        gravedad: propio ? (gravedadPorPedido.get(String(propio.id)) ?? { pierde_margen: 0, cobra_de_mas: 0 }) : { pierde_margen: 0, cobra_de_mas: 0 },
+        gravedad: gravedadPorPedido.get(String(p.id)) ?? { pierde_margen: 0, cobra_de_mas: 0 },
         im_error: propio?.im_error ?? null,
         hoja_id: enHoja.get(String(p.id)) ?? null,
         // Lo pasa a buscar el cliente: no sale en ninguna hoja.

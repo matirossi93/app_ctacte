@@ -115,7 +115,7 @@ const LISTAS_VALIDAS = new Set([9, 11, 12, 13, 14, 15]);
 const REGLAS_TTL_MS = 5 * 60 * 1000;
 let _reglasCache: { reglas: ReglaLista[]; fetchedAt: number } | null = null;
 
-async function reglasActivas(): Promise<ReglaLista[]> {
+export async function reglasActivas(): Promise<ReglaLista[]> {
   if (_reglasCache && Date.now() - _reglasCache.fetchedAt < REGLAS_TTL_MS) return _reglasCache.reglas;
   const { data, error } = await sb().from('listas_reglas')
     .select('nombre, match_tipo, match_valor, cod_lista, condicion, umbral, unidad, ambito')
@@ -129,7 +129,7 @@ async function reglasActivas(): Promise<ReglaLista[]> {
 // Qué descuento admite cada renglón. Mismo TTL que las reglas de lista.
 let _descCache: { reglas: ReglaDescuento[]; fetchedAt: number } | null = null;
 
-async function descuentosActivos(): Promise<ReglaDescuento[]> {
+export async function descuentosActivos(): Promise<ReglaDescuento[]> {
   if (_descCache && Date.now() - _descCache.fetchedAt < REGLAS_TTL_MS) return _descCache.reglas;
   const { data, error } = await sb().from('descuentos_reglas')
     .select('nombre, match_tipo, match_valor, desde_cantidad, ambito, porcentaje_max, requiere_lista, requiere_mejor_lista, aviso')
@@ -146,7 +146,7 @@ async function descuentosActivos(): Promise<ReglaDescuento[]> {
 }
 
 /** Catálogo de IM ya clasificado en bulto/granel, que es lo que necesita el evaluador. */
-async function catalogoParaListas(): Promise<Map<number, ArticuloInfo>> {
+export async function catalogoParaListas(): Promise<Map<number, ArticuloInfo>> {
   const crudo = await fetchArticulosCatalogo();
   const out = new Map<number, ArticuloInfo>();
   for (const [cod, a] of crudo) out.set(cod, clasificarArticulo({ cod_articulo: cod, ...a }));
