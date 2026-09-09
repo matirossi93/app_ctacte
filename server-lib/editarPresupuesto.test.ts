@@ -15,7 +15,7 @@ const m = vi.hoisted(() => ({
   actualizarPresupuestoCantidades: vi.fn(),
   crearPresupuesto: vi.fn(),
   anularComprobante: vi.fn(),
-  actualizarObservaciones: vi.fn(),
+  actualizarCabecera: vi.fn(),
 }));
 
 vi.mock('./infomanager.js', () => ({
@@ -24,7 +24,7 @@ vi.mock('./infomanager.js', () => ({
   actualizarPresupuestoCantidades: m.actualizarPresupuestoCantidades,
   crearPresupuesto: m.crearPresupuesto,
   anularComprobante: m.anularComprobante,
-  actualizarObservaciones: m.actualizarObservaciones,
+  actualizarCabecera: m.actualizarCabecera,
   fetchArticulosCatalogo: vi.fn(async () => new Map([[1, { descripcion: 'ALPISTE X 30 KG' }]])),
   fechaArgentina: () => '2026-09-09',
 }));
@@ -346,21 +346,21 @@ describe('las observaciones', () => {
    * jueves"), y hasta ahora sólo se podía escribir desde InfoManager.
    */
   it('🔑 cambiarlas solas no rehace el presupuesto: va por PUT y el número no cambia', async () => {
-    m.actualizarObservaciones.mockResolvedValue({ ok: true, raw: {} });
+    m.actualizarCabecera.mockResolvedValue({ ok: true, raw: {} });
     const r = await llamar({
       observaciones: 'FACTURAR A NOMBRE DE LA SRL',
       items: ITEMS_IM.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista_precios: 13, descuento_porc: 0, precio: i.precio })),
     });
     expect(r.status).toBe(200);
     expect(r.body.modo).toBe('cantidades');
-    expect(m.actualizarObservaciones).toHaveBeenCalledWith(expect.objectContaining({
+    expect(m.actualizarCabecera).toHaveBeenCalledWith(expect.objectContaining({
       id: '58727292', numero: 58158, punto_de_venta: 1, observaciones: 'FACTURAR A NOMBRE DE LA SRL',
     }));
     expect(m.crearPresupuesto).not.toHaveBeenCalled();
   });
 
   it('🪤 si las observaciones no se pudieron guardar se avisa: las cantidades YA se guardaron', async () => {
-    m.actualizarObservaciones.mockResolvedValue({ ok: false, error: 'IM caído' });
+    m.actualizarCabecera.mockResolvedValue({ ok: false, error: 'IM caído' });
     const r = await llamar({
       observaciones: 'OTRA COSA',
       items: ITEMS_IM.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista_precios: 13, descuento_porc: 0, precio: i.precio })),
@@ -375,7 +375,7 @@ describe('las observaciones', () => {
       items: ITEMS_IM.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista_precios: 13, descuento_porc: 0, precio: i.precio })),
     });
     expect(r.status).toBe(200);
-    expect(m.actualizarObservaciones).not.toHaveBeenCalled();
+    expect(m.actualizarCabecera).not.toHaveBeenCalled();
   });
 
   it('🔑 al rehacer el presupuesto viajan las nuevas, no las viejas', async () => {
@@ -413,5 +413,71 @@ describe('el código de compatibilidad', () => {
     const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 }] });
     expect(r.status).toBe(502);
     expect(m.anularComprobante).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('la fecha del presupuesto', () => {
+  /**
+   * 🔑 Mati (09/09/2026): *"necesitamos poder editar la fecha del presupuesto apenas llegan al
+   * panel así lo redireccionamos a otra fecha"*. La fecha del comprobante es la que decide en qué
+   * día de reparto entra el pedido — la oficina la mueve todo el tiempo para reordenar despachos.
+   */
+  it('🔑 moverla de día no rehace el presupuesto: el número no cambia', async () => {
+    m.actualizarCabecera.mockResolvedValue({ ok: true, raw: {} });
+    const r = await llamar({
+      fecha: '2026-09-11',
+      items: ITEMS_IM.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista_precios: 13, descuento_porc: 0, precio: i.precio })),
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.modo).toBe('cantidades');
+    expect(r.body.fecha).toBe('2026-09-11');
+    expect(m.actualizarCabecera).toHaveBeenCalledWith(expect.objectContaining({ fecha: '2026-09-11' }));
+    expect(m.crearPresupuesto).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🪤 Fecha y observaciones viajan en el MISMO PUT de IM. Mandar sólo una pisaría la otra con
+   * lo que hubiera en el body, así que las dos se resuelven juntas contra lo que ya tenía.
+   */
+  it('🪤 al mover la fecha, las observaciones que ya tenía NO se borran', async () => {
+    m.actualizarCabecera.mockResolvedValue({ ok: true, raw: {} });
+    await llamar({
+      fecha: '2026-09-11',
+      items: ITEMS_IM.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista_precios: 13, descuento_porc: 0, precio: i.precio })),
+    });
+    expect(m.actualizarCabecera).toHaveBeenCalledWith(expect.objectContaining({
+      observaciones: 'entregar el jueves',
+    }));
+  });
+
+  it('🔴 una fecha inventada se rechaza: el pedido desaparecería de la pantalla', async () => {
+    const r = await llamar({
+      fecha: '11/09/2026',
+      items: ITEMS_IM.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista_precios: 13, descuento_porc: 0, precio: i.precio })),
+    });
+    expect(r.status).toBe(400);
+    expect(m.actualizarCabecera).not.toHaveBeenCalled();
+    expect(m.actualizarPresupuestoCantidades).not.toHaveBeenCalled();
+  });
+
+  it('si no cambió, no se le pide nada a InfoManager', async () => {
+    const r = await llamar({
+      fecha: '2026-09-09',                 // la que ya tiene
+      items: ITEMS_IM.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista_precios: 13, descuento_porc: 0, precio: i.precio })),
+    });
+    expect(r.status).toBe(200);
+    expect(m.actualizarCabecera).not.toHaveBeenCalled();
+  });
+
+  it('🔑 al rehacer el presupuesto, el nuevo nace con la fecha nueva', async () => {
+    const r = await llamar({
+      fecha: '2026-09-11',
+      items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 }],
+    });
+    expect(r.body.modo).toBe('recreado');
+    const creado = m.crearPresupuesto.mock.calls[0][0];
+    expect(creado.fecha).toBe('2026-09-11');
+    expect(creado.fecha_entrega).toBe('2026-09-11');
   });
 });

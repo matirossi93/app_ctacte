@@ -115,3 +115,13 @@
     border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text);
     font-family: inherit; font-size: 0.83rem; padding: 0.3rem 0.4rem; border-radius: var(--radius-sm);
 }
+
+/* Fecha y observaciones, arriba del pie: los dos datos de cabecera que se editan. */
+.ed-cabecera { display: flex; gap: 0.75rem; align-items: flex-start; flex-wrap: wrap; margin-top: 0.5rem; }
+.ed-cabecera .ed-obs { flex: 1 1 260px; margin-top: 0; }
+.ed-fecha { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.78rem; color: var(--color-text-muted); }
+.ed-fecha input {
+    border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text);
+    font-family: inherit; font-size: 0.83rem; padding: 0.25rem 0.4rem; border-radius: var(--radius-sm);
+}
+.ed-movida { color: var(--color-accent); margin-left: 0.3rem; }

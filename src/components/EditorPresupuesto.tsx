@@ -60,18 +60,21 @@ const money = (n: number) => '$' + Math.round(n).toLocaleString('es-AR');
 const firma = (rs: ItemEditable[]) =>
     rs.map(r => `${r.cod_articulo}:${Number(r.cod_lista_precios)}:${Number(r.descuento_porc) || 0}`).join('|');
 
-export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, observacionesOriginales, onGuardado, onCancelar }: {
+export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, observacionesOriginales, fechaOriginal, onGuardado, onCancelar }: {
     comprobanteId: string;
     numero: number | null;
     itemsOriginales: ItemEditable[];
     /** Lo que escribió el vendedor en InfoManager. Es lo que la oficina lee antes de facturar. */
     observacionesOriginales: string | null;
+    /** La fecha del comprobante: es la que decide en qué día de reparto entra el pedido. */
+    fechaOriginal: string | null;
     /** Se llama con el comprobante resultante: puede ser otro si hubo que recrearlo. */
     onGuardado: (r: { modo: string; im_numero: number | null; aviso?: string | null }) => void;
     onCancelar: () => void;
 }) {
     const [items, setItems] = useState<ItemEditable[]>(() => itemsOriginales.map(i => ({ ...i })));
     const [observaciones, setObservaciones] = useState(observacionesOriginales ?? '');
+    const [fecha, setFecha] = useState(fechaOriginal ?? '');
     const [busqueda, setBusqueda] = useState('');
     const [resultados, setResultados] = useState<ArticuloBuscado[] | null>(null);
     const [buscando, setBuscando] = useState(false);
@@ -84,7 +87,8 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, obse
      */
     const seRecrea = firma(items) !== firma(itemsOriginales);
     const cambiaObs = observaciones.trim() !== (observacionesOriginales ?? '').trim();
-    const hayCambios = seRecrea || cambiaObs
+    const cambiaFecha = !!fecha && fecha !== (fechaOriginal ?? '');
+    const hayCambios = seRecrea || cambiaObs || cambiaFecha
         || items.some((it, i) => Number(it.cantidad) !== Number(itemsOriginales[i]?.cantidad))
         || items.some((it, i) => Number(it.precio) !== Number(itemsOriginales[i]?.precio));
 
@@ -144,6 +148,7 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, obse
                 headers: { ...authHeaders(), 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     observaciones,
+                    fecha,
                     items: items.map(i => ({
                         cod_articulo: i.cod_articulo,
                         cantidad: Number(i.cantidad),
@@ -286,14 +291,24 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, obse
                 )}
             </div>
 
-            {/* 🔑 Las observaciones son lo que la oficina lee justo antes de facturar: "facturar a
-                nombre de la SRL", "entregar el jueves temprano" (Mati, 09/09/2026). */}
-            <label className="ed-obs">
-                <span>Observaciones del presupuesto</span>
-                <textarea value={observaciones} rows={2} maxLength={500}
-                          placeholder="Lo que tiene que ver quien factura y quien entrega"
-                          onChange={e => setObservaciones(e.target.value)} />
-            </label>
+            <div className="ed-cabecera">
+                {/* 🔑 La fecha decide en qué día de reparto entra el pedido. Mati (09/09/2026):
+                    *"poder editar la fecha apenas llegan al panel, así lo redireccionamos a otra
+                    fecha"*. */}
+                <label className="ed-fecha">
+                    <span>Fecha del pedido {cambiaFecha && <b className="ed-movida">se mueve de día</b>}</span>
+                    <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} />
+                </label>
+
+                {/* Lo que la oficina lee justo antes de facturar: "facturar a nombre de la SRL",
+                    "entregar el jueves temprano". */}
+                <label className="ed-obs">
+                    <span>Observaciones del presupuesto</span>
+                    <textarea value={observaciones} rows={2} maxLength={500}
+                              placeholder="Lo que tiene que ver quien factura y quien entrega"
+                              onChange={e => setObservaciones(e.target.value)} />
+                </label>
+            </div>
 
             <div className="ed-pie">
                 <span className="ed-total">Total estimado <b>{money(total)}</b></span>

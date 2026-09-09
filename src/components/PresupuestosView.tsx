@@ -421,6 +421,7 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                             comprobanteId={p.im_comprobante_id}
                                             numero={p.im_numero}
                                             observacionesOriginales={obsAbierto}
+                                            fechaOriginal={p.fecha}
                                             itemsOriginales={items.map(it => ({
                                                 id: it.id,
                                                 cod_articulo: it.cod_articulo,

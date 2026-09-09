@@ -842,19 +842,24 @@ export async function anularComprobante(input: {
 }
 
 /**
- * Cambiar las OBSERVACIONES de un comprobante vivo (Mati, 09/09/2026: *"necesito que podamos
- * agregar observaciones en el presupuesto"*).
+ * Cambiar la CABECERA de un comprobante vivo: sus observaciones y su fecha.
+ *
+ * Mati (09/09/2026): *"necesito que podamos agregar observaciones en el presupuesto"* y
+ * *"necesitamos poder editar la fecha del presupuesto apenas llegan al panel, así lo
+ * redireccionamos a otra fecha"* — la fecha del presupuesto es la que decide en qué día de
+ * reparto entra el pedido.
  *
  * 🪤 NO va por `PUT /presupuestos/{id}`: ese schema (`VentasPresupuestosActualizar`) sólo tiene
- * `tipo_presupuesto` e `items`, así que las observaciones se ignoran en silencio. Va por
- * `PUT /ventas/{id}`, el mismo camino que usa `anularComprobante` — con `anulada: 'N'`, porque
- * el campo tiene default y omitirlo dejaría el comprobante en un estado que no elegimos.
+ * `tipo_presupuesto` e `items`, así que la fecha y las observaciones se ignoran en silencio. Va
+ * por `PUT /ventas/{id}`, el mismo camino que usa `anularComprobante` — con `anulada: 'N'`,
+ * porque el campo tiene default y omitirlo dejaría el comprobante en un estado que no elegimos.
  * Verificado contra IM el 09/09/2026.
  */
-export async function actualizarObservaciones(input: {
+export async function actualizarCabecera(input: {
   id: number | string;
   numero: number;
   punto_de_venta: number;
+  /** La fecha CON LA QUE QUEDA. Para no moverla, se pasa la que ya tiene. */
   fecha: string;
   observaciones: string;
   tipo_comprobante?: string;

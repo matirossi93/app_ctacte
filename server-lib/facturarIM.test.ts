@@ -178,14 +178,14 @@ describe('el remito cuando falta stock (09/09/2026)', () => {
   it('por defecto mueve stock: es lo que corresponde', async () => {
     const post = mockIM({ isCreated: true, remito: { id: '1', numero: 5 } });
     await emitirRemito(DATOS);
-    expect(post.mock.calls[0][1].mueve_stock).toBe('S');
-    expect(post.mock.calls[0][1].observaciones).not.toMatch(/STOCK NO DESCONTADO/);
+    expect((post.mock.calls[0] as any[])[1].mueve_stock).toBe('S');
+    expect((post.mock.calls[0] as any[])[1].observaciones).not.toMatch(/STOCK NO DESCONTADO/);
   });
 
   it('🔑 con sinMoverStock sale sin descontar Y queda escrito en el comprobante', async () => {
     const post = mockIM({ isCreated: true, remito: { id: '1', numero: 5 } });
     await emitirRemito(DATOS, { sinMoverStock: true });
-    expect(post.mock.calls[0][1].mueve_stock).toBe('N');
-    expect(post.mock.calls[0][1].observaciones).toMatch(/STOCK NO DESCONTADO/);
+    expect((post.mock.calls[0] as any[])[1].mueve_stock).toBe('N');
+    expect((post.mock.calls[0] as any[])[1].observaciones).toMatch(/STOCK NO DESCONTADO/);
   });
 });

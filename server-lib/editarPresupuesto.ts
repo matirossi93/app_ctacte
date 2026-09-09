@@ -32,7 +32,7 @@ import { puedeArmarHojasDeRuta } from './permisos.js';
 import {
   cabeceraComprobante, getItemsComprobante, actualizarPresupuestoCantidades,
   crearPresupuesto, anularComprobante, fetchArticulosCatalogo, fechaArgentina,
-  fetchClientesIMCached, actualizarObservaciones,
+  fetchClientesIMCached, actualizarCabecera,
 } from './infomanager.js';
 import { invalidarVista } from './vistaPresupuestos.js';
 import { invalidarRemitos } from './vistaRemitos.js';
@@ -188,6 +188,19 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
      */
     const obsNueva = req.body?.observaciones != null ? String(req.body.observaciones).trim().slice(0, 500) : undefined;
     const cambiaObs = obsNueva != null && obsNueva !== (cab.observaciones ?? '');
+    /**
+     * 🔑 La FECHA del presupuesto es la que decide en qué día de reparto entra el pedido. Mati
+     * (09/09/2026): *"necesitamos poder editar la fecha del presupuesto apenas llegan al panel
+     * así lo redireccionamos a otra fecha"*. Se valida el formato: una fecha inventada mueve el
+     * pedido a un día que no existe y desaparece de la pantalla.
+     */
+    const fechaPedida = String(req.body?.fecha ?? '').trim();
+    if (fechaPedida && !/^\d{4}-\d{2}-\d{2}$/.test(fechaPedida)) {
+      res.status(400).json({ error: 'La fecha del presupuesto tiene que ser una fecha válida.' });
+      return;
+    }
+    const fechaNueva = fechaPedida || undefined;
+    const cambiaFecha = fechaNueva != null && fechaNueva !== (cab.fecha ?? '');
     if (!mismoSurtido && notasIM.length) {
       res.status(409).json({
         error: `Este presupuesto tiene ${notasIM.length} renglón(es) sin código escritos en InfoManager (${notasIM.map(n => `"${n.detalle ?? 'sin texto'}"`).join(', ')}). Rehacerlo los borraría, y la API de InfoManager no los puede volver a cargar. Cambiá sólo cantidades acá, o hacé el cambio en InfoManager.`,
@@ -205,21 +218,26 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
       const r = await actualizarPresupuestoCantidades(id, payload);
       if (!r.ok) { res.status(502).json({ error: `InfoManager rechazó el cambio: ${r.error}` }); return; }
       /**
-       * Las observaciones van por otro PUT: el de presupuestos no las tiene en el schema (las
-       * ignora en silencio). Se hace DESPUÉS de las cantidades y no frena: si falla, el cambio
-       * de cantidades ya está hecho y lo que corresponde es avisarlo, no fingir que no pasó.
+       * La fecha y las observaciones van por otro PUT: el de presupuestos no las tiene en el
+       * schema (las ignora en silencio). Se hace DESPUÉS de las cantidades y no frena: si falla,
+       * el cambio de cantidades ya está hecho y lo que corresponde es avisarlo, no fingir que no
+       * pasó. Las dos viajan juntas porque es el mismo PUT: mandar una sola pisaría la otra.
        */
-      let avisoObs: string | null = null;
-      if (cambiaObs && cab.numero != null && cab.punto_de_venta != null && cab.fecha) {
-        const o = await actualizarObservaciones({
-          id, numero: cab.numero, punto_de_venta: cab.punto_de_venta, fecha: cab.fecha,
-          observaciones: obsNueva!,
+      let avisoCab: string | null = null;
+      if ((cambiaObs || cambiaFecha) && cab.numero != null && cab.punto_de_venta != null) {
+        const o = await actualizarCabecera({
+          id, numero: cab.numero, punto_de_venta: cab.punto_de_venta,
+          fecha: fechaNueva ?? cab.fecha ?? fechaArgentina(),
+          observaciones: obsNueva ?? cab.observaciones ?? '',
         });
-        if (!o.ok) avisoObs = `Se guardaron las cantidades, pero NO las observaciones: ${o.error}`;
+        if (!o.ok) avisoCab = `Se guardaron las cantidades, pero NO ${cambiaFecha ? 'la fecha' : 'las observaciones'}: ${o.error}`;
       }
       await limpiarRevision(id);
       invalidarVista(); invalidarRemitos();
-      res.json({ ok: true, modo: 'cantidades', im_comprobante_id: id, im_numero: cab.numero, aviso: avisoObs });
+      res.json({
+        ok: true, modo: 'cantidades', im_comprobante_id: id, im_numero: cab.numero,
+        fecha: fechaNueva ?? cab.fecha ?? null, aviso: avisoCab,
+      });
       return;
     }
 
@@ -244,9 +262,9 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
       usuario: cab.usuario || String(req.body?.usuario_im ?? 'jorgelina'),
       punto_de_venta: cab.punto_de_venta ?? 1,
       observaciones: obsNueva ?? cab.observaciones ?? '',
-      // La fecha manda en qué día de reparto entra: se conserva la del original.
-      fecha: cab.fecha ?? fechaArgentina(),
-      fecha_entrega: cab.fecha_entrega ?? cab.fecha ?? fechaArgentina(),
+      // La fecha manda en qué día de reparto entra: la nueva si la mandaron, si no la del original.
+      fecha: fechaNueva ?? cab.fecha ?? fechaArgentina(),
+      fecha_entrega: fechaNueva ?? cab.fecha_entrega ?? cab.fecha ?? fechaArgentina(),
       cod_compatibilidad: codCompatibilidad(),
       items: items.map(i => ({
         cod_articulo: i.cod_articulo,
