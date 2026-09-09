@@ -80,11 +80,35 @@ export type ResultadoEmision =
 const PTO_VENTA_FACTURA = Number(process.env.IM_PTO_VENTA_FACTURA || 777);
 const PTO_VENTA_REMITO = Number(process.env.IM_PTO_VENTA_REMITO || 7);
 /**
- * Punto de venta de las notas de crédito. Verificado en `GET /puntos-de-venta` el 08/09/2026:
- * los comprobantes 41 (NC A) y 42 (NC B) de la empresa 1 con `id_destino: 1` salen por el 777,
- * el mismo de las facturas. Va en su propia variable para poder corregirlo sin deploy.
+ * 🔴 PUNTO DE VENTA DE LAS NOTAS DE CRÉDITO Y DÉBITO: EL 999, NO EL 777 DE LAS FACTURAS.
+ *
+ * IM valida la unicidad del número **sin mirar el tipo de comprobante**. Como cada tipo lleva su
+ * propia serie y la de facturas B va por 50.422 mientras la de NC B va por 30.073, cada NC choca
+ * contra una factura vieja del mismo número. Probado contra IM el 08 y el 09/09/2026:
+ *
+ *   NC B pv777 numero 0      -> ✗ "Ya existe una factura con ... numero = 30073"
+ *   NC B pv777 numero 30073  -> ✗ el mismo error (no es el número que mandamos)
+ *   ND B pv777 numero 0      -> ✗ "... numero = 742"
+ *   **NC B pv999 destino 3** -> ✅ sale, y ahí IM sí le asigna el número solo
+ *   **ND B pv999 destino 3** -> ✅ sale igual
+ *
+ * ⚠️ Emitir por otra serie es una DECISIÓN DE NEGOCIO, no técnica: es otro punto de venta ante
+ * AFIP. Se le planteó así a Mati el 09/09/2026 y la tomó él (*"usemos ese punto de venta, no hay
+ * problema"*). Queda en variables de entorno para volver al 777 sin deploy el día que Sistec
+ * arregle la validación — y ese día `IM_NUMERO_NC_AUTO` vuelve a 0.
  */
-const PTO_VENTA_NC = Number(process.env.IM_PTO_VENTA_NC || 777);
+const PTO_VENTA_NC = Number(process.env.IM_PTO_VENTA_NC || 999);
+/**
+ * 🪤 El destino va atado al punto de venta: la combinación empresa+comprobante+destino+pv tiene
+ * que EXISTIR en `/puntos-de-venta` o IM contesta "no está relacionado a un punto de venta
+ * existente". El 999 de la empresa 1 es destino 3; el 777 es destino 1.
+ */
+const ID_DESTINO_NC = Number(process.env.IM_ID_DESTINO_NC || 3);
+/**
+ * En el 999 IM asigna el correlativo solo con `numero: 0` (probado: NC B nº2, ND B nº1). En el
+ * 777 no, y ahí hay que calcularlo. Con la variable en 0 se usa el camino de calcular.
+ */
+const NUMERO_NC_AUTO = String(process.env.IM_NUMERO_NC_AUTO ?? '1') === '1';
 /**
  * ⚠️ La NC real de la oficina viene con `genero_re_auto: 'S'`, pero esa la creó la pantalla de
  * IM, no la API. El remito y el presupuesto —los dos verificados por API— mandan 'N', y una 'S'
@@ -580,22 +604,69 @@ export async function emitirRemitoMasivo(d: DatosComprobante): Promise<Resultado
 export async function emitirNotaCredito(
   d: DatosComprobante & { numero?: number | null; observaciones?: string },
 ): Promise<ResultadoEmision> {
+  return emitirNota('NC', d);
+}
+
+/**
+ * POST /ventas — emite una NOTA DE DÉBITO.
+ *
+ * Es la otra mitad de corregir una factura: lo que hay que cobrarle DE MÁS al cliente porque
+ * faltó un producto en la factura o porque se le cargó una lista más barata de la que iba.
+ * Mismo payload que la NC salvo `tipo_comprobante`, igual que la FA y la NC entre sí.
+ */
+export async function emitirNotaDebito(
+  d: DatosComprobante & { numero?: number | null; observaciones?: string },
+): Promise<ResultadoEmision> {
+  return emitirNota('ND', d);
+}
+
+/**
+ * El cuerpo común de las dos. Se comparte porque la única diferencia real es la letra del tipo:
+ * las NC y ND reales de la oficina tienen exactamente los mismos campos.
+ *
+ * 🔴 ES IRREVERSIBLE: consume numeración fiscal y toca la cuenta corriente del cliente.
+ *
+ * 📌 Los campos salen de una NC REAL de Casa Central (leída de IM el 08/09/2026):
+ * `condicion_venta_tipo: 2`, `talonario_manual: 'S'`, `tag: 'S'`, `cod_unidad_negocio_cab: 0` y,
+ * en el renglón, `cod_cuenta: 4100002`.
+ *
+ * ⚠️ `mueve_stock: 'N'`: la mercadería que vuelve NO reingresa al stock por este camino. Es el
+ * criterio actual de la oficina, copiado tal cual — si algún día quieren que reingrese, es
+ * cambiar esta letra.
+ *
+ * 🪤 La API de IM **no tiene ningún campo** para relacionar la nota con su factura (verificado por
+ * tres caminos el 08/09/2026). Lo que sí hace la oficina es escribirlo en las observaciones, así
+ * que quien llama manda ahí "SEGUN FACTURA 50401" y el vínculo exacto se guarda de nuestro lado.
+ */
+async function emitirNota(
+  tipo: 'NC' | 'ND',
+  d: DatosComprobante & { numero?: number | null; observaciones?: string },
+): Promise<ResultadoEmision> {
+  const que = tipo === 'NC' ? 'nota de crédito' : 'nota de débito';
   const letra = letraDeFactura(d.categoria_iva);
   if (!letra) {
-    return { ok: false, error: `No se puede saber qué letra de nota de crédito le corresponde al cliente ${d.cod_cliente} (condición de IVA: ${d.categoria_iva ?? 'sin cargar'}). Hacela a mano.` };
+    return { ok: false, error: `No se puede saber qué letra de ${que} le corresponde al cliente ${d.cod_cliente} (condición de IVA: ${d.categoria_iva ?? 'sin cargar'}). Hacela a mano.` };
   }
-  let numero = d.numero ?? await proximoNumeroFactura(letra, PTO_VENTA_FACTURA, 30, 'NC');
+  /**
+   * 🔑 En el punto 999 IM asigna el correlativo solo con `numero: 0` — probado el 09/09/2026
+   * (NC B nº2, ND B nº1). En el 777 no lo asigna y hay que calcularlo, así que ese camino se
+   * conserva detrás de `IM_NUMERO_NC_AUTO` para el día que se vuelva allá.
+   */
+  let numero = d.numero ?? (NUMERO_NC_AUTO ? 0 : await proximoNumeroFactura(letra, PTO_VENTA_NC, 30, tipo));
   if (numero == null) {
-    return { ok: false, error: `No pude averiguar el próximo número de nota de crédito ${letra} del punto ${PTO_VENTA_FACTURA}: no hay ninguna emitida en los últimos 30 días. Hacela a mano.` };
+    return { ok: false, error: `No pude averiguar el próximo número de ${que} ${letra} del punto ${PTO_VENTA_NC}: no hay ninguna emitida en los últimos 30 días. Hacela a mano.` };
   }
 
   const fecha = fechaPedida(d);
   const cli = await imClient();
+  let items = renglones(d.items, d.cod_vendedor);
   // Mismo criterio que la factura: si otro tomó el número mientras tanto, se sube al siguiente.
   for (let intento = 0; intento < 3; intento++) {
     const payload = {
       ...cabecera(d, fecha),
-      tipo_comprobante: 'NC',
+      // 🪤 El destino va atado al punto de venta, no al de las facturas (ver ID_DESTINO_NC).
+      id_destino: ID_DESTINO_NC,
+      tipo_comprobante: tipo,
       tipo_factura: letra,
       numero,
       punto_de_venta: PTO_VENTA_NC,
@@ -606,25 +677,31 @@ export async function emitirNotaCredito(
       cod_deposito: d.cod_deposito ?? 1,
       cod_unidad_negocio_cab: 0,
       genero_re_auto: NC_GENERO_RE_AUTO,
-      // 🪤 La NC NO puede llevar el `cod_compatibilidad` del presupuesto: ya lo usó la factura, y
-      // IM rechaza un código repetido incluso contra comprobantes anulados. El vínculo con la
-      // hoja vive en `hojas_ruta_ajustes` y, para leerlo desde IM, en las observaciones.
+      // 🪤 La nota NO puede llevar el `cod_compatibilidad` del presupuesto: ya lo usó la factura, y
+      // IM rechaza un código repetido incluso contra comprobantes anulados. El vínculo vive de
+      // nuestro lado y, para leerlo desde IM, en las observaciones.
       cod_compatibilidad: '',
-      items: renglones(d.items, d.cod_vendedor),
+      items,
+    };
+    /** Un solo lugar para decidir si el rechazo se reintenta y cómo. Igual que en la factura. */
+    const reintentar = (error: string): boolean => {
+      // 🪤 Sólo el choque de NUMERACIÓN sube el número. Un "ya existe" por otra cosa haría subir
+      // tres veces y terminar diciendo "los números ya estaban usados", que sería mentira.
+      if (/ya existe una nota/i.test(error)) { numero = Number(numero) + 1; return true; }
+      const art = articuloFueraDeLista(error);
+      if (art != null) { items = sinListaDelArticulo(items, art); return true; }
+      return false;
     };
     try {
       const { data } = await cli.post('/ventas', payload);
-      const r = interpretar(data, `NC ${letra}`);
-      // 🪤 Sólo se reintenta cuando el choque es de NUMERACIÓN. Un "ya existe" por otra cosa
-      // (por ejemplo un cod_compatibilidad repetido) haría subir el número tres veces y
-      // terminar diciendo "el número y los dos siguientes ya estaban usados", que sería falso.
-      if (!r.ok && /ya existe una nota/i.test(r.error) && intento < 2) { numero += 1; continue; }
+      const r = interpretar(data, `${tipo} ${letra}`);
+      if (!r.ok && intento < 2 && reintentar(r.error)) continue;
       return r.ok ? { ...r, numero: r.numero ?? numero } : r;
     } catch (err: any) {
       const e = comoError(err);
-      if (!e.ok && /ya existe una nota/i.test(e.error) && intento < 2) { numero += 1; continue; }
+      if (!e.ok && intento < 2 && reintentar(e.error)) continue;
       return e;
     }
   }
-  return { ok: false, error: `No se pudo emitir la nota de crédito ${letra}: el número ${numero} y los dos siguientes ya estaban usados.` };
+  return { ok: false, error: `No se pudo emitir la ${que} ${letra}: InfoManager rechazó los tres intentos.` };
 }

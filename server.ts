@@ -53,6 +53,8 @@ import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos
 import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, precioArticulo, catalogoPedido, validarListasPedido, editarPedido } from './server-lib/pedidos.js';
 import { pendientesDelDia, arrastreDelDia, impresionHoja, sugerenciaDelDia, listarHojas, listarCamiones, crearHoja, editarHoja, borrarHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
 import { tableroFacturacion, previsualizarFacturacion, facturarSeleccion, liberarReclamo } from './server-lib/facturarPresupuestos.js';
+// Corregir una factura ya emitida, con notas de crédito y de débito.
+import { verFacturaParaCorregir, corregirFactura, historialCorrecciones } from './server-lib/correccionFactura.js';
 import { marcarRetiro, quitarRetiro, marcarRetirado, listarRetiros, resumenRetiros } from './server-lib/retirosSucursal.js';
 import { listarChoferes, liquidacionMensual } from './server-lib/liquidacionChoferes.js';
 import { listarAjustes, crearAjuste, borrarAjuste, candidatasAVincular, vincularAjuste } from './server-lib/ajustesEntrega.js';
@@ -681,6 +683,10 @@ app.get('/api/facturacion', requireJwt, (req: any, res) => tableroFacturacion(re
 app.post('/api/facturacion', requireJwt, (req: any, res) => facturarSeleccion(req, res));
 // Libera un intento que quedó a medias, DESPUÉS de que una persona verificó en IM.
 app.delete('/api/facturacion/reclamo/:comprobanteId', requireJwt, (req: any, res) => liberarReclamo(req, res));
+// 🔴 Corregir una factura EMITE comprobantes reales. Sin `emitir: true` sólo previsualiza.
+app.get('/api/facturacion/corregir/:idFactura', requireJwt, (req: any, res) => verFacturaParaCorregir(req, res));
+app.get('/api/facturacion/corregir/:idFactura/historial', requireJwt, (req: any, res) => historialCorrecciones(req, res));
+app.post('/api/facturacion/corregir', requireJwt, (req: any, res) => corregirFactura(req, res));
 
 app.get('/api/presupuestos/fraccionado', requireJwt, (req: any, res) => fraccionadoDelRango(req, res));
 // 🪤 Antes de `/:comprobanteId`: si no, la ruta con parámetro se come "consolidado".

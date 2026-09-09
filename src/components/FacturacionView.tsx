@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-    AlertTriangle, Loader2, RefreshCw, Receipt, CheckCircle2, X, FileWarning, Printer,
+    AlertTriangle, Loader2, RefreshCw, Receipt, CheckCircle2, X, FileWarning, Printer, Pencil,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import { imprimirComprobante } from '../utils/imprimirComprobante';
 import { useRecargarAlVolver } from '../utils/recargarAlVolver';
 import { FacturarModal } from './FacturarModal';
+import { CorregirFacturaModal } from './CorregirFacturaModal';
 import './FacturacionView.css';
 
 /**
@@ -45,6 +46,12 @@ const dia = (f: string | null) => (f ? `${f.slice(8, 10)}/${f.slice(5, 7)}` : '�
 export function FacturacionView({ desde, hasta }: { desde: string; hasta: string }) {
     const [pendientes, setPendientes] = useState<Fila[]>([]);
     const [facturados, setFacturados] = useState<Fila[]>([]);
+    /**
+     * Qué factura se está corrigiendo. Mati (09/09/2026): los repartidores llaman desde la calle
+     * porque se cargó mal una lista o un artículo, y corregirlo en IM con notas de crédito es
+     * lento. Acá se edita la factura como si se pudiera y salen la NC y la ND solas.
+     */
+    const [corrigiendo, setCorrigiendo] = useState<string | null>(null);
     const [totales, setTotales] = useState<any>(null);
     const [sinAprobar, setSinAprobar] = useState(0);
     const [cargando, setCargando] = useState(true);
@@ -205,6 +212,13 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                                 <Printer size={14} /> RE
                                             </button>
                                         )}
+                                        {p.im_factura_id && (
+                                            <button className="fc-imprimir fc-corregir"
+                                                    title="Corregir con notas de crédito y débito: sacar, agregar o cambiar el precio de un producto"
+                                                    onClick={() => setCorrigiendo(String(p.im_factura_id))}>
+                                                <Pencil size={14} /> Corregir
+                                            </button>
+                                        )}
                                     </td>
                                 </tr>
                             ))}
@@ -233,6 +247,15 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                         setFacturando(null);
                         if (huboCambios) void cargar(true);
                     }}
+                />
+            )}
+
+            {corrigiendo && (
+                <CorregirFacturaModal
+                    idFactura={corrigiendo}
+                    onCerrar={() => setCorrigiendo(null)}
+                    // Emitir una nota cambia el total del cliente: la pantalla tiene que releerlo.
+                    onListo={() => void cargar(true)}
                 />
             )}
         </div>

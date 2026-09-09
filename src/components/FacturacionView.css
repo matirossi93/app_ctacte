@@ -92,3 +92,8 @@
 }
 .fc-imprimir:hover { color: var(--color-text); border-color: var(--color-text-muted); }
 .fc-imprimir-celda { display: flex; gap: 0.25rem; justify-content: flex-end; }
+
+/* Corregir una factura emitida (notas de crédito y débito). Se distingue de los "Imprimir"
+   porque emite comprobantes reales: no es lo mismo apretarlo por error. */
+.fc-imprimir.fc-corregir { border-color: #EEC045; color: #8a5a00; background: #fdf0d5; }
+.fc-imprimir.fc-corregir:hover { background: #f8e6bd; }
