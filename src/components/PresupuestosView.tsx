@@ -31,6 +31,12 @@ interface Presupuesto {
     de_otro_dia: boolean;
     /** Lo que escribió el vendedor en el pedido, tal como está en InfoManager. */
     observaciones: string | null;
+    /**
+     * 🔴 La factura que este presupuesto YA tiene. `nuestra` = la emitimos desde el panel ·
+     * `deducida` = hay una del mismo cliente por el mismo importe. Facturar uno que ya está
+     * facturado emite una factura duplicada de verdad: pasó el 09/09/2026 con la 50401.
+     */
+    factura: { numero: number | null; tipo: string; fecha: string | null; origen: 'nuestra' | 'deducida' } | null;
     cod_cliente: number;
     cliente_nombre: string;
     cod_zona: number | null;
@@ -250,6 +256,11 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                             <AlertTriangle size={13} /> {resumen.con_cantidad_rara} con cantidad rara
                         </span>
                     )}
+                    {(resumen?.ya_facturados ?? 0) > 0 && (
+                        <span className="pr-chip facturado" title="Ya tienen su factura emitida: no hay que volver a facturarlos">
+                            <Check size={13} /> {resumen.ya_facturados} ya facturados
+                        </span>
+                    )}
                     {(resumen?.sin_stock ?? 0) > 0 && (
                         <span className="pr-chip" title="Piden más de lo que hay en el depósito">
                             {resumen.sin_stock} sin stock
@@ -291,6 +302,17 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                 <div className="pr-fila-info">
                                     <div className="pr-cli">
                                         <span>{p.cliente_nombre}</span>
+                                        {/* 🔴 Lo primero que hay que ver: si ya tiene factura, no se
+                                            vuelve a facturar. */}
+                                        {p.factura && (
+                                            <span className={`pr-badge ${p.factura.origen === 'nuestra' ? 'facturado' : 'aviso'}`}
+                                                  title={p.factura.origen === 'nuestra'
+                                                      ? 'Se facturó desde el panel'
+                                                      : `Hay una ${p.factura.tipo} del mismo cliente por el mismo importe${p.factura.fecha ? ` (${p.factura.fecha})` : ''}. InfoManager no guarda el vínculo, así que conviene verificarlo antes de facturar.`}>
+                                                <Check size={11} /> {p.factura.tipo} {p.factura.numero ?? ''}
+                                                {p.factura.origen === 'deducida' && ' ?'}
+                                            </span>
+                                        )}
                                         {p.gravedad?.pierde_margen > 0 && (
                                             <span className="pr-badge grave"><AlertTriangle size={11} /> por debajo de lista</span>
                                         )}

@@ -86,6 +86,7 @@ export async function listarPresupuestos(req: Request & { user?: JwtPayload }, r
       cobra_de_mas: vista.cobra_de_mas,
       sin_stock: vista.sin_stock,
       con_cantidad_rara: vista.con_cantidad_rara,
+      ya_facturados: vista.ya_facturados,
     });
   } catch (err: any) {
     console.error('[listarPresupuestos]', err?.message);

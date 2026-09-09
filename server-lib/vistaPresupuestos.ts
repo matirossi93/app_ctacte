@@ -20,6 +20,7 @@ import { zonaDeCliente } from './zonaCliente.js';
 import { revisarCantidades } from './controlCantidades.js';
 import { formatosDeBolsa } from './formatosBolsa.js';
 import { armarConsolidado } from './consolidadoArticulos.js';
+import { buscarFacturasYaEmitidas } from './facturaYaEmitida.js';
 
 /** Depósito contra el que se controla el stock. 1 = Depósito General (Casa Central). */
 const DEPOSITO_CONTROL = Number(process.env.PEDIDO_DEPOSITO || 1);
@@ -199,6 +200,33 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
       .filter((f: any) => f.im_remito_numero != null || f.facturado_at != null)
       .map((f: any) => String(f.im_comprobante_id)));
 
+    /**
+     * 🔴 ¿Cuál de estos presupuestos ya tiene su factura? Mati (09/09/2026): *"tenemos que
+     * incorporar en la parte de presupuestos que diga si ya está facturado o no"*, después de que
+     * facturar uno ya facturado emitiera una SEGUNDA factura real (la 50401).
+     *
+     * InfoManager no lo marca: medido ese día, los 35 presupuestos con factura y los 23 sin ella
+     * están todos en `tipo_presupuesto: 'C'`. Se deduce comparando contra las facturas reales del
+     * rango — mismo cliente, mismo importe al centavo.
+     */
+    const { data: nuestrasFact } = await sb().from('presupuestos_facturados')
+      .select('im_comprobante_id, im_factura_id, im_factura_numero, im_factura_tipo')
+      .eq('tenant_id', TENANT_ID).not('im_factura_id', 'is', null);
+    const nuestras = new Map((nuestrasFact ?? []).map((n: any) => [String(n.im_comprobante_id), {
+      im_factura_id: n.im_factura_id ?? null,
+      im_factura_numero: n.im_factura_numero ?? null,
+      im_factura_tipo: n.im_factura_tipo ?? null,
+    }]));
+    const facturasVigentes = ventas.filter((v: any) =>
+      String(v.tipo_comprobante ?? '').trim() === 'FA' &&
+      String(v.anulada ?? '').trim().toUpperCase() !== 'S');
+    const facturaDelPresupuesto = buscarFacturasYaEmitidas(
+      presupuestos.map((p: any) => ({
+        im_comprobante_id: String(p.id), cod_cliente: Number(p.cod_cliente), total: Number(p.total ?? 0),
+      })),
+      facturasVigentes as any, nuestras,
+    );
+
     const filas = presupuestos.map((p: any) => {
       const c = porCliente.get(Number(p.cod_cliente));
       const z = zonaDeCliente(c);
@@ -255,6 +283,12 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
         en_retiro: enRetiro.has(String(p.id)),
         // Su mercadería ya salió del depósito (hay remito), así que ya descontó stock.
         ya_salio: yaSalio.has(String(p.id)),
+        /**
+         * La factura que YA tiene este presupuesto, si tiene. `nuestra` = la emitimos desde el
+         * panel · `deducida` = hay una del mismo cliente por el mismo importe. Facturar uno que
+         * ya está facturado emite una factura duplicada de verdad: pasó el 09/09/2026.
+         */
+        factura: facturaDelPresupuesto.get(String(p.id)) ?? null,
         // La etapa 1: aprobado / observado / null (sin revisar).
         revision: revisionPor.get(String(p.id)) ?? null,
         // Los dos controles que pidió Mati además de las listas.
@@ -278,6 +312,8 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
       sin_zona: filas.filter(f => f.cod_zona == null).length,
       // Lo que decide si la etapa 1 está terminada: qué falta mirar y qué quedó observado.
       sin_stock: filas.filter(f => f.faltantes.length > 0).length,
+      // Lo que ya está facturado: no hay que volver a emitirlo.
+      ya_facturados: filas.filter(f => f.factura).length,
       con_cantidad_rara: filas.filter(f => f.avisos_cantidad.length > 0).length,
       sin_revisar: filas.filter(f => !f.revision).length,
       aprobados: filas.filter(f => f.revision?.estado === 'aprobado').length,

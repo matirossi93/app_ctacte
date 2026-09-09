@@ -158,3 +158,9 @@
     font-size: 0.82rem; line-height: 1.35; white-space: pre-wrap; word-break: break-word;
 }
 .pr-obs-im svg { flex-shrink: 0; margin-top: 0.15rem; }
+
+/* 🔴 Ya tiene factura emitida. Es lo primero que hay que ver: facturar de nuevo emite una
+   factura duplicada de verdad (pasó el 09/09/2026 con la 50401, hubo que borrarla a mano). */
+.pr-badge.facturado, .pr-chip.facturado {
+    background: rgba(6, 101, 47, 0.1); color: #06652F; border: 1px solid rgba(6, 101, 47, 0.35);
+}

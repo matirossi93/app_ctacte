@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.hoisted(() => { process.env.INFOMANAGER_CLIENT_SECRET = 'test-secret'; });
 
 const m = vi.hoisted(() => ({
+  fetchVentas: vi.fn(async () => [] as any[]),
   sbMock: vi.fn(),
   vistaDeRango: vi.fn(),
   cabeceraComprobante: vi.fn(),
@@ -24,7 +25,7 @@ const m = vi.hoisted(() => ({
 }));
 
 vi.mock('./infomanager.js', () => ({
-  fetchVentas: vi.fn(async () => []),
+  fetchVentas: m.fetchVentas,
   fetchVentasItems: m.fetchVentasItems,
   fetchArticulosCatalogo: vi.fn(async () => new Map()),
   fetchClientesIMCached: m.fetchClientesIMCached,
@@ -43,7 +44,7 @@ vi.mock('./pedidos.js', () => ({ usuarioIM: vi.fn(async () => 'jorgelina') }));
 vi.mock('./vistaPresupuestos.js', () => ({ vistaDeRango: m.vistaDeRango, invalidarVista: vi.fn() }));
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
 
-const { facturarSeleccion, previsualizarFacturacion, tableroFacturacion, liberarReclamo } = await import('./facturarPresupuestos.js');
+const { facturarSeleccion, previsualizarFacturacion, tableroFacturacion, liberarReclamo, prepararFacturacion } = await import('./facturarPresupuestos.js');
 
 let tablas: Record<string, any> = {};
 let escrituras: Array<{ tabla: string; op: string; valor: any }> = [];
@@ -76,7 +77,7 @@ function fakeSb() {
         update: (v: any) => { escrituras.push({ tabla: t, op: 'update', valor: v }); return q; },
         delete: () => { escrituras.push({ tabla: t, op: 'delete', valor: null }); return q; },
       };
-      for (const k of ['select', 'eq', 'in', 'order', 'limit', 'is']) q[k] = () => q;
+      for (const k of ['select', 'eq', 'in', 'order', 'limit', 'is', 'not', 'or']) q[k] = () => q;
       return q;
     },
   }));
@@ -315,7 +316,7 @@ describe('cuando la base no contesta', () => {
             return { ...q, then: (r: any, j: any) => Promise.resolve(res).then(r, j) };
           },
         };
-        for (const k of ['select', 'eq', 'in', 'order', 'limit', 'is']) q[k] = () => q;
+        for (const k of ['select', 'eq', 'in', 'order', 'limit', 'is', 'not', 'or']) q[k] = () => q;
         return q;
       },
     }));
@@ -431,5 +432,73 @@ describe('liberar un intento a medias', () => {
 
   it('🔴 un vendedor no libera nada', async () => {
     expect((await llamar(liberarReclamo, { rol: 'vendedor' })).status).toBe(403);
+  });
+});
+
+describe('no facturar dos veces lo mismo', () => {
+  /**
+   * 🔴 El 09/09/2026 Mati facturó a propósito desde el panel un presupuesto que YA estaba
+   * facturado en InfoManager: **se emitió una segunda factura real** (la 50401, que hubo que
+   * borrar a mano). El remito falló después porque el stock ya estaba descontado, pero la
+   * factura ya había salido.
+   *
+   * 🪤 IM no marca el presupuesto al facturarlo — medido ese día: los 35 presupuestos con
+   * factura y los 23 sin ella están todos en `tipo_presupuesto: 'C'`. Se deduce comparando
+   * contra las facturas reales: mismo cliente, mismo importe.
+   */
+  it('🔴 un presupuesto que ya tiene factura en IM no se factura de nuevo', async () => {
+    tablas['presupuestos_facturados'] = { data: [], error: null };
+    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-08', anulada: false, existe: true, observaciones: null });
+    m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 297, categoria_iva: 'CF' }]);
+    m.fetchVentasItems.mockResolvedValue([{ id_comprobante: '58727292', cod_articulo: 1, cantidad: 1, precio: 155430.72 }]);
+    // La factura que ya existe en InfoManager, del mismo cliente y por el mismo importe.
+    m.fetchVentas.mockResolvedValue([
+      { id: 'f-vieja', numero: 50370, cod_cliente: 297, total: 155430.72, tipo_factura: 'B',
+        tipo_comprobante: 'FA', anulada: 'N', fecha: '2026-09-09' },
+    ]);
+
+    const r = await prepararFacturacion(
+      [{ im_comprobante_id: '58727292', im_numero: 58158, cod_cliente: 297,
+         cliente_nombre: 'FORRAJERIA El Parque', total: 155430.72, fecha: '2026-09-08' } as any],
+      'jorgelina',
+    );
+    expect(r[0].estado).toBe('no_se_puede');
+    expect(r[0].motivo).toMatch(/YA ESTÁ FACTURADO/i);
+    expect(r[0].motivo).toMatch(/50370/);
+  });
+
+  it('sin factura que le calce, se factura normalmente', async () => {
+    tablas['presupuestos_facturados'] = { data: [], error: null };
+    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-08', anulada: false, existe: true, observaciones: null });
+    m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 297, categoria_iva: 'CF' }]);
+    m.fetchVentasItems.mockResolvedValue([{ id_comprobante: '58727292', cod_articulo: 1, cantidad: 1, precio: 155430.72 }]);
+    // Una factura de OTRO cliente: no tiene nada que ver.
+    m.fetchVentas.mockResolvedValue([
+      { id: 'f-otra', numero: 50370, cod_cliente: 999, total: 155430.72, tipo_factura: 'B',
+        tipo_comprobante: 'FA', anulada: 'N', fecha: '2026-09-09' },
+    ]);
+    const r = await prepararFacturacion(
+      [{ im_comprobante_id: '58727292', im_numero: 58158, cod_cliente: 297,
+         cliente_nombre: 'FORRAJERIA El Parque', total: 155430.72, fecha: '2026-09-08' } as any],
+      'jorgelina',
+    );
+    expect(r[0].estado).toBe('listo');
+  });
+
+  it('🪤 una factura ANULADA no cuenta: ésa justamente hay que rehacerla', async () => {
+    tablas['presupuestos_facturados'] = { data: [], error: null };
+    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-08', anulada: false, existe: true, observaciones: null });
+    m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 297, categoria_iva: 'CF' }]);
+    m.fetchVentasItems.mockResolvedValue([{ id_comprobante: '58727292', cod_articulo: 1, cantidad: 1, precio: 155430.72 }]);
+    m.fetchVentas.mockResolvedValue([
+      { id: 'f-anulada', numero: 50401, cod_cliente: 297, total: 155430.72, tipo_factura: 'B',
+        tipo_comprobante: 'FA', anulada: 'S', fecha: '2026-09-09' },
+    ]);
+    const r = await prepararFacturacion(
+      [{ im_comprobante_id: '58727292', im_numero: 58158, cod_cliente: 297,
+         cliente_nombre: 'FORRAJERIA El Parque', total: 155430.72, fecha: '2026-09-08' } as any],
+      'jorgelina',
+    );
+    expect(r[0].estado).toBe('listo');
   });
 });

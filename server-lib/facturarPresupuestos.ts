@@ -29,7 +29,9 @@ import type { JwtPayload } from './auth.js';
 import { puedeArmarHojasDeRuta } from './permisos.js';
 import {
   fetchVentasItems, fetchClientesIMCached, cabeceraComprobante, desconfirmarPresupuesto,
+  fetchVentas, fechaArgentina,
 } from './infomanager.js';
+import { buscarFacturasYaEmitidas } from './facturaYaEmitida.js';
 import { emitirFactura, emitirRemito, letraDeFactura, proximoNumeroFactura } from './facturarIM.js';
 import type { DatosComprobante } from './facturarIM.js';
 import { usuarioIM } from './pedidos.js';
@@ -128,6 +130,49 @@ export async function prepararFacturacion(
     }
   }
 
+  /**
+   * 🔴 ¿Alguno de estos presupuestos YA está facturado en InfoManager?
+   *
+   * El 09/09/2026 se emitió una factura DUPLICADA real (la 50401) porque nadie preguntaba esto:
+   * el panel sólo miraba lo que había facturado ÉL. InfoManager no marca el presupuesto al
+   * facturarlo —medido: los 35 ya facturados y los 23 sin facturar están todos en
+   * `tipo_presupuesto: 'C'`— así que se busca la factura real: mismo cliente, mismo importe.
+   *
+   * Se mira desde el día del presupuesto más viejo hasta hoy: un presupuesto del lunes se puede
+   * haber facturado el miércoles.
+   */
+  const yaEmitidas = new Map<string, any>();
+  if (aRevisar.length) {
+    try {
+      const desde = dias[0] ?? fechaArgentina();
+      const ventas = await fetchVentas(desde, fechaArgentina());
+      const facturasVigentes = ventas.filter((v: any) =>
+        String(v.tipo_comprobante ?? '').trim() === 'FA' &&
+        String(v.anulada ?? '').trim().toUpperCase() !== 'S');
+      // Las que ya sabemos de qué presupuesto son: no pueden marcar a otro.
+      const { data: nuestrasFilas } = await sb().from('presupuestos_facturados')
+        .select('im_comprobante_id, im_factura_id, im_factura_numero, im_factura_tipo')
+        .eq('tenant_id', TENANT_ID).not('im_factura_id', 'is', null);
+      const nuestras = new Map((nuestrasFilas ?? []).map((n: any) => [String(n.im_comprobante_id), {
+        im_factura_id: n.im_factura_id ?? null,
+        im_factura_numero: n.im_factura_numero ?? null,
+        im_factura_tipo: n.im_factura_tipo ?? null,
+      }]));
+      for (const [k, v] of buscarFacturasYaEmitidas(
+        aRevisar.map(f => ({
+          im_comprobante_id: String(f.im_comprobante_id),
+          cod_cliente: Number(f.cod_cliente),
+          total: Number(f.total ?? 0),
+        })),
+        facturasVigentes as any, nuestras,
+      )) yaEmitidas.set(k, v);
+    } catch (e: any) {
+      // 🪤 No poder chequear no puede bloquear la facturación del día entero, pero tampoco puede
+      // pasar callado: se avisa por log y la pantalla sigue con el resto de los controles.
+      console.warn('[prepararFacturacion] no pude chequear facturas ya emitidas:', e?.message);
+    }
+  }
+
   return filas.map((f): Preparado => {
     const quien = `${f.cliente_nombre ?? 'cliente ' + f.cod_cliente} (PR ${f.im_numero ?? f.im_comprobante_id})`;
     const cliente = porCliente.get(Number(f.cod_cliente));
@@ -144,6 +189,22 @@ export async function prepararFacturacion(
     // tiempo: emitir sin poder verificarlo deja una factura sin respaldo. Se cae del lado seguro.
     if (cab?.existe !== true || cab?.anulada !== false) {
       return no(`${quien}: no pude verificar en InfoManager si el presupuesto sigue vigente. Probá de nuevo en un rato.`);
+    }
+
+    /**
+     * 🔴 Ya tiene factura en InfoManager: no se emite otra. Es el caso que dejó la factura 50401
+     * duplicada el 09/09/2026.
+     */
+    /**
+     * 🪤 NO aplica cuando ya sabemos cuál es su factura (`f.im_factura_id`): ése es el caso de
+     * "la factura salió y el remito falló", y ahí hay que hacer el remito, no frenar. El guard es
+     * para lo que NO tenemos registrado, que es justamente lo que se factura a mano en IM.
+     */
+    const ya = f.im_factura_id ? null : yaEmitidas.get(String(f.im_comprobante_id));
+    if (ya) {
+      return no(ya.origen === 'nuestra'
+        ? `${quien}: ya se facturó desde el panel (${ya.tipo} ${ya.numero ?? ''}). No se factura de nuevo.`
+        : `${quien}: parece que YA ESTÁ FACTURADO en InfoManager — hay una ${ya.tipo} ${ya.numero ?? ''} del mismo cliente por el mismo importe${ya.fecha ? ` del ${ya.fecha}` : ''}. Verificalo antes de emitir: si facturás igual, el cliente queda con dos facturas.`);
     }
 
     const items = renglonesPorComp.get(String(f.im_comprobante_id)) ?? [];
