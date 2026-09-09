@@ -10,7 +10,7 @@
  * prueba 58230-58232 y remito 77290, todos anulados). Ver
  * `reference_im_api_facturar_remitos_20260907` en la memoria.
  */
-import { imClient, fetchVentas, fechaArgentina, horaArgentina } from './infomanager.js';
+import { imClient, fetchVentas, fetchVentasParaNumeracion, fechaArgentina, horaArgentina } from './infomanager.js';
 
 /** Cómo factura cada tipo de cliente. Sale de 3.887 facturas reales de la semana del 01/09. */
 export type CategoriaIva = 'CF' | 'RI' | 'RM' | string;
@@ -127,17 +127,25 @@ export async function proximoNumeroFactura(
   // 🪤 `hasta` mira ADELANTE (ver DIAS_ADELANTE_REMITO): la oficina factura hoy el reparto de
   // mañana, y esas facturas ya tienen número.
   const hasta = fechaArgentina(Date.now() + DIAS_ADELANTE_REMITO * 864e5);
-  const desde = fechaArgentina(Date.now() - dias * 864e5);
-  const ventas = await fetchVentas(desde, hasta);
-  const nums = ventas
-    .filter((v: any) =>
-      String(v.tipo_comprobante ?? '').trim() === tipo &&
-      String(v.tipo_factura ?? '').trim() === letra &&
-      Number(v.punto_de_venta) === puntoDeVenta)
-    .map((v: any) => Number(v.numero))
-    .filter((n) => Number.isFinite(n));
-  if (!nums.length) return null;
-  return Math.max(...nums) + 1;
+  const maxDe = async (diasAtras: number): Promise<number | null> => {
+    const ventas = await fetchVentasParaNumeracion(fechaArgentina(Date.now() - diasAtras * 864e5), hasta);
+    const nums = ventas
+      .filter((v: any) =>
+        String(v.tipo_comprobante ?? '').trim() === tipo &&
+        String(v.tipo_factura ?? '').trim() === letra &&
+        Number(v.punto_de_venta) === puntoDeVenta)
+      .map((v: any) => Number(v.numero))
+      .filter((n) => Number.isFinite(n));
+    return nums.length ? Math.max(...nums) + 1 : null;
+  };
+  /**
+   * ⏱️ Primero la ventana corta. Medido contra IM el 09/09/2026: 30 días son 58.119 filas y
+   * **31 s**; 7 días son 14.118 y **5 s**. Y esto es lo PRIMERO que corre al apretar Facturar,
+   * así que esa espera la mira la oficina. La oficina factura todos los días, o sea que en una
+   * semana siempre hay comprobantes del talonario; la ventana larga queda para el caso raro
+   * (talonario nuevo, feriados) y es el único que paga los 31 s.
+   */
+  return (await maxDe(Math.min(DIAS_BUSQUEDA_CORTA, dias))) ?? (dias > DIAS_BUSQUEDA_CORTA ? await maxDe(dias) : null);
 }
 
 function interpretar(data: any, tipo: string): ResultadoEmision {
@@ -339,6 +347,14 @@ export async function emitirRemito(d: DatosComprobante): Promise<ResultadoEmisio
 const DIAS_ADELANTE_REMITO = Number(process.env.IM_DIAS_ADELANTE_REMITO || 30);
 
 /**
+ * ⏱️ Cuántos días hacia atrás se miran ANTES de abrir la ventana larga.
+ *
+ * `fetchVentas` cuesta proporcional al rango: 7 días son ~5 s y 30 días ~31 s (medido contra IM
+ * el 09/09/2026). Buscar el próximo número es lo primero que pasa al apretar Facturar.
+ */
+const DIAS_BUSQUEDA_CORTA = 7;
+
+/**
  * El próximo número del talonario de REMITOS. Igual que las facturas, IM no lo asigna en el
  * endpoint masivo: `numero: 0` da *"El número de comprobante [0] debe ser un número mayor que 0"*.
  *
@@ -347,7 +363,7 @@ const DIAS_ADELANTE_REMITO = Number(process.env.IM_DIAS_ADELANTE_REMITO || 30);
  * reintenta con el siguiente.
  */
 export async function proximoNumeroRemito(puntoDeVenta: number, dias = 7): Promise<number | null> {
-  const ventas = await fetchVentas(
+  const ventas = await fetchVentasParaNumeracion(
     fechaArgentina(Date.now() - dias * 864e5),
     fechaArgentina(Date.now() + DIAS_ADELANTE_REMITO * 864e5),
   );

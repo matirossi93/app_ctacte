@@ -118,6 +118,39 @@ export interface VentaRaw {
 }
 
 /**
+ * ⏱️ Cache MUY corto de `/ventas` por rango, **sólo para averiguar numeraciones**.
+ *
+ * Mati (09/09/2026): *"intentemos mejorar los tiempos de demora cuando se hace click en
+ * facturar"*. Al facturar una tanda, el mismo rango se pide una vez por letra de factura y otra
+ * vez por CADA remito que hay que forzar por stock negativo — y cada pedida son ~5 s medidos
+ * contra IM.
+ *
+ * 🪤 Es opt-in a propósito. `fetchVentas` normal NO cachea: `emitirRemitoMasivo` la usa para ir
+ * a buscar el remito que acaba de emitir, y una lista de hace 20 segundos no lo tendría — diría
+ * "lo aceptó pero no lo encontré" sobre un remito que existe. Sólo lo usan las dos funciones
+ * que buscan el próximo número, donde una lista un poco vieja como mucho propone un número ya
+ * tomado, y eso ya se resuelve solo reintentando con el siguiente.
+ */
+const VENTAS_NUM_TTL_MS = 20_000;
+const _ventasNumCache = new Map<string, { rows: VentaRaw[]; at: number }>();
+
+/** Tira el cache de numeración. La usan los tests; en producción vence solo a los 20 s. */
+export function invalidarCacheNumeracion(): void { _ventasNumCache.clear(); }
+
+export async function fetchVentasParaNumeracion(desde: string, hasta: string): Promise<VentaRaw[]> {
+  const k = `${desde}|${hasta}`;
+  const hit = _ventasNumCache.get(k);
+  if (hit && Date.now() - hit.at < VENTAS_NUM_TTL_MS) return hit.rows;
+  const rows = await fetchVentas(desde, hasta);
+  _ventasNumCache.set(k, { rows, at: Date.now() });
+  // Sin esto el mapa crece con un rango distinto por día que pase el proceso abierto.
+  if (_ventasNumCache.size > 20) {
+    for (const [key, v] of _ventasNumCache) if (Date.now() - v.at >= VENTAS_NUM_TTL_MS) _ventasNumCache.delete(key);
+  }
+  return rows;
+}
+
+/**
  * Fetch paginado de /ventas entre fechas.
  * InfoManager pagina con page + limit. Iteramos hasta que no haya nextPage.
  */

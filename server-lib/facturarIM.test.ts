@@ -13,6 +13,9 @@ vi.hoisted(() => { process.env.INFOMANAGER_CLIENT_SECRET = 'test-secret'; });
 vi.mock('axios', () => ({ default: { post: vi.fn(), create: vi.fn() } }));
 
 const { emitirFactura, emitirRemito, emitirRemitoMasivo, letraDeFactura } = await import('./facturarIM.js');
+// La numeración cachea el rango 20 s para no pedirle a IM la misma lista una vez por letra y
+// otra por cada remito forzado. Entre tests hay que tirarlo o uno le contesta al siguiente.
+const { invalidarCacheNumeracion } = await import('./infomanager.js');
 
 function mockIM(respuesta: any, fallar?: any) {
     const post = vi.fn(async () => { if (fallar) throw fallar; return { data: respuesta }; });
@@ -32,7 +35,7 @@ const DATOS = {
     items: [{ cod_articulo: 661, cantidad: 1, precio: 29771.58, cod_lista_precios: 13 }],
 };
 
-beforeEach(() => { vi.clearAllMocks(); });
+beforeEach(() => { vi.clearAllMocks(); invalidarCacheNumeracion(); });
 
 describe('letraDeFactura — es una regla FISCAL', () => {
     it('🔴 CF lleva B; RI y RM llevan A', () => {
@@ -396,5 +399,95 @@ describe('proximoNumeroFactura — la numeración no sigue a la fecha', () => {
     expect(nums).toEqual([...nums].sort((a, b) => a - b));
     expect(new Set(nums).size).toBe(nums.length);
     expect(r.ok).toBe(false);
+  });
+});
+
+/**
+ * ⏱️ EL CLICK DE FACTURAR TARDABA UNA ETERNIDAD Y ERA CASI TODO ESTO.
+ *
+ * Mati (09/09/2026): *"intentemos mejorar los tiempos de demora cuando se hace click en
+ * facturar"*. Medido contra IM ese día: `fetchVentas` de 30 días trae 58.119 filas y tarda
+ * **31 s**; el de 7 días trae 14.118 y tarda **5 s**. Y averiguar el próximo número es lo
+ * primero que pasa al apretar Facturar, así que esos 31 s los espera la oficina mirando la
+ * pantalla — por cada letra de factura que haya en la tanda.
+ *
+ * La oficina factura todos los días, así que en 7 días SIEMPRE hay comprobantes del talonario.
+ * Se busca ahí primero y sólo se abre a 30 días si no aparece ninguno, que es el caso raro
+ * (arranque de talonario, feriados largos) y el único que justifica pagar la espera.
+ */
+describe('la numeración no paga 30 días de ventas cuando alcanza con 7', () => {
+  const conVentas = (rows: any[]) => {
+    const get = vi.fn(async () => ({ data: { results: rows } }));
+    vi.mocked(axios.create).mockReturnValue({
+      post: vi.fn(), get, put: vi.fn(), interceptors: { request: { use: vi.fn() } },
+    } as any);
+    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+    return get;
+  };
+
+  it('🔴 con facturas en la última semana consulta UNA sola ventana corta', async () => {
+    const get = conVentas([{ numero: 50410, tipo_comprobante: 'FA', tipo_factura: 'B', punto_de_venta: 777 }]);
+    const { proximoNumeroFactura } = await import('./facturarIM.js');
+    expect(await proximoNumeroFactura('B', 777)).toBe(50411);
+    expect(get).toHaveBeenCalledTimes(1);
+    const { fechaDesde, fechaHasta } = (get.mock.calls[0] as any[])[1].params;
+    // Una semana atrás, no un mes: es la diferencia entre 5 s y 31 s.
+    const dias = (Date.parse(fechaHasta) - Date.parse(fechaDesde)) / 864e5;
+    expect(dias).toBeLessThan(40);
+  });
+
+  it('sin nada en la semana corta se abre a la ventana larga antes de rendirse', async () => {
+    // Ninguna factura del talonario: la ventana corta vuelve vacía y hay que mirar más atrás.
+    const get = conVentas([{ numero: 900, tipo_comprobante: 'RE', punto_de_venta: 7 }]);
+    const { proximoNumeroFactura } = await import('./facturarIM.js');
+    await proximoNumeroFactura('B', 777);
+    expect(get).toHaveBeenCalledTimes(2);
+    const corta = (get.mock.calls[0] as any[])[1].params;
+    const larga = (get.mock.calls[1] as any[])[1].params;
+    expect(larga.fechaDesde < corta.fechaDesde).toBe(true);
+  });
+});
+
+/**
+ * ⏱️ Al facturar una tanda, el mismo rango se pedía una vez por letra de factura y otra por CADA
+ * remito que hay que forzar por stock negativo. Son ~5 s cada vez contra IM.
+ */
+describe('la numeración no le pide a IM la misma lista dos veces seguidas', () => {
+  it('dos búsquedas seguidas del mismo rango son UNA sola consulta', async () => {
+    const get = vi.fn(async () => ({ data: { results: [
+      { numero: 50410, tipo_comprobante: 'FA', tipo_factura: 'B', punto_de_venta: 777 },
+      { numero: 1200, tipo_comprobante: 'FA', tipo_factura: 'A', punto_de_venta: 777 },
+    ] } }));
+    vi.mocked(axios.create).mockReturnValue({
+      post: vi.fn(), get, put: vi.fn(), interceptors: { request: { use: vi.fn() } },
+    } as any);
+    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+    const { proximoNumeroFactura } = await import('./facturarIM.js');
+    expect(await proximoNumeroFactura('B', 777)).toBe(50411);
+    expect(await proximoNumeroFactura('A', 777)).toBe(1201);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 🪤 El cache es SÓLO de la numeración. `emitirRemitoMasivo` va a buscar a IM el remito que
+   * acaba de emitir —el endpoint contesta con el body vacío— y una lista vieja no lo tendría:
+   * diría "lo aceptó pero no lo encontré" sobre un remito que existe.
+   */
+  it('🔴 la búsqueda del remito recién emitido NO sale del cache', async () => {
+    let consultas = 0;
+    const get = vi.fn(async () => {
+      consultas += 1;
+      // La 1ª es la numeración; a partir de la 2ª aparece el remito recién creado.
+      const rows: any[] = [{ id: '1', numero: 77400, tipo_comprobante: 'RE', punto_de_venta: 7, cod_cliente: 1093 }];
+      if (consultas > 1) rows.push({ id: '2', numero: 77401, tipo_comprobante: 'RE', punto_de_venta: 7, cod_cliente: 1093 });
+      return { data: { results: rows } };
+    });
+    vi.mocked(axios.create).mockReturnValue({
+      post: vi.fn(async () => ({ data: '' })), get, put: vi.fn(), interceptors: { request: { use: vi.fn() } },
+    } as any);
+    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+    const r = await emitirRemitoMasivo(DATOS);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.numero).toBe(77401);
   });
 });
