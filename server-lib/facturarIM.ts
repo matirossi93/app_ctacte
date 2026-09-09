@@ -301,17 +301,40 @@ export async function emitirRemito(d: DatosComprobante): Promise<ResultadoEmisio
 }
 
 /**
+ * Cuántos días HACIA ADELANTE mira la búsqueda del próximo número de remito.
+ *
+ * 🔴 LA NUMERACIÓN NO SIGUE A LA FECHA. La oficina fecha los remitos del reparto de mañana con
+ * la fecha de mañana, así que una ventana que termina hoy no los ve y devuelve un número YA
+ * USADO. El 09/09/2026 los remitos 77377 y 77378 estaban fechados el 10/09: el masivo salió con
+ * el 77377, IM contestó *"El número de comprobante [77377] ya existe para el punto de venta [7]
+ * y empresa [1]"*, y LEAL y DIAZ se quedaron con la factura emitida y sin remito.
+ */
+const DIAS_ADELANTE_REMITO = Number(process.env.IM_DIAS_ADELANTE_REMITO || 30);
+
+/**
  * El próximo número del talonario de REMITOS. Igual que las facturas, IM no lo asigna en el
  * endpoint masivo: `numero: 0` da *"El número de comprobante [0] debe ser un número mayor que 0"*.
+ *
+ * 🪤 La ventana va de `dias` atrás a `DIAS_ADELANTE_REMITO` adelante (ver arriba). Aun así el
+ * número puede estar tomado —la oficina emite desde IM al mismo tiempo—, y por eso quien lo usa
+ * reintenta con el siguiente.
  */
 export async function proximoNumeroRemito(puntoDeVenta: number, dias = 7): Promise<number | null> {
-  const ventas = await fetchVentas(fechaArgentina(Date.now() - dias * 864e5), fechaArgentina());
+  const ventas = await fetchVentas(
+    fechaArgentina(Date.now() - dias * 864e5),
+    fechaArgentina(Date.now() + DIAS_ADELANTE_REMITO * 864e5),
+  );
   const nums = ventas
     .filter((v: any) =>
       String(v.tipo_comprobante ?? '').trim() === 'RE' && Number(v.punto_de_venta) === puntoDeVenta)
     .map((v: any) => Number(v.numero))
     .filter((n) => Number.isFinite(n));
   return nums.length ? Math.max(...nums) + 1 : null;
+}
+
+/** ¿IM rechazó por número repetido? Es lo único que se reintenta subiendo el correlativo. */
+function esChoqueDeNumero(error: string): boolean {
+  return /n[uú]mero de comprobante \[\d+\] ya existe|ya existe una factura/i.test(String(error));
 }
 
 /**
@@ -339,15 +362,15 @@ export async function proximoNumeroRemito(puntoDeVenta: number, dias = 7): Promi
  */
 export async function emitirRemitoMasivo(d: DatosComprobante): Promise<ResultadoEmision> {
   const fecha = fechaPedida(d);
-  const numero = await proximoNumeroRemito(PTO_VENTA_REMITO);
+  let numero = await proximoNumeroRemito(PTO_VENTA_REMITO);
   if (numero == null) {
     return { ok: false, error: `No pude averiguar el próximo número de remito del punto ${PTO_VENTA_REMITO}: no hay ninguno emitido en la última semana. Hacelo a mano.` };
   }
-  const cuerpo = {
+  const cuerpoCon = (num: number) => ({
     cabecera: [{
       id_aux: 1,
       punto_de_venta: PTO_VENTA_REMITO,
-      numero,
+      numero: num,
       fecha,
       cod_cliente: d.cod_cliente,
       observaciones: (d.observaciones ?? '').slice(0, 500),
@@ -377,12 +400,26 @@ export async function emitirRemitoMasivo(d: DatosComprobante): Promise<Resultado
         detalle_aux: '',
       };
     }),
-  };
-  try {
-    const cli = await imClient();
-    await cli.post('/remitos/masivo', cuerpo);
-  } catch (err: any) {
-    return comoError(err);
+  });
+
+  /**
+   * 🔑 Hasta 5 intentos subiendo el número, igual que las facturas. El correlativo lo calculamos
+   * nosotros y la oficina emite remitos desde IM al mismo tiempo, así que un choque es normal;
+   * lo que NO puede pasar es que el pedido se quede sin remito por eso. Verificado el 09/09/2026:
+   * los números 77377 a 77381 estaban tomados de una sola vez, por eso 5 y no 3.
+   */
+  const cli = await imClient();
+  for (let intento = 0; ; intento++) {
+    try {
+      await cli.post('/remitos/masivo', cuerpoCon(numero));
+      break;
+    } catch (err: any) {
+      const e = comoError(err);
+      // 🪤 `sinRespuesta` NO se reintenta: sin respuesta de IM el remito puede haber salido igual
+      // y el reintento emitiría un segundo remito por la misma mercadería.
+      if (!e.ok && !e.sinRespuesta && esChoqueDeNumero(e.error) && intento < 4) { numero += 1; continue; }
+      return e;
+    }
   }
   // Contestó 200 y sin cuerpo: el remito hay que ir a buscarlo para saber que existe de verdad.
   try {

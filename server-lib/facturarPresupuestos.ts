@@ -715,13 +715,23 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
        * el reintento emitiría un segundo remito por la misma mercadería.
        */
       let remitoForzado: string | null = null;
+      /**
+       * 🪤 Cuando el masivo TAMBIÉN falla, el motivo que se muestra tiene que ser EL SUYO, no el
+       * de stock del primer intento. El 09/09/2026 el masivo moría por un choque de numeración y
+       * en pantalla seguía diciendo "no hay stock, ajustalo en InfoManager": Jorgelina ajustaba
+       * el stock, volvía a apretar y fallaba igual, porque el stock nunca había sido el problema.
+       */
+      let motivoMasivo: string | null = null;
       if (!re.ok && !re.sinRespuesta) {
         const faltantes = articulosSinStockDelError(re.error, catalogoEmision);
         if (faltantes) {
           console.warn(`[facturarSeleccion] ${quien}: IM rechazó el remito por stock (${faltantes}). Reintento por /remitos/masivo.`);
           const reintento = await emitirRemitoMasivo(p.datos as any);
           if (reintento.ok) { re = reintento; remitoForzado = faltantes; }
-          else console.error(`[facturarSeleccion] ${quien}: el remito masivo tampoco salió: ${reintento.error}`);
+          else {
+            motivoMasivo = reintento.error;
+            console.error(`[facturarSeleccion] ${quien}: el remito masivo tampoco salió: ${reintento.error}`);
+          }
         }
       }
       if (!re.ok) {
@@ -731,10 +741,10 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
          * [{cod_articulo, cantidad, stock_disponible}]"*. Ese JSON crudo en pantalla no le dice
          * nada a nadie, así que se traduce a los nombres de los productos.
          */
-        const faltantes = articulosSinStockDelError(re.error, catalogoEmision);
+        const faltantes = motivoMasivo ? null : articulosSinStockDelError(re.error, catalogoEmision);
         fallados.push(faltantes
           ? `${quien}: la FACTURA ${facturaNumero} se emitió, pero el REMITO no: InfoManager dice que no hay stock de ${faltantes}. Ajustá el stock en InfoManager y volvé a apretar Facturar (va a hacer sólo el remito), o hacelo a mano.`
-          : `${quien}: la FACTURA ${facturaNumero} se emitió, pero el remito falló (${re.error}). Hacé el remito a mano.`);
+          : `${quien}: la FACTURA ${facturaNumero} se emitió, pero el remito falló (${motivoMasivo ?? re.error}). Hacé el remito a mano.`);
         if (re.sinRespuesta) cortado = `InfoManager no contestó al emitir el remito de ${quien}. La factura ${facturaNumero} SÍ se emitió. Revisalo en IM. Se frenó el resto.`;
         continue;
       }

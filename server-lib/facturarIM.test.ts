@@ -229,3 +229,82 @@ describe('el remito cuando el stock está en negativo (09/09/2026)', () => {
     expect(post).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * 🔴 EL BUG QUE DEJÓ SIN REMITO A LEAL Y A DIAZ EL 09/09/2026.
+ *
+ * `/remitos/masivo` es el camino que usa el panel cuando el stock está en negativo, y es el
+ * único que necesita que el número se lo demos nosotros. Se calculaba mirando los remitos de
+ * los últimos 7 días **hasta hoy**, y la oficina fecha los del reparto de mañana con la fecha
+ * de mañana: los 77377 y 77378 estaban fechados el 10/09, la ventana no los veía y el masivo
+ * salía con un número ya usado. IM contestaba *"El número de comprobante [77377] ya existe
+ * para el punto de venta [7] y empresa [1]"*, el reintento moría ahí, y en pantalla se seguía
+ * mostrando el error de stock original — o sea, parecía que el arreglo del stock negativo
+ * nunca había funcionado.
+ */
+describe('proximoNumeroRemito — la numeración no sigue a la fecha', () => {
+  it('🔴 la ventana mira ADELANTE: los remitos del reparto de mañana ya tienen número', async () => {
+    const get = vi.fn(async () => ({ data: { results: [] } }));
+    vi.mocked(axios.create).mockReturnValue({
+      post: vi.fn(), get, put: vi.fn(), interceptors: { request: { use: vi.fn() } },
+    } as any);
+    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+    const { proximoNumeroRemito } = await import('./facturarIM.js');
+    await proximoNumeroRemito(7);
+    const params = (get.mock.calls[0] as any[])[1].params;
+    const hoy = new Date().toISOString().slice(0, 10);
+    expect(params.fechaHasta > hoy).toBe(true);
+  });
+});
+
+describe('emitirRemitoMasivo — choque de numeración', () => {
+  it('🔴 si el número ya existe reintenta con el siguiente en vez de rendirse', async () => {
+    // El primer POST choca (IM contesta 500 con el error adentro), el segundo entra.
+    let intentos = 0;
+    const post = vi.fn(async () => {
+      intentos += 1;
+      if (intentos === 1) {
+        throw { response: { status: 500, data: { detalles: 'Validaciones: • El número de comprobante [77377] ya existe para el punto de venta [7] y empresa [1].' } } };
+      }
+      return { data: '' };
+    });
+    // 1ª consulta: la numeración (ve hasta el 77377, propone el 77378, que choca).
+    // 2ª consulta: la verificación posterior, donde ya está el remito que entró (77379).
+    let consultas = 0;
+    const get = vi.fn(async () => {
+      consultas += 1;
+      const rows = consultas === 1
+        ? [{ id: '1', numero: 77376, tipo_comprobante: 'RE', punto_de_venta: 7, cod_cliente: 1093 },
+           { id: '2', numero: 77377, tipo_comprobante: 'RE', punto_de_venta: 7, cod_cliente: 1093 }]
+        : [{ id: '9', numero: 77379, tipo_comprobante: 'RE', punto_de_venta: 7, cod_cliente: 1093 }];
+      return { data: { results: rows } };
+    });
+    vi.mocked(axios.create).mockReturnValue({
+      post, get, put: vi.fn(), interceptors: { request: { use: vi.fn() } },
+    } as any);
+    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+    const r = await emitirRemitoMasivo(DATOS);
+    expect(post).toHaveBeenCalledTimes(2);
+    // El segundo intento va con el número siguiente, no con el mismo.
+    expect((post.mock.calls[1] as any[])[1].cabecera[0].numero)
+      .toBe((post.mock.calls[0] as any[])[1].cabecera[0].numero + 1);
+    // Y lo da por emitido con el número que entró de verdad, no con el que chocó.
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.numero).toBe(77379);
+  });
+
+  it('🔴 el error de un choque de numeración NO se confunde con falta de stock', async () => {
+    const post = vi.fn(async () => {
+      throw { response: { status: 500, data: { detalles: 'Validaciones: • El número de comprobante [77377] ya existe para el punto de venta [7] y empresa [1].' } } };
+    });
+    vi.mocked(axios.create).mockReturnValue({
+      post,
+      get: vi.fn(async () => ({ data: { results: [{ id: '1', numero: 77376, tipo_comprobante: 'RE', punto_de_venta: 7, cod_cliente: 1093 }] } })),
+      put: vi.fn(), interceptors: { request: { use: vi.fn() } },
+    } as any);
+    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+    const r = await emitirRemitoMasivo(DATOS);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/n[úu]mero/i);
+  });
+});
