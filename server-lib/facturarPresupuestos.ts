@@ -233,12 +233,34 @@ export async function prepararFacturacion(
         origen_id: f.im_comprobante_id,
         total: Number(f.total ?? 0),
         cod_deposito: 1,
-        items: items.map((it: any) => ({
-          cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad),
-          precio: Number(it.precio ?? 0), iva_por: Number(it.iva_por ?? 0),
-          cod_lista_precios: it.cod_lista_precios != null ? Number(it.cod_lista_precios) : null,
-          descuento_porc: it.descuento_porc ? Number(it.descuento_porc) : null,
-        })),
+        items: items.map((it: any) => {
+          /**
+           * 🔴 EL DESCUENTO SE APLICABA DOS VECES. `/ventas/items` devuelve `precio` YA NETO
+           * (con el descuento adentro) y `precio_orig` bruto. Mandábamos el neto **más** el
+           * `descuento_porc`, así que InfoManager lo volvía a descontar.
+           *
+           * Medido sobre el PR 58288 (BIANCONI, 09/09/2026): el presupuesto era $587.301,97 y la
+           * factura 50401 salió por **$514.237,59** — $73.064 de menos. El endpoint de remitos sí
+           * valida que el total coincida con los ítems y por eso lo rechazó; el de facturas no
+           * valida y la emitió mal en silencio.
+           *
+           * El precio va BRUTO (`precio_orig`) y el descuento aparte, que es lo que IM espera y
+           * lo que ya hacía `crearPresupuesto` desde el 28/08/2026.
+           */
+          const desc = it.descuento_porc ? Number(it.descuento_porc) : null;
+          const bruto = Number(it.precio_orig ?? 0);
+          const neto = Number(it.precio ?? 0);
+          return {
+            cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad),
+            // Sin descuento los dos precios son el mismo; con descuento manda el bruto.
+            precio: desc && bruto > 0 ? bruto : neto,
+            iva_por: Number(it.iva_por ?? 0),
+            cod_lista_precios: it.cod_lista_precios != null ? Number(it.cod_lista_precios) : null,
+            descuento_porc: desc,
+            // El detalle libre de los renglones sin artículo del catálogo.
+            ...(it.detalle && !(Number(it.cod_articulo) > 0) ? { detalle: String(it.detalle) } : {}),
+          };
+        }),
       },
     };
   });

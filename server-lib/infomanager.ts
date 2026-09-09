@@ -157,7 +157,19 @@ export interface VentaItem {
   id_comprobante: number;
   cod_articulo: number | string;
   cantidad: number | string;
+  /**
+   * 🔴 El precio **NETO**: ya tiene el descuento aplicado. Mandarlo de vuelta junto con
+   * `descuento_porc` lo descuenta DOS VECES — pasó el 09/09/2026 y una factura salió por
+   * $73.064 de menos. Para reenviar a IM va `precio_orig`, que es el bruto de lista.
+   */
   precio?: number | string;
+  /** El precio de lista, sin descuento. Es el que espera IM al crear un comprobante. */
+  precio_orig?: number | string;
+  descuento_porc?: number | string;
+  cod_lista_precios?: number | string;
+  iva_por?: number | string;
+  /** El texto del renglón. En los renglones libres (`cod_articulo: 0`) es lo único que lo describe. */
+  detalle?: string;
   importe?: number | string;
 }
 
@@ -715,8 +727,15 @@ export async function crearPresupuesto(input: CrearPresupuestoInput): Promise<Pr
       // — probado el 28/08: 21.141,16 con 25% quedó en 11.891,90 en vez de 15.855,87.
       const bruto = it.precio != null ? Number(it.precio) : null;
       const cuenta = Number(it.cod_cuenta || cuentaDefault);
+      /**
+       * 🪤 Un renglón LIBRE va con `cod_articulo` en **texto vacío**, no en 0. Verificado contra
+       * los 30 renglones sin artículo que la oficina cargó el 08 y 09/09/2026 desde su sistema:
+       * todos tienen `cod_articulo: ""`, `cod_cuenta: 4100002` e `iva_por: 0`. Mandando `0` IM
+       * lo rechaza, porque el artículo cero no existe en el catálogo.
+       */
+      const libre = !(Number(it.cod_articulo) > 0);
       return {
-        cod_articulo: it.cod_articulo,
+        cod_articulo: libre ? '' : it.cod_articulo,
         cantidad: it.cantidad,
         iva_por: it.iva_por ?? 21,
         // Sin artículo del catálogo, el detalle es lo único que dice qué es ese renglón.

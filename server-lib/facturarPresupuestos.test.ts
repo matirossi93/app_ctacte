@@ -502,3 +502,67 @@ describe('no facturar dos veces lo mismo', () => {
     expect(r[0].estado).toBe('listo');
   });
 });
+
+describe('el descuento no se puede aplicar dos veces', () => {
+  /**
+   * 🔴 El 09/09/2026 la factura 50401 de BIANCONI salió por $514.237,59 cuando el presupuesto
+   * era de $587.301,97: **$73.064 de menos**. `/ventas/items` devuelve `precio` YA NETO y
+   * nosotros lo reenviábamos junto con `descuento_porc`, así que IM lo descontaba otra vez.
+   *
+   * El remito lo detectó ("el total del comprobante no coincide con el total calculado según los
+   * ítems") porque `/remitos` sí valida; `/ventas` no valida y emitió mal en silencio.
+   */
+  it('🔴 con descuento se manda el precio BRUTO, no el neto', async () => {
+    tablas['presupuestos_facturados'] = { data: [], error: null };
+    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-09', anulada: false, existe: true, observaciones: null });
+    m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 233, categoria_iva: 'CF' }]);
+    m.fetchVentas.mockResolvedValue([]);
+    // Los números reales del PR 58288: bruto 22473.67, 35% de descuento, neto 14607.8855.
+    m.fetchVentasItems.mockResolvedValue([{
+      id_comprobante: '58777277', cod_articulo: 320, cantidad: 4,
+      precio: 14607.8855, precio_orig: 22473.67, descuento_porc: 35, iva_por: 0,
+    }]);
+    const r = await prepararFacturacion(
+      [{ im_comprobante_id: '58777277', im_numero: 58288, cod_cliente: 233,
+         cliente_nombre: 'BIANCONI, Paola', total: 58431.542, fecha: '2026-09-09' } as any],
+      'jorgelina',
+    );
+    expect(r[0].estado).toBe('listo');
+    // 22473.67 × 4 × 0,65 = 58.431,54, que es el total del renglón en el presupuesto.
+    expect(r[0].datos!.items[0]).toMatchObject({ precio: 22473.67, descuento_porc: 35 });
+  });
+
+  it('sin descuento, el precio va tal cual', async () => {
+    tablas['presupuestos_facturados'] = { data: [], error: null };
+    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-09', anulada: false, existe: true, observaciones: null });
+    m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 233, categoria_iva: 'CF' }]);
+    m.fetchVentas.mockResolvedValue([]);
+    m.fetchVentasItems.mockResolvedValue([{
+      id_comprobante: '58777277', cod_articulo: 165, cantidad: 15,
+      precio: 10924.15, precio_orig: 10924.15, descuento_porc: 0, iva_por: 0,
+    }]);
+    const r = await prepararFacturacion(
+      [{ im_comprobante_id: '58777277', im_numero: 58288, cod_cliente: 233,
+         cliente_nombre: 'BIANCONI, Paola', total: 163862.25, fecha: '2026-09-09' } as any],
+      'jorgelina',
+    );
+    expect(r[0].datos!.items[0]).toMatchObject({ precio: 10924.15, descuento_porc: null });
+  });
+
+  it('🪤 si IM no manda `precio_orig`, se usa el neto: es mejor que mandar cero', async () => {
+    tablas['presupuestos_facturados'] = { data: [], error: null };
+    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-09', anulada: false, existe: true, observaciones: null });
+    m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 233, categoria_iva: 'CF' }]);
+    m.fetchVentas.mockResolvedValue([]);
+    m.fetchVentasItems.mockResolvedValue([{
+      id_comprobante: '58777277', cod_articulo: 320, cantidad: 1,
+      precio: 100, descuento_porc: 10, iva_por: 0,
+    }]);
+    const r = await prepararFacturacion(
+      [{ im_comprobante_id: '58777277', im_numero: 58288, cod_cliente: 233,
+         cliente_nombre: 'X', total: 100, fecha: '2026-09-09' } as any],
+      'jorgelina',
+    );
+    expect(r[0].datos!.items[0].precio).toBe(100);
+  });
+});

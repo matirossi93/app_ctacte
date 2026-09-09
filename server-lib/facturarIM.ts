@@ -38,6 +38,8 @@ export interface ItemAFacturar {
   precio: number;
   cod_lista_precios?: number | null;
   descuento_porc?: number | null;
+  /** El texto del renglón libre (`cod_articulo` vacío): el costo de distribución. */
+  detalle?: string | null;
   iva_por?: number | null;
 }
 
@@ -179,7 +181,9 @@ function cabecera(d: DatosComprobante, fecha: string) {
 
 function renglones(items: ItemAFacturar[]) {
   return items.map((it) => ({
-    cod_articulo: it.cod_articulo,
+    // 🪤 Igual que al crear un presupuesto: el renglón sin artículo del catálogo (el costo de
+    // distribución) va con `cod_articulo` en texto vacío, no en 0. Así los guarda IM.
+    cod_articulo: Number(it.cod_articulo) > 0 ? it.cod_articulo : '',
     cantidad: it.cantidad,
     precio: it.precio,
     iva_por: it.iva_por ?? 0,
@@ -189,6 +193,8 @@ function renglones(items: ItemAFacturar[]) {
     cod_unidad_negocio: UNIDAD_NEGOCIO,
     ...(it.cod_lista_precios != null ? { cod_lista_precios: it.cod_lista_precios } : {}),
     ...(it.descuento_porc ? { descuento_porc: it.descuento_porc } : {}),
+    // El texto del renglón libre: sin él, en la factura no dice qué se cobró.
+    ...(it.detalle && !(Number(it.cod_articulo) > 0) ? { detalle: String(it.detalle) } : {}),
   }));
 }
 
