@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-    AlertTriangle, Loader2, RefreshCw, Receipt, CheckCircle2, X, FileWarning, Printer, Pencil,
+    AlertTriangle, Loader2, RefreshCw, Receipt, CheckCircle2, X, FileWarning, Printer, Pencil, Search,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
+import { coincide } from '../utils/buscar';
 import { imprimirComprobante } from '../utils/imprimirComprobante';
 import { useRecargarAlVolver } from '../utils/recargarAlVolver';
 import { FacturarModal } from './FacturarModal';
@@ -45,6 +46,8 @@ const dia = (f: string | null) => (f ? `${f.slice(8, 10)}/${f.slice(5, 7)}` : '�
 
 export function FacturacionView({ desde, hasta }: { desde: string; hasta: string }) {
     const [pendientes, setPendientes] = useState<Fila[]>([]);
+    /** El buscador: filtra las dos listas (pendientes y facturados) sin volver a consultar IM. */
+    const [busqueda, setBusqueda] = useState('');
     const [facturados, setFacturados] = useState<Fila[]>([]);
     /**
      * Qué factura se está corrigiendo. Mati (09/09/2026): los repartidores llaman desde la calle
@@ -89,7 +92,12 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
 
     const elegidos = useMemo(() => pendientes.filter(p => sel.has(p.im_comprobante_id)), [pendientes, sel]);
     const importeElegido = elegidos.reduce((s, p) => s + Number(p.total ?? 0), 0);
-    const todosElegidos = !!pendientes.length && elegidos.length === pendientes.length;
+    const buscar = (p: Fila) => coincide(busqueda, [
+        p.cliente_nombre, p.im_numero, p.cod_cliente, p.im_factura_numero, p.im_remito_numero]);
+    const visibles = useMemo(() => pendientes.filter(buscar), [pendientes, busqueda]);
+    const facturadosVisibles = useMemo(() => facturados.filter(buscar), [facturados, busqueda]);
+
+    const todosElegidos = !!visibles.length && elegidos.length === visibles.length;
 
     function toggle(id: string) {
         setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -101,6 +109,12 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                 <button className="fc-btn ghost" onClick={() => void cargar(true)} disabled={cargando}>
                     <RefreshCw size={15} className={cargando ? 'spin' : ''} /> Actualizar
                 </button>
+                <div className="fc-buscador">
+                    <Search size={14} />
+                    <input value={busqueda} onChange={e => setBusqueda(e.target.value)}
+                           placeholder="Buscar cliente, PR, factura o remito…" />
+                    {!!busqueda && <button onClick={() => setBusqueda('')} title="Limpiar"><X size={13} /></button>}
+                </div>
                 <div className="fc-resumen">
                     <span><b>{totales?.pendientes ?? 0}</b> para facturar</span>
                     <span><b>{money(totales?.importe_pendiente ?? 0)}</b></span>
@@ -139,7 +153,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                     type="checkbox" title="Elegir todos"
                                     checked={todosElegidos}
                                     ref={el => { if (el) el.indeterminate = !!elegidos.length && !todosElegidos; }}
-                                    onChange={() => setSel(todosElegidos ? new Set() : new Set(pendientes.map(p => p.im_comprobante_id)))}
+                                    onChange={() => setSel(todosElegidos ? new Set() : new Set(visibles.map(p => p.im_comprobante_id)))}
                                 />
                             </th>
                             <th>Cliente</th><th>Pedido</th><th>Fecha</th>
@@ -147,7 +161,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                         </tr>
                     </thead>
                     <tbody>
-                        {pendientes.map(p => (
+                        {visibles.map(p => (
                             <tr key={p.im_comprobante_id} className={sel.has(p.im_comprobante_id) ? 'sel' : ''}>
                                 <td className="c">
                                     <input type="checkbox" checked={sel.has(p.im_comprobante_id)} onChange={() => toggle(p.im_comprobante_id)} />
@@ -179,13 +193,13 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
             )}
 
             {/* Lo emitido queda a la vista: en InfoManager el vínculo con el presupuesto no existe. */}
-            {!!facturados.length && (
+            {!!facturadosVisibles.length && (
                 <details className="fc-facturados">
-                    <summary>{facturados.length} ya facturados en estos días</summary>
+                    <summary>{facturadosVisibles.length} ya facturados en estos días</summary>
                     <table className="fc-tabla">
                         <thead><tr><th>Cliente</th><th>Pedido</th><th>Factura</th><th>Remito</th><th className="n">Importe</th><th /></tr></thead>
                         <tbody>
-                            {facturados.map(p => (
+                            {facturadosVisibles.map(p => (
                                 <tr key={p.im_comprobante_id}>
                                     <td>{p.cliente_nombre}</td>
                                     <td className="fc-pr">PR {p.im_numero ?? '—'}</td>

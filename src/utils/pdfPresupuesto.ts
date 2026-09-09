@@ -26,11 +26,26 @@ const money = (n: number) =>
     .replace(/\u00a0/g, ' ');
 
 /** Colores Semillero (los mismos del panel y de las demás apps). */
-const GREEN: [number, number, number] = [6, 101, 47];
-const GOLD: [number, number, number] = [238, 192, 69];
-const BEIGE: [number, number, number] = [249, 239, 227];
+/**
+ * 🔴 LA PALETA ES PARA LÁSER BLANCO Y NEGRO.
+ *
+ * Mati (09/09/2026): *"nuestras impresoras son láser negras y al tener ese formato con la tinta
+ * verde sale todo negro, y no solo que nos hace consumir mucha tinta, sino que se mancha todo"*.
+ *
+ * La banda verde llena de arriba y las cabeceras de tabla en verde salían como bloques negros
+ * sólidos en cada hoja. La jerarquía ahora la dan el GROSOR y las LÍNEAS, no el relleno: no hay
+ * un solo rectángulo pintado en todo el documento.
+ *
+ * `PDF_COLOR=1` vuelve a la paleta de marca, para el día que impriman en una color.
+ */
+const A_COLOR = String(import.meta.env?.VITE_PDF_COLOR ?? '') === '1';
+const GREEN: [number, number, number] = A_COLOR ? [6, 101, 47] : [25, 25, 25];
+const GOLD: [number, number, number] = A_COLOR ? [238, 192, 69] : [90, 90, 90];
+const BEIGE: [number, number, number] = A_COLOR ? [249, 239, 227] : [255, 255, 255];
 const DARK: [number, number, number] = [30, 18, 12];
 const GRIS: [number, number, number] = [120, 110, 100];
+/** El borde de las cajas que antes eran un relleno beige. */
+const LINEA: [number, number, number] = A_COLOR ? [238, 192, 69] : [150, 150, 150];
 
 const MARGEN = 12;
 /**
@@ -96,19 +111,30 @@ function rotulo(doc: jsPDF, txt: string, x: number, y: number, opts: { align?: '
  * quién es ni a qué presupuesto pertenece.
  */
 function membrete(doc: jsPDF, d: DatosPresupuesto, ancho: number) {
-  doc.setFillColor(...GREEN);
-  doc.rect(0, 0, ancho, ALTO_BANDA, 'F');
-  doc.setFillColor(...GOLD);
-  doc.rect(0, ALTO_BANDA, ancho, 1.2, 'F');
+  if (A_COLOR) {
+    doc.setFillColor(...GREEN);
+    doc.rect(0, 0, ancho, ALTO_BANDA, 'F');
+    doc.setFillColor(...GOLD);
+    doc.rect(0, ALTO_BANDA, ancho, 1.2, 'F');
+  } else {
+    // 🔴 Sin relleno: en láser B/N una banda llena es un bloque negro en CADA hoja. Una regla
+    // gruesa abajo separa igual de bien y no gasta tóner.
+    doc.setDrawColor(...GREEN);
+    doc.setLineWidth(0.7);
+    doc.line(0, ALTO_BANDA, ancho, ALTO_BANDA);
+    doc.setLineWidth(0.2);
+  }
 
-  // Isotipo dentro de un disco blanco: el logo es circular y sobre el verde necesita respirar.
   const cx = MARGEN + 6.5;
   const cy = ALTO_BANDA / 2;
-  doc.setFillColor(255, 255, 255);
-  doc.circle(cx, cy, 6.8, 'F');
+  if (A_COLOR) {
+    // El logo es circular y sobre el verde necesita un disco blanco para respirar.
+    doc.setFillColor(255, 255, 255);
+    doc.circle(cx, cy, 6.8, 'F');
+  }
   doc.addImage(LOGO_DATA_URI, 'PNG', cx - 6, cy - 6, 12, 12);
 
-  doc.setTextColor(255, 255, 255);
+  doc.setTextColor(...(A_COLOR ? [255, 255, 255] as [number, number, number] : GREEN));
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10.5);
   doc.setCharSpace(0.2);
@@ -119,7 +145,7 @@ function membrete(doc: jsPDF, d: DatosPresupuesto, ancho: number) {
 
   const derecha = ancho - MARGEN;
   if (d.numero) {
-    doc.setTextColor(255, 255, 255);
+    doc.setTextColor(...(A_COLOR ? [255, 255, 255] as [number, number, number] : GREEN));
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(12);
     doc.text(`N° ${d.numero}`, derecha, cy - 0.5, { align: 'right' });
@@ -136,8 +162,14 @@ function membrete(doc: jsPDF, d: DatosPresupuesto, ancho: number) {
  * dirección y el teléfono son para el que reparte (Mati, 09/09/2026).
  */
 function fichaCliente(doc: jsPDF, d: DatosPresupuesto, ancho: number, y: number): number {
-  doc.setFillColor(...BEIGE);
-  doc.roundedRect(MARGEN, y, ancho - MARGEN * 2, ALTO_FICHA, 1.6, 1.6, 'F');
+  // 🔴 Borde en vez de relleno: un rectángulo pintado en láser B/N sale gris sucio y mancha.
+  if (A_COLOR) {
+    doc.setFillColor(...BEIGE);
+    doc.roundedRect(MARGEN, y, ancho - MARGEN * 2, ALTO_FICHA, 1.6, 1.6, 'F');
+  } else {
+    doc.setDrawColor(...LINEA);
+    doc.roundedRect(MARGEN, y, ancho - MARGEN * 2, ALTO_FICHA, 1.6, 1.6, 'S');
+  }
 
   doc.setTextColor(...GRIS);
   rotulo(doc, 'Cliente', MARGEN + 4, y + 4.6);
@@ -222,8 +254,17 @@ export function generarPresupuestoPdf(d: DatosPresupuesto): { blob: Blob; nombre
     // 7,5 pt con 1,4 mm de padding: la fila baja de 8,4 mm a 5,2 y entran casi el doble de
     // renglones. Más abajo de esto la lista deja de leerse cómoda en papel.
     styles: { fontSize: 7, cellPadding: 1, textColor: DARK, lineColor: [230, 220, 208], lineWidth: 0.1 },
-    headStyles: { fillColor: GREEN, textColor: 255, fontStyle: 'bold', fontSize: 6.5, cellPadding: 1.3 },
-    alternateRowStyles: { fillColor: BEIGE },
+    /**
+     * 🔴 En B/N la cabecera va SIN relleno: pintada sale como una barra negra en cada página y es
+     * lo que más tóner gasta. Se distingue con negrita, mayúsculas y una línea gruesa abajo.
+     */
+    headStyles: A_COLOR
+      ? { fillColor: GREEN, textColor: 255, fontStyle: 'bold', fontSize: 6.5, cellPadding: 1.3 }
+      : { fillColor: false as any, textColor: GREEN, fontStyle: 'bold', fontSize: 6.5, cellPadding: 1.3,
+          lineColor: GREEN, lineWidth: { bottom: 0.5 } as any },
+    // 🪤 Las filas alternas pintadas son medio documento con fondo: en láser B/N se ve gris sucio
+    // y no aporta nada que no aporten ya las líneas de la tabla.
+    ...(A_COLOR ? { alternateRowStyles: { fillColor: BEIGE } } : {}),
     columnStyles: hayDescuento
       ? { 0: { cellWidth: 'auto' }, 1: { halign: 'right', cellWidth: 14 }, 2: { halign: 'right', cellWidth: 25 }, 3: { halign: 'right', cellWidth: 13 }, 4: { halign: 'right', cellWidth: 27, fontStyle: 'bold' } }
       : { 0: { cellWidth: 'auto' }, 1: { halign: 'right', cellWidth: 15 }, 2: { halign: 'right', cellWidth: 28 }, 3: { halign: 'right', cellWidth: 30, fontStyle: 'bold' } },
@@ -237,9 +278,18 @@ export function generarPresupuestoPdf(d: DatosPresupuesto): { blob: Blob; nombre
   if (y + 13 > PISO) { doc.addPage(); membrete(doc, d, ancho); y = ALTO_BANDA + AIRE + 3; }
 
   const anchoTotal = 70;
-  doc.setFillColor(...GREEN);
-  doc.roundedRect(ancho - MARGEN - anchoTotal, y, anchoTotal, 12, 1.6, 1.6, 'F');
-  doc.setTextColor(255, 255, 255);
+  if (A_COLOR) {
+    doc.setFillColor(...GREEN);
+    doc.roundedRect(ancho - MARGEN - anchoTotal, y, anchoTotal, 12, 1.6, 1.6, 'F');
+    doc.setTextColor(255, 255, 255);
+  } else {
+    // El total es lo primero que se mira: en B/N se destaca con un recuadro grueso, no pintado.
+    doc.setDrawColor(...GREEN);
+    doc.setLineWidth(0.5);
+    doc.roundedRect(ancho - MARGEN - anchoTotal, y, anchoTotal, 12, 1.6, 1.6, 'S');
+    doc.setLineWidth(0.2);
+    doc.setTextColor(...GREEN);
+  }
   rotulo(doc, 'Total', ancho - MARGEN - anchoTotal + 5, y + 7.6);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(12);
@@ -257,8 +307,13 @@ export function generarPresupuestoPdf(d: DatosPresupuesto): { blob: Blob; nombre
     const lineas = doc.splitTextToSize(d.observaciones, ancho - MARGEN * 2 - 8);
     const alto = 8 + lineas.length * 3.8;
     if (y + alto > PISO) { doc.addPage(); membrete(doc, d, ancho); y = ALTO_BANDA + AIRE + 3; }
-    doc.setFillColor(...BEIGE);
-    doc.roundedRect(MARGEN, y, ancho - MARGEN * 2, alto, 1.6, 1.6, 'F');
+    if (A_COLOR) {
+      doc.setFillColor(...BEIGE);
+      doc.roundedRect(MARGEN, y, ancho - MARGEN * 2, alto, 1.6, 1.6, 'F');
+    } else {
+      doc.setDrawColor(...LINEA);
+      doc.roundedRect(MARGEN, y, ancho - MARGEN * 2, alto, 1.6, 1.6, 'S');
+    }
     doc.setTextColor(...GRIS);
     rotulo(doc, 'Observaciones', MARGEN + 4, y + 4.6);
     doc.setTextColor(...DARK);

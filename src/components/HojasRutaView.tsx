@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle, Truck, Plus, Loader2, X, Wand2, MapPin, Package,
     ChevronRight, RefreshCw, Trash2, Printer, CheckCircle2, Store, Lock, Unlock, FileMinus,
-    MessageSquare,
+    MessageSquare, Search,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
+import { coincide } from '../utils/buscar';
 import { useRecargarAlVolver } from '../utils/recargarAlVolver';
 import { ImprimirHoja } from './ImprimirHoja';
 import { AjustesHojaModal } from './AjustesHojaModal';
@@ -100,8 +101,18 @@ const kilos = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 
  * estirar hacia atrás, así que el rango que elegía la oficina arriba no llegaba hasta acá.
  */
 export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }) {
-    /** La fecha con la que se crea una hoja nueva: el final del rango, o sea el día de despacho. */
-    const fecha = hasta;
+    /**
+     * 🔑 CON QUÉ FECHA SE CREA UNA HOJA NUEVA. Mati (09/09/2026): *"las hojas de ruta tendrían que
+     * tener fecha y poder elegirse, porque muchas veces armamos hojas de ruta para días
+     * siguientes"*. Arranca en el final del rango —el día que se está mirando— y se puede mover
+     * sin tocar el rango: se arma la hoja de mañana con los pedidos que ya están hoy.
+     */
+    const [fecha, setFecha] = useState(hasta);
+    // Si se mueve el rango, la fecha de la hoja lo sigue, salvo que ya la hayan elegido a mano.
+    const [fechaTocada, setFechaTocada] = useState(false);
+    useEffect(() => { if (!fechaTocada) setFecha(hasta); }, [hasta, fechaTocada]);
+    /** El buscador: sobre los pedidos que ya están en pantalla, por cliente o por comprobante. */
+    const [busqueda, setBusqueda] = useState('');
     const [pendientes, setPendientes] = useState<Pendiente[]>([]);
     const [hojas, setHojas] = useState<Hoja[]>([]);
     const [camiones, setCamiones] = useState<Camion[]>([]);
@@ -214,6 +225,8 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
     const porZona = useMemo(() => {
         const g = new Map<string, { zona: string; cod_zona: number | null; filas: Pendiente[]; kg: number }>();
         for (const p of pendientes) {
+            if (!coincide(busqueda, [p.cliente_nombre, p.im_numero, p.cod_cliente,
+                                     (p as any).im_remito_numero, (p as any).im_factura_numero])) continue;
             const k = String(p.cod_zona ?? 'sin');
             if (!g.has(k)) g.set(k, { zona: p.zona, cod_zona: p.cod_zona, filas: [], kg: 0 });
             const x = g.get(k)!;
@@ -224,7 +237,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
             if (b.cod_zona == null) return -1;
             return b.kg - a.kg;                     // y las zonas más pesadas primero
         });
-    }, [pendientes]);
+    }, [pendientes, busqueda]);
 
     const seleccionados = useMemo(() => pendientes.filter(p => sel.has(p.im_comprobante_id)), [pendientes, sel]);
     const kgSel = seleccionados.reduce((s, p) => s + p.kg, 0);
@@ -433,16 +446,28 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
     return (
         <div className="hr-root">
             <div className="hr-top">
-                {/* La fecha la elige el rango del header. Acá se dice con cuál queda la hoja nueva,
-                    que es el final del rango: el día en que sale el camión. */}
+                {/* QUÉ pedidos se ven: lo elige el rango del header, arriba. */}
                 <span className="hr-fecha-rango">
                     {desde === hasta
-                        ? <>Día <b>{desde.slice(8, 10)}/{desde.slice(5, 7)}</b></>
-                        : <>Del <b>{desde.slice(8, 10)}/{desde.slice(5, 7)}</b> al <b>{hasta.slice(8, 10)}/{hasta.slice(5, 7)}</b></>}
+                        ? <>Pedidos del <b>{desde.slice(8, 10)}/{desde.slice(5, 7)}</b></>
+                        : <>Pedidos del <b>{desde.slice(8, 10)}/{desde.slice(5, 7)}</b> al <b>{hasta.slice(8, 10)}/{hasta.slice(5, 7)}</b></>}
                 </span>
+                {/* 🔑 Con QUÉ FECHA se crea la hoja: se elige aparte del rango, porque la oficina
+                    arma hoy la hoja de mañana con pedidos que ya están cargados (Mati, 09/09/2026). */}
+                <label className="hr-fecha">
+                    Hoja del
+                    <input type="date" value={fecha}
+                           onChange={e => { setFecha(e.target.value); setFechaTocada(true); }} />
+                </label>
                 <button className="hr-btn ghost" onClick={() => void cargar(true)} disabled={cargando}>
                     <RefreshCw size={15} className={cargando ? 'spin' : ''} /> Actualizar
                 </button>
+                <div className="hr-buscador">
+                    <Search size={14} />
+                    <input value={busqueda} onChange={e => setBusqueda(e.target.value)}
+                           placeholder="Buscar cliente o comprobante…" />
+                    {!!busqueda && <button onClick={() => setBusqueda('')} title="Limpiar"><X size={13} /></button>}
+                </div>
                 <div className="hr-resumen">
                     <span><b>{pendientes.length}</b> sin asignar</span>
                     <span><b>{kilos(pendientes.reduce((s, p) => s + p.kg, 0))}</b></span>

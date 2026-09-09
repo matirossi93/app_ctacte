@@ -38,6 +38,8 @@ const MAX_DIAS_ITEMS = 12;
  * por el panel sea instantáneo sin que se note el retraso: un pedido que entra aparece en el
  * refresco siguiente, y el botón Actualizar saltea el cache.
  */
+/** El panel es de Casa Central: la única sucursal que arma hojas de ruta. */
+const COD_EMPRESA_CASA_CENTRAL = Number(process.env.PEDIDO_EMPRESA_DEFAULT || 1);
 const VISTA_TTL_MS = 90_000;
 const _vistaCache = new Map<string, { at: number; datos: any }>();
 
@@ -83,9 +85,15 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
     // El formato de bolsa de cada producto a granel: lo que haya cacheado, sin esperar.
     const formatos = formatosDeBolsa();
 
+    /**
+     * 🔴 SÓLO CASA CENTRAL: es la única que despacha con hoja de ruta (Mati, 09/09/2026). Hoy
+     * los presupuestos son todos de la empresa 1 —medido: 152 de 152—, pero nada lo garantizaba,
+     * y en la vista de remitos ese mismo agujero metía 1.852 comprobantes de las sucursales.
+     */
     const presupuestos = ventas.filter((v: any) =>
       String(v.tipo_comprobante ?? '').trim() === 'PR' &&
-      String(v.anulada ?? '').trim().toUpperCase() !== 'S');
+      String(v.anulada ?? '').trim().toUpperCase() !== 'S' &&
+      Number(v.cod_empresa) === COD_EMPRESA_CASA_CENTRAL);
 
     // 🪤 Los renglones NO se piden por toda la ventana. Medido contra IM el 07/09/2026:
     //   `/ventas/items` de 15 días -> 57.385 items en 23,7 s

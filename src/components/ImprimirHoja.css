@@ -123,9 +123,28 @@
     .imp-meta { margin-bottom: 2.5mm !important; font-size: 7.5pt !important; }
     .imp-tabla.frac .paq { font-size: 7.5pt !important; min-width: 26px !important; padding: 0.3mm 0.8mm !important; margin: 0.2mm 0.6mm 0.2mm 0 !important; }
     .imp-nota { font-size: 7pt !important; margin-top: 2mm !important; }
-    /* Se conservan los colores de la marca: en blanco y negro el verde sale gris oscuro y el
-       texto claro encima igual se lee. */
-    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    /**
+     * 🔴 NADA PINTADO. Mati (09/09/2026): *"nuestras impresoras son láser negras y al tener ese
+     * formato con la tinta verde sale todo negro, y no solo que nos hace consumir mucha tinta,
+     * sino que se mancha todo"*.
+     *
+     * 🪤 Acá había un `print-color-adjust: exact`, que es justamente la regla que OBLIGA al
+     * navegador a imprimir los fondos: la banda verde del encabezado y la cabecera de la tabla
+     * salían como bloques negros sólidos en cada hoja. Sacarla no alcanza —algunos navegadores
+     * los imprimen igual—, así que además se fuerzan blancos.
+     */
+    * { -webkit-print-color-adjust: economy !important; print-color-adjust: economy !important; }
+    .imp-overlay *, .imp-tabla th, .imp-tabla td, .imp-tabla tfoot td {
+        background: #fff !important; background-image: none !important; color: #000 !important;
+    }
+    /* La jerarquía la dan el grosor y las líneas, no el relleno. */
+    .imp-tabla thead th { border-bottom: 1.2pt solid #000 !important; font-weight: 700 !important; }
+    .imp-tabla tfoot td { border-top: 1.2pt solid #000 !important; font-weight: 700 !important; }
+    .imp-tabla th, .imp-tabla td { border-color: #999 !important; }
+    .imp-head { border-bottom: 1.2pt solid #000 !important; }
+    .imp-tabla .total-cli, .imp-tabla .saldo { font-weight: 700 !important; }
+    /* Las celdas que se completan a mano tienen que quedar VACÍAS y con borde para escribir. */
+    .imp-tabla .escribir { background: #fff !important; }
     /* Que un cliente no quede partido entre dos hojas: cada uno es su propio tbody. */
     .imp-grupo { page-break-inside: avoid; break-inside: avoid; }
     .imp-tabla tr { page-break-inside: avoid; }

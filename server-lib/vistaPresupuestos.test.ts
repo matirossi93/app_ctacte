@@ -59,6 +59,8 @@ function fakeSb() {
 
 const PR = {
   id: '999', numero: 58300, tipo_comprobante: 'PR', anulada: 'N',
+  // 🔑 El panel es de Casa Central: los de otras empresas ni se miran (ver el test de abajo).
+  cod_empresa: 1,
   fecha: '2026-09-09', cod_cliente: 7, total: 10000, observaciones: '',
 };
 /** Un renglón de 1 bolsa (30 kg) del artículo 1, con la lista y el descuento que se le pasen. */
@@ -197,5 +199,28 @@ describe('dos presupuestos vivos del mismo cliente', () => {
     const v = await vistaDeRango('2026-09-09', '2026-09-09', true);
     expect(v.pendientes).toHaveLength(1);
     expect(v.pendientes[0].hermanos).toEqual([]);
+  });
+});
+
+/**
+ * 🔴 EL PANEL ES DE CASA CENTRAL. Mati (09/09/2026): *"el panel tiene que ser para casa central
+ * únicamente, porque es la única que tiene hoja de ruta... ya están apareciendo pedidos de las
+ * otras sucursales"*.
+ *
+ * Medido ese día sobre los remitos vivos de una semana: 182 de Casa Central (empresa 1) contra
+ * **1.852 de las sucursales** (empresas 2, 3 y 4). Nueve de cada diez filas eran de otra
+ * sucursal, que además no se despacha desde acá.
+ */
+describe('sólo Casa Central', () => {
+  it('🔴 un presupuesto de otra sucursal no entra en la vista', async () => {
+    m.fetchVentas.mockResolvedValue([
+      { ...PR, id: '999', cod_empresa: 1 },
+      { ...PR, id: '1000', numero: 58301, cod_empresa: 2 },   // San Martín
+      { ...PR, id: '1001', numero: 58302, cod_empresa: 3 },   // otra sucursal
+    ]);
+    m.fetchVentasItems.mockResolvedValue(renglon(12));
+    const v = await vistaDeRango('2026-09-09', '2026-09-09', true);
+    const ids = [...v.pendientes, ...v.asignados].map((f: any) => String(f.im_comprobante_id));
+    expect(ids).toEqual(['999']);
   });
 });

@@ -90,8 +90,17 @@
     .fr-bolsas { font-size: 7pt !important; }
     .fr-tabla tr { page-break-inside: avoid; }
     .fr-tabla thead { display: table-header-group; }
-    /* Se conservan los colores de la marca: en B/N el verde sale gris oscuro y se lee igual. */
-    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    /**
+     * 🔴 NADA PINTADO: las impresoras de la oficina son láser B/N y un fondo verde sale como un
+     * bloque negro que gasta tóner y mancha (Mati, 09/09/2026). El `exact` que había acá era
+     * justamente lo que obligaba al navegador a imprimirlos.
+     */
+    * { -webkit-print-color-adjust: economy !important; print-color-adjust: economy !important; }
+    .fr-root *, .fr-tabla th, .fr-tabla td {
+        background: #fff !important; background-image: none !important; color: #000 !important;
+    }
+    .fr-tabla thead th { border-bottom: 1.2pt solid #000 !important; font-weight: 700 !important; }
+    .fr-tabla th, .fr-tabla td { border-color: #999 !important; }
     @page { margin: 8mm 7mm; }
 }
 

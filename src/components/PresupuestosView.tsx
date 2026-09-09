@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle, Check, CircleAlert, Loader2, RefreshCw, ChevronRight, X, Package,
-    MessageSquare, Printer,
+    MessageSquare, Printer, Search,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
+import { coincide } from '../utils/buscar';
 import { EditorPresupuesto } from './EditorPresupuesto';
 import { imprimirComprobante } from '../utils/imprimirComprobante';
 import { useRecargarAlVolver } from '../utils/recargarAlVolver';
@@ -99,6 +100,11 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
     const [error, setError] = useState<string | null>(null);
     const [aviso, setAviso] = useState<string | null>(null);
     const [filtro, setFiltro] = useState<Filtro>('sin_revisar');
+    /**
+     * El buscador. Mati (09/09/2026): *"se hace una fila interminable"*. Filtra lo que ya está en
+     * pantalla —por cliente o por número— sin volver a consultar InfoManager.
+     */
+    const [busqueda, setBusqueda] = useState('');
     const [trabajando, setTrabajando] = useState<string | null>(null);
     /** Qué presupuesto tiene el detalle abierto, y sus renglones. */
     const [abierto, setAbierto] = useState<string | null>(null);
@@ -143,11 +149,12 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
     useRecargarAlVolver(() => { void cargar(true); });
 
     const visibles = useMemo(() => filas.filter(p => {
+        if (!coincide(busqueda, [p.cliente_nombre, p.im_numero, p.cod_cliente])) return false;
         if (filtro === 'todos') return true;
         if (filtro === 'sin_revisar') return !p.revision;
         if (filtro === 'aprobados') return p.revision?.estado === 'aprobado';
         return p.revision?.estado === 'observado';
-    }), [filas, filtro]);
+    }), [filas, filtro, busqueda]);
 
     /** Marca la revisión en la pantalla sin volver a pedir todo a InfoManager (son segundos). */
     function pintarRevision(id: string, revision: Revision | null) {
@@ -271,6 +278,12 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                         {txt} <b>{n}</b>
                     </button>
                 ))}
+                <div className="pr-buscador">
+                    <Search size={14} />
+                    <input value={busqueda} onChange={e => setBusqueda(e.target.value)}
+                           placeholder="Buscar cliente o número…" />
+                    {!!busqueda && <button onClick={() => setBusqueda('')} title="Limpiar"><X size={13} /></button>}
+                </div>
             </div>
 
             {aviso && <div className="pr-aviso"><AlertTriangle size={15} /><span>{aviso}</span><button onClick={() => setAviso(null)}><X size={14} /></button></div>}
@@ -278,7 +291,9 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
 
             {cargando && <div className="pr-cargando"><Loader2 className="spin" size={20} /> Trayendo los presupuestos de InfoManager…</div>}
             {!cargando && !visibles.length && (
-                <div className="pr-vacio"><Package size={26} /><span>No hay presupuestos en este filtro.</span></div>
+                <div className="pr-vacio"><Package size={26} /><span>
+                    {busqueda ? `Ningún presupuesto coincide con "${busqueda}".` : 'No hay presupuestos en este filtro.'}
+                </span></div>
             )}
 
             {visibles.map(p => {

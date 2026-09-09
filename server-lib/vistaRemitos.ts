@@ -49,7 +49,52 @@ export function invalidarRemitos() { _cache.clear(); }
 const esTipo = (v: any, t: string) => String(v?.tipo_comprobante ?? '').trim() === t;
 const vigente = (v: any) => String(v?.anulada ?? '').trim().toUpperCase() !== 'S';
 
+/**
+ * 🔴 EL PANEL ES DE CASA CENTRAL. Es la única que arma hojas de ruta.
+ *
+ * Mati (09/09/2026): *"el panel tiene que ser para casa central únicamente, porque es la única
+ * que tiene hoja de ruta... ya están apareciendo pedidos de las otras sucursales"*.
+ *
+ * 🪤 Nada filtraba por empresa. Medido ese día sobre los remitos vivos de 7 días: 182 de Casa
+ * Central (empresa 1, punto de venta 7) contra **1.852 de las sucursales** (empresas 2, 3 y 4,
+ * todas por el punto 888). O sea que 9 de cada 10 filas de la pantalla eran ruido de otra
+ * sucursal, que además no se pueden despachar desde acá.
+ */
+const COD_EMPRESA_CASA_CENTRAL = Number(process.env.PEDIDO_EMPRESA_DEFAULT || 1);
+const esCasaCentral = (v: any) => Number(v?.cod_empresa) === COD_EMPRESA_CASA_CENTRAL;
+
+/**
+ * 🔑 Desde cuándo se arma la hoja de ruta en el panel.
+ *
+ * Mati (09/09/2026): *"hay que limpiar todos los pedidos que ya estaban facturados y que
+ * entraron, porque recién arrancamos hoy con el nuevo método... están dando vuelta y no los
+ * podemos sacar"*. Todo lo facturado ANTES de arrancar ya salió por el circuito viejo: no hay
+ * ninguna hoja que armarle y en la pantalla es ruido puro.
+ *
+ * 📌 El default es el 09/09/2026, el día que la oficina arrancó con el panel. Está hardcodeado a
+ * propósito y no en el entorno: es un hecho con fecha, no una preferencia — antes de ese día no
+ * existe una sola hoja de ruta armada acá. `HOJAS_RUTA_DESDE` lo pisa, y `HOJAS_RUTA_DESDE=todo`
+ * saca el corte por completo si alguna vez hace falta mirar para atrás.
+ */
+const DESDE_MINIMO = (() => {
+  const env = String(process.env.HOJAS_RUTA_DESDE ?? '').trim();
+  if (env.toLowerCase() === 'todo') return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(env) ? env : '2026-09-09';
+})();
+
+/** La misma forma que devuelve la vista, pero sin nada: el rango cae entero antes del arranque. */
+function vaciaDesde(_desde: string, _hasta: string) {
+  return {
+    pendientes: [], asignados: [], en_retiro: 0,
+    totales: { remitos: 0, importe: 0, kg: 0 },
+    sin_zona: 0, sin_factura: 0, factura_deducida: 0, dias_sin_items: [] as string[],
+  };
+}
+
 export async function vistaRemitos(desde: string, hasta: string, forzar = false) {
+  // El corte de arranque manda sobre lo que pida la pantalla: nada anterior entra nunca.
+  if (DESDE_MINIMO && desde < DESDE_MINIMO) desde = DESDE_MINIMO;
+  if (DESDE_MINIMO && hasta < DESDE_MINIMO) return vaciaDesde(desde, hasta);
   const clave = `${desde}|${hasta}`;
   const hit = _cache.get(clave);
   if (!forzar && hit && Date.now() - hit.at < VISTA_TTL_MS) return hit.datos;
@@ -61,8 +106,9 @@ export async function vistaRemitos(desde: string, hasta: string, forzar = false)
   ]);
   const porCliente = new Map(clientes.map((c: any) => [Number(c.cod_cliente), c]));
 
-  const remitos = ventas.filter(v => esTipo(v, 'RE') && vigente(v));
-  const facturas = ventas.filter(v => esTipo(v, 'FA') && vigente(v));
+  // 🔴 Sólo Casa Central: es la única que despacha con hoja de ruta (ver esCasaCentral).
+  const remitos = ventas.filter(v => esTipo(v, 'RE') && vigente(v) && esCasaCentral(v));
+  const facturas = ventas.filter(v => esTipo(v, 'FA') && vigente(v) && esCasaCentral(v));
 
   // Los renglones, sólo de los días que de verdad tienen remitos (ver vistaPresupuestos.ts).
   const todasLasFechas = [...new Set(remitos.map((r: any) => String(r.fecha ?? '').slice(0, 10)).filter(Boolean))].sort();
