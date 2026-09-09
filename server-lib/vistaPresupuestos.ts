@@ -12,7 +12,7 @@
  */
 import { sb, TENANT_ID } from './supabase.js';
 import {
-  fetchVentas, fetchVentasItems, fetchArticulosCatalogo, fetchClientesIMCached,
+  fetchVentas, fetchVentasItems, fetchArticulosCatalogo, fetchClientesIMCon,
   fetchStockPorDeposito,
 } from './infomanager.js';
 import { pesoDeRenglones } from './pesoComprobante.js';
@@ -61,10 +61,9 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
     // comprobante para reordenar los despachos, así que un pedido fechado para el 10 existe
     // desde antes. Un pedido que no aparece en la pantalla no entra en ninguna hoja y nadie
     // se entera hasta que llama el cliente.
-    const [ventas, cat, clientes, stock] = await Promise.all([
+    const [ventas, cat, stock] = await Promise.all([
       fetchVentas(desde, hasta),
       fetchArticulosCatalogo(),
-      fetchClientesIMCached().catch(() => []),
       // Sin stock la pantalla igual sirve: se avisa que no se pudo consultar, no se inventa.
       // 🪤 `forzar` va también acá: el cache de stock dura 10 minutos y sin esto el botón
       // Actualizar refrescaba lo pedido en vivo contra un stock de hasta 10 minutos atrás. Los
@@ -72,6 +71,13 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
       // —que descuenta stock— que es justo cuando se aprieta el botón.
       fetchStockPorDeposito(DEPOSITO_CONTROL, forzar).catch(() => null),
     ]);
+    /**
+     * 🔑 Los clientes se piden DESPUÉS de las ventas, con los códigos que aparecen en ellas: un
+     * cliente dado de alta hace un rato no está en el cache (dura 30 min) y la pantalla mostraba
+     * *"Cliente 1347"* en vez de *"LEAL, Paulina (Este)"* (Mati, 09/09/2026). Normalmente sale
+     * del cache y no cuesta nada; sólo va a buscarlo si falta alguno.
+     */
+    const clientes = await fetchClientesIMCon(ventas.map((v: any) => v.cod_cliente)).catch(() => []);
 
     const porCliente = new Map(clientes.map((c: any) => [Number(c.cod_cliente), c]));
     // El formato de bolsa de cada producto a granel: lo que haya cacheado, sin esperar.

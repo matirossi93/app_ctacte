@@ -29,7 +29,8 @@ vi.mock('./infomanager.js', () => ({
   fetchVentas: m.fetchVentas,
   fetchVentasItems: m.fetchVentasItems,
   fetchArticulosCatalogo: vi.fn(async () => CATALOGO),
-  fetchClientesIMCached: vi.fn(async () => [{ cod_cliente: 7, razon_social: 'FORRAJERIA EL SOL' }]),
+  // Se pide con los códigos del rango: un cliente recién creado no está en el cache.
+  fetchClientesIMCon: vi.fn(async () => [{ cod_cliente: 7, razon_social: 'FORRAJERIA EL SOL' }]),
   fetchStockPorDeposito: vi.fn(async () => new Map([[1, 999]])),
 }));
 vi.mock('./pedidos.js', () => ({

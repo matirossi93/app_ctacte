@@ -30,7 +30,8 @@ vi.mock('./infomanager.js', () => ({
   fetchArticulosCatalogo: vi.fn(async () => new Map()),
   // El remito valida stock: la preparación lo consulta para avisar antes de facturar.
   fetchStockPorDeposito: vi.fn(async () => new Map()),
-  fetchClientesIMCached: m.fetchClientesIMCached,
+  // Se pide con los códigos de lo que se factura: un cliente nuevo no está cacheado.
+  fetchClientesIMCon: m.fetchClientesIMCached,
   cabeceraComprobante: m.cabeceraComprobante,
   desconfirmarPresupuesto: m.desconfirmarPresupuesto,
   fechaArgentina: () => '2026-09-08',

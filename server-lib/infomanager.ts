@@ -594,13 +594,49 @@ let clientesIMCache: { data: ClienteIM[]; fetchedAt: number } | null = null;
 let clientesIMPending: Promise<ClienteIM[]> | null = null;
 const CLIENTES_IM_TTL_MS = 30 * 60 * 1000;
 
+/**
+ * 🔑 Los clientes, GARANTIZANDO que estén los códigos que se piden.
+ *
+ * El maestro se cachea 30 minutos, así que un cliente dado de alta recién no está: el panel
+ * mostraba *"Cliente 1347"* en vez de *"LEAL, Paulina (Este)"* (Mati, 09/09/2026), y —peor— al
+ * facturar no se sabía su condición de IVA, así que no se podía emitir. Si falta alguno de los
+ * códigos pedidos, se refresca UNA vez.
+ *
+ * 🪤 Los que se buscaron y de verdad no existen en IM quedan anotados: sin eso, un `cod_cliente`
+ * inválido en un comprobante haría refrescar el maestro entero en CADA request.
+ */
+const clientesInexistentes = new Set<number>();
+
+export async function fetchClientesIMCon(codigos: Iterable<number | string>): Promise<ClienteIM[]> {
+  const clientes = await fetchClientesIMCached();
+  const tengo = new Set(clientes.map((c) => Number(c.cod_cliente)));
+  const faltan = [...new Set([...codigos].map(Number))]
+    .filter((c) => Number.isFinite(c) && c > 0 && !tengo.has(c) && !clientesInexistentes.has(c));
+  if (!faltan.length) return clientes;
+
+  console.log(`[clientes] ${faltan.length} sin cachear (${faltan.slice(0, 5).join(', ')}): refresco el maestro`);
+  const frescos = await fetchClientesIMCached(true).catch((e: any) => {
+    console.warn('[fetchClientesIMCon] no pude refrescar:', e?.message);
+    return clientes;
+  });
+  const ahora = new Set(frescos.map((c) => Number(c.cod_cliente)));
+  for (const c of faltan) if (!ahora.has(c)) clientesInexistentes.add(c);
+  return frescos;
+}
+
 export async function fetchClientesIMCached(force = false): Promise<ClienteIM[]> {
   if (!force && clientesIMCache && (Date.now() - clientesIMCache.fetchedAt) < CLIENTES_IM_TTL_MS) {
     return clientesIMCache.data;
   }
   if (clientesIMPending) return clientesIMPending;
   clientesIMPending = fetchClientesIM()
-    .then(rows => { clientesIMCache = { data: rows, fetchedAt: Date.now() }; return rows; })
+    .then(rows => {
+      clientesIMCache = { data: rows, fetchedAt: Date.now() };
+      // Un código que ayer no existía puede existir hoy: la lista negra sólo vale para el maestro
+      // que teníamos, no para el nuevo.
+      clientesInexistentes.clear();
+      return rows;
+    })
     .catch(err => {
       console.error('[fetchClientesIMCached]', err?.message ?? err);
       // Si ya teníamos cache (aunque vencido), lo devolvemos antes que nada.

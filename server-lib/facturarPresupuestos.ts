@@ -28,7 +28,7 @@ import { sb, TENANT_ID } from './supabase.js';
 import type { JwtPayload } from './auth.js';
 import { puedeArmarHojasDeRuta } from './permisos.js';
 import {
-  fetchVentasItems, fetchClientesIMCached, cabeceraComprobante, desconfirmarPresupuesto,
+  fetchVentasItems, fetchClientesIMCon, cabeceraComprobante, desconfirmarPresupuesto,
   fetchVentas, fechaArgentina, fetchStockPorDeposito, fetchArticulosCatalogo,
 } from './infomanager.js';
 import { buscarFacturasYaEmitidas } from './facturaYaEmitida.js';
@@ -132,7 +132,12 @@ export interface Preparado {
 export async function prepararFacturacion(
   filas: PresupuestoAFacturar[], usuario: string,
 ): Promise<Preparado[]> {
-  const clientes = await fetchClientesIMCached().catch(() => [] as any[]);
+  /**
+   * 🔑 Con los códigos de lo que se va a facturar. Sin el cliente en la lista no se sabe su
+   * condición de IVA, y sin eso no se emite nada: un cliente creado hace un rato no se podía
+   * facturar hasta que venciera el cache de 30 minutos (Mati, 09/09/2026).
+   */
+  const clientes = await fetchClientesIMCon(filas.map(f => f.cod_cliente)).catch(() => [] as any[]);
   const porCliente = new Map(clientes.map((c: any) => [Number(c.cod_cliente), c]));
 
   const aRevisar = filas.filter(f => !f.facturado_at);

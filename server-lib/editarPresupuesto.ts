@@ -32,7 +32,7 @@ import { puedeArmarHojasDeRuta } from './permisos.js';
 import {
   cabeceraComprobante, getItemsComprobante, actualizarPresupuestoCantidades,
   crearPresupuesto, anularComprobante, fetchArticulosCatalogo, fechaArgentina,
-  fetchClientesIMCached, actualizarCabecera,
+  fetchClientesIMCon, actualizarCabecera,
 } from './infomanager.js';
 import { invalidarVista } from './vistaPresupuestos.js';
 import { invalidarRemitos } from './vistaRemitos.js';
@@ -394,14 +394,16 @@ export async function comprobanteParaImprimir(req: Request & { user?: JwtPayload
   if (frenaSiNoPuede(req, res)) return;
   try {
     const id = String(req.params.id);
-    const [cab, items, cat, clientes] = await Promise.all([
+    const [cab, items, cat] = await Promise.all([
       cabeceraComprobante(id),
       getItemsComprobante(id),
       fetchArticulosCatalogo(),
-      fetchClientesIMCached().catch(() => [] as any[]),
     ]);
     if (cab.existe === false) { res.status(404).json({ error: 'Ese comprobante ya no está en InfoManager.' }); return; }
     if (cab.existe !== true) { res.status(502).json({ error: 'No pude leer el comprobante en InfoManager.' }); return; }
+
+    // Con el código del cliente en la mano: si es uno recién creado y no está cacheado, se busca.
+    const clientes = await fetchClientesIMCon([cab.cod_cliente ?? 0]).catch(() => [] as any[]);
 
     const cliente = (clientes as any[]).find(c => Number(c.cod_cliente) === Number(cab.cod_cliente));
     /**
