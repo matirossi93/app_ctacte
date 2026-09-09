@@ -114,15 +114,22 @@
     /* 🔄 Más chico para que entren más clientes por hoja (Mati, 09/09/2026: *"hay que hacerlo
        más chico, que entren más artículos por hoja"*). 7,5 pt con celdas de 1,2 mm: una hoja de
        ruta de 20 clientes pasó de dos carillas a una. */
-    .imp-tabla { font-size: 7.5pt; }
-    .imp-tabla th, .imp-tabla td { padding: 1.2mm 1.6mm !important; }
-    .imp-tabla thead th { font-size: 6.5pt !important; }
+    /* 🔄 09/09/2026, segunda pasada. Se había achicado a 7,5 pt para meter más pedidos por hoja,
+       y en el camión no se leía: Mati pidió *"agrandar un poco la letra y que sea un poco más
+       gruesa, sólo un poco"*. 8,5 pt con peso 600 — se lee de parado y sigue entrando lo mismo,
+       porque las columnas de bultos y el subtotal por cliente ya salieron. */
+    .imp-tabla { font-size: 8.5pt; font-weight: 500; }
+    .imp-tabla th, .imp-tabla td { padding: 1.3mm 1.6mm !important; }
+    .imp-tabla thead th { font-size: 7.5pt !important; }
+    /* El cliente y los importes son lo que se busca con la vista: van con más cuerpo. */
+    .imp-tabla td:first-child { font-weight: 600 !important; }
+    .imp-tabla .n { font-weight: 600 !important; }
     .imp-head { padding-bottom: 2mm !important; margin-bottom: 2.5mm !important; }
     .imp-empresa { font-size: 11pt !important; }
     .imp-nro { font-size: 12pt !important; }
-    .imp-meta { margin-bottom: 2.5mm !important; font-size: 7.5pt !important; }
+    .imp-meta { margin-bottom: 2.5mm !important; font-size: 8pt !important; }
     .imp-tabla.frac .paq { font-size: 7.5pt !important; min-width: 26px !important; padding: 0.3mm 0.8mm !important; margin: 0.2mm 0.6mm 0.2mm 0 !important; }
-    .imp-nota { font-size: 7pt !important; margin-top: 2mm !important; }
+    .imp-nota { font-size: 7.5pt !important; margin-top: 2mm !important; }
     /**
      * 🔴 NADA PINTADO. Mati (09/09/2026): *"nuestras impresoras son láser negras y al tener ese
      * formato con la tinta verde sale todo negro, y no solo que nos hace consumir mucha tinta,

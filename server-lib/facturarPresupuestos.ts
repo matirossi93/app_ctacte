@@ -667,6 +667,8 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
       // 1) FACTURA — salvo que ya la tenga.
       let facturaNumero: number | null = f.im_factura_numero ?? null;
       let tipoFactura = `FA ${p.letra ?? ''}`.trim();
+      /** El id interno en IM de la factura: es lo que marca el remito como suyo. */
+      let facturaId: string | null = f.im_factura_id ?? null;
       if (!f.im_factura_id) {
         // 🔴 RECLAMO. El rol administrativo lo tienen dos personas: si las dos aprietan Facturar
         // sobre la misma selección, las dos leen "no está facturado" y las dos emiten. La fila se
@@ -703,6 +705,7 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
         }
         facturaNumero = fa.numero;
         tipoFactura = fa.tipo;
+        facturaId = fa.id;
       }
 
       // 2) REMITO
@@ -720,7 +723,18 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
           .eq('tenant_id', TENANT_ID).eq('im_comprobante_id', String(f.im_comprobante_id));
         if (errMarca) { fallados.push(`${quien}: no pude marcar el intento del remito (${errMarca.message}).`); continue; }
       }
-      let re = await emitirRemito(p.datos as any);
+      /**
+       * 🔗 El remito viaja marcado con la factura de la que sale. InfoManager no tiene ningún
+       * campo para relacionarlos: lo escribe en las observaciones, y acá se copia esa misma
+       * convención (ver `marcaDeFactura`). Mati (09/09/2026): *"no se están asociando los
+       * comprobantes entre sí... para hacer una nota de crédito el sistema pide que esté
+       * asociada a la factura"*.
+       *
+       * 🪤 `f.im_factura_id` es el caso "la factura ya estaba y falta sólo el remito"; `fa.id`
+       * es el de la factura que se acaba de emitir en este mismo paso.
+       */
+      const datosRemito = { ...(p.datos as any), im_factura_id: f.im_factura_id ?? facturaId };
+      let re = await emitirRemito(datosRemito);
       /**
        * 🔑 LA MERCADERÍA SE REMITE AUNQUE EL STOCK ESTÉ EN NEGATIVO.
        *
@@ -749,7 +763,7 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
         const faltantes = articulosSinStockDelError(re.error, catalogoEmision);
         if (faltantes) {
           console.warn(`[facturarSeleccion] ${quien}: IM rechazó el remito por stock (${faltantes}). Reintento por /remitos/masivo.`);
-          const reintento = await emitirRemitoMasivo(p.datos as any);
+          const reintento = await emitirRemitoMasivo(datosRemito);
           if (reintento.ok) { re = reintento; remitoForzado = faltantes; }
           else {
             motivoMasivo = reintento.error;

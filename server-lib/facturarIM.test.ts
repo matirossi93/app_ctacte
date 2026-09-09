@@ -542,3 +542,58 @@ describe('un artículo que no está en la lista de precios no frena la factura',
     expect((post.mock.calls[1] as any[])[1].items[0].cod_lista_precios).toBeUndefined();
   });
 });
+
+/**
+ * 🔗 QUE LOS COMPROBANTES QUEDEN ASOCIADOS EN INFOMANAGER.
+ *
+ * Mati (09/09/2026): *"no se están asociando los comprobantes entre sí... si queremos hacer una
+ * nota de crédito el sistema te pide que esté asociada a la factura porque tiene que ver con el
+ * movimiento de mercadería. Tenemos un recuadro que cuando está asociado se hace un tilde, y no
+ * se está haciendo"*.
+ *
+ * Leído de un remito REAL que generó IM (el 77298, de la factura 50362), el vínculo lo escribe en
+ * las observaciones con el id interno: `" [Remito Automático -FA:58764473]"`. No hay ningún campo
+ * para esto y `genero_re_auto: 'S'` lo descarta la API, así que se replica esa convención.
+ */
+describe('el remito queda marcado con su factura', () => {
+  it('🔴 la marca lleva el id INTERNO de la factura, no el número', async () => {
+    const post = mockIM({ isCreated: true, remito: { id: 7, numero: 77300 } });
+    await emitirRemito({ ...DATOS, observaciones: 'Pedido 58330', im_factura_id: '58785131' } as any);
+    const obs = (post.mock.calls[0] as any[])[1].observaciones;
+    expect(obs).toBe('Pedido 58330 [Remito Automático -FA:58785131]');
+  });
+
+  it('sin factura no inventa una marca vacía', async () => {
+    const post = mockIM({ isCreated: true, remito: { id: 7, numero: 77300 } });
+    await emitirRemito({ ...DATOS, observaciones: 'Pedido 58330' } as any);
+    expect((post.mock.calls[0] as any[])[1].observaciones).toBe('Pedido 58330');
+  });
+});
+
+/**
+ * 🔴 SIN LOS CAMPOS AFIP, INFOMANAGER IMPRIME LA FACTURA COMO COMPROBANTE FISCAL.
+ *
+ * Mati (09/09/2026): *"nos lleva directamente a imprimir un comprobante fiscal... nosotros no
+ * pasamos por AFIP, lo declaramos por otro lado"*. Comparadas las 75 facturas B del punto 777
+ * hechas en IM contra las 23 del panel, la única diferencia eran estos cuatro campos.
+ */
+describe('los campos AFIP de la factura', () => {
+  it('🔴 una factura B lleva el código 6 y una A el 1', async () => {
+    let post = mockIM({ isCreated: true, venta: { id: 1, numero: 50360 } });
+    await emitirFactura({ ...DATOS, categoria_iva: 'CF' });   // CF → B
+    expect((post.mock.calls[0] as any[])[1].afip_comprobantes_fe).toBe('6');
+
+    post = mockIM({ isCreated: true, venta: { id: 1, numero: 1630 } });
+    await emitirFactura({ ...DATOS, categoria_iva: 'RI' });   // RI → A
+    expect((post.mock.calls[0] as any[])[1].afip_comprobantes_fe).toBe('1');
+  });
+
+  it('los otros tres van como los pone la oficina', async () => {
+    const post = mockIM({ isCreated: true, venta: { id: 1, numero: 50360 } });
+    await emitirFactura(DATOS);
+    const b = (post.mock.calls[0] as any[])[1];
+    expect(b.afip_conceptos_fe).toBe(1);       // 1 = productos
+    expect(b.afip_tipdoc_fe).toBe(96);         // 96 = DNI
+    expect(b.afip_cond_vta).toBe(4);           // 4 = cuenta corriente, que es como factura el panel
+  });
+});

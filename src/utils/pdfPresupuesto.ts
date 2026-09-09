@@ -253,21 +253,32 @@ export function generarPresupuestoPdf(d: DatosPresupuesto): { blob: Blob; nombre
     margin: { left: MARGEN, right: MARGEN, top: ALTO_BANDA + AIRE, bottom: 12 },
     // 7,5 pt con 1,4 mm de padding: la fila baja de 8,4 mm a 5,2 y entran casi el doble de
     // renglones. Más abajo de esto la lista deja de leerse cómoda en papel.
-    styles: { fontSize: 7, cellPadding: 1, textColor: DARK, lineColor: [230, 220, 208], lineWidth: 0.1 },
+    /**
+     * 🔄 Segunda pasada del 09/09/2026. Se había bajado a 7 pt para meter más renglones por hoja y
+     * en la calle no se leía: Mati pidió *"agrandar un poco la letra y que sea un poco más gruesa,
+     * sólo un poco"*.
+     *
+     * 🪤 Los dos pedidos se pelean: más grande = menos renglones por hoja. Medido contando las
+     * páginas del PDF de verdad (hay test), 7,4 pt con 0,9 mm de padding es **lo más grande que
+     * sigue metiendo los 42 renglones del pedido de DIAZ en una sola hoja**. A 7,5 ya se parte.
+     * El grueso lo aporta la negrita de la descripción, que no ocupa alto.
+     */
+    styles: { fontSize: 7.4, cellPadding: 0.9, textColor: DARK, lineColor: [190, 190, 190], lineWidth: 0.1 },
     /**
      * 🔴 En B/N la cabecera va SIN relleno: pintada sale como una barra negra en cada página y es
      * lo que más tóner gasta. Se distingue con negrita, mayúsculas y una línea gruesa abajo.
      */
     headStyles: A_COLOR
-      ? { fillColor: GREEN, textColor: 255, fontStyle: 'bold', fontSize: 6.5, cellPadding: 1.3 }
-      : { fillColor: false as any, textColor: GREEN, fontStyle: 'bold', fontSize: 6.5, cellPadding: 1.3,
+      ? { fillColor: GREEN, textColor: 255, fontStyle: 'bold', fontSize: 7, cellPadding: 1.3 }
+      : { fillColor: false as any, textColor: GREEN, fontStyle: 'bold', fontSize: 7, cellPadding: 1.3,
           lineColor: GREEN, lineWidth: { bottom: 0.5 } as any },
     // 🪤 Las filas alternas pintadas son medio documento con fondo: en láser B/N se ve gris sucio
     // y no aporta nada que no aporten ya las líneas de la tabla.
     ...(A_COLOR ? { alternateRowStyles: { fillColor: BEIGE } } : {}),
     columnStyles: hayDescuento
-      ? { 0: { cellWidth: 'auto' }, 1: { halign: 'right', cellWidth: 14 }, 2: { halign: 'right', cellWidth: 25 }, 3: { halign: 'right', cellWidth: 13 }, 4: { halign: 'right', cellWidth: 27, fontStyle: 'bold' } }
-      : { 0: { cellWidth: 'auto' }, 1: { halign: 'right', cellWidth: 15 }, 2: { halign: 'right', cellWidth: 28 }, 3: { halign: 'right', cellWidth: 30, fontStyle: 'bold' } },
+      // 🔑 La descripción y el importe en negrita: son las dos columnas que se leen de un vistazo.
+      ? { 0: { cellWidth: 'auto', fontStyle: 'bold' }, 1: { halign: 'right', cellWidth: 14, fontStyle: 'bold' }, 2: { halign: 'right', cellWidth: 25 }, 3: { halign: 'right', cellWidth: 13 }, 4: { halign: 'right', cellWidth: 27, fontStyle: 'bold' } }
+      : { 0: { cellWidth: 'auto', fontStyle: 'bold' }, 1: { halign: 'right', cellWidth: 15, fontStyle: 'bold' }, 2: { halign: 'right', cellWidth: 28 }, 3: { halign: 'right', cellWidth: 30, fontStyle: 'bold' } },
   });
 
   // ── Total ──

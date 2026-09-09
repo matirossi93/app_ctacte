@@ -294,7 +294,12 @@ export async function corregirFactura(req: Request & { user?: JwtPayload }, res:
      * 🪤 La API de IM no tiene ningún campo para relacionar la NC con su factura. La oficina lo
      * escribe en las observaciones y el panel hace lo mismo, para que se lea igual desde IM.
      */
-    const obs = `SEGUN FACTURA ${cab.numero ?? id}${motivo ? ` - ${motivo}` : ''}`.slice(0, 500);
+    /**
+     * 🔗 Va el número Y el id interno. El número es lo que lee una persona —es la convención que
+     * la oficina ya escribe a mano, "SEGUN FACTURA 50415"— y el id es lo que identifica el
+     * comprobante sin ambigüedad, que es lo que InfoManager usa para relacionarlos.
+     */
+    const obs = `SEGUN FACTURA ${cab.numero ?? id} [FA:${id}]${motivo ? ` - ${motivo}` : ''}`.slice(0, 500);
     const base = {
       cod_empresa: Number(cab.cod_empresa) || 1,
       cod_cliente: Number(cab.cod_cliente),

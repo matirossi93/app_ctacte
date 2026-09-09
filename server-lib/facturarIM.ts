@@ -41,6 +41,29 @@ export interface ItemAFacturar {
   iva_por?: number | null;
 }
 
+/**
+ * 🔗 CÓMO MARCA INFOMANAGER QUE UN REMITO ES DE UNA FACTURA.
+ *
+ * Mati (09/09/2026): *"no se están asociando los comprobantes entre sí... si queremos hacer una
+ * nota de crédito el sistema te pide que esté asociada a la factura porque tiene que ver con el
+ * movimiento de mercadería. Tenemos un recuadro en las ventanas que cuando está asociado se hace
+ * un tilde, y no se está haciendo"*.
+ *
+ * Leído de un remito REAL que generó IM (el 77298, de la factura 50362): el vínculo lo escribe
+ * **en las observaciones**, con el id INTERNO de la factura:
+ *
+ *   observaciones: " [Remito Automático -FA:58764473]"
+ *
+ * 🪤 No hay ningún campo para esto: `VentasRemitosCrear` no tiene uno, `/comprobantes-relacion`
+ * es de sólo lectura, y `genero_re_auto: 'S'` —que es lo que dispara el remito automático desde
+ * la pantalla de IM— la API lo DESCARTA (probado el 09/09/2026: se manda 'S' y queda 'N').
+ * Así que se replica la convención de IM, que es lo único que queda escrito del vínculo.
+ */
+export function marcaDeFactura(idFactura: string | number | null | undefined): string {
+  const id = String(idFactura ?? '').trim();
+  return id ? ` [Remito Automático -FA:${id}]` : '';
+}
+
 export interface DatosComprobante {
   /**
    * 🔑 Con qué fecha se emite. Mati (09/09/2026): *"necesitamos poder cambiar la fecha cuando se
@@ -66,6 +89,12 @@ export interface DatosComprobante {
    * incrementando: consultarlo por cada factura son 6 s de más cada vez.
    */
   numero?: number | null;
+  /**
+   * 🔗 El id INTERNO en IM de la factura de la que sale este remito. Va a las observaciones con
+   * la misma convención que usa InfoManager (ver `marcaDeFactura`), que es lo único que deja
+   * escrito el vínculo entre los dos comprobantes.
+   */
+  im_factura_id?: string | number | null;
 }
 
 export type ResultadoEmision =
@@ -219,7 +248,7 @@ function cabecera(d: DatosComprobante, fecha: string) {
     usuario_hora: horaArgentina(),
     tag: 'S',
     moneda: 'P', cotizacion: 1, moneda_2: 'P', cotizacion_2: 1,
-    observaciones: (d.observaciones ?? '').slice(0, 500),
+    observaciones: ((d.observaciones ?? '') + marcaDeFactura(d.im_factura_id)).slice(0, 500),
     anulada: 'N',                    // sin esto IM lo deja en NULL y no pasa los filtros
     fac_electronica: 0,
     cod_lista_precios: d.cod_lista_precios,
@@ -277,6 +306,39 @@ function renglones(items: ItemAFacturar[], _codVendedor: number) {
  * 🪤 La letra sale de la condición de IVA del cliente y **no tiene default**: si no se puede
  * determinar, no se emite nada.
  */
+/**
+ * 🔴 LOS CAMPOS AFIP DE LA FACTURA. Sin ellos IM la imprime como comprobante FISCAL.
+ *
+ * Mati (09/09/2026): *"quisimos imprimir una de las facturas generadas por la app y nos lleva
+ * directamente a imprimir un comprobante fiscal desde InfoManager... nosotros no pasamos por
+ * AFIP, lo declaramos por otro lado. Fijate en los comprobantes anteriores y replicá eso"*.
+ *
+ * Comparadas las 75 facturas B del punto 777 hechas en IM contra las 23 del panel, la diferencia
+ * era exactamente ésta: las de IM traen los cuatro campos cargados y las nuestras en null/0.
+ * Verificado que la API SÍ los guarda (están en el schema `VentasCrear`).
+ *
+ * | comprobante | comprobantes_fe | conceptos | tipdoc | cond_vta |
+ * |-------------|-----------------|-----------|--------|----------|
+ * | FA A        | "1"             | 1         | 96     | 1 ó 4    |
+ * | FA B        | "6"             | 1         | 96     | 1 ó 4    |
+ * | NC / ND / RE| ""              | 0 ó 1     | 0      | 0        |
+ *
+ * `cond_vta` sigue a `condicion_venta_tipo`: 1 (contado) → 1, 2 (cuenta corriente) → 4.
+ *
+ * ⚠️ `talonario_manual: 'S'` —que también tienen las de IM— NO se puede mandar: no está en el
+ * schema de creación ni en el de actualización, y probado el 09/09/2026 IM lo descarta en
+ * silencio. Si con los campos AFIP no alcanza, eso hay que pedírselo a Sistec.
+ */
+function camposAfip(letra: 'A' | 'B', condicionVenta: number) {
+  return {
+    afip_comprobantes_fe: letra === 'A' ? '1' : '6',
+    afip_conceptos_fe: 1,        // 1 = productos
+    afip_tipdoc_fe: 96,          // 96 = DNI, que es lo que usan todas las de la oficina
+    afip_cond_vta: condicionVenta === 2 ? 4 : 1,
+    afip_cod_barra: '',
+  };
+}
+
 export async function emitirFactura(d: DatosComprobante): Promise<ResultadoEmision> {
   const letra = letraDeFactura(d.categoria_iva);
   if (!letra) {
@@ -315,6 +377,8 @@ export async function emitirFactura(d: DatosComprobante): Promise<ResultadoEmisi
       condicion_venta_tipo: 2,        // 2 = cuenta corriente
       no_grabado: 0,
       cod_deposito: d.cod_deposito ?? 1,
+      // Sin esto IM la imprime como comprobante fiscal (ver camposAfip).
+      ...camposAfip(letra, 2),
       items,
     };
     /** Un solo lugar para decidir si el rechazo se reintenta y cómo. */
@@ -504,7 +568,7 @@ export async function emitirRemitoMasivo(d: DatosComprobante): Promise<Resultado
       numero: num,
       fecha,
       cod_cliente: d.cod_cliente,
-      observaciones: (d.observaciones ?? '').slice(0, 500),
+      observaciones: ((d.observaciones ?? '') + marcaDeFactura(d.im_factura_id)).slice(0, 500),
       // Lo único que queda del lado de IM apuntando al presupuesto: el masivo no tiene
       // `cod_compatibilidad`, así que el origen viaja acá.
       observaciones_aux: String(d.origen_id ?? '').slice(0, 500),
