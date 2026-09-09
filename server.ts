@@ -57,6 +57,7 @@ import { marcarRetiro, quitarRetiro, marcarRetirado, listarRetiros, resumenRetir
 import { listarChoferes, liquidacionMensual } from './server-lib/liquidacionChoferes.js';
 import { listarAjustes, crearAjuste, borrarAjuste, candidatasAVincular, vincularAjuste } from './server-lib/ajustesEntrega.js';
 import { listarPresupuestos, revisarPresupuesto, borrarRevision, detallePresupuesto, corregirCantidades, fraccionadoDelRango, consolidadoDelRango } from './server-lib/panelPresupuestos.js';
+import { editarPresupuesto, buscarArticulos } from './server-lib/editarPresupuesto.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -689,6 +690,10 @@ app.get('/api/presupuestos/:comprobanteId', requireJwt, (req: any, res) => detal
 app.post('/api/presupuestos/:comprobanteId/revision', requireJwt, (req: any, res) => revisarPresupuesto(req, res));
 app.delete('/api/presupuestos/:comprobanteId/revision', requireJwt, (req: any, res) => borrarRevision(req, res));
 app.put('/api/presupuestos/:comprobanteId/cantidades', requireJwt, (req: any, res) => corregirCantidades(req, res));
+// Editar de verdad: cambiar listas, agregar y sacar productos. Recrea el comprobante cuando hace
+// falta, porque la API de IM sólo acepta cambiar cantidades sobre uno existente.
+app.put('/api/presupuestos/:comprobanteId/editar', requireJwt, (req: any, res) => editarPresupuesto(req, res));
+app.get('/api/articulos/buscar', requireJwt, (req: any, res) => buscarArticulos(req, res));
 
 app.get('/api/hojas-ruta/camiones', requireJwt, (req: any, res) => listarCamiones(req, res));
 app.get('/api/hojas-ruta/pendientes', requireJwt, (req: any, res) => pendientesDelDia(req, res));
