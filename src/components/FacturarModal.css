@@ -97,3 +97,10 @@
     background: #fdf0d5; color: #8a5a00; border: 1px solid #EEC045;
     padding: 0.1rem 0.45rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700;
 }
+
+/* Aviso que NO frena: el stock queda en negativo pero la mercadería sale igual. */
+.fac-alerta.suave {
+    border-color: var(--color-border);
+    background: var(--color-surface-2, var(--color-surface));
+    color: var(--color-text-muted);
+}

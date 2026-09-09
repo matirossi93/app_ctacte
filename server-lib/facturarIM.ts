@@ -267,12 +267,8 @@ export async function emitirFactura(d: DatosComprobante): Promise<ResultadoEmisi
  *
  * ⚠️ `mueve_stock: 'S'` descuenta stock de verdad. Anularlo lo devuelve.
  */
-export async function emitirRemito(
-  d: DatosComprobante,
-  opts: { sinMoverStock?: boolean } = {},
-): Promise<ResultadoEmision> {
+export async function emitirRemito(d: DatosComprobante): Promise<ResultadoEmision> {
   const fecha = fechaPedida(d);
-  const obs = (d.observaciones ?? '').slice(0, 460);
   const payload = {
     ...cabecera(d, fecha),
     fecha_entrega: fecha,
@@ -283,21 +279,11 @@ export async function emitirRemito(
     // IM contesta "Talonario manual no válido".
     talonario_manual: 'A',
     /**
-     * 🔴 `mueve_stock: 'S'` descuenta stock, y ES LO QUE DISPARA LA VALIDACIÓN: si algún artículo
-     * no llega a la cantidad, IM rechaza el remito entero. Medido el 09/09/2026 probando las
-     * cuatro variantes contra IM con un artículo en −570:
-     *   · `/remitos` con 'S'            -> rechaza por stock, descuenta cuando hay
-     *   · `/remitos` con 'N'            -> SALE SIEMPRE, no descuenta
-     *   · `/ventas` con tipo RE         -> sale siempre, IGNORA mueve_stock, no descuenta
-     *   · talonario 'M' con nº propio   -> rechaza igual (no es el talonario)
-     *
-     * O sea: por la API no hay forma de descontar stock que IM no tiene. Cuando el rechazo es por
-     * stock, quien llama reintenta con `sinMoverStock` — la mercadería sale igual (Mati,
-     * 09/09/2026: *"nosotros desde IM generamos a pesar de que esté sin stock"*) y queda escrito
-     * en el propio remito que el stock no se descontó, para que se ajuste.
+     * 🪤 `mueve_stock: 'S'` descuenta stock y ES LO QUE DISPARA LA VALIDACIÓN de este endpoint: si
+     * a algún artículo no le alcanza, IM rechaza el remito entero. Cuando pasa eso, quien llama
+     * reintenta por `emitirRemitoMasivo`, que sí lo deja salir (y descuenta igual).
      */
-    mueve_stock: opts.sinMoverStock ? 'N' : 'S',
-    ...(opts.sinMoverStock ? { observaciones: `${obs} · STOCK NO DESCONTADO` } : {}),
+    mueve_stock: 'S',
     cod_deposito: d.cod_deposito ?? 1,
     total: d.total, neto: d.total,
     iva_importe: 0, importe_iva_10_5: 0, importe_iva_27: 0,
@@ -311,6 +297,108 @@ export async function emitirRemito(
     return interpretar(data, 'RE');
   } catch (err: any) {
     return comoError(err);
+  }
+}
+
+/**
+ * El próximo número del talonario de REMITOS. Igual que las facturas, IM no lo asigna en el
+ * endpoint masivo: `numero: 0` da *"El número de comprobante [0] debe ser un número mayor que 0"*.
+ */
+export async function proximoNumeroRemito(puntoDeVenta: number, dias = 7): Promise<number | null> {
+  const ventas = await fetchVentas(fechaArgentina(Date.now() - dias * 864e5), fechaArgentina());
+  const nums = ventas
+    .filter((v: any) =>
+      String(v.tipo_comprobante ?? '').trim() === 'RE' && Number(v.punto_de_venta) === puntoDeVenta)
+    .map((v: any) => Number(v.numero))
+    .filter((n) => Number.isFinite(n));
+  return nums.length ? Math.max(...nums) + 1 : null;
+}
+
+/**
+ * POST /remitos/masivo — EL REMITO QUE SALE AUNQUE EL STOCK ESTÉ EN NEGATIVO.
+ *
+ * 🔑 Mati (09/09/2026): *"necesito por favor que se remita la mercadería aunque esté en negativo"*.
+ * `POST /remitos` no lo permite: valida stock y rechaza el remito entero. Se probaron cinco
+ * caminos contra IM con un artículo en −570 (todos los comprobantes anulados después):
+ *
+ *   · `/remitos` normal              -> ❌ rechaza · descuenta cuando hay
+ *   · `/remitos` con mueve_stock 'N' -> ✅ sale · ✘ NO descuenta
+ *   · `/ventas` con tipo RE          -> ✅ sale · ✘ NO descuenta (ignora mueve_stock)
+ *   · talonario 'M' con nº propio    -> ❌ rechaza (no era el talonario)
+ *   · **`/remitos/masivo`**          -> ✅ SALE · ✅ DESCUENTA (−570 quedó en −571)
+ *
+ * Este endpoint ni siquiera expone `mueve_stock`: IM lo crea con 'S' por su cuenta y no valida.
+ * Es el mismo remito, con el mismo talonario y el mismo punto de venta.
+ *
+ * 🪤 DOS TRAMPAS, las dos verificadas:
+ *  1. **No aplica `descuento_porc`**: lo guarda escrito pero calcula el importe con el precio
+ *     entero. Un renglón con 35% salía por 89.894,68 en vez de 58.431,54, y el remito terminaba
+ *     por MÁS que su factura. Por eso acá va el precio NETO y el descuento en cero.
+ *  2. **Contesta 200 con el body VACÍO**: no devuelve ni id ni número. Hay que ir a buscar el
+ *     remito por su número, y si no aparece se dice que no se sabe — no se inventa un id.
+ */
+export async function emitirRemitoMasivo(d: DatosComprobante): Promise<ResultadoEmision> {
+  const fecha = fechaPedida(d);
+  const numero = await proximoNumeroRemito(PTO_VENTA_REMITO);
+  if (numero == null) {
+    return { ok: false, error: `No pude averiguar el próximo número de remito del punto ${PTO_VENTA_REMITO}: no hay ninguno emitido en la última semana. Hacelo a mano.` };
+  }
+  const cuerpo = {
+    cabecera: [{
+      id_aux: 1,
+      punto_de_venta: PTO_VENTA_REMITO,
+      numero,
+      fecha,
+      cod_cliente: d.cod_cliente,
+      observaciones: (d.observaciones ?? '').slice(0, 500),
+      // Lo único que queda del lado de IM apuntando al presupuesto: el masivo no tiene
+      // `cod_compatibilidad`, así que el origen viaja acá.
+      observaciones_aux: String(d.origen_id ?? '').slice(0, 500),
+      cotizacion: 1,
+      tag: 'S',
+      cod_deposito: d.cod_deposito ?? 1,
+      usuario: d.usuario,
+      cod_empresa: d.cod_empresa,
+      cod_transporte: 0,
+      cod_origen_sistema: 0,
+    }],
+    items: d.items.map((it) => {
+      // 🪤 NETO: este endpoint no aplica el descuento (ver arriba).
+      const desc = Number(it.descuento_porc) || 0;
+      const neto = Number(it.precio) * (1 - desc / 100);
+      return {
+        id_comprobante_aux: 1,
+        cod_articulo: it.cod_articulo,
+        cantidad: it.cantidad,
+        cant_uni_venta: 0,
+        precio: Math.round(neto * 10000) / 10000,
+        descuento_porc: 0,
+        detalle: '',
+        detalle_aux: '',
+      };
+    }),
+  };
+  try {
+    const cli = await imClient();
+    await cli.post('/remitos/masivo', cuerpo);
+  } catch (err: any) {
+    return comoError(err);
+  }
+  // Contestó 200 y sin cuerpo: el remito hay que ir a buscarlo para saber que existe de verdad.
+  try {
+    const ventas = await fetchVentas(fecha, fecha);
+    const re = ventas.find((v: any) =>
+      String(v.tipo_comprobante ?? '').trim() === 'RE' &&
+      Number(v.punto_de_venta) === PTO_VENTA_REMITO &&
+      Number(v.numero) === numero &&
+      Number(v.cod_cliente) === Number(d.cod_cliente));
+    if (!re) {
+      return { ok: false, error: `InfoManager aceptó el remito ${numero} pero después no lo encontré. Verificalo en InfoManager antes de reintentar: puede haberse emitido igual.` };
+    }
+    return { ok: true, id: String((re as any).id), numero, tipo: 'RE', raw: re };
+  } catch (e: any) {
+    // Salió, pero no se pudo confirmar cuál. NO se reintenta a ciegas: sería un segundo remito.
+    return { ok: false, error: `Se mandó el remito ${numero} pero no pude confirmarlo (${e?.message ?? 'sin respuesta de IM'}). Verificalo en InfoManager antes de reintentar.` };
   }
 }
 

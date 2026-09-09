@@ -37,6 +37,11 @@ interface PedidoPrevio {
     im_factura_numero: number | null;
     im_remito_numero: number | null;
     renglones: number;
+    /**
+     * Artículos que van a quedar en negativo al remitir. NO impide facturar: el remito sale
+     * igual. Casi siempre es una diferencia de inventario que hay que corregir.
+     */
+    sin_stock: Array<{ cod_articulo: number; descripcion: string; pedido: number; disponible: number | null }>;
 }
 
 interface Previa {
@@ -129,6 +134,8 @@ export function FacturarModal(
     const aEmitir = previa?.a_emitir;
     const puedeEmitir = !!aEmitir && (aEmitir.facturas > 0 || aEmitir.remitos > 0);
     const noSePuede = (previa?.pedidos ?? []).filter(p => p.estado === 'no_se_puede');
+    /** Lo que va a quedar en negativo. Se avisa antes, pero no frena nada. */
+    const enNegativo = (previa?.pedidos ?? []).filter(p => p.estado !== 'no_se_puede' && p.sin_stock?.length);
     // Si se intentó emitir, al cerrar SIEMPRE se recarga: aunque la respuesta no haya llegado,
     // del otro lado puede haber comprobantes nuevos.
     const cerrar = () => { if (!emitiendo) onClose(intentado || !!resultado); };
@@ -208,6 +215,26 @@ export function FacturarModal(
                                 ))}
                             </tbody>
                         </table>
+
+                        {!!enNegativo.length && (
+                            <div className="fac-alerta suave">
+                                <AlertTriangle size={16} />
+                                <div>
+                                    <b>{enNegativo.length} pedido(s) van a dejar stock en negativo.</b> Se
+                                    facturan y se remiten igual — el depósito tiene diferencias de inventario y
+                                    la mercadería sale lo mismo. Conviene corregirlo en InfoManager:
+                                    <ul>
+                                        {enNegativo.slice(0, 6).map(p => (
+                                            <li key={p.im_comprobante_id}>
+                                                PR {p.im_numero ?? '—'}: {p.sin_stock.map(f =>
+                                                    `${f.descripcion} (piden ${f.pedido}, hay ${f.disponible ?? '?'})`).join(' · ')}
+                                            </li>
+                                        ))}
+                                        {enNegativo.length > 6 && <li>…y {enNegativo.length - 6} más</li>}
+                                    </ul>
+                                </div>
+                            </div>
+                        )}
 
                         {!!noSePuede.length && (
                             <div className="fac-alerta">

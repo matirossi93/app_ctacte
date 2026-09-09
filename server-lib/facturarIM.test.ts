@@ -12,7 +12,7 @@ import axios from 'axios';
 vi.hoisted(() => { process.env.INFOMANAGER_CLIENT_SECRET = 'test-secret'; });
 vi.mock('axios', () => ({ default: { post: vi.fn(), create: vi.fn() } }));
 
-const { emitirFactura, emitirRemito, letraDeFactura } = await import('./facturarIM.js');
+const { emitirFactura, emitirRemito, emitirRemitoMasivo, letraDeFactura } = await import('./facturarIM.js');
 
 function mockIM(respuesta: any, fallar?: any) {
     const post = vi.fn(async () => { if (fallar) throw fallar; return { data: respuesta }; });
@@ -167,25 +167,65 @@ describe('emitirRemito', () => {
     });
 });
 
-describe('el remito cuando falta stock (09/09/2026)', () => {
+describe('el remito cuando el stock está en negativo (09/09/2026)', () => {
   /**
-   * 🔴 `mueve_stock: 'S'` es lo que dispara la validación de stock de IM. Probado contra IM con
-   * un artículo en −570: con 'S' rechaza el remito entero, con 'N' sale siempre pero no
-   * descuenta. Mati: *"nosotros desde IM generamos a pesar de que esté sin stock"*, así que
-   * cuando IM rechaza se reintenta sin mover stock — y tiene que quedar ESCRITO en el remito,
-   * porque si no nadie se entera de que ese stock quedó sin descontar.
+   * 🔑 Mati: *"necesito por favor que se remita la mercadería aunque esté en negativo"*.
+   * `/remitos` valida stock y rechaza; `/remitos/masivo` deja salir el remito Y descuenta igual.
+   * Probado contra IM con un artículo en −570, que quedó en −571.
    */
-  it('por defecto mueve stock: es lo que corresponde', async () => {
+  it('el remito normal siempre mueve stock: es lo que corresponde', async () => {
     const post = mockIM({ isCreated: true, remito: { id: '1', numero: 5 } });
     await emitirRemito(DATOS);
+    expect((post.mock.calls[0] as any[])[0]).toBe('/remitos');
     expect((post.mock.calls[0] as any[])[1].mueve_stock).toBe('S');
-    expect((post.mock.calls[0] as any[])[1].observaciones).not.toMatch(/STOCK NO DESCONTADO/);
   });
 
-  it('🔑 con sinMoverStock sale sin descontar Y queda escrito en el comprobante', async () => {
-    const post = mockIM({ isCreated: true, remito: { id: '1', numero: 5 } });
-    await emitirRemito(DATOS, { sinMoverStock: true });
-    expect((post.mock.calls[0] as any[])[1].mueve_stock).toBe('N');
-    expect((post.mock.calls[0] as any[])[1].observaciones).toMatch(/STOCK NO DESCONTADO/);
+  /**
+   * 🪤 El masivo NO aplica `descuento_porc`: lo guarda escrito y calcula el importe con el precio
+   * entero. Un renglón de 4 × 22.473,67 con 35% salía por 89.894,68 en vez de 58.431,54, o sea el
+   * remito por MÁS que su factura. Va el precio ya neto y el descuento en cero.
+   */
+  it('🔴 manda el precio NETO: el masivo no aplica el descuento y el remito saldría por de más', async () => {
+    const post = mockIM('');
+    vi.mocked(axios.create).mockReturnValue({
+      post,
+      get: vi.fn(async () => ({ data: { results: [{ id: '999', numero: 77373, tipo_comprobante: 'RE', punto_de_venta: 7, cod_cliente: 1093 }] } })),
+      put: vi.fn(), interceptors: { request: { use: vi.fn() } },
+    } as any);
+    await emitirRemitoMasivo({ ...DATOS, items: [{ cod_articulo: 320, cantidad: 4, precio: 22473.67, descuento_porc: 35 }] });
+    const [url, body] = post.mock.calls[0] as any[];
+    expect(url).toBe('/remitos/masivo');
+    expect(body.items[0].precio).toBeCloseTo(14607.8855, 4);
+    expect(body.items[0].descuento_porc).toBe(0);
+    // 4 × 14.607,8855 = 58.431,542, que es exactamente lo que factura el renglón.
+    expect(body.items[0].precio * body.items[0].cantidad).toBeCloseTo(58431.542, 3);
+  });
+
+  /**
+   * 🔴 El masivo contesta 200 con el body VACÍO: no devuelve id ni número. Si el remito no
+   * aparece después, se dice que no se sabe — inventar un id haría que el panel lo dé por
+   * emitido y nadie vuelva a mirarlo.
+   */
+  it('🔴 si después no encuentra el remito, NO lo da por emitido', async () => {
+    const post = mockIM('');
+    vi.mocked(axios.create).mockReturnValue({
+      post,
+      get: vi.fn(async () => ({ data: { results: [{ id: '1', numero: 70000, tipo_comprobante: 'RE', punto_de_venta: 7, cod_cliente: 1093 }] } })),
+      put: vi.fn(), interceptors: { request: { use: vi.fn() } },
+    } as any);
+    const r = await emitirRemitoMasivo(DATOS);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/no lo encontré|no pude confirmar/i);
+  });
+
+  it('sin ningún remito reciente no inventa una numeración', async () => {
+    const post = mockIM('');
+    vi.mocked(axios.create).mockReturnValue({
+      post, get: vi.fn(async () => ({ data: { results: [] } })),
+      put: vi.fn(), interceptors: { request: { use: vi.fn() } },
+    } as any);
+    const r = await emitirRemitoMasivo(DATOS);
+    expect(r.ok).toBe(false);
+    expect(post).not.toHaveBeenCalled();
   });
 });

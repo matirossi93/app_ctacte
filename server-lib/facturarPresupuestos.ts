@@ -32,7 +32,7 @@ import {
   fetchVentas, fechaArgentina, fetchStockPorDeposito, fetchArticulosCatalogo,
 } from './infomanager.js';
 import { buscarFacturasYaEmitidas } from './facturaYaEmitida.js';
-import { emitirFactura, emitirRemito, letraDeFactura, proximoNumeroFactura } from './facturarIM.js';
+import { emitirFactura, emitirRemito, emitirRemitoMasivo, letraDeFactura, proximoNumeroFactura } from './facturarIM.js';
 import type { DatosComprobante } from './facturarIM.js';
 import { usuarioIM } from './pedidos.js';
 import { vistaDeRango, invalidarVista } from './vistaPresupuestos.js';
@@ -458,6 +458,12 @@ export async function previsualizarFacturacion(req: Request & { user?: JwtPayloa
         im_factura_numero: p.fila.im_factura_numero ?? null,
         im_remito_numero: p.fila.im_remito_numero ?? null,
         renglones: p.datos?.items.length ?? 0,
+        /**
+         * Los artículos que van a quedar en negativo al remitir. NO impide facturar —el remito
+         * sale igual por `/remitos/masivo`—, pero conviene verlo antes: casi siempre es una
+         * diferencia de inventario que alguien tiene que corregir.
+         */
+        sin_stock: p.sin_stock ?? [],
       })),
       a_emitir: {
         facturas: listos.length,
@@ -688,25 +694,29 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
       }
       let re = await emitirRemito(p.datos as any);
       /**
-       * 🔑 IM rechaza el remito cuando algún artículo no tiene stock suficiente — y en el depósito
-       * hay diferencias de inventario grandes (MEZCLA P/PAJARO figuraba en −570). Mati
-       * (09/09/2026): *"nosotros desde IM generamos a pesar de que esté sin stock"*.
+       * 🔑 LA MERCADERÍA SE REMITE AUNQUE EL STOCK ESTÉ EN NEGATIVO.
        *
-       * La mercadería sale igual, así que el remito se emite SIN mover stock. No es lo ideal —el
-       * stock de esos artículos queda sin descontar— pero es mejor que la alternativa real: la
-       * factura ya emitida, sin remito, y el pedido sin poder entrar a ninguna hoja de ruta.
-       * Queda escrito en el remito y se avisa en pantalla para que se ajuste el inventario.
+       * `POST /remitos` valida stock y rechaza el remito entero; en el depósito hay diferencias de
+       * inventario grandes (MEZCLA P/PAJARO figuraba en −570), así que pedidos perfectamente
+       * normales se quedaban con la factura emitida y sin remito — sin poder entrar a una hoja.
+       * Mati (09/09/2026): *"necesito por favor que se remita la mercadería aunque esté en
+       * negativo"*.
        *
-       * 🪤 `sinRespuesta` NO se reintenta: si IM no contestó, el remito puede haber salido igual
-       * y el reintento emitiría un segundo remito por la misma mercadería.
+       * `POST /remitos/masivo` sí lo deja salir **y descuenta stock igual** (probado contra IM: un
+       * artículo en −570 quedó en −571). Es el mismo talonario y el mismo punto de venta, así que
+       * el remito es indistinguible de los otros.
+       *
+       * 🪤 `sinRespuesta` NO se reintenta: si IM no contestó, el remito puede haber salido igual y
+       * el reintento emitiría un segundo remito por la misma mercadería.
        */
-      let stockNoDescontado: string | null = null;
+      let remitoForzado: string | null = null;
       if (!re.ok && !re.sinRespuesta) {
         const faltantes = articulosSinStockDelError(re.error, catalogoEmision);
         if (faltantes) {
-          console.warn(`[facturarSeleccion] ${quien}: IM rechazó el remito por stock (${faltantes}). Reintento sin descontar stock.`);
-          const reintento = await emitirRemito(p.datos as any, { sinMoverStock: true });
-          if (reintento.ok) { re = reintento; stockNoDescontado = faltantes; }
+          console.warn(`[facturarSeleccion] ${quien}: IM rechazó el remito por stock (${faltantes}). Reintento por /remitos/masivo.`);
+          const reintento = await emitirRemitoMasivo(p.datos as any);
+          if (reintento.ok) { re = reintento; remitoForzado = faltantes; }
+          else console.error(`[facturarSeleccion] ${quien}: el remito masivo tampoco salió: ${reintento.error}`);
         }
       }
       if (!re.ok) {
@@ -738,9 +748,9 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
         continue;
       }
 
-      // El remito salió pero sin descontar stock: no es un error, pero hay que decirlo.
-      if (stockNoDescontado) {
-        fallados.push(`${quien}: salieron la factura ${facturaNumero} y el remito ${re.numero}, pero el remito NO descontó stock — InfoManager no lo permite con ${stockNoDescontado}. Ajustá el inventario de esos artículos.`);
+      // Salió todo, pero con el stock en negativo: no es un error, y conviene saberlo igual.
+      if (remitoForzado) {
+        fallados.push(`${quien}: salieron la factura ${facturaNumero} y el remito ${re.numero}. Ojo que quedó stock en negativo: ${remitoForzado}.`);
       }
 
       // 3) El presupuesto sale de la ventana de facturación de la oficina.
