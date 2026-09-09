@@ -491,3 +491,55 @@ describe('la numeración no le pide a IM la misma lista dos veces seguidas', () 
     if (r.ok) expect(r.numero).toBe(77401);
   });
 });
+
+/**
+ * 🔴 EL COSTO DE DISTRIBUCIÓN NO PERTENECE A NINGUNA LISTA DE PRECIOS.
+ *
+ * NAVARRO (PR 58317) no se pudo facturar el 09/09/2026: *"HTTP 400: El artículo código [13819]
+ * no pertenece a la lista de precios [13]"*. El renglón del costo de distribución se guarda con
+ * la lista que estaba abierta en el editor, `/presupuestos` lo acepta sin chistar y `/ventas` lo
+ * rechaza. Probado contra IM: el mismo renglón SIN `cod_lista_precios` entra (FA 50413).
+ *
+ * El reintento saca la lista SÓLO del artículo que IM nombra, así que el resto de los renglones
+ * conserva la suya. Sirve para cualquier artículo que quede fuera de la lista del pedido, no
+ * sólo para el 13819.
+ */
+describe('un artículo que no está en la lista de precios no frena la factura', () => {
+  it('🔴 reintenta sin la lista del artículo que IM rechazó', async () => {
+    let n = 0;
+    const post = vi.fn(async () => {
+      n += 1;
+      if (n === 1) throw { response: { status: 400, data: { detalles: 'Validaciones: \n• El artículo código [13819] no pertenece a la lista de precios [13].' } } };
+      return { data: { isCreated: true, venta: { id: 9, numero: 50413 } } };
+    });
+    vi.mocked(axios.create).mockReturnValue({
+      post, get: vi.fn(), put: vi.fn(), interceptors: { request: { use: vi.fn() } },
+    } as any);
+    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+    const r = await emitirFactura({ ...DATOS, numero: 50413, items: [
+      { cod_articulo: 1214, cantidad: 10, precio: 877.63, cod_lista_precios: 13 },
+      { cod_articulo: 13819, cantidad: 1, precio: 7700, cod_lista_precios: 13 },
+    ] });
+    expect(r.ok).toBe(true);
+    const items = (post.mock.calls[1] as any[])[1].items;
+    // El que rechazó IM va sin lista; el otro la conserva.
+    expect(items.find((i: any) => i.cod_articulo === 13819).cod_lista_precios).toBeUndefined();
+    expect(items.find((i: any) => i.cod_articulo === 1214).cod_lista_precios).toBe(13);
+  });
+
+  it('el remito hace lo mismo: si no, la factura sale y el remito queda colgado', async () => {
+    let n = 0;
+    const post = vi.fn(async () => {
+      n += 1;
+      if (n === 1) throw { response: { status: 400, data: { detalles: '• El artículo código [13819] no pertenece a la lista de precios [13].' } } };
+      return { data: { isCreated: true, remito: { id: 3, numero: 77400 } } };
+    });
+    vi.mocked(axios.create).mockReturnValue({
+      post, get: vi.fn(), put: vi.fn(), interceptors: { request: { use: vi.fn() } },
+    } as any);
+    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+    const r = await emitirRemito({ ...DATOS, items: [{ cod_articulo: 13819, cantidad: 1, precio: 7700, cod_lista_precios: 13 }] });
+    expect(r.ok).toBe(true);
+    expect((post.mock.calls[1] as any[])[1].items[0].cod_lista_precios).toBeUndefined();
+  });
+});

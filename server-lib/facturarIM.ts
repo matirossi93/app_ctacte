@@ -263,31 +263,42 @@ export async function emitirFactura(d: DatosComprobante): Promise<ResultadoEmisi
    * tiene que cubrir un día entero de reparto adelantado.
    */
   const INTENTOS = 10;
+  // Ya se sabe que no es null (el guard de arriba); TypeScript lo pierde dentro del closure.
+  let num: number = numero;
+  // Los renglones que se mandan: se les puede sacar la lista a los que IM rechace (ver abajo).
+  let items = renglones(d.items, d.cod_vendedor);
   for (let intento = 0; intento < INTENTOS; intento++) {
     const payload = {
       ...cabecera(d, fecha),
       tipo_comprobante: 'FA',
       tipo_factura: letra,
-      numero,
+      numero: num,
       punto_de_venta: PTO_VENTA_FACTURA,
       condicion_venta_tipo: 2,        // 2 = cuenta corriente
       no_grabado: 0,
       cod_deposito: d.cod_deposito ?? 1,
-      items: renglones(d.items, d.cod_vendedor),
+      items,
+    };
+    /** Un solo lugar para decidir si el rechazo se reintenta y cómo. */
+    const reintentar = (error: string): boolean => {
+      if (esChoqueDeNumero(error)) { num += 1; return true; }
+      const art = articuloFueraDeLista(error);
+      if (art != null) { items = sinListaDelArticulo(items, art); return true; }
+      return false;
     };
     try {
       const { data } = await cli.post('/ventas', payload);
       const r = interpretar(data, `FA ${letra}`);
       // 🪤 El "ya existe" viene como 200 con el error adentro: hay que leerlo del texto.
-      if (!r.ok && esChoqueDeNumero(r.error) && intento < INTENTOS - 1) { numero += 1; continue; }
-      return r.ok ? { ...r, numero: r.numero ?? numero } : r;
+      if (!r.ok && intento < INTENTOS - 1 && reintentar(r.error)) continue;
+      return r.ok ? { ...r, numero: r.numero ?? num } : r;
     } catch (err: any) {
       const e = comoError(err);
-      if (!e.ok && esChoqueDeNumero(e.error) && intento < INTENTOS - 1) { numero += 1; continue; }
+      if (!e.ok && intento < INTENTOS - 1 && reintentar(e.error)) continue;
       return e;
     }
   }
-  return { ok: false, error: `No se pudo emitir la factura ${letra}: los ${INTENTOS} números desde el ${numero - INTENTOS + 1} ya estaban usados.` };
+  return { ok: false, error: `No se pudo emitir la factura ${letra}: los ${INTENTOS} números desde el ${num - INTENTOS + 1} ya estaban usados.` };
 }
 
 /**
@@ -319,13 +330,25 @@ export async function emitirRemito(d: DatosComprobante): Promise<ResultadoEmisio
     cod_jurisdiccion: 0, cod_jurisdiccion_comerc: 0, genero_re_auto: 'N',
     items: renglones(d.items, d.cod_vendedor),
   };
-  try {
-    const cli = await imClient();
-    const { data } = await cli.post('/remitos', payload);
-    return interpretar(data, 'RE');
-  } catch (err: any) {
-    return comoError(err);
+  const cli = await imClient();
+  // 🪤 Igual que la factura: si un artículo no está en la lista del pedido —el COSTO DE
+  // DISTRIBUCION no está en ninguna— se le saca la lista a ese renglón y se reintenta. Sin esto
+  // la factura salía y el remito quedaba colgado, que es el peor de los dos estados.
+  for (let intento = 0; intento < 3; intento++) {
+    try {
+      const { data } = await cli.post('/remitos', payload);
+      const r = interpretar(data, 'RE');
+      const art = r.ok ? null : articuloFueraDeLista(r.error);
+      if (art != null && intento < 2) { payload.items = sinListaDelArticulo(payload.items, art); continue; }
+      return r;
+    } catch (err: any) {
+      const e = comoError(err);
+      const art = e.ok ? null : articuloFueraDeLista(e.error);
+      if (art != null && intento < 2) { payload.items = sinListaDelArticulo(payload.items, art); continue; }
+      return e;
+    }
   }
+  return { ok: false, error: 'No pude emitir el remito: InfoManager sigue rechazando artículos por la lista de precios.' };
 }
 
 /**
@@ -373,6 +396,33 @@ export async function proximoNumeroRemito(puntoDeVenta: number, dias = 7): Promi
     .map((v: any) => Number(v.numero))
     .filter((n) => Number.isFinite(n));
   return nums.length ? Math.max(...nums) + 1 : null;
+}
+
+/**
+ * Qué artículo rechazó IM por no estar en la lista de precios, o `null` si el error es otro.
+ *
+ * 🪤 IM contesta *"El artículo código [13819] no pertenece a la lista de precios [13]"*. Pasa con
+ * el COSTO DE DISTRIBUCION, que no pertenece a ninguna lista: el renglón se guarda con la lista
+ * que estaba abierta en el editor, `/presupuestos` lo acepta y `/ventas` lo rechaza. NAVARRO
+ * (PR 58317) se quedó sin facturar así el 09/09/2026.
+ */
+function articuloFueraDeLista(error: string): number | null {
+  const m = String(error).match(/art[ií]culo c[óo]digo \[(\d+)\][^.]*no pertenece a la lista de precios/i);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Los mismos renglones, pero sin `cod_lista_precios` en el que IM rechazó.
+ *
+ * Se le saca la lista SÓLO a ese: el resto la conserva. El precio va explícito en el renglón, así
+ * que sacarla no cambia lo que se factura — la lista es el dato de dónde salió ese precio.
+ */
+function sinListaDelArticulo(items: any[], codArticulo: number): any[] {
+  return items.map((it) => {
+    if (Number(it.cod_articulo) !== codArticulo) return it;
+    const { cod_lista_precios, ...resto } = it;
+    return resto;
+  });
 }
 
 /** ¿IM rechazó por número repetido? Es lo único que se reintenta subiendo el correlativo. */
