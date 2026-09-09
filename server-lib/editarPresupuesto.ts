@@ -382,12 +382,22 @@ export async function comprobanteParaImprimir(req: Request & { user?: JwtPayload
     if (cab.existe !== true) { res.status(502).json({ error: 'No pude leer el comprobante en InfoManager.' }); return; }
 
     const cliente = (clientes as any[]).find(c => Number(c.cod_cliente) === Number(cab.cod_cliente));
+    /**
+     * 🔑 La dirección y el teléfono van EN EL PAPEL. Mati (09/09/2026): *"tiene que decir la
+     * dirección y teléfono del cliente"* — el que reparte necesita saber a dónde va y a quién
+     * llamar si no encuentra el domicilio, y hoy eso lo tiene que buscar aparte.
+     */
+    const domicilio = [cliente?.domicilio, cliente?.localidad]
+      .map((x: any) => String(x ?? '').trim()).filter(Boolean).join(' · ') || null;
+    const telefono = [cliente?.telefono, cliente?.whatsapp, cliente?.telefonos]
+      .map((t: any) => String(t ?? '').trim()).find(Boolean) || null;
     res.json({
       ok: true,
       comprobante: {
         id, numero: cab.numero, fecha: cab.fecha, observaciones: cab.observaciones,
         anulada: cab.anulada, cod_cliente: cab.cod_cliente,
         cliente: cliente?.razon_social ?? cliente?.nombre ?? `Cliente ${cab.cod_cliente ?? ''}`,
+        domicilio, telefono,
       },
       items: (items as any[]).map(it => {
         const art = cat.get(Number(it.cod_articulo));

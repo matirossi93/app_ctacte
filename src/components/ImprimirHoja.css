@@ -107,7 +107,18 @@
     html, body { background: #fff !important; }
     .imp-no-print, .imp-toolbar { display: none !important; }
     .imp-hoja { padding: 0 !important; max-width: none !important; }
-    .imp-tabla { font-size: 9pt; }
+    /* 🔄 Más chico para que entren más clientes por hoja (Mati, 09/09/2026: *"hay que hacerlo
+       más chico, que entren más artículos por hoja"*). 7,5 pt con celdas de 1,2 mm: una hoja de
+       ruta de 20 clientes pasó de dos carillas a una. */
+    .imp-tabla { font-size: 7.5pt; }
+    .imp-tabla th, .imp-tabla td { padding: 1.2mm 1.6mm !important; }
+    .imp-tabla thead th { font-size: 6.5pt !important; }
+    .imp-head { padding-bottom: 2mm !important; margin-bottom: 2.5mm !important; }
+    .imp-empresa { font-size: 11pt !important; }
+    .imp-nro { font-size: 12pt !important; }
+    .imp-meta { margin-bottom: 2.5mm !important; font-size: 7.5pt !important; }
+    .imp-tabla.frac .paq { font-size: 7.5pt !important; min-width: 26px !important; padding: 0.3mm 0.8mm !important; margin: 0.2mm 0.6mm 0.2mm 0 !important; }
+    .imp-nota { font-size: 7pt !important; margin-top: 2mm !important; }
     /* Se conservan los colores de la marca: en blanco y negro el verde sale gris oscuro y el
        texto claro encima igual se lee. */
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -118,7 +129,7 @@
     .imp-tabla thead { display: table-header-group; }
     .imp-tabla tfoot { display: table-footer-group; }
     .imp-head { border-bottom-color: #06652F !important; }
-    .imp-head-marca img { width: 40px; height: 40px; }
+    .imp-head-marca img { width: 28px; height: 28px; }
     .imp-tabla .escribir, .imp-tabla .saldo { background: #fff !important; }
-    @page { margin: 11mm 9mm; }
+    @page { margin: 8mm 7mm; }
 }

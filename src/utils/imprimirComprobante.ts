@@ -17,8 +17,12 @@ export async function imprimirComprobante(id: string, titulo: 'Presupuesto' | 'F
   if (!r.ok) throw new Error(d?.error ?? 'No se pudo traer el comprobante');
 
   const { blob } = generarPresupuestoPdf({
+    tipo: titulo,
     numero: d.comprobante?.numero ?? null,
     cliente: d.comprobante?.cliente ?? '',
+    // Para el que reparte: a dónde va y a quién llamar si no encuentra el domicilio.
+    domicilio: d.comprobante?.domicilio ?? null,
+    telefono: d.comprobante?.telefono ?? null,
     fecha: d.comprobante?.fecha ?? new Date(),
     observaciones: d.comprobante?.observaciones ?? null,
     items: d.items ?? [],

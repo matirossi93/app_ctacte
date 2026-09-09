@@ -32,11 +32,20 @@ const BEIGE: [number, number, number] = [249, 239, 227];
 const DARK: [number, number, number] = [30, 18, 12];
 const GRIS: [number, number, number] = [120, 110, 100];
 
-const MARGEN = 14;
-/** Alto de la banda verde. La tabla de las páginas siguientes arranca justo abajo. */
-const ALTO_BANDA = 30;
+const MARGEN = 12;
+/**
+ * 🔄 TODO ESTO SE ACHICÓ EL 09/09/2026. Mati: *"hay que hacerlo más chico, que entren más
+ * artículos por hoja"*. Un pedido de 40 renglones salía en tres hojas y ahora entra en una: la
+ * banda pasó de 30 mm a 19, la ficha del cliente de 17 a 15 —llevando MÁS datos—, y la fila de
+ * la tabla de 8,4 mm a 5,2. Son ~24 renglones por hoja contra los ~44 de ahora.
+ */
+const ALTO_BANDA = 19;
 /** Desde acá para abajo ya no entra nada: es donde empieza el pie. */
-const PISO = 276;
+const PISO = 283;
+/** Alto de la ficha del cliente, que ahora lleva también domicilio y teléfono. */
+const ALTO_FICHA = 13;
+/** Aire entre la banda y la ficha, y entre la ficha y la tabla. */
+const AIRE = 4;
 
 export interface RenglonPresupuesto {
   descripcion: string | null;
@@ -50,10 +59,18 @@ export interface RenglonPresupuesto {
 export interface DatosPresupuesto {
   numero: number | null;
   cliente: string;
+  /**
+   * 🔑 A dónde va y a quién llamar. Mati (09/09/2026): *"tiene que decir la dirección y teléfono
+   * del cliente"* — el que reparte los necesita en el papel, no en otra pantalla.
+   */
+  domicilio?: string | null;
+  telefono?: string | null;
   vendedor?: string | null;
   fecha: string | Date;
   items: RenglonPresupuesto[];
   observaciones?: string | null;
+  /** Qué dice el papel. El mismo formato sirve para los tres comprobantes. */
+  tipo?: 'Presupuesto' | 'Factura' | 'Remito';
 }
 
 /** Nombre de archivo sin acentos ni caracteres que rompan en Android/iOS. */
@@ -61,7 +78,7 @@ function nombreArchivo(d: DatosPresupuesto): string {
   const limpio = d.cliente
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 28);
-  return `Presupuesto-${d.numero ?? 'SN'}${limpio ? `-${limpio}` : ''}.pdf`;
+  return `${d.tipo ?? 'Presupuesto'}-${d.numero ?? 'SN'}${limpio ? `-${limpio}` : ''}.pdf`;
 }
 
 /** Texto en mayúsculas con aire entre letras, para los rótulos chicos. */
@@ -82,71 +99,91 @@ function membrete(doc: jsPDF, d: DatosPresupuesto, ancho: number) {
   doc.setFillColor(...GREEN);
   doc.rect(0, 0, ancho, ALTO_BANDA, 'F');
   doc.setFillColor(...GOLD);
-  doc.rect(0, ALTO_BANDA, ancho, 1.8, 'F');
+  doc.rect(0, ALTO_BANDA, ancho, 1.2, 'F');
 
   // Isotipo dentro de un disco blanco: el logo es circular y sobre el verde necesita respirar.
-  const cx = MARGEN + 9;
+  const cx = MARGEN + 6.5;
   const cy = ALTO_BANDA / 2;
   doc.setFillColor(255, 255, 255);
-  doc.circle(cx, cy, 9.6, 'F');
-  doc.addImage(LOGO_DATA_URI, 'PNG', cx - 8.6, cy - 8.6, 17.2, 17.2);
+  doc.circle(cx, cy, 6.8, 'F');
+  doc.addImage(LOGO_DATA_URI, 'PNG', cx - 6, cy - 6, 12, 12);
 
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.setCharSpace(0.3);
-  doc.text('SEMILLERO EL MANANTIAL', cx + 13, cy - 1);
+  doc.setFontSize(10.5);
+  doc.setCharSpace(0.2);
+  doc.text('SEMILLERO EL MANANTIAL', cx + 10, cy - 0.5);
   doc.setCharSpace(0);
   doc.setTextColor(...GOLD);
-  rotulo(doc, 'Presupuesto', cx + 13, cy + 5);
+  rotulo(doc, d.tipo ?? 'Presupuesto', cx + 10, cy + 4.5);
 
   const derecha = ancho - MARGEN;
   if (d.numero) {
     doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(15);
-    doc.text(`N° ${d.numero}`, derecha, cy - 1, { align: 'right' });
+    doc.setFontSize(12);
+    doc.text(`N° ${d.numero}`, derecha, cy - 0.5, { align: 'right' });
   }
   const fecha = new Date(d.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   doc.setTextColor(...GOLD);
-  rotulo(doc, fecha, derecha, cy + 5, { align: 'right' });
+  rotulo(doc, fecha, derecha, cy + 4.5, { align: 'right' });
 }
 
-/** Ficha del cliente. Sólo en la primera página. */
+/**
+ * Ficha del cliente. Sólo en la primera página.
+ *
+ * Lleva el nombre, el domicilio y el teléfono en 15 mm: antes ocupaba 17 con sólo el nombre. La
+ * dirección y el teléfono son para el que reparte (Mati, 09/09/2026).
+ */
 function fichaCliente(doc: jsPDF, d: DatosPresupuesto, ancho: number, y: number): number {
-  const alto = 17;
   doc.setFillColor(...BEIGE);
-  doc.roundedRect(MARGEN, y, ancho - MARGEN * 2, alto, 2, 2, 'F');
+  doc.roundedRect(MARGEN, y, ancho - MARGEN * 2, ALTO_FICHA, 1.6, 1.6, 'F');
 
   doc.setTextColor(...GRIS);
-  rotulo(doc, 'Cliente', MARGEN + 5, y + 6);
+  rotulo(doc, 'Cliente', MARGEN + 4, y + 4.6);
   doc.setTextColor(...DARK);
   doc.setFont('helvetica', 'bold');
   // El nombre puede ser larguísimo (una razón social completa). Antes que cortarlo —el
   // cliente leería su propio nombre a medias en el papel que le mandamos— se achica la
   // tipografía hasta que entre; recién si ni al mínimo entra se corta, y ahí sí con «…»
   // para que se vea que falta algo.
-  const anchoNombre = ancho - MARGEN * 2 - 10 - (d.vendedor ? 55 : 0);
-  let cuerpo = 12;
-  while (cuerpo > 8.5 && (doc.setFontSize(cuerpo), doc.getTextWidth(d.cliente) > anchoNombre)) cuerpo -= 0.5;
+  const anchoNombre = ancho - MARGEN * 2 - 8 - (d.vendedor ? 45 : 0);
+  let cuerpo = 10;
+  while (cuerpo > 7.5 && (doc.setFontSize(cuerpo), doc.getTextWidth(d.cliente) > anchoNombre)) cuerpo -= 0.5;
   doc.setFontSize(cuerpo);
   let nombre = d.cliente;
   if (doc.getTextWidth(nombre) > anchoNombre) {
     while (nombre.length > 4 && doc.getTextWidth(nombre + '…') > anchoNombre) nombre = nombre.slice(0, -1);
     nombre += '…';
   }
-  doc.text(nombre, MARGEN + 5, y + 12.5);
+  doc.text(nombre, MARGEN + 4, y + 8.6);
+
+  // Domicilio y teléfono en la misma línea: es lo que mira el repartidor de un vistazo.
+  const contacto = [d.domicilio, d.telefono && `Tel. ${d.telefono}`]
+    .map((x) => String(x ?? '').trim()).filter(Boolean).join('  ·  ');
+  if (contacto) {
+    doc.setTextColor(...GRIS);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    let texto = contacto;
+    const disponible = ancho - MARGEN * 2 - 8;
+    if (doc.getTextWidth(texto) > disponible) {
+      while (texto.length > 4 && doc.getTextWidth(texto + '…') > disponible) texto = texto.slice(0, -1);
+      texto += '…';
+    }
+    doc.text(texto, MARGEN + 4, y + 11.8);
+  }
 
   if (d.vendedor) {
-    const derecha = ancho - MARGEN - 5;
+    const derecha = ancho - MARGEN - 4;
     doc.setTextColor(...GRIS);
-    rotulo(doc, 'Te atiende', derecha, y + 6, { align: 'right' });
+    rotulo(doc, 'Te atiende', derecha, y + 4.6, { align: 'right' });
     doc.setTextColor(...DARK);
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    doc.text(d.vendedor, derecha, y + 12.5, { align: 'right' });
+    doc.setFontSize(9);
+    doc.text(d.vendedor, derecha, y + 8.6, { align: 'right' });
   }
-  return y + alto;
+  return y + ALTO_FICHA;
 }
 
 export function generarPresupuestoPdf(d: DatosPresupuesto): { blob: Blob; nombre: string } {
@@ -178,53 +215,56 @@ export function generarPresupuestoPdf(d: DatosPresupuesto): { blob: Blob; nombre
     // La ficha del cliente sólo en la primera: en las siguientes esos 17 mm son renglones.
     didDrawPage: (data) => {
       membrete(doc, d, ancho);
-      if (data.pageNumber === 1) fichaCliente(doc, d, ancho, ALTO_BANDA + 8);
+      if (data.pageNumber === 1) fichaCliente(doc, d, ancho, ALTO_BANDA + AIRE);
     },
-    startY: ALTO_BANDA + 8 + 17 + 8,
-    margin: { left: MARGEN, right: MARGEN, top: ALTO_BANDA + 8, bottom: 22 },
-    styles: { fontSize: 9, cellPadding: 2.6, textColor: DARK, lineColor: [230, 220, 208], lineWidth: 0.1 },
-    headStyles: { fillColor: GREEN, textColor: 255, fontStyle: 'bold', fontSize: 8.5, cellPadding: 2.8 },
+    startY: ALTO_BANDA + AIRE + ALTO_FICHA + AIRE,
+    margin: { left: MARGEN, right: MARGEN, top: ALTO_BANDA + AIRE, bottom: 12 },
+    // 7,5 pt con 1,4 mm de padding: la fila baja de 8,4 mm a 5,2 y entran casi el doble de
+    // renglones. Más abajo de esto la lista deja de leerse cómoda en papel.
+    styles: { fontSize: 7, cellPadding: 1, textColor: DARK, lineColor: [230, 220, 208], lineWidth: 0.1 },
+    headStyles: { fillColor: GREEN, textColor: 255, fontStyle: 'bold', fontSize: 6.5, cellPadding: 1.3 },
     alternateRowStyles: { fillColor: BEIGE },
     columnStyles: hayDescuento
-      ? { 0: { cellWidth: 'auto' }, 1: { halign: 'right', cellWidth: 16 }, 2: { halign: 'right', cellWidth: 28 }, 3: { halign: 'right', cellWidth: 16 }, 4: { halign: 'right', cellWidth: 30, fontStyle: 'bold' } }
-      : { 0: { cellWidth: 'auto' }, 1: { halign: 'right', cellWidth: 18 }, 2: { halign: 'right', cellWidth: 32 }, 3: { halign: 'right', cellWidth: 34, fontStyle: 'bold' } },
+      ? { 0: { cellWidth: 'auto' }, 1: { halign: 'right', cellWidth: 14 }, 2: { halign: 'right', cellWidth: 25 }, 3: { halign: 'right', cellWidth: 13 }, 4: { halign: 'right', cellWidth: 27, fontStyle: 'bold' } }
+      : { 0: { cellWidth: 'auto' }, 1: { halign: 'right', cellWidth: 15 }, 2: { halign: 'right', cellWidth: 28 }, 3: { halign: 'right', cellWidth: 30, fontStyle: 'bold' } },
   });
 
   // ── Total ──
   const total = d.items.reduce((s, i) => s + (Number(i.subtotal) || 0), 0);
-  let y = (doc as any).lastAutoTable.finalY + 9;
+  let y = (doc as any).lastAutoTable.finalY + 6;
   // Si el total no entra entero abajo de la tabla, va a una hoja nueva: partir la caja del
   // total entre dos páginas es la clase de detalle que hace desconfiar del número.
-  if (y + 16 > PISO) { doc.addPage(); membrete(doc, d, ancho); y = ALTO_BANDA + 12; }
+  if (y + 13 > PISO) { doc.addPage(); membrete(doc, d, ancho); y = ALTO_BANDA + AIRE + 3; }
 
-  const anchoTotal = 84;
+  const anchoTotal = 70;
   doc.setFillColor(...GREEN);
-  doc.roundedRect(ancho - MARGEN - anchoTotal, y, anchoTotal, 15, 2, 2, 'F');
+  doc.roundedRect(ancho - MARGEN - anchoTotal, y, anchoTotal, 12, 1.6, 1.6, 'F');
   doc.setTextColor(255, 255, 255);
-  rotulo(doc, 'Total', ancho - MARGEN - anchoTotal + 6, y + 9.5);
+  rotulo(doc, 'Total', ancho - MARGEN - anchoTotal + 5, y + 7.6);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
-  doc.text(money(total), ancho - MARGEN - 6, y + 10, { align: 'right' });
+  doc.setFontSize(12);
+  doc.text(money(total), ancho - MARGEN - 5, y + 8, { align: 'right' });
 
   // Cuántos renglones lleva, para que el cliente pueda controlar que no le falte nada.
   doc.setTextColor(...GRIS);
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.text(`${d.items.length} ${d.items.length === 1 ? 'producto' : 'productos'}`, MARGEN, y + 10);
-  y += 15 + 10;
+  doc.setFontSize(8);
+  doc.text(`${d.items.length} ${d.items.length === 1 ? 'producto' : 'productos'}`, MARGEN, y + 8);
+  y += 12 + 6;
 
   if (d.observaciones) {
-    const lineas = doc.splitTextToSize(d.observaciones, ancho - MARGEN * 2 - 10);
-    const alto = 10 + lineas.length * 4.6;
-    if (y + alto > PISO) { doc.addPage(); membrete(doc, d, ancho); y = ALTO_BANDA + 12; }
+    doc.setFontSize(8.5);
+    const lineas = doc.splitTextToSize(d.observaciones, ancho - MARGEN * 2 - 8);
+    const alto = 8 + lineas.length * 3.8;
+    if (y + alto > PISO) { doc.addPage(); membrete(doc, d, ancho); y = ALTO_BANDA + AIRE + 3; }
     doc.setFillColor(...BEIGE);
-    doc.roundedRect(MARGEN, y, ancho - MARGEN * 2, alto, 2, 2, 'F');
+    doc.roundedRect(MARGEN, y, ancho - MARGEN * 2, alto, 1.6, 1.6, 'F');
     doc.setTextColor(...GRIS);
-    rotulo(doc, 'Observaciones', MARGEN + 5, y + 6);
+    rotulo(doc, 'Observaciones', MARGEN + 4, y + 4.6);
     doc.setTextColor(...DARK);
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9.5);
-    doc.text(lineas, MARGEN + 5, y + 11.5);
+    doc.setFontSize(8.5);
+    doc.text(lineas, MARGEN + 4, y + 9);
   }
 
   // ── Pie, en todas las páginas ──
@@ -233,13 +273,16 @@ export function generarPresupuestoPdf(d: DatosPresupuesto): { blob: Blob; nombre
   for (let p = 1; p <= paginas; p++) {
     doc.setPage(p);
     doc.setDrawColor(...GOLD);
-    doc.setLineWidth(0.6);
-    doc.line(MARGEN, 282, ancho - MARGEN, 282);
+    doc.setLineWidth(0.5);
+    doc.line(MARGEN, 287, ancho - MARGEN, 287);
     doc.setTextColor(...GRIS);
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.text('Presupuesto sujeto a confirmación y disponibilidad de stock.', MARGEN, 287);
-    if (paginas > 1) doc.text(`Página ${p} de ${paginas}`, ancho - MARGEN, 287, { align: 'right' });
+    doc.setFontSize(7.5);
+    // 🪤 La leyenda es de PRESUPUESTO: en una factura o un remito diría cualquier cosa.
+    if ((d.tipo ?? 'Presupuesto') === 'Presupuesto') {
+      doc.text('Presupuesto sujeto a confirmación y disponibilidad de stock.', MARGEN, 291);
+    }
+    if (paginas > 1) doc.text(`Página ${p} de ${paginas}`, ancho - MARGEN, 291, { align: 'right' });
   }
 
   return { blob: doc.output('blob'), nombre: nombreArchivo(d) };

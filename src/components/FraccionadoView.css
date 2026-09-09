@@ -78,12 +78,21 @@
     .of-body { overflow: visible !important; height: auto !important; }
     html, body { background: #fff !important; }
     .fr-hoja { border: none !important; padding: 0 !important; }
-    .fr-tabla { font-size: 9pt; }
+    /* 🔄 Más chico: el listado de fraccionado de un día llega a 120 filas y salía en cinco
+       hojas (Mati, 09/09/2026). */
+    .fr-tabla { font-size: 7.5pt; }
+    .fr-tabla th, .fr-tabla td { padding: 1.2mm 1.6mm !important; }
+    .fr-tabla thead th { font-size: 6.5pt !important; }
+    .fr-cajita { font-size: 7.5pt !important; min-width: 26px !important; padding: 0.3mm 0.8mm !important; margin: 0.2mm 0.6mm 0.2mm 0 !important; }
+    .fr-head { padding-bottom: 2mm !important; margin-bottom: 2.5mm !important; }
+    .fr-empresa { font-size: 11pt !important; }
+    .fr-datos { margin-bottom: 2.5mm !important; font-size: 7.5pt !important; }
+    .fr-bolsas { font-size: 7pt !important; }
     .fr-tabla tr { page-break-inside: avoid; }
     .fr-tabla thead { display: table-header-group; }
     /* Se conservan los colores de la marca: en B/N el verde sale gris oscuro y se lee igual. */
     * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    @page { margin: 11mm 9mm; }
+    @page { margin: 8mm 7mm; }
 }
 
 /* Bolsas cerradas: el pedido era múltiplo exacto del formato, así que se agarran del depósito
