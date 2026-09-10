@@ -259,6 +259,8 @@ export async function listarHojas(req: Request & { user?: JwtPayload }, res: Res
       return {
         ...h,
         camion: h.hojas_ruta_camiones?.nombre ?? null,
+        // El día en que sale el camión: la pantalla lo muestra y lo deja cambiar.
+        fecha: h.fecha,
         chofer: h.choferes?.nombre ?? null,
         // Se deriva de los pedidos: `hojas_ruta.facturada_at` quedó sin escritor cuando la
         // facturación se mudó de etapa.
@@ -731,6 +733,19 @@ export async function editarHoja(req: Request & { user?: JwtPayload }, res: Resp
     if ('camion_id' in b) cambios.camion_id = b.camion_id ? String(b.camion_id) : null;
     if ('observaciones' in b) cambios.observaciones = b.observaciones ? String(b.observaciones) : null;
     if ('cod_zona' in b) cambios.cod_zona = Number(b.cod_zona) > 0 ? Number(b.cod_zona) : null;
+    /**
+     * 🔑 LA FECHA DE LA HOJA: el día en que sale el camión. Mati (10/09/2026): *"las hojas de ruta
+     * tienen que poder relacionarse a una fecha, porque muchas veces armamos hojas para días
+     * siguientes"*. Se arma hoy la hoja de mañana, y a veces hay que correrla un día.
+     *
+     * 🪤 Se valida el formato acá: una fecha inventada sale impresa en el papel que va al camión
+     * y además decide en qué día del rango aparece la hoja.
+     */
+    if ('fecha' in b) {
+      const f = String(b.fecha ?? '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) { res.status(400).json({ error: 'La fecha de la hoja no es válida.' }); return; }
+      cambios.fecha = f;
+    }
     // 🔑 El chofer es el dato del que sale el pago: se le liquida por el importe que entregó.
     if ('chofer_id' in b) cambios.chofer_id = b.chofer_id ? String(b.chofer_id) : null;
     if ('estado' in b) {

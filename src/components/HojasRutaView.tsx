@@ -74,6 +74,12 @@ interface HojaPedido {
 
 interface Hoja {
     id: string; numero: number; turno: string | null; transporte: string | null;
+    /**
+     * 🔑 EL DÍA EN QUE SALE EL CAMIÓN. Mati (10/09/2026): *"las hojas de ruta tienen que poder
+     * relacionarse a una fecha, porque muchas veces armamos hojas para días siguientes"*. Se
+     * elige al crearla y se puede mover después, mientras la hoja no esté cerrada.
+     */
+    fecha: string;
     camion: string | null; camion_id: string | null; capacidad_kg: number | null;
     cod_zona: number | null; estado: string;
     /** Derivado en el server: todos los pedidos de la hoja tienen sus comprobantes emitidos. */
@@ -378,6 +384,21 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
     }
 
     /**
+     * Cambia el día de reparto de una hoja.
+     *
+     * 🪤 Las hojas se listan por el RANGO de arriba. Si se la manda a un día que queda afuera, la
+     * hoja desaparece de la pantalla y parece que se borró — hay que decirlo, no dejar que la
+     * persona lo descubra.
+     */
+    async function moverHoja(h: Hoja, fechaNueva: string) {
+        await editarHoja(h.id, { fecha: fechaNueva }, 'No se pudo cambiar la fecha de la hoja');
+        if (fechaNueva < desde || fechaNueva > hasta) {
+            const dm = `${fechaNueva.slice(8, 10)}/${fechaNueva.slice(5, 7)}`;
+            setAviso(`La hoja ${h.numero} pasó al ${dm}, que está fuera del rango que estás viendo. Estirá el Desde o el Hasta de arriba para verla.`);
+        }
+    }
+
+    /**
      * Cerrar la hoja: "esto ya se entregó".
      *
      * 🔴 Mati (08/09/2026): *"debería haber algún botón para guardar o cerrar la HR una vez que
@@ -627,6 +648,17 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                         <div className={`hr-hoja${h.carga.excedido ? ' excedida' : ''}${cerrada ? ' cerrada' : ''}`} key={h.id}>
                             <div className="hr-hoja-head">
                                 <span className="hr-hoja-num">Hoja {h.numero}</span>
+                                {/* La fecha de reparto, editable: se arma la hoja hoy para mañana
+                                    y a veces hay que correrla un día. Cerrada no se toca: ya se
+                                    liquidó. */}
+                                <input
+                                    className="hr-hoja-fecha"
+                                    type="date"
+                                    value={String(h.fecha ?? '').slice(0, 10)}
+                                    title="Día en que sale esta hoja"
+                                    onChange={e => e.target.value && void moverHoja(h, e.target.value)}
+                                    disabled={trabajando || cerrada}
+                                />
                                 {cerrada && (
                                     <span className="hr-badge cerrada" title="Cerrada: entró en la liquidación del chofer">
                                         <Lock size={11} /> cerrada

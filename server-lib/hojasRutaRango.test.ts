@@ -53,3 +53,33 @@ describe('rangoPedido', () => {
     expect(r.hasta).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });
+
+/**
+ * 🔑 LA FECHA DE LA HOJA. Mati (10/09/2026): *"las hojas de ruta tienen que poder relacionarse a
+ * una fecha, porque muchas veces armamos hojas de ruta para días siguientes"*.
+ *
+ * Se elige al crearla y se puede mover después: la hoja de mañana se arma hoy, y a veces hay que
+ * correrla un día.
+ */
+describe('editarHoja — la fecha de reparto', () => {
+  const llamar = async (body: any) => {
+    const { editarHoja } = await import('./hojasRuta.js');
+    let status = 200, json: any = null;
+    const res: any = { status(c: number) { status = c; return res; }, json(j: any) { json = j; return res; } };
+    await editarHoja({ body, params: { id: 'h1' }, query: {}, user: { rol: 'administrativo' } } as any, res);
+    return { status, json };
+  };
+
+  it('🔴 una fecha inventada no llega a la base', async () => {
+    for (const f of ['mañana', '10/09/2026', '2026-13-45x', '']) {
+      const r = await llamar({ fecha: f });
+      expect(r.status).toBe(400);
+      expect(String(r.json?.error)).toMatch(/fecha/i);
+    }
+  });
+
+  it('sin nada para cambiar, avisa en vez de escribir', async () => {
+    const r = await llamar({});
+    expect(r.status).toBe(400);
+  });
+});
