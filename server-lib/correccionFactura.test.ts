@@ -13,7 +13,7 @@ vi.mock('./pedidos.js', () => ({ usuarioIM: vi.fn(async () => 'jorgelina') }));
 vi.mock('./vistaPresupuestos.js', () => ({ invalidarVista: vi.fn(), vistaDeRango: vi.fn() }));
 vi.mock('./vistaRemitos.js', () => ({ invalidarRemitos: vi.fn(), vistaRemitos: vi.fn() }));
 
-const { calcularCorreccion, consolidarRenglones, articulosAmbiguos, renglonesSinArticuloConImporte } = await import('./correccionFactura.js');
+const { calcularCorreccion, consolidarRenglones, articulosAmbiguos, renglonesSinArticuloConImporte, renglonDeAjuste, ARTICULO_AJUSTE } = await import('./correccionFactura.js');
 
 /** Lo que sale de la factura y lo que tiene que quedar, con el importe de cada lado. */
 const importe = (rs: Array<{ cantidad: number; precio: number }>) =>
@@ -383,5 +383,47 @@ describe('renglones sin código de artículo', () => {
       { cod_articulo: 320, cantidad: 4, precio: 22473.67 },
       { cod_articulo: 0, cantidad: 6, precio: 0, descripcion: 'ANILLO FRUTA PENDIENTE' },
     ])).toEqual([]);
+  });
+});
+
+/**
+ * 🔴 LA NOTA QUE NO SACA MERCADERÍA.
+ *
+ * Mati (10/09/2026): *"la NC puede ser financiera, por alguna diferencia de cambio, o sea que no
+ * necesariamente tiene que dar de baja algún producto"*.
+ *
+ * La oficina ya las hace: leídas 10 días de IM, 5 NC por *"Diferencia por Cambio de Mercadería"*
+ * y 4 ND por *"INTERES FACTURA"*, todas con un renglón, cantidad 1 y el importe en el precio.
+ *
+ * 🪤 Ellos las emiten SIN código de artículo, desde las pantallas de IM. Por API no se puede:
+ * probado el 10/09/2026, `cod_articulo: ''` da HTTP 400 y `0` da "El artículo código [0] no
+ * existe". Así que el renglón va con un artículo genérico del catálogo.
+ */
+describe('la nota financiera', () => {
+  it('🔴 un solo renglón, cantidad 1 y el importe entero en el precio', () => {
+    const r = renglonDeAjuste(47436, 'Diferencia de cambio');
+    expect(r.cantidad).toBe(1);
+    expect(r.precio).toBe(47436);
+    expect(r.cod_articulo).toBe(ARTICULO_AJUSTE);
+    // Sin descuento: el importe es el que se escribió, no uno calculado.
+    expect(r.descuento_porc ?? 0).toBe(0);
+  });
+
+  it('🔑 el motivo va en el detalle del renglón, que es lo que se lee en InfoManager', () => {
+    expect(renglonDeAjuste(1000, 'INTERES FACTURA 18/8').descripcion).toBe('INTERES FACTURA 18/8');
+  });
+
+  it('sin motivo el renglón igual dice de qué se trata', () => {
+    expect(renglonDeAjuste(1000, '').descripcion).toMatch(/ajuste/i);
+  });
+
+  /** 🔴 Los centavos importan: es el importe que se le acredita al cliente. */
+  it('🔴 respeta los centavos y no los redondea a pesos', () => {
+    expect(renglonDeAjuste(1234.56, 'x').precio).toBe(1234.56);
+  });
+
+  it('🪤 un importe negativo o cero no es una nota: el signo lo da el tipo', () => {
+    expect(() => renglonDeAjuste(0, 'x')).toThrow();
+    expect(() => renglonDeAjuste(-500, 'x')).toThrow();
   });
 });

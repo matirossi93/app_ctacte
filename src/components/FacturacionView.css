@@ -91,7 +91,19 @@
     border-radius: var(--radius-sm); cursor: pointer;
 }
 .fc-imprimir:hover { color: var(--color-text); border-color: var(--color-text-muted); }
-.fc-imprimir-celda { display: flex; gap: 0.25rem; justify-content: flex-end; }
+/**
+ * 🪤 Esta celda llevaba la clase `.c`, que es la de los checkboxes y fija 34px de ancho: los
+ * botones se desbordaban y TAPABAN la columna de importe (Mati, 10/09/2026, con la captura).
+ * `width: 1%` hace que la celda tome sólo lo que necesita y el resto quede para las otras
+ * columnas; `flex-wrap` deja que bajen de línea cuando la factura tiene notas de crédito.
+ */
+.fc-imprimir-celda {
+  display: flex; flex-wrap: wrap; gap: 0.25rem;
+  justify-content: flex-end; align-items: center;
+  /* `width: 1%` + `min-width: max-content` = la celda mide exactamente lo que ocupan sus
+     botones en una línea, ni más ni menos. El resto del ancho queda para cliente e importe. */
+  width: 1%; min-width: max-content;
+}
 
 /* Corregir una factura emitida (notas de crédito y débito). Se distingue de los "Imprimir"
    porque emite comprobantes reales: no es lo mismo apretarlo por error. */
@@ -109,3 +121,9 @@
     color: var(--color-text); width: 230px; padding: 0.22rem 0;
 }
 .fc-buscador button { background: none; border: none; cursor: pointer; color: var(--color-text-muted); display: flex; }
+
+/* Las notas de crédito y débito de una factura, en la fila de facturados. */
+.fc-nota.nc { border-color: #b45309; color: #b45309; }
+.fc-nota.nd { border-color: #1d4ed8; color: #1d4ed8; }
+/* El importe original de la factura, cuando las notas lo cambiaron. */
+.fc-antes-notas { font-size: 0.72rem; color: var(--color-text-muted); text-decoration: line-through; }

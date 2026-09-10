@@ -31,6 +31,8 @@ interface Fila {
     bultos: number;
     kg: number;
     im_factura_numero: number | null;
+    /** Las NC/ND que corrigen esta factura. El vínculo lo guardamos nosotros: IM no lo tiene. */
+    notas?: Array<{ tipo: string; numero: number | null; total: number; im_comprobante_id: string; motivo: string | null }>;
     im_factura_tipo: string | null;
     im_remito_numero: number | null;
     /** Los ids de InfoManager: es lo que hace falta para imprimir cada comprobante. */
@@ -45,6 +47,14 @@ interface Fila {
     /** La factura salió y el remito no: el reintento hace SÓLO el remito. */
     falta_remito: boolean;
 }
+
+/**
+ * Lo que las notas le cambian al importe de la factura: negativo si se le devolvió plata.
+ * El signo lo da el tipo, no el total, que en la tabla siempre es positivo.
+ */
+const ajusteNotas = (notas?: Array<{ tipo: string; total: number }>) =>
+    Math.round((notas ?? []).reduce((s, n) =>
+        s + (/^NC/i.test(n.tipo) ? -1 : 1) * Math.abs(Number(n.total ?? 0)), 0) * 100) / 100;
 
 const money = (n: number) => '$' + Math.round(n).toLocaleString('es-AR');
 const dia = (f: string | null) => (f ? `${f.slice(8, 10)}/${f.slice(5, 7)}` : '—');
@@ -98,7 +108,8 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
     const elegidos = useMemo(() => pendientes.filter(p => sel.has(p.im_comprobante_id)), [pendientes, sel]);
     const importeElegido = elegidos.reduce((s, p) => s + Number(p.total ?? 0), 0);
     const buscar = (p: Fila) => coincide(busqueda, [
-        p.cliente_nombre, p.im_numero, p.cod_cliente, p.im_factura_numero, p.im_remito_numero]);
+        p.cliente_nombre, p.im_numero, p.cod_cliente, p.im_factura_numero, p.im_remito_numero,
+        ...(p.notas ?? []).map(n => `${n.tipo} ${n.numero ?? ''}`)]);
     const visibles = useMemo(() => pendientes.filter(buscar), [pendientes, busqueda]);
     const facturadosVisibles = useMemo(() => facturados.filter(buscar), [facturados, busqueda]);
 
@@ -225,8 +236,15 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                     <td className="fc-pr">PR {p.im_numero ?? '—'}</td>
                                     <td><CheckCircle2 size={12} /> {p.im_factura_tipo ?? 'FA'} {p.im_factura_numero ?? '—'}</td>
                                     <td>RE {p.im_remito_numero ?? '—'}</td>
-                                    <td className="n">{money(p.total)}</td>
-                                    <td className="c fc-imprimir-celda">
+                                    <td className="n">
+                                        {money(p.total + ajusteNotas(p.notas))}
+                                        {/* 🔴 Lo que la factura decía antes de las notas: si sólo se
+                                            ve el neto, nadie entiende por qué no coincide con la FA. */}
+                                        {!!ajusteNotas(p.notas) && (
+                                            <div className="fc-antes-notas">FA {money(p.total)}</div>
+                                        )}
+                                    </td>
+                                    <td className="fc-imprimir-celda">
                                         <button className="fc-imprimir" title="Imprimir el presupuesto"
                                                 onClick={() => imprimirComprobante(p.im_comprobante_id, 'Presupuesto')
                                                     .catch(e => setError(e?.message ?? 'No se pudo imprimir'))}>
@@ -253,6 +271,19 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                                 <Pencil size={14} /> Corregir
                                             </button>
                                         )}
+                                        {/* 🔑 Cada nota se ve y se imprime desde acá. Mati (10/09/2026):
+                                            *"tiene que aparecer en el panel para poder verla y también
+                                            tenemos que poder imprimirla a la NC"*. */}
+                                        {(p.notas ?? []).map(n => (
+                                            <button key={n.im_comprobante_id}
+                                                    className={'fc-imprimir fc-nota ' + (/^NC/i.test(n.tipo) ? 'nc' : 'nd')}
+                                                    title={`Imprimir la ${n.tipo} ${n.numero ?? ''} por ${money(n.total)}${n.motivo ? ` — ${n.motivo}` : ''}`}
+                                                    onClick={() => imprimirComprobante(n.im_comprobante_id,
+                                                        /^NC/i.test(n.tipo) ? 'Nota de crédito' : 'Nota de débito')
+                                                        .catch(e => setError(e?.message ?? 'No se pudo imprimir'))}>
+                                                <Printer size={14} /> {n.tipo} {n.numero ?? ''}
+                                            </button>
+                                        ))}
                                     </td>
                                 </tr>
                             ))}

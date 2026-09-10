@@ -101,3 +101,21 @@
 
 .spin { animation: cf-giro 1s linear infinite; }
 @keyframes cf-giro { to { transform: rotate(360deg); } }
+
+/* Las dos formas de corregir: por productos o por plata. */
+.cf-solapas { display: flex; gap: 0.4rem; margin: 0 0 0.6rem; border-bottom: 1px solid var(--color-border); }
+.cf-solapas button {
+  background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer;
+  padding: 0.45rem 0.7rem; font-size: 0.85rem; font-weight: 600; color: var(--color-text-muted);
+}
+.cf-solapas button.activa { color: var(--color-text); border-bottom-color: #06652F; }
+
+.cf-financiera { display: flex; flex-direction: column; gap: 0.6rem; }
+.cf-fila-fin { display: flex; gap: 0.8rem; }
+.cf-fila-fin label { flex: 1; }
+.cf-financiera label { display: flex; flex-direction: column; gap: 0.2rem; }
+.cf-financiera label > span { font-size: 0.75rem; text-transform: uppercase; font-weight: 700; color: var(--color-text-muted); }
+.cf-financiera input, .cf-financiera select {
+  padding: 0.4rem 0.5rem; border: 1px solid var(--color-border); border-radius: 4px; font-size: 0.9rem;
+}
+.cf-fila-fin input { text-align: right; font-variant-numeric: tabular-nums; }

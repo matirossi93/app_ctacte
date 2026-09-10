@@ -63,6 +63,15 @@ export function CorregirFacturaModal(
   const [candidatos, setCandidatos] = useState<any[]>([]);
   /** Renglones escritos a mano con plata adentro: la nota no los puede incluir. */
   const [sinArticulo, setSinArticulo] = useState<Array<{ descripcion: string; importe: number }>>([]);
+  /**
+   * 🔑 El modo financiero. Mati (10/09/2026): *"la NC puede ser financiera, por alguna diferencia
+   * de cambio, o sea que no necesariamente tiene que dar de baja algún producto"*. Es otra cosa
+   * que corregir renglones, así que es otra pantalla y no un caso raro de la misma.
+   */
+  const [modo, setModo] = useState<'productos' | 'financiera'>('productos');
+  const [finTipo, setFinTipo] = useState<'NC' | 'ND'>('NC');
+  const [finImporte, setFinImporte] = useState('');
+  const [finMotivo, setFinMotivo] = useState('');
 
   useEffect(() => {
     let vivo = true;
@@ -147,6 +156,28 @@ export function CorregirFacturaModal(
     setBuscando(''); setCandidatos([]);
   };
 
+  async function emitirFinanciera() {
+    const importe = nun(finImporte);
+    if (!(importe > 0) || !finMotivo.trim()) return;
+    const que = finTipo === 'NC' ? 'NOTA DE CRÉDITO' : 'NOTA DE DÉBITO';
+    if (!confirm(`Se va a emitir una ${que} por ${money(importe)} en InfoManager.\n\nMotivo: ${finMotivo.trim()}\n\nEs IRREVERSIBLE: toca la cuenta corriente del cliente.\n\n¿Seguimos?`)) return;
+    setEmitiendo(true); setError(null);
+    try {
+      const r = await fetch('/api/facturacion/nota-financiera', {
+        method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ im_factura_id: idFactura, tipo: finTipo, importe, motivo: finMotivo.trim(), emitir: true }),
+      });
+      const d = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(d?.error ?? 'No se pudo emitir');
+      setResultado({ emitidos: d.emitidos ?? [], fallados: d.fallados ?? [] });
+      onListo();
+    } catch (e: any) {
+      setError(e?.message ?? 'Error de conexión');
+    } finally {
+      setEmitiendo(false);
+    }
+  }
+
   async function emitir() {
     if (!vista) return;
     const detalle = [
@@ -197,6 +228,61 @@ export function CorregirFacturaModal(
           </div>
         ) : !cargando && factura && (
           <>
+            <div className="cf-solapas">
+              <button className={modo === 'productos' ? 'activa' : ''} onClick={() => setModo('productos')}>
+                Corregir productos
+              </button>
+              <button className={modo === 'financiera' ? 'activa' : ''} onClick={() => setModo('financiera')}>
+                Ajuste financiero
+              </button>
+            </div>
+
+            {modo === 'financiera' ? (
+              <div className="cf-financiera">
+                {/* 🔑 No saca mercadería: es plata. Diferencia de cambio, intereses, bonificación. */}
+                <p className="cf-nota">
+                  Para lo que no saca mercadería: una diferencia de cambio, intereses, una
+                  bonificación. Va contra la factura {factura.numero}, así que la hoja de ruta lo
+                  descuenta del pedido.
+                </p>
+                <div className="cf-fila-fin">
+                  <label>
+                    <span>Comprobante</span>
+                    <select value={finTipo} onChange={e => setFinTipo(e.target.value as 'NC' | 'ND')}>
+                      <option value="NC">Nota de crédito · le devolvemos plata</option>
+                      <option value="ND">Nota de débito · le cobramos de más</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Importe</span>
+                    <input inputMode="decimal" value={finImporte} placeholder="0,00"
+                           onChange={e => setFinImporte(e.target.value)} />
+                  </label>
+                </div>
+                <label className="cf-fila-motivo">
+                  <span>Motivo</span>
+                  <input value={finMotivo} maxLength={100}
+                         onChange={e => setFinMotivo(e.target.value)}
+                         placeholder="Diferencia por cambio de mercadería, interés factura 18/8…" />
+                </label>
+                {nun(finImporte) > 0 && finMotivo.trim() && (
+                  <p className="cf-dif">
+                    {finTipo === 'NC'
+                      ? <>Se le devuelven <b>{money(nun(finImporte))}</b>.</>
+                      : <>Se le cobran <b>{money(nun(finImporte))}</b> de más.</>}
+                  </p>
+                )}
+                <div className="cf-pie">
+                  <button className="cf-btn" onClick={onCerrar} disabled={emitiendo}>Cancelar</button>
+                  <button className="cf-btn primario" onClick={() => void emitirFinanciera()}
+                          disabled={emitiendo || !(nun(finImporte) > 0) || !finMotivo.trim()}>
+                    {emitiendo ? <><Loader2 size={15} className="spin" /> Emitiendo…</>
+                      : `Emitir la ${finTipo === 'NC' ? 'nota de crédito' : 'nota de débito'}`}
+                  </button>
+                </div>
+              </div>
+            ) : (
+            <>
             {/* 🪤 La factura no se modifica. Que se lea antes de tocar nada. */}
             <p className="cf-nota">
               La factura {factura.numero} no se toca: es un comprobante fiscal. Dejá los renglones
@@ -340,6 +426,8 @@ export function CorregirFacturaModal(
                 {emitiendo ? <><Loader2 size={15} className="spin" /> Emitiendo…</> : 'Emitir la corrección'}
               </button>
             </div>
+            </>
+            )}
           </>
         )}
       </div>

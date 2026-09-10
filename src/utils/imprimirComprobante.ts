@@ -11,7 +11,13 @@ import { generarPresupuestoPdf } from './pdfPresupuesto';
  * 🔑 Abre el PDF en una pestaña en vez de descargarlo: lo que la oficina quiere es mandarlo a la
  * impresora, no juntar archivos en Descargas.
  */
-export async function imprimirComprobante(id: string, titulo: 'Presupuesto' | 'Factura' | 'Remito'): Promise<void> {
+/**
+ * Lo que va en el encabezado del PDF. Las notas de crédito y débito entran acá desde el
+ * 10/09/2026: Mati pidió poder imprimirlas igual que la factura y el remito.
+ */
+export type TituloComprobante = 'Presupuesto' | 'Factura' | 'Remito' | 'Nota de crédito' | 'Nota de débito';
+
+export async function imprimirComprobante(id: string, titulo: TituloComprobante): Promise<void> {
   const r = await fetch(`/api/comprobantes/${id}/imprimir`, { headers: authHeaders() });
   const d = await r.json().catch(() => null);
   if (!r.ok) throw new Error(d?.error ?? 'No se pudo traer el comprobante');

@@ -272,6 +272,47 @@ export function calcularCorreccion(
   return { nc, nd, total_nc, total_nd, diferencia: centavos(total_nd - total_nc) };
 }
 
+/**
+ * 🔴 EL ARTÍCULO DE LA NOTA FINANCIERA.
+ *
+ * Mati (10/09/2026): *"la NC puede ser financiera, por alguna diferencia de cambio, o sea que no
+ * necesariamente tiene que dar de baja algún producto"*.
+ *
+ * 🪤 La oficina las emite SIN código de artículo desde las pantallas de IM —leídas 10 días: 5 NC
+ * por "Diferencia por Cambio de Mercadería" y 4 ND por "INTERES FACTURA"—, pero por API no se
+ * puede: probado el 10/09/2026, `cod_articulo: ''` da HTTP 400 y `0` da *"El artículo código [0]
+ * no existe"*. Sólo entra un artículo del catálogo.
+ *
+ * ⚠️ 13818 (FORRAJES VARIOS) es genérico y lo eligió Mati para arrancar, sabiendo que carga la
+ * diferencia al rubro 13 y que eso se ve en el BI y en las comisiones. Cuando exista un artículo
+ * propio de ajuste financiero se cambia acá o por variable de entorno, sin tocar código.
+ */
+export const ARTICULO_AJUSTE = Number(process.env.IM_ARTICULO_AJUSTE || 13818);
+
+/**
+ * El renglón único de una nota financiera: cantidad 1 y el importe entero en el precio, igual que
+ * las que hace la oficina.
+ *
+ * 🔴 Tira si el importe no es positivo. El signo lo da el tipo de comprobante —NC baja, ND
+ * sube—, así que un importe negativo acá significa que alguien se equivocó de campo, y emitirlo
+ * sería una nota por el importe contrario.
+ */
+export function renglonDeAjuste(importe: number, motivo: string): RenglonCorreccion {
+  const n = centavos(Number(importe));
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error('El importe de la nota tiene que ser mayor a cero.');
+  }
+  return {
+    cod_articulo: ARTICULO_AJUSTE,
+    cantidad: 1,
+    precio: n,
+    descuento_porc: 0,
+    descripcion: String(motivo ?? '').trim().slice(0, 100) || 'Ajuste financiero',
+    iva_por: 0,
+    cod_lista_precios: null,
+  };
+}
+
 function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
   if (!puedeArmarHojasDeRuta(String(req.user?.rol ?? ''))) {
     res.status(403).json({ error: 'Corregir una factura lo hace administración.' });
@@ -521,6 +562,113 @@ export async function corregirFactura(req: Request & { user?: JwtPayload }, res:
   } catch (err: any) {
     console.error('[corregirFactura]', err?.message);
     res.status(502).json({ error: `No se pudo corregir: ${err?.message ?? 'sin respuesta de InfoManager'}` });
+  }
+}
+
+/**
+ * POST /api/facturacion/nota-financiera — una NC o ND que NO saca mercadería.
+ *
+ * body: `{ im_factura_id, tipo: 'NC'|'ND', importe, motivo, emitir? }`
+ *
+ * Mati (10/09/2026): *"la NC puede ser financiera, por alguna diferencia de cambio"*. Se cuelga
+ * igual de una factura —para que el cliente sepa a qué corresponde y para que la hoja de ruta la
+ * descuente del pedido— pero el importe lo escribe una persona en vez de salir de los renglones.
+ *
+ * 🔴 Sin `emitir: true` no toca nada, igual que la corrección por renglones.
+ */
+export async function notaFinanciera(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  const id = String(req.body?.im_factura_id ?? '').trim();
+  if (!/^\d+$/.test(id)) { res.status(400).json({ error: 'Falta la factura.' }); return; }
+  const tipo = String(req.body?.tipo ?? 'NC').toUpperCase() === 'ND' ? 'ND' : 'NC';
+  const motivo = String(req.body?.motivo ?? '').trim().slice(0, 200);
+  const emitir = req.body?.emitir === true;
+
+  let renglon: RenglonCorreccion;
+  try {
+    renglon = renglonDeAjuste(Number(req.body?.importe), motivo);
+  } catch (e: any) {
+    res.status(400).json({ error: e?.message ?? 'Importe inválido.' });
+    return;
+  }
+  /**
+   * 🔴 El motivo es obligatorio. En la factura corregida por renglones se entiende sola mirando
+   * los productos; acá el importe sale de la nada y sin el motivo escrito nadie puede reconstruir
+   * después por qué se le acreditó esa plata al cliente.
+   */
+  if (!motivo) {
+    res.status(400).json({ error: 'Escribí el motivo: es lo que se lee en InfoManager y lo único que explica el importe.' });
+    return;
+  }
+
+  try {
+    const cab = await cabeceraComprobante(id);
+    if (cab.existe !== true || cab.anulada !== false) {
+      res.status(409).json({ error: 'No pude verificar que la factura siga vigente en InfoManager.' });
+      return;
+    }
+    const clientes = await fetchClientesIMCon([cab.cod_cliente ?? 0]).catch(() => [] as any[]);
+    const cliente = clientes.find((c: any) => Number(c.cod_cliente) === Number(cab.cod_cliente));
+    const letra = letraDeFactura((cliente as any)?.categoria_iva);
+    if (!letra) {
+      res.status(409).json({ error: `No se sabe qué letra le corresponde al cliente ${cab.cod_cliente}. Hacela a mano.` });
+      return;
+    }
+
+    const total = renglon.precio;
+    if (!emitir) {
+      res.json({ ok: true, previsualizacion: true, letra, tipo, total, renglon });
+      return;
+    }
+
+    // Misma guarda que la corrección: si no está la tabla del vínculo, no se emite nada.
+    const { error: errTabla } = await sb().from('facturas_correcciones').select('id').limit(1);
+    if (errTabla) {
+      res.status(503).json({ error: `Todavía no está la tabla de correcciones en la base (${errTabla.message}). No se emitió nada.` });
+      return;
+    }
+
+    const usuario = await usuarioIM(req.user);
+    const base = {
+      cod_empresa: Number(cab.cod_empresa) || 1,
+      cod_cliente: Number(cab.cod_cliente),
+      cod_vendedor: Number(cab.cod_vendedor) || 0,
+      categoria_iva: (cliente as any)?.categoria_iva,
+      cod_lista_precios: Number(cab.cod_lista_precios) || 12,
+      usuario,
+      observaciones: `${motivo} SEGUN FACTURA ${cab.numero ?? id} [FA:${id}]`.slice(0, 500),
+      fecha: fechaArgentina(),
+      cod_deposito: 1,
+      total,
+      items: [renglon] as any,
+      numero: null,
+    };
+    const r = tipo === 'NC' ? await emitirNotaCredito(base as any) : await emitirNotaDebito(base as any);
+    if (!r.ok) {
+      console.error(`[notaFinanciera] ${tipo} rechazada · factura ${cab.numero}: ${r.error}`);
+      res.status(502).json({ error: `La ${tipo === 'NC' ? 'nota de crédito' : 'nota de débito'} no salió: ${r.error}` });
+      return;
+    }
+
+    const { error } = await sb().from('facturas_correcciones').insert({
+      tenant_id: TENANT_ID,
+      im_factura_id: id,
+      im_factura_numero: cab.numero ?? null,
+      cod_cliente: Number(cab.cod_cliente),
+      tipo: r.tipo, im_comprobante_id: r.id, numero: r.numero, total,
+      motivo,
+      creado_por: req.user?.sub ?? null,
+    });
+    const fallados = error
+      ? [`Salió la ${r.tipo} ${r.numero} pero NO se pudo registrar (${error.message}). ANOTALA.`]
+      : [];
+    if (error) console.error('[notaFinanciera] no pude registrar:', error.message);
+
+    invalidarVista(); invalidarRemitos();
+    res.json({ ok: true, emitidos: [{ tipo: r.tipo, numero: r.numero, id: r.id, total }], fallados, letra });
+  } catch (err: any) {
+    console.error('[notaFinanciera]', err?.message);
+    res.status(502).json({ error: `No se pudo emitir: ${err?.message ?? 'sin respuesta de InfoManager'}` });
   }
 }
 

@@ -90,7 +90,7 @@ export interface DatosPresupuesto {
   items: RenglonPresupuesto[];
   observaciones?: string | null;
   /** Qué dice el papel. El mismo formato sirve para los tres comprobantes. */
-  tipo?: 'Presupuesto' | 'Factura' | 'Remito';
+  tipo?: 'Presupuesto' | 'Factura' | 'Remito' | 'Nota de crédito' | 'Nota de débito';
 }
 
 /** Nombre de archivo sin acentos ni caracteres que rompan en Android/iOS. */

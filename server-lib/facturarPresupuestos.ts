@@ -1010,6 +1010,30 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
       : { data: emitidos };
     const porId = new Map((alDia ?? []).map((e: any) => [String(e.im_comprobante_id), e]));
 
+    /**
+     * 🔑 LAS NOTAS DE CRÉDITO Y DÉBITO DE CADA FACTURA. Mati (10/09/2026): *"si se le hizo la NC
+     * a Baca tiene que aparecer en el panel para poder verla"*. El vínculo nota→factura sólo
+     * existe de nuestro lado: la API de IM no tiene ningún campo que lo guarde.
+     */
+    const idsFactura = [...new Set((alDia ?? []).map((e: any) => e.im_factura_id).filter(Boolean).map(String))];
+    const notasPorFactura = new Map<string, any[]>();
+    if (idsFactura.length) {
+      const { data: correcciones, error: errNotas } = await sb().from('facturas_correcciones')
+        .select('im_factura_id, im_comprobante_id, tipo, numero, total, motivo, created_at')
+        .eq('tenant_id', TENANT_ID).in('im_factura_id', idsFactura)
+        .order('created_at', { ascending: true });
+      // 🪤 Que falte la tabla no puede tumbar la pantalla entera: se avisa por log y sigue.
+      if (errNotas) console.warn('[tableroFacturacion] no pude leer las correcciones:', errNotas.message);
+      for (const n of correcciones ?? []) {
+        const k = String((n as any).im_factura_id);
+        if (!notasPorFactura.has(k)) notasPorFactura.set(k, []);
+        notasPorFactura.get(k)!.push({
+          tipo: (n as any).tipo, numero: (n as any).numero, total: Number((n as any).total ?? 0),
+          im_comprobante_id: String((n as any).im_comprobante_id), motivo: (n as any).motivo ?? null,
+        });
+      }
+    }
+
     const filas = aprobados.map((p: any) => {
       const e = porId.get(String(p.im_comprobante_id));
       return {
@@ -1025,6 +1049,8 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
         falta_remito: !!e?.im_factura_id && !e?.facturado_at,
         // Lo que se anuló en InfoManager desde la última vez que se miró esta pantalla.
         aviso_anulado: avisosAnulados.get(String(p.im_comprobante_id)) ?? null,
+        // Las NC/ND que corrigen esta factura: se ven en la fila y se pueden imprimir.
+        notas: e?.im_factura_id ? (notasPorFactura.get(String(e.im_factura_id)) ?? []) : [],
       };
     });
 
