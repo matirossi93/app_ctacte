@@ -142,11 +142,11 @@ describe('asignar pedidos a una hoja', () => {
 
 describe('crear hoja', () => {
   it('🔴 el número sigue al último, para que se parezca al de IM', async () => {
-    // La oficina habla de "la 3406". Si nuestro número no se parece, hay que traducir.
-    tablas['hojas_ruta'] = { data: { numero: 3405 }, error: null };
+    // La oficina habla de "la 3409". Si nuestro número no se parece, hay que traducir.
+    tablas['hojas_ruta'] = { data: { numero: 3408 }, error: null };
     await llamar(crearHoja, { body: { fecha: '2026-09-08', turno: 'Mañana' } });
     const fila = insertados.find(([t]) => t === 'hojas_ruta')![1];
-    expect(fila.numero).toBe(3406);
+    expect(fila.numero).toBe(3409);
     expect(fila.turno).toBe('Mañana');
   });
 
@@ -158,7 +158,7 @@ describe('crear hoja', () => {
   it('🔴 una serie que quedó atrás salta hasta alcanzar a la de IM', async () => {
     tablas['hojas_ruta'] = { data: { numero: 3399 }, error: null };
     await llamar(crearHoja, { body: { fecha: '2026-09-11' } });
-    expect(insertados.find(([t]) => t === 'hojas_ruta')![1].numero).toBe(3402);
+    expect(insertados.find(([t]) => t === 'hojas_ruta')![1].numero).toBe(3405);
   });
 
   it('🔴 la PRIMERA hoja no arranca en 1: sigue la numeración de IM', async () => {
@@ -167,7 +167,7 @@ describe('crear hoja', () => {
     tablas['hojas_ruta'] = { data: null, error: null };
     await llamar(crearHoja, { body: { fecha: '2026-09-08' } });
     const fila = insertados.find(([t]) => t === 'hojas_ruta')![1];
-    expect(fila.numero).toBe(3402);
+    expect(fila.numero).toBe(3405);
   });
 
   it('🔴 número repetido: 409 que se entiende, no un 500', async () => {

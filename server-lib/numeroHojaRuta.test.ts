@@ -13,7 +13,7 @@ import { proximoNumeroHoja, NUMERO_MINIMO_HOJA } from './numeroHojaRuta.js';
  */
 describe('proximoNumeroHoja', () => {
   it('🔴 sigue al último: es una serie, no un contador propio', () => {
-    expect(proximoNumeroHoja(3405)).toBe(3406);
+    expect(proximoNumeroHoja(3408)).toBe(3409);
   });
 
   /**
@@ -22,7 +22,7 @@ describe('proximoNumeroHoja', () => {
    */
   it('🔴 salta hasta el piso cuando la serie quedó atrás', () => {
     expect(proximoNumeroHoja(3399)).toBe(NUMERO_MINIMO_HOJA);
-    expect(NUMERO_MINIMO_HOJA).toBe(3402);
+    expect(NUMERO_MINIMO_HOJA).toBe(3405);
   });
 
   /**
@@ -30,8 +30,8 @@ describe('proximoNumeroHoja', () => {
    * nueva y la serie nunca avanzaría de a uno: 3402, 3402, 3402…
    */
   it('🪤 una vez que la serie lo pasa, el piso no vuelve a tocar nada', () => {
-    expect(proximoNumeroHoja(3402)).toBe(3403);
-    expect(proximoNumeroHoja(3403)).toBe(3404);
+    expect(proximoNumeroHoja(3405)).toBe(3406);
+    expect(proximoNumeroHoja(3406)).toBe(3407);
     expect(proximoNumeroHoja(3500)).toBe(3501);
   });
 
