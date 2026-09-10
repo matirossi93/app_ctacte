@@ -7,6 +7,8 @@ import { describe, it, expect, vi } from 'vitest';
 // recibosShared.js NO se mockea: es la fuente única real de los estados y no
 // tiene side-effects de import.
 vi.mock('./infomanager.js', () => ({
+  // El cache de /ventas se limpia junto con las vistas (10/09/2026).
+  invalidarCacheVentas: vi.fn(),
   fetchComprobPendientes: vi.fn(),
   fetchClientesIMCached: vi.fn(),
   fetchVendedores: vi.fn(),

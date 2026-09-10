@@ -58,6 +58,7 @@ import { verFacturaParaCorregir, corregirFactura, historialCorrecciones, notaFin
 import { marcarRetiro, quitarRetiro, marcarRetirado, listarRetiros, resumenRetiros } from './server-lib/retirosSucursal.js';
 import { listarChoferes, liquidacionMensual } from './server-lib/liquidacionChoferes.js';
 import { listarAjustes, crearAjuste, borrarAjuste, candidatasAVincular, vincularAjuste } from './server-lib/ajustesEntrega.js';
+import { anularPresupuesto } from './server-lib/anularPresupuesto.js';
 import { listarPresupuestos, revisarPresupuesto, borrarRevision, detallePresupuesto, corregirCantidades, fraccionadoDelRango, consolidadoDelRango } from './server-lib/panelPresupuestos.js';
 import { editarPresupuesto, buscarArticulos, comprobanteParaImprimir } from './server-lib/editarPresupuesto.js';
 
@@ -700,6 +701,8 @@ app.get('/api/presupuestos/:comprobanteId', requireJwt, (req: any, res) => detal
 app.post('/api/presupuestos/:comprobanteId/revision', requireJwt, (req: any, res) => revisarPresupuesto(req, res));
 app.delete('/api/presupuestos/:comprobanteId/revision', requireJwt, (req: any, res) => borrarRevision(req, res));
 app.put('/api/presupuestos/:comprobanteId/cantidades', requireJwt, (req: any, res) => corregirCantidades(req, res));
+// Anular un pedido: es lo único que lo saca de la lista (desconfirmarlo en IM no alcanza).
+app.post('/api/presupuestos/:comprobanteId/anular', requireJwt, (req: any, res) => anularPresupuesto(req, res));
 // Editar de verdad: cambiar listas, agregar y sacar productos. Recrea el comprobante cuando hace
 // falta, porque la API de IM sólo acepta cambiar cantidades sobre uno existente.
 app.put('/api/presupuestos/:comprobanteId/editar', requireJwt, (req: any, res) => editarPresupuesto(req, res));

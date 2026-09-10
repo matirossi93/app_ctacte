@@ -12,6 +12,8 @@ vi.hoisted(() => { process.env.INFOMANAGER_CLIENT_SECRET = 'test-secret'; });
 
 const m = vi.hoisted(() => ({ fetchVentas: vi.fn(), fetchVentasItems: vi.fn(), sbMock: vi.fn() }));
 vi.mock('./infomanager.js', () => ({
+  // El cache de /ventas se limpia junto con las vistas (10/09/2026).
+  invalidarCacheVentas: vi.fn(),
   fetchVentas: m.fetchVentas,
   fetchVentasItems: m.fetchVentasItems,
   fetchArticulosCatalogo: vi.fn(async () => new Map()),

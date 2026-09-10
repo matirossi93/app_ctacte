@@ -13,7 +13,7 @@
 import { sb, TENANT_ID } from './supabase.js';
 import {
   fetchVentas, fetchVentasItems, fetchArticulosCatalogo, fetchClientesIMCon,
-  fetchStockPorDeposito,
+  fetchStockPorDeposito, invalidarCacheVentas,
 } from './infomanager.js';
 import { pesoDeRenglones } from './pesoComprobante.js';
 import { zonaDeCliente } from './zonaCliente.js';
@@ -50,7 +50,12 @@ const _vistaCache = new Map<string, { at: number; datos: any }>();
  * aparece también en el rango 1→8, y esa entrada quedaba vieja mostrando el pedido como libre
  * cuando ya estaba en una hoja. Se limpia todo: son 90 segundos de cache, no un índice.
  */
-export function invalidarVista() { _vistaCache.clear(); }
+/**
+ * 🔑 Limpia TAMBIÉN el cache de `/ventas`. Los dos guardan lo mismo visto desde distinto lado:
+ * si al emitir o anular sólo se tirara la vista, la reconstrucción saldría del listado viejo y
+ * la pantalla mostraría exactamente lo que se acaba de cambiar, sin cambiar.
+ */
+export function invalidarVista() { _vistaCache.clear(); invalidarCacheVentas(); }
 
 export async function vistaDeRango(desde: string, hasta: string, forzar = false) {
   const clave = `${desde}|${hasta}`;

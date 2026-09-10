@@ -5,6 +5,8 @@ import * as XLSX from 'xlsx';
 // (process.exit si falta el secret) y supabase.js. Mockeamos SOLO esas hojas
 // con side-effects; conciliacion.js se carga real (clasificarRecibos real).
 vi.mock('./infomanager.js', () => ({
+  // El cache de /ventas se limpia junto con las vistas (10/09/2026).
+  invalidarCacheVentas: vi.fn(),
   fetchComprobPendientes: vi.fn(),
   fetchClientesIMCached: vi.fn(),
   fetchVendedores: vi.fn(),

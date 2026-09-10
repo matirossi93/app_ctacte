@@ -156,7 +156,60 @@ export async function fetchVentasParaNumeracion(desde: string, hasta: string): P
  * Fetch paginado de /ventas entre fechas.
  * InfoManager pagina con page + limit. Iteramos hasta que no haya nextPage.
  */
-export async function fetchVentas(desde: string, hasta: string, opts?: { codEmpresa?: number; limit?: number }): Promise<VentaRaw[]> {
+/**
+ * 🔑 CACHE CORTO DE `/ventas` POR RANGO. Mati (10/09/2026): *"sigue pensando mucho la página,
+ * buscando presupuestos o facturas se demora mucho"*.
+ *
+ * El mismo rango se pedía varias veces para dibujar UNA pantalla: la vista de presupuestos, el
+ * control de anulados y el chequeo de facturas ya emitidas hacen cada uno su consulta, y cada una
+ * cuesta segundos —7 días son ~14.000 filas y 5 s—. Con un cache de 60 s la primera paga y las
+ * demás salen gratis.
+ *
+ * 🪤 SÓLO RANGOS CORTOS. Los meses enteros que baja el snapshot de comisiones son ~55.000 ventas
+ * y ~110.000 renglones cada uno: guardarlos acá además de su propio cache duplicaría la memoria
+ * del proceso, que ya tuvo un crash por OOM el 06/07/2026.
+ */
+const MAX_DIAS_CACHE_VENTAS = 10;
+const CACHE_VENTAS_MS = 60_000;
+const _cacheVentas = new Map<string, { at: number; filas: VentaRaw[] }>();
+
+function diasEntre(desde: string, hasta: string): number {
+  const a = Date.parse(`${desde}T00:00:00Z`), b = Date.parse(`${hasta}T00:00:00Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return Infinity;
+  return Math.round((b - a) / 86400000) + 1;
+}
+
+/** Lo llaman los caminos que acaban de cambiar algo en IM y necesitan releer sin cache. */
+export function invalidarCacheVentas(): void { _cacheVentas.clear(); }
+
+export async function fetchVentas(
+  desde: string, hasta: string,
+  /**
+   * 🪤 `sinCache` para los caminos que acaban de ESCRIBIR en IM y releen para confirmar. El
+   * ejemplo es `emitirRemitoMasivo`: el endpoint contesta con el body vacío y hay que ir a buscar
+   * el remito por su número. Con una lista de hace 40 segundos diría "lo aceptó pero no lo
+   * encontré" sobre un remito que existe, y alguien lo emitiría dos veces.
+   */
+  opts?: { codEmpresa?: number; limit?: number; sinCache?: boolean },
+): Promise<VentaRaw[]> {
+  const cacheable = !opts?.sinCache && diasEntre(desde, hasta) <= MAX_DIAS_CACHE_VENTAS;
+  const clave = `${desde}|${hasta}|${opts?.codEmpresa ?? 'all'}`;
+  if (cacheable) {
+    const hit = _cacheVentas.get(clave);
+    if (hit && Date.now() - hit.at < CACHE_VENTAS_MS) return hit.filas;
+  }
+  const filas = await fetchVentasSinCache(desde, hasta, opts);
+  // Lo recién leído sin cache también sirve para el próximo que pida el mismo rango.
+  if (cacheable || opts?.sinCache) {
+    // 🪤 Un cache sin techo crece con cada rango distinto que alguien mire. 40 entradas de
+    // rangos cortos es memoria despreciable y cubre de sobra el uso de una jornada.
+    if (_cacheVentas.size > 40) _cacheVentas.clear();
+    _cacheVentas.set(clave, { at: Date.now(), filas });
+  }
+  return filas;
+}
+
+async function fetchVentasSinCache(desde: string, hasta: string, opts?: { codEmpresa?: number; limit?: number }): Promise<VentaRaw[]> {
   const cli = await imClient();
   const limit = opts?.limit ?? 5000;
   const all: VentaRaw[] = [];
@@ -1216,12 +1269,43 @@ export async function buscarPresupuestoPorCompatibilidad(
  */
 export async function comprobantesVigentes(
   ids: Iterable<string | number>,
+  /**
+   * 🔑 El rango donde probablemente estén. Mati (10/09/2026): *"se demora mucho al buscar"*.
+   *
+   * Con esto la respuesta sale de UNA consulta de rango —cacheada, y que las pantallas hacen
+   * igual— en vez de un GET por comprobante. Con 60 facturas emitidas eso eran 60 consultas a
+   * InfoManager en cada carga del tablero, en tandas de a 10 que la pantalla esperaba una atrás
+   * de la otra.
+   *
+   * Los que no aparezcan en el rango se preguntan de a uno, como antes: puede ser una factura
+   * vieja o una que ya no está.
+   */
+  rango?: { desde: string; hasta: string },
 ): Promise<Map<string, boolean | null>> {
   const unicos = [...new Set([...ids].map(String).filter(id => /^\d+$/.test(id)))];
   const salida = new Map<string, boolean | null>();
-  // De a 10: son un GET cada uno y la pantalla espera. Con 25 facturas son tres tandas.
-  for (let i = 0; i < unicos.length; i += 10) {
-    await Promise.all(unicos.slice(i, i + 10).map(async (id) => {
+
+  let faltan = unicos;
+  if (rango && unicos.length) {
+    try {
+      const listado = await fetchVentas(rango.desde, rango.hasta);
+      const porId = new Map(listado.map(v => [String(v.id), v]));
+      faltan = [];
+      for (const id of unicos) {
+        const v = porId.get(id);
+        // 🪤 No estar en el listado NO es "no existe": puede ser de otra fecha. Se va a preguntar.
+        if (!v) { faltan.push(id); continue; }
+        salida.set(id, String(v.anulada ?? '').trim().toUpperCase() !== 'S');
+      }
+    } catch {
+      // Si el listado falla se cae al camino de siempre: es más lento, pero contesta.
+      faltan = unicos;
+    }
+  }
+
+  // De a 10: son un GET cada uno y la pantalla espera.
+  for (let i = 0; i < faltan.length; i += 10) {
+    await Promise.all(faltan.slice(i, i + 10).map(async (id) => {
       try {
         const c = await cabeceraComprobante(id);
         // `existe: null` es "no sé": se propaga tal cual.

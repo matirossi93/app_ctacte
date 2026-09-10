@@ -626,7 +626,8 @@ export async function emitirRemitoMasivo(d: DatosComprobante): Promise<Resultado
   }
   // Contestó 200 y sin cuerpo: el remito hay que ir a buscarlo para saber que existe de verdad.
   try {
-    const ventas = await fetchVentas(fecha, fecha);
+    // 🪤 Sin cache: se acaba de emitir y una lista de hace un minuto no lo tendría.
+    const ventas = await fetchVentas(fecha, fecha, { sinCache: true });
     const re = ventas.find((v: any) =>
       String(v.tipo_comprobante ?? '').trim() === 'RE' &&
       Number(v.punto_de_venta) === PTO_VENTA_REMITO &&

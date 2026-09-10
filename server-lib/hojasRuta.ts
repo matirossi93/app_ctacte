@@ -64,6 +64,8 @@ function fechaPedida(req: Request): string {
  * una consulta más de renglones contra IM, así que un rango sin techo cuelga la pantalla.
  */
 const MAX_RANGO_DIAS = 31;
+/** Cuántas hojas trae el histórico. Cada una viene con todos sus pedidos: no puede ser infinito. */
+const MAX_HOJAS_HISTORICO = 200;
 
 /**
  * `?desde=&hasta=` — el rango que se está mirando.
@@ -226,12 +228,25 @@ export async function arrastreDelDia(req: Request & { user?: JwtPayload }, res: 
 export async function listarHojas(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
   try {
+    /**
+     * 🔑 EL HISTÓRICO. Mati (10/09/2026): *"estaría bueno tener una sección donde podamos ver el
+     * histórico de todas las hojas de ruta para poder controlar que estén todas bien, si no ahora
+     * desaparecen con el filtro de fecha y es difícil encontrarlas"*.
+     *
+     * Con `?todas=1` se ignora el rango y salen las últimas, de la más nueva a la más vieja. El
+     * tope existe porque cada hoja viene con todos sus pedidos: sin límite, dentro de un año esto
+     * sería una consulta enorme para mirar las diez de arriba.
+     */
+    const todas = String(req.query.todas ?? '') === '1';
     // 🔑 Por RANGO, igual que los pendientes: si la pantalla muestra tres días de pedidos y las
     // hojas de un solo día, los pedidos ya asignados aparecen como si nadie los hubiera tocado.
     const { desde, hasta } = rangoPedido(req);
-    const { data: hojas, error } = await sb().from('hojas_ruta')
+    const base = sb().from('hojas_ruta')
       .select('*, hojas_ruta_camiones(nombre, capacidad_kg), choferes(nombre), hojas_ruta_pedidos(*)')
-      .eq('tenant_id', TENANT_ID).gte('fecha', desde).lte('fecha', hasta).order('fecha').order('numero');
+      .eq('tenant_id', TENANT_ID);
+    const { data: hojas, error } = todas
+      ? await base.order('numero', { ascending: false }).limit(MAX_HOJAS_HISTORICO)
+      : await base.gte('fecha', desde).lte('fecha', hasta).order('fecha').order('numero');
     if (error) { res.status(500).json({ error: error.message }); return; }
     // 🔑 Lo emitido se cruza contra `presupuestos_facturados`, que es la fuente viva: los campos
     // copiados en `hojas_ruta_pedidos` son de cuando se armó la hoja, y si el pedido se facturó
@@ -465,7 +480,17 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
         capacidad_kg: (hoja as any).hojas_ruta_camiones?.capacidad_kg ?? null,
         estado: (hoja as any).estado,
       },
-      clientes: [...porCliente.values()],
+      /**
+       * 🔑 POR ORDEN ALFABÉTICO. Mati (10/09/2026): *"a la hora de imprimir las hojas de ruta
+       * deberían ordenarse por orden alfabético también"*. En la lista se busca por apellido —el
+       * repartidor tiene que encontrar al cliente en el papel— y el orden en que se cargaron los
+       * pedidos no ayuda a eso.
+       *
+       * 🪤 Con `localeCompare` en español: si no, "ÁVILA" se va después de "ZARATE" y "Ñ" queda
+       * fuera de lugar.
+       */
+      clientes: [...porCliente.values()].sort((a: any, b: any) =>
+        String(a.cliente_nombre ?? '').localeCompare(String(b.cliente_nombre ?? ''), 'es', { sensitivity: 'base' })),
       totales: {
         clientes: porCliente.size, comprobantes: pedidos.length,
         bultos: Math.round(totales.bultos * 100) / 100,

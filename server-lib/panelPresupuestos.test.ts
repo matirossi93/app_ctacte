@@ -18,6 +18,8 @@ const m = vi.hoisted(() => ({
 }));
 
 vi.mock('./infomanager.js', () => ({
+  // El cache de /ventas se limpia junto con las vistas (10/09/2026).
+  invalidarCacheVentas: vi.fn(),
   fechaArgentina: (t?: number) => (t ? new Date(t).toISOString().slice(0, 10) : '2026-09-08'),
   fetchArticulosCatalogo: vi.fn(async () => new Map([[1, { descripcion: 'MEZCLA FINA', unidad_de_medida: 'KG', equivalencia_um: 1 }]])),
   fetchVentasItems: m.fetchVentasItems,

@@ -8,6 +8,8 @@ import XLSX from 'xlsx';
 // conciliacion.js. Mockeamos SOLO las hojas con side-effects — mismo patrón
 // que cruceCarpeta.test.ts.
 vi.mock('./infomanager.js', () => ({
+  // El cache de /ventas se limpia junto con las vistas (10/09/2026).
+  invalidarCacheVentas: vi.fn(),
   fetchComprobPendientes: vi.fn(),
   fetchClientesIMCached: vi.fn(),
   fetchVendedores: vi.fn(),

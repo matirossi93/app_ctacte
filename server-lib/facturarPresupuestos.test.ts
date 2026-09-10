@@ -25,6 +25,8 @@ const m = vi.hoisted(() => ({
 }));
 
 vi.mock('./infomanager.js', () => ({
+  // El cache de /ventas se limpia junto con las vistas (10/09/2026).
+  invalidarCacheVentas: vi.fn(),
   fetchVentas: m.fetchVentas,
   fetchVentasItems: m.fetchVentasItems,
   fetchArticulosCatalogo: vi.fn(async () => new Map()),

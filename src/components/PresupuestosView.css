@@ -177,3 +177,7 @@
     color: var(--color-text); width: 190px; padding: 0.22rem 0;
 }
 .pr-buscador button { background: none; border: none; cursor: pointer; color: var(--color-text-muted); display: flex; }
+
+/* Anular un pedido: rojo, porque no se deshace desde acá. */
+.pr-btn.pr-anular { border-color: #b91c1c; color: #b91c1c; }
+.pr-btn.pr-anular:hover:not(:disabled) { background: #fee2e2; }

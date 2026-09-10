@@ -4,6 +4,8 @@ import { describe, it, expect, vi } from 'vitest';
 // process.exit sin env; snapshotCache/comisionOverrides dependen de ellos).
 // Mockeamos SOLO esas hojas — mismo patrón que cruceCarpeta/rebotes.test.ts.
 vi.mock('./infomanager.js', () => ({
+  // El cache de /ventas se limpia junto con las vistas (10/09/2026).
+  invalidarCacheVentas: vi.fn(),
   fetchArticulosCatalogo: vi.fn(),
 }));
 vi.mock('./supabase.js', () => ({

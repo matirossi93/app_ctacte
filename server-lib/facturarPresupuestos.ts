@@ -644,15 +644,20 @@ async function itemsDeLaFactura(idFactura: string): Promise<DatosComprobante['it
  *
  * Devuelve los avisos para mostrar, y de paso deja las filas al día.
  */
-async function sincronizarAnulados(filas: any[]): Promise<Map<string, string>> {
+async function sincronizarAnulados(filas: any[], rango?: { desde: string; hasta: string }): Promise<Map<string, string>> {
   const avisos = new Map<string, string>();
   const conComprobante = filas.filter(f => f.im_factura_id || f.im_remito_id);
   if (!conComprobante.length) return avisos;
 
+  /**
+   * 🔑 Con el rango, esto sale de UNA consulta cacheada en vez de un GET por comprobante. Con 60
+   * facturas emitidas eran 60 consultas a IM en cada carga del tablero (Mati, 10/09/2026: *"se
+   * demora mucho al buscar"*).
+   */
   const vigencia = await comprobantesVigentes([
     ...conComprobante.map(f => f.im_factura_id).filter(Boolean),
     ...conComprobante.map(f => f.im_remito_id).filter(Boolean),
-  ]).catch(() => new Map<string, boolean | null>());
+  ], rango).catch(() => new Map<string, boolean | null>());
 
   for (const f of conComprobante) {
     const id = String(f.im_comprobante_id);
@@ -999,6 +1004,8 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
      */
     const avisosAnulados = await sincronizarAnulados(
       (emitidos ?? []).map((e: any) => ({ ...e, im_comprobante_id: String(e.im_comprobante_id) })),
+      // Las facturas del rango que se está mirando salen del listado, sin un GET por cada una.
+      { desde, hasta },
     ).catch((err: any) => {
       console.warn('[tableroFacturacion] no pude chequear anulados:', err?.message);
       return new Map<string, string>();

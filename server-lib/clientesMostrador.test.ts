@@ -3,7 +3,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.hoisted(() => { process.env.INFOMANAGER_CLIENT_SECRET = 'test-secret'; });
 
 const m = vi.hoisted(() => ({ fetchClientesIMCached: vi.fn(), sbMock: vi.fn() }));
-vi.mock('./infomanager.js', () => ({ fetchClientesIMCached: m.fetchClientesIMCached }));
+vi.mock('./infomanager.js', () => ({
+  // El cache de /ventas se limpia junto con las vistas (10/09/2026).
+  invalidarCacheVentas: vi.fn(), fetchClientesIMCached: m.fetchClientesIMCached }));
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 't', hasSupabase: () => true }));
 
 const { listClientesLookup } = await import('./clientes.js');

@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // enriquecer (razón social, localidad, vendedor) los clientes nuevos con ventas.
 const fetchClientesIMCached = vi.fn();
 vi.mock('./infomanager.js', () => ({
+  // El cache de /ventas se limpia junto con las vistas (10/09/2026).
+  invalidarCacheVentas: vi.fn(),
   fetchVendedores: vi.fn(),
   fetchVentas: vi.fn(),
   fetchClientesIMCached: (...args: any[]) => fetchClientesIMCached(...args),

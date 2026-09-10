@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle, Check, CircleAlert, Loader2, RefreshCw, ChevronRight, X, Package,
-    MessageSquare, Printer, Search,
+    MessageSquare, Printer, Search, Ban,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import { coincide } from '../utils/buscar';
@@ -105,6 +105,32 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
      * pantalla —por cliente o por número— sin volver a consultar InfoManager.
      */
     const [busqueda, setBusqueda] = useState('');
+
+    /**
+     * 🔑 ANULAR UN PEDIDO. Mati (10/09/2026): *"ver la manera de tener la opción de anular algún
+     * presupuesto"*, a propósito de que *"Bianconi sigue apareciendo y eso ya lo resolvimos"*:
+     * desconfirmarlo en InfoManager no lo saca de la lista, sólo anularlo.
+     */
+    async function anular(p: any) {
+        const quien = `${p.cliente_nombre ?? 'el cliente'} · PR ${p.im_numero ?? ''}`;
+        const motivo = window.prompt(`Anular el pedido de ${quien}.\n\nSe anula en InfoManager y desaparece de la lista. ¿Por qué?`, '');
+        if (motivo === null) return;
+        setTrabajando(p.im_comprobante_id);
+        try {
+            const r = await fetch(`/api/presupuestos/${p.im_comprobante_id}/anular`, {
+                method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({ motivo }),
+            });
+            const d = await r.json().catch(() => null);
+            if (!r.ok) throw new Error(d?.error ?? 'No se pudo anular');
+            setAviso(`Pedido ${d.numero ?? ''} anulado.`);
+            await cargar(true);
+        } catch (e: any) {
+            setAviso(e?.message ?? 'No se pudo anular');
+        } finally {
+            setTrabajando(null);
+        }
+    }
     const [trabajando, setTrabajando] = useState<string | null>(null);
     /** Qué presupuesto tiene el detalle abierto, y sus renglones. */
     const [abierto, setAbierto] = useState<string | null>(null);
@@ -395,6 +421,14 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                             onClick={() => imprimirComprobante(String((p.factura as any).im_factura_id ?? ''), 'Factura')
                                                 .catch(e => setAviso(e?.message ?? 'No se pudo imprimir'))}>
                                         <Printer size={14} /> FA
+                                    </button>
+                                )}
+                                {/* 🔴 Sólo si NO está facturado: el backend lo vuelve a chequear. */}
+                                {p.factura?.numero == null && (
+                                    <button className="pr-btn ghost chico pr-anular"
+                                            title="Anular este pedido en InfoManager y sacarlo de la lista"
+                                            onClick={() => void anular(p)} disabled={trabajando === p.im_comprobante_id}>
+                                        <Ban size={14} /> Anular
                                     </button>
                                 )}
                             </div>

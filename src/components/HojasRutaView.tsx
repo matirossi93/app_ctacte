@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle, Truck, Plus, Loader2, X, Wand2, MapPin, Package,
     ChevronRight, RefreshCw, Trash2, Printer, CheckCircle2, Store, Lock, Unlock, FileMinus,
-    MessageSquare, Search,
+    MessageSquare, Search, ChevronDown, History,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import { coincide } from '../utils/buscar';
@@ -145,6 +145,17 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
     const [imprimiendo, setImprimiendo] = useState<string | null>(null);
     /** Qué hoja tiene abierto el panel de diferencias de entrega (notas de crédito). */
     const [ajustandoId, setAjustandoId] = useState<string | null>(null);
+    /**
+     * 🔑 Mati (10/09/2026): *"estaría bueno que las hojas de ruta puedan ser desplegables o
+     * plegables porque se hace muy larga la lista"*. Se guarda quién está PLEGADA y no quién
+     * abierta: así una hoja nueva aparece abierta, que es lo que uno quiere al crearla.
+     */
+    const [plegadas, setPlegadas] = useState<Set<string>>(new Set());
+    /**
+     * 🔑 *"tener una sección donde podamos ver el histórico de todas las hojas de ruta, si no
+     * desaparecen con el filtro de fecha y es difícil encontrarlas"*.
+     */
+    const [historico, setHistorico] = useState(false);
 
     /**
      * Las hojas solas. Sale de Supabase: es instantáneo.
@@ -155,10 +166,10 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
      * (Mati, 07/09/2026: "revisar y pulir la velocidad al interactuar con la página").
      */
     const cargarHojas = useCallback(async () => {
-        const h = await fetch(`/api/hojas-ruta?desde=${desde}&hasta=${hasta}`, { headers: authHeaders() });
+        const h = await fetch(historico ? '/api/hojas-ruta?todas=1' : `/api/hojas-ruta?desde=${desde}&hasta=${hasta}`, { headers: authHeaders() });
         const d = await h.json().catch(() => null);
         if (h.ok) setHojas(d?.hojas ?? []);
-    }, [desde, hasta]);
+    }, [desde, hasta, historico]);
 
     /**
      * Los pendientes: esto sí va a IM y tarda unos segundos.
@@ -637,17 +648,52 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                         </button>
                     </h2>
 
+                    {/* 🔑 Ver todas, sin el filtro de fecha: es la única forma de repasar que estén
+                        bien las de días anteriores sin ir adivinando el rango. */}
+                    <div className="hr-hojas-barra">
+                        <button className={'hr-btn ghost chico' + (historico ? ' activo' : '')}
+                                onClick={() => { setHistorico(v => !v); setPlegadas(new Set()); }}>
+                            <History size={14} /> {historico ? 'Ver sólo las del rango' : 'Ver todas las hojas'}
+                        </button>
+                        {!!hojas.length && (
+                            <button className="hr-btn ghost chico"
+                                    onClick={() => setPlegadas(p => p.size ? new Set() : new Set(hojas.map(h => h.id)))}>
+                                {plegadas.size ? 'Desplegar todas' : 'Plegar todas'}
+                            </button>
+                        )}
+                        {historico && <span className="hr-hojas-cuenta">{hojas.length} hojas</span>}
+                    </div>
+
                     {!hojas.length && !cargando && (
-                        <div className="hr-vacio"><Truck size={26} /><span>Todavía no hay hojas para este día.</span></div>
+                        <div className="hr-vacio"><Truck size={26} />
+                            <span>{historico ? 'Todavía no hay ninguna hoja.' : 'Todavía no hay hojas para este día.'}</span>
+                        </div>
                     )}
 
                     {hojas.map(h => {
                       // 🔒 Cerrada = ya volvió del reparto y se liquidó: no se le toca nada.
                       const cerrada = h.estado === 'cerrada';
+                      const plegada = plegadas.has(h.id);
                       return (
-                        <div className={`hr-hoja${h.carga.excedido ? ' excedida' : ''}${cerrada ? ' cerrada' : ''}`} key={h.id}>
+                        <div className={`hr-hoja${h.carga.excedido ? ' excedida' : ''}${cerrada ? ' cerrada' : ''}${plegada ? ' plegada' : ''}`} key={h.id}>
                             <div className="hr-hoja-head">
+                                {/* 🔑 Plegar: con muchas hojas la lista se hace interminable. El
+                                    número y el resumen quedan siempre a la vista. */}
+                                <button className="hr-plegar" title={plegada ? 'Desplegar' : 'Plegar'}
+                                        onClick={() => setPlegadas(p => {
+                                            const n = new Set(p);
+                                            if (n.has(h.id)) n.delete(h.id); else n.add(h.id);
+                                            return n;
+                                        })}>
+                                    {plegada ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
+                                </button>
                                 <span className="hr-hoja-num">Hoja {h.numero}</span>
+                                {plegada && (
+                                    <span className="hr-plegada-resumen">
+                                        {String(h.fecha ?? '').slice(0, 10)} · {h.pedidos.length} pedido{h.pedidos.length === 1 ? '' : 's'}
+                                        {h.camion ? ` · ${h.camion}` : ''}
+                                    </span>
+                                )}
                                 {/* La fecha de reparto, editable: se arma la hoja hoy para mañana
                                     y a veces hay que correrla un día. Cerrada no se toca: ya se
                                     liquidó. */}
@@ -681,6 +727,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                 </button>
                             </div>
 
+                            {!plegada && <>
                             {/* Turno y chofer van impresos en la cabecera de la hoja de ruta
                                 ("Turno: Mañana · Transporte: Niño"), así que se cargan acá.
                                 🔑 Chofer y transportista son el MISMO dato (Mati, 08/09/2026), y
@@ -781,6 +828,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                     </button>
                                 </div>
                             )}
+                            </>}
                         </div>
                       );
                     })}

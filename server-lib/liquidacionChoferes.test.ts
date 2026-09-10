@@ -9,7 +9,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.hoisted(() => { process.env.INFOMANAGER_CLIENT_SECRET = 'test-secret'; });
 
 const m = vi.hoisted(() => ({ sbMock: vi.fn() }));
-vi.mock('./infomanager.js', () => ({ fechaArgentina: () => '2026-09-08' }));
+vi.mock('./infomanager.js', () => ({
+  // El cache de /ventas se limpia junto con las vistas (10/09/2026).
+  invalidarCacheVentas: vi.fn(), fechaArgentina: () => '2026-09-08' }));
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
 
 const { liquidacionMensual, listarChoferes, limitesDelMes } = await import('./liquidacionChoferes.js');
