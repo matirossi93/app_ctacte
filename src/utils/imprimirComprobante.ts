@@ -17,7 +17,14 @@ import { generarPresupuestoPdf } from './pdfPresupuesto';
  */
 export type TituloComprobante = 'Presupuesto' | 'Factura' | 'Remito' | 'Nota de crédito' | 'Nota de débito';
 
-export async function imprimirComprobante(id: string, titulo: TituloComprobante): Promise<void> {
+/**
+ * @param valorizado  `false` imprime el papel SIN importes. Mati (10/09/2026): *"necesito que el
+ *                    remito tenga la opción de valorizado o no valorizado, porque necesitamos que
+ *                    salga sin importe muchas veces"*. Por defecto va con importes.
+ */
+export async function imprimirComprobante(
+  id: string, titulo: TituloComprobante, valorizado = true,
+): Promise<void> {
   const r = await fetch(`/api/comprobantes/${id}/imprimir`, { headers: authHeaders() });
   const d = await r.json().catch(() => null);
   if (!r.ok) throw new Error(d?.error ?? 'No se pudo traer el comprobante');
@@ -26,12 +33,15 @@ export async function imprimirComprobante(id: string, titulo: TituloComprobante)
     tipo: titulo,
     numero: d.comprobante?.numero ?? null,
     cliente: d.comprobante?.cliente ?? '',
+    // Con lo que la oficina lo busca en InfoManager: el endpoint ya lo devolvía.
+    cod_cliente: d.comprobante?.cod_cliente ?? null,
     // Para el que reparte: a dónde va y a quién llamar si no encuentra el domicilio.
     domicilio: d.comprobante?.domicilio ?? null,
     telefono: d.comprobante?.telefono ?? null,
     fecha: d.comprobante?.fecha ?? new Date(),
     observaciones: d.comprobante?.observaciones ?? null,
     items: d.items ?? [],
+    valorizado,
   });
 
   const url = URL.createObjectURL(blob);
@@ -41,7 +51,7 @@ export async function imprimirComprobante(id: string, titulo: TituloComprobante)
   if (!w) {
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${titulo}-${d.comprobante?.numero ?? id}.pdf`;
+    a.download = `${titulo}${valorizado ? '' : '-sin-importe'}-${d.comprobante?.numero ?? id}.pdf`;
     a.click();
   }
   // Se libera después, para no cortarle el archivo a la pestaña recién abierta.

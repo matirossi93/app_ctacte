@@ -557,6 +557,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
             await compartirPresupuestoPdf({
                 numero: p.im_numero,
                 cliente: p.cliente_nombre ?? `Cliente ${p.cod_cliente}`,
+                cod_cliente: p.cod_cliente ?? null,
                 // Quién lo atiende. El PDF ya tenía el campo pero nadie se lo pasaba, así que
                 // el presupuesto salía sin decir con quién hablar para cerrarlo.
                 vendedor: getUser()?.nombre ?? null,

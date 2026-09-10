@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     AlertTriangle, Loader2, RefreshCw, Receipt, CheckCircle2, X, FileWarning, Printer, Pencil, Search, CalendarDays,
+    DollarSign,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import { coincide } from '../utils/buscar';
@@ -108,6 +109,23 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
 
     useRecargarAlVolver(() => { void cargar(true); });
 
+    /**
+     * 🔑 ¿EL REMITO SALE CON IMPORTES O SIN ELLOS?
+     *
+     * Mati (10/09/2026): *"necesito que el remito tenga la opción de valorizado o no valorizado,
+     * porque necesitamos que salga sin importe muchas veces"*.
+     *
+     * Es un modo pegajoso y no una pregunta por remito: en una tanda se imprimen veinte seguidos
+     * y contestar veinte veces lo mismo es peor que elegirlo una vez. Queda guardado entre
+     * sesiones, y para que nadie imprima lo que no quería **el botón del remito dice cuál de los
+     * dos va a salir** antes de apretarlo.
+     */
+    const [remitoValorizado, setRemitoValorizado] = useState(
+        () => localStorage.getItem('fc_remito_sin_importe') !== '1');
+    useEffect(() => {
+        localStorage.setItem('fc_remito_sin_importe', remitoValorizado ? '0' : '1');
+    }, [remitoValorizado]);
+
     const elegidos = useMemo(() => pendientes.filter(p => sel.has(p.im_comprobante_id)), [pendientes, sel]);
     const importeElegido = elegidos.reduce((s, p) => s + Number(p.total ?? 0), 0);
     const buscar = (p: Fila) => coincide(busqueda, [
@@ -134,6 +152,13 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                            placeholder="Buscar cliente, PR, factura o remito…" />
                     {!!busqueda && <button onClick={() => setBusqueda('')} title="Limpiar"><X size={13} /></button>}
                 </div>
+                <button className={'fc-btn ghost fc-valorizado' + (remitoValorizado ? '' : ' apagado')}
+                        onClick={() => setRemitoValorizado(v => !v)}
+                        title={remitoValorizado
+                            ? 'Los remitos se imprimen CON importes. Tocá para que salgan sin importe.'
+                            : 'Los remitos se imprimen SIN importes. Tocá para que salgan valorizados.'}>
+                    <DollarSign size={15} /> Remito {remitoValorizado ? 'valorizado' : 'sin importe'}
+                </button>
                 <div className="fc-resumen">
                     <span><b>{totales?.pendientes ?? 0}</b> para facturar</span>
                     <span><b>{money(totales?.importe_pendiente ?? 0)}</b></span>
@@ -261,10 +286,11 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                             </button>
                                         )}
                                         {p.im_remito_id && (
-                                            <button className="fc-imprimir" title={`Imprimir el remito ${p.im_remito_numero ?? ''}`}
-                                                    onClick={() => imprimirComprobante(String(p.im_remito_id), 'Remito')
+                                            <button className={'fc-imprimir' + (remitoValorizado ? '' : ' fc-sin-importe')}
+                                                    title={`Imprimir el remito ${p.im_remito_numero ?? ''} ${remitoValorizado ? 'CON importes' : 'SIN importes'}`}
+                                                    onClick={() => imprimirComprobante(String(p.im_remito_id), 'Remito', remitoValorizado)
                                                         .catch(e => setError(e?.message ?? 'No se pudo imprimir'))}>
-                                                <Printer size={14} /> RE
+                                                <Printer size={14} /> RE{remitoValorizado ? '' : ' s/$'}
                                             </button>
                                         )}
                                         {p.im_factura_id && (

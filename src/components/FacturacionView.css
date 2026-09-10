@@ -127,3 +127,21 @@
 .fc-nota.nd { border-color: #1d4ed8; color: #1d4ed8; }
 /* El importe original de la factura, cuando las notas lo cambiaron. */
 .fc-antes-notas { font-size: 0.72rem; color: var(--color-text-muted); text-decoration: line-through; }
+
+/**
+ * 🔑 El interruptor de remito valorizado / sin importe (Mati, 10/09/2026).
+ *
+ * Apagado se ve distinto a propósito: es un modo que cambia lo que sale por la impresora, así
+ * que tiene que notarse de un vistazo cuál de los dos está puesto.
+ */
+.fc-valorizado.apagado {
+    border-color: #b45309;
+    color: #b45309;
+    background: #fffbeb;
+}
+.fc-valorizado.apagado svg { opacity: .55; }
+/* El botón del remito avisa lo mismo, ahí donde se aprieta. */
+.fc-imprimir.fc-sin-importe {
+    border-color: #b45309;
+    color: #b45309;
+}

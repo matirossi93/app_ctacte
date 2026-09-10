@@ -80,6 +80,11 @@ export interface DatosPresupuesto {
   numero: number | null;
   cliente: string;
   /**
+   * 🔑 Con qué número lo busca la oficina en InfoManager. Mati (10/09/2026): *"en el formato de
+   * factura y de presupuesto estaría bueno que también aparezca el código del cliente"*.
+   */
+  cod_cliente?: number | null;
+  /**
    * 🔑 A dónde va y a quién llamar. Mati (09/09/2026): *"tiene que decir la dirección y teléfono
    * del cliente"* — el que reparte los necesita en el papel, no en otra pantalla.
    */
@@ -91,6 +96,18 @@ export interface DatosPresupuesto {
   observaciones?: string | null;
   /** Qué dice el papel. El mismo formato sirve para los tres comprobantes. */
   tipo?: 'Presupuesto' | 'Factura' | 'Remito' | 'Nota de crédito' | 'Nota de débito';
+  /**
+   * 🔑 ¿VA CON IMPORTES? Mati (10/09/2026): *"necesito que el remito tenga la opción de
+   * valorizado o no valorizado, porque necesitamos que salga sin importe muchas veces"*.
+   *
+   * En `false` se van las columnas de precio y la caja del total: quedan el producto y la
+   * cantidad, que es lo que el cliente controla cuando recibe la mercadería. El resto del papel
+   * —membrete, ficha del cliente, observaciones, cuántos renglones lleva— no cambia.
+   *
+   * Por defecto va valorizado: un comprobante sin importes tiene que ser una decisión, no un
+   * descuido.
+   */
+  valorizado?: boolean;
 }
 
 /** Nombre de archivo sin acentos ni caracteres que rompan en Android/iOS. */
@@ -178,6 +195,12 @@ function fichaCliente(doc: jsPDF, d: DatosPresupuesto, ancho: number, y: number)
 
   doc.setTextColor(...GRIS);
   rotulo(doc, 'Cliente', MARGEN + 4, y + 4.6);
+  // 🔑 El código, pegado al rótulo: es con lo que la oficina lo busca en InfoManager.
+  if (d.cod_cliente != null && Number(d.cod_cliente) > 0) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.text(`#${Number(d.cod_cliente)}`, MARGEN + 4 + doc.getTextWidth('CLIENTE') + 5.5, y + 4.6);
+  }
   doc.setTextColor(...DARK);
   doc.setFont('helvetica', 'bold');
   // El nombre puede ser larguísimo (una razón social completa). Antes que cortarlo —el
@@ -228,18 +251,23 @@ export function generarPresupuestoPdf(d: DatosPresupuesto): { blob: Blob; nombre
   const ancho = doc.internal.pageSize.getWidth();
 
   // ── Renglones ──
+  // Sin importes queda producto y cantidad: ver `valorizado` en DatosPresupuesto.
+  const conImportes = d.valorizado !== false;
   // La columna de descuento sólo aparece si hay alguno: una columna de ceros es ruido.
-  const hayDescuento = d.items.some((i) => Number(i.descuento_porc) > 0);
-  const cabecera = hayDescuento
-    ? ['Producto', 'Cant.', 'Precio unit.', 'Desc.', 'Subtotal']
-    : ['Producto', 'Cant.', 'Precio unit.', 'Subtotal'];
+  const hayDescuento = conImportes && d.items.some((i) => Number(i.descuento_porc) > 0);
+  const cabecera = !conImportes
+    ? ['Producto', 'Cant.']
+    : hayDescuento
+      ? ['Producto', 'Cant.', 'Precio unit.', 'Desc.', 'Subtotal']
+      : ['Producto', 'Cant.', 'Precio unit.', 'Subtotal'];
 
   const filas = d.items.map((i) => {
     const base = [
       i.descripcion ?? `Artículo ${i.cod_articulo}`,
       String(Number(i.cantidad)),
-      money(Number(i.precio_unit)),
     ];
+    if (!conImportes) return base;
+    base.push(money(Number(i.precio_unit)));
     if (hayDescuento) base.push(Number(i.descuento_porc) > 0 ? `${Number(i.descuento_porc)}%` : '—');
     base.push(money(Number(i.subtotal)));
     return base;
@@ -281,15 +309,27 @@ export function generarPresupuestoPdf(d: DatosPresupuesto): { blob: Blob; nombre
     // 🪤 Las filas alternas pintadas son medio documento con fondo: en láser B/N se ve gris sucio
     // y no aporta nada que no aporten ya las líneas de la tabla.
     ...(A_COLOR ? { alternateRowStyles: { fillColor: BEIGE } } : {}),
-    columnStyles: hayDescuento
-      // 🔑 La descripción y el importe en negrita: son las dos columnas que se leen de un vistazo.
-      ? { 0: { cellWidth: 'auto', fontStyle: 'bold' }, 1: { halign: 'right', cellWidth: 14, fontStyle: 'bold' }, 2: { halign: 'right', cellWidth: 25 }, 3: { halign: 'right', cellWidth: 13 }, 4: { halign: 'right', cellWidth: 27, fontStyle: 'bold' } }
-      : { 0: { cellWidth: 'auto', fontStyle: 'bold' }, 1: { halign: 'right', cellWidth: 15, fontStyle: 'bold' }, 2: { halign: 'right', cellWidth: 28 }, 3: { halign: 'right', cellWidth: 30, fontStyle: 'bold' } },
+    columnStyles: !conImportes
+      // Sin precios, la cantidad se corre a la derecha del todo y el producto se lleva el resto.
+      ? { 0: { cellWidth: 'auto', fontStyle: 'bold' }, 1: { halign: 'right', cellWidth: 22, fontStyle: 'bold' } }
+      : hayDescuento
+        // 🔑 La descripción y el importe en negrita: son las dos columnas que se leen de un vistazo.
+        ? { 0: { cellWidth: 'auto', fontStyle: 'bold' }, 1: { halign: 'right', cellWidth: 14, fontStyle: 'bold' }, 2: { halign: 'right', cellWidth: 25 }, 3: { halign: 'right', cellWidth: 13 }, 4: { halign: 'right', cellWidth: 27, fontStyle: 'bold' } }
+        : { 0: { cellWidth: 'auto', fontStyle: 'bold' }, 1: { halign: 'right', cellWidth: 15, fontStyle: 'bold' }, 2: { halign: 'right', cellWidth: 28 }, 3: { halign: 'right', cellWidth: 30, fontStyle: 'bold' } },
   });
 
   // ── Total ──
   const total = d.items.reduce((s, i) => s + (Number(i.subtotal) || 0), 0);
   let y = (doc as any).lastAutoTable.finalY + 6;
+  if (!conImportes) {
+    // Sin caja de total, pero SÍ cuántos renglones lleva: es lo que se cuenta al recibir.
+    if (y + 8 > PISO) { doc.addPage(); membrete(doc, d, ancho); y = ALTO_BANDA + AIRE + 3; }
+    doc.setTextColor(...GRIS);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(`${d.items.length} ${d.items.length === 1 ? 'producto' : 'productos'}`, MARGEN, y + 4);
+    y += 4 + 6;
+  } else {
   // Si el total no entra entero abajo de la tabla, va a una hoja nueva: partir la caja del
   // total entre dos páginas es la clase de detalle que hace desconfiar del número.
   if (y + 13 > PISO) { doc.addPage(); membrete(doc, d, ancho); y = ALTO_BANDA + AIRE + 3; }
@@ -318,6 +358,7 @@ export function generarPresupuestoPdf(d: DatosPresupuesto): { blob: Blob; nombre
   doc.setFontSize(8);
   doc.text(`${d.items.length} ${d.items.length === 1 ? 'producto' : 'productos'}`, MARGEN, y + 8);
   y += 12 + 6;
+  }
 
   if (d.observaciones) {
     doc.setFontSize(8.5);

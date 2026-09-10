@@ -83,3 +83,58 @@ describe('el mismo formato sirve para los tres comprobantes', () => {
     expect(generarPresupuestoPdf(base).nombre).toMatch(/^Presupuesto-58300/);
   });
 });
+
+/**
+ * 🔑 Mati (10/09/2026): *"necesito que el remito tenga la opción de valorizado o no valorizado,
+ * porque necesitamos que salga sin importe muchas veces"*.
+ *
+ * El remito acompaña la mercadería, y muchas entregas no van con los precios a la vista: el que
+ * recibe firma que le llegó lo que dice el papel, no cuánto sale.
+ */
+describe('remito sin importe (no valorizado)', () => {
+  const remito: DatosPresupuesto = { ...base, tipo: 'Remito', valorizado: false };
+
+  it('🔑 no lleva ningún precio ni el total', async () => {
+    const txt = await generarPresupuestoPdf(remito).blob.text();
+    // 18733,03 es el precio unitario y 561990,90 el total de los 10 renglones.
+    expect(txt).not.toContain('18.733');
+    expect(txt).not.toContain('561.990');
+    expect(txt).not.toContain('TOTAL');
+    expect(txt).not.toContain('Precio');
+    expect(txt).not.toContain('Subtotal');
+  });
+
+  it('sí lleva los productos y las cantidades: es lo que el cliente controla al recibir', async () => {
+    const txt = await generarPresupuestoPdf(remito).blob.text();
+    expect(txt).toContain('ALIMENTO BALANCEADO');
+    expect(txt).toContain('Cant');
+    expect(txt).toContain('productos');
+  });
+
+  it('el valorizado sigue saliendo con todo (es lo de siempre)', async () => {
+    const txt = await generarPresupuestoPdf({ ...base, tipo: 'Remito' }).blob.text();
+    expect(txt).toContain('18.733');
+    expect(txt).toContain('TOTAL');
+  });
+
+  it('sin importes entran MÁS renglones por hoja, no menos', async () => {
+    expect(await paginas({ ...remito, items: items(45) })).toBe(1);
+  });
+});
+
+/**
+ * 🔑 Mati (10/09/2026): *"en el formato de factura y de presupuesto estaría bueno que también
+ * aparezca el código del cliente"*. Es con lo que la oficina lo busca en InfoManager.
+ */
+describe('el código del cliente', () => {
+  it('🔑 sale impreso junto al nombre', async () => {
+    const txt = await generarPresupuestoPdf({ ...base, cod_cliente: 233 }).blob.text();
+    expect(txt).toContain('233');
+  });
+
+  it('sin código no deja un rótulo vacío ni rompe', async () => {
+    const txt = await generarPresupuestoPdf(base).blob.text();
+    expect(txt).toContain('DIAZ, Alfredo');
+    expect(txt.length).toBeGreaterThan(1000);
+  });
+});
