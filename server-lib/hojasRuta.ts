@@ -355,6 +355,37 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
       if (c.saldo_anterior == null && p.saldo_anterior != null) c.saldo_anterior = p.saldo_anterior;
     }
 
+    /**
+     * 🔴 EL SALDO ANTERIOR SE RECALCULA AL IMPRIMIR, NO SE IMPRIME EL CONGELADO.
+     *
+     * Mati (10/09/2026): *"los saldos de los clientes que tira en la hoja de ruta no son
+     * correctos"*. Y no lo eran: el número se guardaba cuando el pedido se metía en la hoja y no
+     * se volvía a mirar. Medido ese día contra InfoManager, con hojas armadas el día anterior:
+     * MERCADO tenía $732.783,68 guardado contra $1.223.064,96 real y AVILA $1.761.968,80 contra
+     * $1.355.626,77. Entre que se arma la hoja y sale el camión el cliente paga, se le factura
+     * otra cosa, o las dos.
+     *
+     * 🪤 Y hay que RESTAR lo de esta hoja. "Saldo anterior" es lo que el cliente debía ANTES de
+     * esta entrega, y la factura de este pedido YA está en su cuenta corriente cuando se imprime
+     * —la hoja se arma con remitos, que salen después de facturar—. Sin restarlo, el repartidor
+     * sumaría dos veces el pedido que lleva en el camión.
+     *
+     * Sólo se resta lo que está facturado: un remito sin factura todavía no tocó la cuenta.
+     * Si InfoManager no contesta, queda el guardado — es viejo, pero es lo que había.
+     */
+    await Promise.all([...porCliente.values()].map(async (c: any) => {
+      try {
+        const d = await getDisponibleCliente(Number(c.cod_cliente));
+        if (!d) return;
+        const enLaHoja = c.comprobantes
+          .filter((x: any) => x.facturado)
+          .reduce((s: number, x: any) => s + Number(x.total ?? 0), 0);
+        c.saldo_anterior = Math.round((Number(d.saldo) - enLaHoja) * 100) / 100;
+      } catch (e: any) {
+        console.warn(`[impresionHoja] sin saldo al día del cliente ${c.cod_cliente}, uso el guardado:`, e?.message);
+      }
+    }));
+
     // ── Fraccionado: lo que se vende por kilo, producto por producto ──────────
     // 🔑 El armado vive en `fraccionado.ts` y lo comparte con la etapa de presupuestos, que es
     // donde la oficina lo prepara ahora (antes del armado de la hoja).
