@@ -13,7 +13,7 @@
 import { sb, TENANT_ID } from './supabase.js';
 import {
   fetchVentas, fetchVentasItems, fetchArticulosCatalogo, fetchClientesIMCon,
-  fetchStockPorDeposito, invalidarCacheVentas,
+  fetchStockPorDeposito, invalidarCacheVentas, invalidarCacheItems,
 } from './infomanager.js';
 import { pesoDeRenglones } from './pesoComprobante.js';
 import { zonaDeCliente } from './zonaCliente.js';
@@ -56,7 +56,7 @@ const _vistaCache = new Map<string, { at: number; datos: any }>();
  * si al emitir o anular sólo se tirara la vista, la reconstrucción saldría del listado viejo y
  * la pantalla mostraría exactamente lo que se acaba de cambiar, sin cambiar.
  */
-export function invalidarVista() { _vistaCache.clear(); invalidarCacheVentas(); }
+export function invalidarVista() { _vistaCache.clear(); invalidarCacheVentas(); invalidarCacheItems(); }
 
 export async function vistaDeRango(desde: string, hasta: string, forzar = false) {
   const clave = `${desde}|${hasta}`;

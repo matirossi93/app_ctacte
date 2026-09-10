@@ -6,6 +6,7 @@ const im = vi.hoisted(() => ({ presupuestoFacturado: vi.fn(), sbMock: vi.fn() })
 vi.mock('./infomanager.js', () => ({
   // El cache de /ventas se limpia junto con las vistas (10/09/2026).
   invalidarCacheVentas: vi.fn(),
+  invalidarCacheItems: vi.fn(),
   presupuestoFacturado: im.presupuestoFacturado,
   crearPresupuesto: vi.fn(), anularComprobante: vi.fn(), getPrecioLista: vi.fn(),
   getDisponibleCliente: vi.fn(), fetchClientesIMCached: vi.fn(), fetchArticulosCatalogo: vi.fn(),

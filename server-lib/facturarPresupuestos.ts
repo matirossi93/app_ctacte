@@ -29,13 +29,14 @@ import type { JwtPayload } from './auth.js';
 import { puedeArmarHojasDeRuta } from './permisos.js';
 import {
   fetchVentasItems, fetchClientesIMCon, cabeceraComprobante, desconfirmarPresupuesto,
-  fetchVentas, fechaArgentina, fetchStockPorDeposito, fetchArticulosCatalogo, comprobantesVigentes,
+  fetchVentas, fechaArgentina, fetchStockPorDeposito, fetchArticulosCatalogo, comprobantesVigentes, getItemsComprobante,
 } from './infomanager.js';
 import { buscarFacturasYaEmitidas } from './facturaYaEmitida.js';
 import { emitirFactura, emitirRemito, emitirRemitoMasivo, letraDeFactura, proximoNumeroFactura } from './facturarIM.js';
 import type { DatosComprobante } from './facturarIM.js';
 import { usuarioIM } from './pedidos.js';
 import { vistaDeRango, invalidarVista } from './vistaPresupuestos.js';
+import { renglonesQueFaltan } from './remitoSigueALaFactura.js';
 // Emitir crea los remitos: la pantalla de hojas los tiene que ver ya mismo.
 import { invalidarRemitos } from './vistaRemitos.js';
 
@@ -604,10 +605,12 @@ export async function liberarReclamo(req: Request & { user?: JwtPayload }, res: 
  */
 async function itemsDeLaFactura(idFactura: string): Promise<DatosComprobante['items'] | null> {
   try {
-    const cab = await cabeceraComprobante(idFactura);
-    const fecha = cab.fecha ?? fechaArgentina();
-    const rs = (await fetchVentasItems(fecha, fecha))
-      .filter((it: any) => String(it.id_comprobante) === String(idFactura) && Number(it.cod_articulo) > 0);
+    /**
+     * 🔑 Un GET al comprobante, no el listado del día entero. Antes traía TODOS los renglones de
+     * la fecha —miles— para quedarse con veinte, y eso se paga por cada remito de la tanda.
+     */
+    const rs = (await getItemsComprobante(idFactura))
+      .filter((it: any) => Number(it.cod_articulo) > 0);
     if (!rs.length) return null;
     return rs.map((it: any) => {
       const desc = it.descuento_porc ? Number(it.descuento_porc) : null;
@@ -870,12 +873,32 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
        * Con la factura ya emitida ella es la verdad: es el comprobante fiscal y lo que el cliente
        * va a pagar. El remito tiene que decir exactamente lo mismo.
        */
+      /**
+       * 🔴 SIEMPRE, aunque la factura se acabe de emitir en este mismo paso. Antes esto valía
+       * sólo para el camino "ya estaba la factura, falta el remito", dando por sentado que una
+       * factura recién emitida dice exactamente lo que se le mandó. NO es así.
+       *
+       * URUEÑA, 10/09/2026 (medido contra IM): se mandaron 23 renglones, la FA 50444 salió con
+       * 22 —InfoManager se comió el artículo 1 sin avisar— y el remito, armado con los renglones
+       * del presupuesto, salió con los 23: 2 BEBE x 25 Kg por $37.986,92 al cliente sin facturar.
+       */
       let itemsRemito = (p.datos as any).items;
-      if (f.im_factura_id) {
-        const dela = await itemsDeLaFactura(String(f.im_factura_id));
+      const idFacturaViva = f.im_factura_id ?? facturaId;
+      if (idFacturaViva) {
+        const dela = await itemsDeLaFactura(String(idFacturaViva));
         if (!dela) {
-          fallados.push(`${quien}: la factura ${f.im_factura_numero ?? ''} ya está emitida pero no pude leer sus renglones en InfoManager, y el remito tiene que decir lo mismo que ella. Probá de nuevo en un rato.`);
+          fallados.push(`${quien}: la factura ${facturaNumero ?? ''} está emitida pero no pude leer sus renglones en InfoManager, y el remito tiene que decir lo mismo que ella. Probá de nuevo en un rato.`);
           continue;
+        }
+        /**
+         * 🔴 Y si la factura no dice lo que se le mandó, se avisa. El remito ya va a salir bien
+         * —sale de ella—, pero alguien tiene que enterarse de que el cliente no está pagando algo
+         * que pidió, hoy y no cuando no cuadre el stock.
+         */
+        const faltan = renglonesQueFaltan((p.datos as any).items ?? [], dela as any);
+        if (faltan.length) {
+          console.error(`[facturarSeleccion] la factura ${facturaNumero} de ${quien} salió SIN los artículos ${faltan.join(', ')} que se le mandaron`);
+          fallados.push(`⚠️ ${quien}: InfoManager emitió la factura ${facturaNumero ?? ''} SIN el artículo ${faltan.join(', ')}, que sí estaba en el pedido. El remito sale igual que la factura, así que no se entrega de más — pero revisá ese pedido.`);
         }
         itemsRemito = dela;
       }

@@ -8,7 +8,8 @@ vi.mock('./notificacionesAlertas.js', () => ({ invalidateAlertasVendedor: vi.fn(
 vi.mock('./historialCompras.js', () => ({ invalidateHistorialCache: vi.fn() }));
 vi.mock('./infomanager.js', () => ({
   // El cache de /ventas se limpia junto con las vistas (10/09/2026).
-  invalidarCacheVentas: vi.fn(), fetchVentas: vi.fn(), fetchVentasItems: vi.fn() }));
+  invalidarCacheVentas: vi.fn(),
+  invalidarCacheItems: vi.fn(), fetchVentas: vi.fn(), fetchVentasItems: vi.fn() }));
 vi.mock('./supabase.js', () => ({ sb: vi.fn(), TENANT_ID: 'test', hasSupabase: () => false }));
 vi.mock('./comisionesShared.js', () => ({ COD_EMPRESA_CASA_CENTRAL: 1, COD_CLIENTES_INTERNOS: new Set() }));
 vi.mock('./comisionOverrides.js', () => ({ loadVendedorOverrides: vi.fn(), resolveCodVendedor: vi.fn() }));

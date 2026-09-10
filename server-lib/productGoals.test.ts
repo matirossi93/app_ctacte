@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('./infomanager.js', () => ({
   // El cache de /ventas se limpia junto con las vistas (10/09/2026).
   invalidarCacheVentas: vi.fn(),
+  invalidarCacheItems: vi.fn(),
   fetchArticulosCatalogo: vi.fn(),
 }));
 vi.mock('./supabase.js', () => ({

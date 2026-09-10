@@ -562,9 +562,18 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                         <div className="hr-vacio"><Package size={26} /><span>No quedan pedidos sin asignar.</span></div>
                     )}
 
+                    {/* 🪤 Buscando no hay nada que plegar: si la zona del cliente que buscás queda
+                        cerrada, el buscador "no encuentra nada" aunque lo haya encontrado. Mati
+                        (10/09/2026) pidió un buscador acá — ya estaba, lo que faltaba era esto. */}
+                    {!!busqueda.trim() && !porZona.length && !cargando && (
+                        <div className="hr-vacio"><Search size={22} />
+                            <span>Ningún pedido sin asignar coincide con “{busqueda}”.</span>
+                        </div>
+                    )}
+
                     {porZona.map(g => {
                         const k = String(g.cod_zona ?? 'sin');
-                        const abierta = zonasAbiertas.has(k);
+                        const abierta = zonasAbiertas.has(k) || !!busqueda.trim();
                         const elegidos = g.filas.filter(f => sel.has(f.im_comprobante_id)).length;
                         const conAviso = g.filas.filter(f => f.im_factura_numero == null).length;
                         return (

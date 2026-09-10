@@ -22,6 +22,7 @@ const m = vi.hoisted(() => ({
 vi.mock('./infomanager.js', () => ({
   // El cache de /ventas se limpia junto con las vistas (10/09/2026).
   invalidarCacheVentas: vi.fn(),
+  invalidarCacheItems: vi.fn(),
   anularComprobante: m.anularComprobante,
   cabeceraComprobante: m.cabeceraComprobante,
   fechaArgentina: () => '2026-09-10',

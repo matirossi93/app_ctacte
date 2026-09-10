@@ -45,6 +45,7 @@ vi.mock('./supabase.js', () => ({
 vi.mock('./infomanager.js', () => ({
   // El cache de /ventas se limpia junto con las vistas (10/09/2026).
   invalidarCacheVentas: vi.fn(),
+  invalidarCacheItems: vi.fn(),
   getPrecioLista,
   fetchArticulosCatalogo: async () => new Map([[1001, {
     descripcion: 'ALPISTE X 20 KG', subrubro: 'ALPISTE', unidad_de_medida: 'Bolsas', equivalencia_um: 20,

@@ -11,7 +11,8 @@ vi.hoisted(() => { process.env.INFOMANAGER_CLIENT_SECRET = 'test-secret'; });
 const m = vi.hoisted(() => ({ sbMock: vi.fn() }));
 vi.mock('./infomanager.js', () => ({
   // El cache de /ventas se limpia junto con las vistas (10/09/2026).
-  invalidarCacheVentas: vi.fn(), fechaArgentina: () => '2026-09-08' }));
+  invalidarCacheVentas: vi.fn(),
+  invalidarCacheItems: vi.fn(), fechaArgentina: () => '2026-09-08' }));
 vi.mock('./vistaPresupuestos.js', () => ({ invalidarVista: vi.fn(), vistaDeRango: vi.fn() }));
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
 

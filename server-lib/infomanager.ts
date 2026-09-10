@@ -265,7 +265,38 @@ export interface VentaItem {
  * GET /api/v1/ventas/items — paginado por rango de fechas.
  * Devuelve TODAS las líneas de las ventas del rango (1 fila por línea).
  */
-export async function fetchVentasItems(desde: string, hasta: string, opts?: { codEmpresa?: number; limit?: number }): Promise<VentaItem[]> {
+/**
+ * 🔑 EL MISMO CACHE QUE `/ventas`, y acá pesa MÁS. Mati (10/09/2026): *"sigue la demora en la
+ * parte de cargar los presupuestos aprobados"*.
+ *
+ * Los renglones son ~2,5 veces las ventas del mismo rango —un día de Casa Central son ~2.000
+ * filas contra ~760— y era la única consulta grande que se pedía entera cada vez. La vista de
+ * presupuestos la hace por cada día del rango, y el tablero de facturación vuelve a hacerla.
+ */
+const _cacheItems = new Map<string, { at: number; filas: VentaItem[] }>();
+
+/** Lo llaman los caminos que acaban de escribir en IM. Va junto con `invalidarCacheVentas`. */
+export function invalidarCacheItems(): void { _cacheItems.clear(); }
+
+export async function fetchVentasItems(
+  desde: string, hasta: string,
+  opts?: { codEmpresa?: number; limit?: number; sinCache?: boolean },
+): Promise<VentaItem[]> {
+  const cacheable = !opts?.sinCache && diasEntre(desde, hasta) <= MAX_DIAS_CACHE_VENTAS;
+  const clave = `${desde}|${hasta}|${opts?.codEmpresa ?? 'all'}`;
+  if (cacheable) {
+    const hit = _cacheItems.get(clave);
+    if (hit && Date.now() - hit.at < CACHE_VENTAS_MS) return hit.filas;
+  }
+  const filas = await fetchVentasItemsSinCache(desde, hasta, opts);
+  if (cacheable || opts?.sinCache) {
+    if (_cacheItems.size > 40) _cacheItems.clear();
+    _cacheItems.set(clave, { at: Date.now(), filas });
+  }
+  return filas;
+}
+
+async function fetchVentasItemsSinCache(desde: string, hasta: string, opts?: { codEmpresa?: number; limit?: number }): Promise<VentaItem[]> {
   const cli = await imClient();
   // limit alto para minimizar requests. semillerobi-next y semillero-existencias
   // usan limit=10000 con éxito en /ventas y /ventas/items.

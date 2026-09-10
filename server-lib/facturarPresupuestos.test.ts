@@ -17,6 +17,7 @@ const m = vi.hoisted(() => ({
   vistaDeRango: vi.fn(),
   cabeceraComprobante: vi.fn(),
   fetchVentasItems: vi.fn(),
+  getItemsComprobante: vi.fn(),
   fetchClientesIMCached: vi.fn(),
   desconfirmarPresupuesto: vi.fn(),
   emitirFactura: vi.fn(),
@@ -27,8 +28,10 @@ const m = vi.hoisted(() => ({
 vi.mock('./infomanager.js', () => ({
   // El cache de /ventas se limpia junto con las vistas (10/09/2026).
   invalidarCacheVentas: vi.fn(),
+  invalidarCacheItems: vi.fn(),
   fetchVentas: m.fetchVentas,
   fetchVentasItems: m.fetchVentasItems,
+  getItemsComprobante: m.getItemsComprobante,
   fetchArticulosCatalogo: vi.fn(async () => new Map()),
   // El remito valida stock: la preparación lo consulta para avisar antes de facturar.
   fetchStockPorDeposito: vi.fn(async () => new Map()),
@@ -138,6 +141,11 @@ beforeEach(() => {
   ]);
   m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-08', anulada: false, existe: true });
   m.fetchVentasItems.mockResolvedValue([RENGLON, RENGLON_FA]);
+  /**
+   * 🔑 El remito sale SIEMPRE de los renglones de la factura, también cuando se acaba de emitir
+   * (URUEÑA, 10/09/2026: IM se comió un renglón y el remito salió por más que la factura).
+   */
+  m.getItemsComprobante.mockResolvedValue([RENGLON_FA]);
   m.proximoNumeroFactura.mockResolvedValue(50360);
   m.emitirFactura.mockResolvedValue({ ok: true, id: 'f1', numero: 50360, tipo: 'FA B' });
   m.emitirRemito.mockResolvedValue({ ok: true, id: 'r1', numero: 77291, tipo: 'RE' });
@@ -765,7 +773,7 @@ describe('con la factura ya emitida, el remito se arma con SUS renglones', () =>
 
   it('🔴 si no puede leer los renglones de la factura, NO emite el remito', async () => {
     faltaElRemito();
-    m.fetchVentasItems.mockResolvedValue([RENGLON]);   // la factura no devuelve ninguno
+    m.getItemsComprobante.mockResolvedValue([]);   // la factura no devuelve ningún renglón
     const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
     expect(m.emitirRemito).not.toHaveBeenCalled();
     expect(String(r.body.fallados ?? '')).toMatch(/renglones/i);
