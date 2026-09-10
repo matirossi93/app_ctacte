@@ -82,9 +82,9 @@
        hojas (Mati, 09/09/2026). */
     /* 🔄 Segunda pasada del 09/09/2026: *"agrandar un poco la letra y que sea un poco más gruesa,
        sólo un poco"*. En el depósito se lee de parado y a un brazo de distancia. */
-    .fr-tabla { font-size: 8.5pt; font-weight: 500; }
-    .fr-tabla th, .fr-tabla td { padding: 1.3mm 1.6mm !important; }
-    .fr-tabla thead th { font-size: 7.5pt !important; }
+    .fr-tabla { font-size: 9.5pt; font-weight: 600; }
+    .fr-tabla th, .fr-tabla td { padding: 1.4mm 1.6mm !important; }
+    .fr-tabla thead th { font-size: 8pt !important; }
     /* El nombre del producto y los totales: es lo que se busca de un vistazo. */
     .fr-tabla .prod, .fr-tabla .n { font-weight: 600 !important; }
     .fr-cajita { font-size: 7.5pt !important; min-width: 26px !important; padding: 0.3mm 0.8mm !important; margin: 0.2mm 0.6mm 0.2mm 0 !important; }

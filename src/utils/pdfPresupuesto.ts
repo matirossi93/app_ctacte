@@ -54,7 +54,12 @@ const MARGEN = 12;
  * banda pasó de 30 mm a 19, la ficha del cliente de 17 a 15 —llevando MÁS datos—, y la fila de
  * la tabla de 8,4 mm a 5,2. Son ~24 renglones por hoja contra los ~44 de ahora.
  */
-const ALTO_BANDA = 19;
+/**
+ * Alto del membrete. 🔄 10/09/2026: bajó de 19 a 15 mm. Ya no es una banda pintada (ver la
+ * paleta B/N), así que no necesita cuerpo — y esos 4 mm son los que dejan subir la letra de la
+ * tabla sin perder renglones por hoja.
+ */
+const ALTO_BANDA = 15;
 /** Desde acá para abajo ya no entra nada: es donde empieza el pie. */
 const PISO = 283;
 /** Alto de la ficha del cliente, que ahora lleva también domicilio y teléfono. */
@@ -259,11 +264,12 @@ export function generarPresupuestoPdf(d: DatosPresupuesto): { blob: Blob; nombre
      * sólo un poco"*.
      *
      * 🪤 Los dos pedidos se pelean: más grande = menos renglones por hoja. Medido contando las
-     * páginas del PDF de verdad (hay test), 7,4 pt con 0,9 mm de padding es **lo más grande que
-     * sigue metiendo los 42 renglones del pedido de DIAZ en una sola hoja**. A 7,5 ya se parte.
-     * El grueso lo aporta la negrita de la descripción, que no ocupa alto.
+     * páginas del PDF de verdad (hay test), **7,7 pt es lo más grande que sigue metiendo los 42
+     * renglones del pedido de DIAZ en una sola hoja** — a 7,8 ya se parte. Los 0,3 pt que se
+     * ganaron sobre la primera pasada salieron de bajar el membrete de 19 a 15 mm, que sin la
+     * banda pintada no hacían falta. El grueso lo aporta la negrita, que no ocupa alto.
      */
-    styles: { fontSize: 7.4, cellPadding: 0.9, textColor: DARK, lineColor: [190, 190, 190], lineWidth: 0.1 },
+    styles: { fontSize: 7.7, cellPadding: 0.9, textColor: DARK, lineColor: [190, 190, 190], lineWidth: 0.1 },
     /**
      * 🔴 En B/N la cabecera va SIN relleno: pintada sale como una barra negra en cada página y es
      * lo que más tóner gasta. Se distingue con negrita, mayúsculas y una línea gruesa abajo.

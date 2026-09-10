@@ -118,9 +118,9 @@
        y en el camión no se leía: Mati pidió *"agrandar un poco la letra y que sea un poco más
        gruesa, sólo un poco"*. 8,5 pt con peso 600 — se lee de parado y sigue entrando lo mismo,
        porque las columnas de bultos y el subtotal por cliente ya salieron. */
-    .imp-tabla { font-size: 8.5pt; font-weight: 500; }
-    .imp-tabla th, .imp-tabla td { padding: 1.3mm 1.6mm !important; }
-    .imp-tabla thead th { font-size: 7.5pt !important; }
+    .imp-tabla { font-size: 9.5pt; font-weight: 600; }
+    .imp-tabla th, .imp-tabla td { padding: 1.4mm 1.6mm !important; }
+    .imp-tabla thead th { font-size: 8pt !important; }
     /* El cliente y los importes son lo que se busca con la vista: van con más cuerpo. */
     .imp-tabla td:first-child { font-weight: 600 !important; }
     .imp-tabla .n { font-weight: 600 !important; }
