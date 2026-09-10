@@ -174,7 +174,20 @@ export async function fetchVentasParaNumeracion(desde: string, hasta: string): P
  * del proceso, que ya tuvo un crash por OOM el 06/07/2026.
  */
 const MAX_DIAS_CACHE_VENTAS = 10;
-const CACHE_VENTAS_MS = 60_000;
+/**
+ * 🔄 10/09/2026: 60 s → 90 s, para que coincida con el cache de la vista.
+ *
+ * Estaban desalineados y era lo peor de los dos mundos: la vista dura 90 s, así que cuando se
+ * re-armaba sus datos ya habían vencido (60 s) y había que volver a pedírselos a IM. Medido con
+ * el log de `vistaDeRango` en producción: **2.174 ms de los 3.224 ms de una carga eran eso**
+ * —ventas 827 + renglones 770 + clientes 575—, con el catálogo y el stock ya calientes.
+ *
+ * 🪤 No es "mostrar datos más viejos": los tres caches se tiran JUNTOS (`invalidarVista`) apenas
+ * alguien asigna, revisa, edita, anula o factura. Lo único que puede quedar hasta 90 s atrasado
+ * es un cambio hecho directamente en InfoManager, y para eso está el botón Actualizar, que los
+ * saltea todos.
+ */
+const CACHE_VENTAS_MS = 90_000;
 const _cacheVentas = new Map<string, { at: number; filas: VentaRaw[] }>();
 
 function diasEntre(desde: string, hasta: string): number {
