@@ -703,6 +703,13 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                         {h.camion ? ` · ${h.camion}` : ''}
                                     </span>
                                 )}
+                                {/* 🔑 El que empuja los controles a la derecha. Antes ese trabajo lo
+                                    hacía un `margin-left:auto` en el select del camión, y como el
+                                    resto de la fila no tenía anchos fijos, cada hoja repartía el
+                                    espacio distinto: el número se partía en dos líneas, el select
+                                    quedaba de otro ancho y los íconos a otra distancia del borde
+                                    (Mati, 10/09/2026: *"acá hay un problema de diseño"*). */}
+                                <span className="hr-hoja-sep" />
                                 {/* La fecha de reparto, editable: se arma la hoja hoy para mañana
                                     y a veces hay que correrla un día. Cerrada no se toca: ya se
                                     liquidó. */}

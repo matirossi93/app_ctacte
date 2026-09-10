@@ -117,13 +117,32 @@
     display: flex; flex-direction: column; gap: 0.4rem;
 }
 .hr-hoja.excedida { border-color: #d98b7a; }
-.hr-hoja-head { display: flex; align-items: center; gap: 0.5rem; }
-.hr-hoja-num { font-weight: 700; color: var(--color-primary); }
+/**
+ * 🔴 LA CABECERA DE LA HOJA TIENE ANCHOS FIJOS.
+ *
+ * Mati (10/09/2026, con captura): *"acá hay un problema de diseño"*. Eran 8 elementos en un flex
+ * sin `wrap` y sin ningún ancho definido, así que el navegador repartía el sobrante distinto en
+ * cada hoja según lo que tuviera: una con chip "facturada" y camión aplastaba el resto, y ahí
+ * "Hoja 3405" se partía en dos líneas mientras "Hoja 3401" entraba en una. Los selects quedaban
+ * de anchos distintos y los íconos a distinta distancia del borde: seis tarjetas, seis layouts.
+ *
+ * Ahora: número a la izquierda, un separador elástico, y de ahí a la derecha todo con ancho
+ * propio. Todas las tarjetas quedan alineadas entre sí, tengan lo que tengan.
+ */
+.hr-hoja-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; row-gap: 0.4rem; }
+/* Nunca partido en dos líneas: es lo que identifica la hoja. */
+.hr-hoja-num { font-weight: 700; color: var(--color-primary); white-space: nowrap; flex: 0 0 auto; }
+/* El elástico: se come el sobrante y deja los controles pegados a la derecha. */
+.hr-hoja-sep { flex: 1 1 auto; min-width: 0; }
 .hr-hoja-head select {
     border: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-text);
     font-family: inherit; font-size: 0.8rem; padding: 0.3rem 0.5rem; border-radius: var(--radius-sm);
-    margin-left: auto;
+    /* Ancho propio: sin esto cada hoja lo dibujaba de un tamaño según lo que le sobraba. */
+    flex: 0 0 8.75rem; width: 8.75rem;
 }
+.hr-hoja-head .hr-badge { flex: 0 0 auto; white-space: nowrap; }
+.hr-hoja-head .hr-icono { flex: 0 0 auto; }
+
 .hr-icono { border: none; background: transparent; color: var(--color-text-muted); cursor: pointer; padding: 0.25rem; border-radius: var(--radius-sm); }
 .hr-icono:hover { background: var(--color-surface-hover); color: var(--color-text); }
 /* Un ícono que no se puede tocar tiene que verse así: el de sacar de la hoja queda
@@ -262,6 +281,9 @@ button.hr-badge { cursor: pointer; font-family: inherit; }
 /* El día en que sale la hoja. Se edita en el lugar: se arma hoy la hoja de mañana y a veces hay
    que correrla un día (Mati, 10/09/2026). */
 .hr-hoja-fecha {
+    /* Ancho propio, igual que el select: los `input[type=date]` miden distinto en cada navegador
+       y sin fijarlo la fila se corría de lugar entre una hoja y otra. */
+    flex: 0 0 auto;
     border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text);
     font-family: inherit; font-size: 0.8rem; padding: 0.18rem 0.4rem; border-radius: var(--radius-sm);
 }
@@ -275,7 +297,11 @@ button.hr-badge { cursor: pointer; font-family: inherit; }
 }
 .hr-plegar:hover { color: var(--color-text); }
 .hr-hoja.plegada { padding-bottom: 0.35rem; }
-.hr-plegada-resumen { font-size: 0.8rem; color: var(--color-text-muted); white-space: nowrap; }
+/* Se corta con «…» antes que empujar los controles de la derecha fuera de su lugar. */
+.hr-plegada-resumen {
+    font-size: 0.8rem; color: var(--color-text-muted); white-space: nowrap;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
 .hr-hojas-barra { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; }
 .hr-hojas-cuenta { font-size: 0.78rem; color: var(--color-text-muted); }
 .hr-btn.ghost.activo { background: rgba(6, 101, 47, 0.1); border-color: #06652F; color: #06652F; }
