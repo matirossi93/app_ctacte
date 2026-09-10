@@ -142,21 +142,32 @@ describe('asignar pedidos a una hoja', () => {
 
 describe('crear hoja', () => {
   it('🔴 el número sigue al último, para que se parezca al de IM', async () => {
-    // La oficina habla de "la 3395". Si nuestro número no se parece, hay que traducir.
-    tablas['hojas_ruta'] = { data: { numero: 3394 }, error: null };
+    // La oficina habla de "la 3406". Si nuestro número no se parece, hay que traducir.
+    tablas['hojas_ruta'] = { data: { numero: 3405 }, error: null };
     await llamar(crearHoja, { body: { fecha: '2026-09-08', turno: 'Mañana' } });
     const fila = insertados.find(([t]) => t === 'hojas_ruta')![1];
-    expect(fila.numero).toBe(3395);
+    expect(fila.numero).toBe(3406);
     expect(fila.turno).toBe('Mañana');
+  });
+
+  /**
+   * 🔑 Mati (10/09/2026): *"al nº de hoja de ruta deberíamos subirle 2 números"*. La serie del
+   * panel quedó atrás de la de IM, así que hay un piso que la empuja una sola vez. El detalle de
+   * ese cálculo se prueba en `numeroHojaRuta.test.ts`; acá sólo que `crearHoja` lo respete.
+   */
+  it('🔴 una serie que quedó atrás salta hasta alcanzar a la de IM', async () => {
+    tablas['hojas_ruta'] = { data: { numero: 3399 }, error: null };
+    await llamar(crearHoja, { body: { fecha: '2026-09-11' } });
+    expect(insertados.find(([t]) => t === 'hojas_ruta')![1].numero).toBe(3402);
   });
 
   it('🔴 la PRIMERA hoja no arranca en 1: sigue la numeración de IM', async () => {
     // Con la tabla vacía, un `0 + 1` arrancaría una numeración paralela a la de InfoManager y
-    // la oficina tendría que llevar dos. La última que se imprimió fue la 3394.
+    // la oficina tendría que llevar dos.
     tablas['hojas_ruta'] = { data: null, error: null };
     await llamar(crearHoja, { body: { fecha: '2026-09-08' } });
     const fila = insertados.find(([t]) => t === 'hojas_ruta')![1];
-    expect(fila.numero).toBe(3395);
+    expect(fila.numero).toBe(3402);
   });
 
   it('🔴 número repetido: 409 que se entiende, no un 500', async () => {

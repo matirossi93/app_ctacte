@@ -26,6 +26,7 @@ import { armarFraccionado, totalesFraccionado } from './fraccionado.js';
 import { formatosDeBolsa } from './formatosBolsa.js';
 import { sugerirRepartos } from './sugerirRepartos.js';
 import { saldoAnteriorDeLaHoja, ajusteDeNotas } from './saldoCliente.js';
+import { proximoNumeroHoja } from './numeroHojaRuta.js';
 
 /** Sólo la oficina. Devuelve true si ya contestó el 403. */
 function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
@@ -502,16 +503,11 @@ export async function crearHoja(req: Request & { user?: JwtPayload }, res: Respo
   try {
     const b = req.body ?? {};
     const fecha = /^\d{4}-\d{2}-\d{2}$/.test(String(b.fecha ?? '')) ? String(b.fecha) : fechaArgentina();
-    // El número sigue al último, para que se parezca al de IM (la hoja del 07/09 era la 3394)
-    // y la oficina pueda hablar de "la 3395" sin traducir.
-    // 🪤 La primera hoja NO puede salir con el número 1: arrancaría una numeración paralela a
-    // la de IM y la oficina tendría que llevar dos. Por eso el arranque se toma de
-    // HOJA_RUTA_NUMERO_INICIAL (o el 3395, que es la que sigue a la última que se imprimió).
+    // El número sigue al último y comparte serie con las hojas que la oficina hace en IM, para
+    // que puedan hablar de "la 3402" sin traducir entre dos numeraciones (ver numeroHojaRuta).
     const { data: ultima } = await sb().from('hojas_ruta')
       .select('numero').eq('tenant_id', TENANT_ID).order('numero', { ascending: false }).limit(1).maybeSingle();
-    const arranque = Number(process.env.HOJA_RUTA_NUMERO_INICIAL) || 3395;
-    const siguiente = ultima?.numero != null ? Number(ultima.numero) + 1 : arranque;
-    const numero = Number(b.numero) || siguiente;
+    const numero = Number(b.numero) || proximoNumeroHoja(ultima?.numero as number | null);
     const { data, error } = await sb().from('hojas_ruta').insert({
       tenant_id: TENANT_ID, fecha, numero,
       turno: b.turno ? String(b.turno) : null,
