@@ -169,6 +169,58 @@ describe('sólo se factura lo aprobado', () => {
   });
 });
 
+/**
+ * 🔑 LO QUE ESCRIBE EL VENDEDOR TIENE QUE LLEGAR A LA FACTURA.
+ *
+ * Mati (10/09/2026): *"necesito que la observación que los vendedores cargan en los presupuestos
+ * se pase a la factura también"*. Son cosas como "FACTURAR A NOMBRE DE LA SRL" o "entregar el
+ * jueves": hoy quedaban en el presupuesto y la oficina las perdía de vista al facturar.
+ */
+describe('las observaciones del presupuesto', () => {
+  it('🔴 la observación del vendedor viaja a la factura, junto al número de pedido', async () => {
+    m.cabeceraComprobante.mockResolvedValue({
+      cod_vendedor: '3', fecha: '2026-09-08', anulada: false, existe: true,
+      observaciones: 'FACTURAR A NOMBRE DE LA SRL',
+    });
+    await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    const obs = m.emitirFactura.mock.calls[0][0].observaciones;
+    expect(obs).toContain('FACTURAR A NOMBRE DE LA SRL');
+    // El número de pedido sigue estando: es como la oficina encuentra la factura.
+    expect(obs).toContain('58050');
+  });
+
+  it('🔑 también llega al remito, que es lo que lee el repartidor', async () => {
+    m.cabeceraComprobante.mockResolvedValue({
+      cod_vendedor: '3', fecha: '2026-09-08', anulada: false, existe: true,
+      observaciones: 'ENTREGAR POR LA PUERTA DE ATRAS',
+    });
+    await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(m.emitirRemito.mock.calls[0][0].observaciones).toContain('ENTREGAR POR LA PUERTA DE ATRAS');
+  });
+
+  it('sin observación queda como antes: sólo el número de pedido, sin guiones colgando', async () => {
+    const obs = (await llamar(facturarSeleccion, { body: { ids: ['10'] } }),
+      m.emitirFactura.mock.calls[0][0].observaciones);
+    expect(obs).toBe('Pedido 58050');
+  });
+
+  /**
+   * 🪤 InfoManager corta las observaciones en 500 caracteres, y a la del remito se le concatena
+   * después la marca " [Remito Automático -FA:…]" que es el único vínculo legible entre la
+   * factura y su remito. Si la del vendedor se come el espacio, ese vínculo se pierde.
+   */
+  it('🪤 una observación larguísima no puede tapar la marca del remito', async () => {
+    m.cabeceraComprobante.mockResolvedValue({
+      cod_vendedor: '3', fecha: '2026-09-08', anulada: false, existe: true,
+      observaciones: 'X'.repeat(900),
+    });
+    await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    const obs: string = m.emitirFactura.mock.calls[0][0].observaciones;
+    expect(obs.length).toBeLessThanOrEqual(400);
+    expect(obs).toContain('Pedido 58050');
+  });
+});
+
 describe('previsualizar', () => {
   it('🔴 dice qué sale y con qué letra, sin emitir ni escribir nada', async () => {
     m.vistaDeRango.mockResolvedValue({

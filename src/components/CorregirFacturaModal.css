@@ -41,6 +41,10 @@
 .cf-tabla tr.sacado td { opacity: 0.55; text-decoration: line-through; }
 .cf-tabla tr.sacado .c button { text-decoration: none; }
 .cf-antes { color: var(--color-text-muted); font-size: 0.8rem; }
+/* El descuento del renglón: se muestra, no se edita. Para corregirlo se toca el precio. */
+.cf-desc { color: var(--color-text-muted); font-size: 0.8rem; white-space: nowrap; }
+/* El aviso de lo que la nota no puede tocar: tiene que leerse antes de emitir. */
+.cf-sinart { align-items: flex-start; line-height: 1.35; }
 .cf-nuevo { color: #06652F; font-weight: 700; font-size: 0.78rem; }
 .cf-tabla tfoot td { font-weight: 700; border-top: 2px solid var(--color-border); }
 .cf-sacar { background: none; border: none; cursor: pointer; color: #a33; padding: 0.2rem; }

@@ -19,7 +19,9 @@ import './CorregirFacturaModal.css';
 interface Renglon {
   cod_articulo: number;
   cantidad: number;
+  /** BRUTO, el precio de lista. Lo que la factura cobró es esto menos el descuento. */
   precio: number;
+  descuento_porc?: number | null;
   descripcion?: string;
   iva_por?: number | null;
   cod_lista_precios?: number | null;
@@ -34,6 +36,14 @@ interface Factura {
 interface Vista { nc: Renglon[]; nd: Renglon[]; total_nc: number; total_nd: number; diferencia: number }
 
 const money = (n: number) => '$' + Number(n ?? 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/**
+ * 🔴 Lo que el renglón cobra DE VERDAD. Mati (10/09/2026): *"al calcular la NC no está tomando el
+ * descuento que tiene ese producto, lo hace por el total"*. La pantalla mostraba el bruto, así que
+ * el TOTAL de la factura tampoco coincidía con la factura: en la FA B 50422 decía $699.708,64
+ * donde InfoManager dice $587.301,91.
+ */
+const importeDe = (r: { cantidad: number; precio: number; descuento_porc?: number | null }) =>
+  r.cantidad * r.precio * (1 - (Number(r.descuento_porc ?? 0) || 0) / 100);
 const nun = (v: string) => { const n = Number(String(v).replace(',', '.')); return Number.isFinite(n) && n >= 0 ? n : 0; };
 
 export function CorregirFacturaModal(
@@ -51,6 +61,8 @@ export function CorregirFacturaModal(
   /** El buscador para agregar un producto que no está en la factura. */
   const [buscando, setBuscando] = useState('');
   const [candidatos, setCandidatos] = useState<any[]>([]);
+  /** Renglones escritos a mano con plata adentro: la nota no los puede incluir. */
+  const [sinArticulo, setSinArticulo] = useState<Array<{ descripcion: string; importe: number }>>([]);
 
   useEffect(() => {
     let vivo = true;
@@ -62,6 +74,7 @@ export function CorregirFacturaModal(
         if (!r.ok) throw new Error(d?.error ?? 'No se pudo leer la factura');
         if (!vivo) return;
         setFactura(d.factura);
+        setSinArticulo(d.sin_articulo ?? []);
         setOriginales(d.renglones);
         setFilas(d.renglones.map((x: Renglon) => ({ ...x })));
       } catch (e: any) {
@@ -74,9 +87,9 @@ export function CorregirFacturaModal(
   }, [idFactura]);
 
   const totalOriginal = useMemo(
-    () => originales.reduce((s, r) => s + r.cantidad * r.precio, 0), [originales]);
+    () => originales.reduce((s, r) => s + importeDe(r), 0), [originales]);
   const totalNuevo = useMemo(
-    () => filas.reduce((s, r) => s + r.cantidad * r.precio, 0), [filas]);
+    () => filas.reduce((s, r) => s + importeDe(r), 0), [filas]);
   const hayCambios = useMemo(() => Math.abs(totalNuevo - totalOriginal) > 0.005
     || filas.length !== originales.length, [totalNuevo, totalOriginal, filas.length, originales.length]);
 
@@ -127,6 +140,7 @@ export function CorregirFacturaModal(
     if (filas.some(f => f.cod_articulo === cod)) { setBuscando(''); setCandidatos([]); return; }
     setFilas(fs => [...fs, {
       cod_articulo: cod, cantidad: 1, precio: Number(a.precio_venta ?? 0) || 0,
+      descuento_porc: 0,
       descripcion: String(a.descripcion ?? `Artículo ${cod}`),
       iva_por: 0, cod_lista_precios: null,
     }]);
@@ -189,10 +203,25 @@ export function CorregirFacturaModal(
               como tendrían que haber quedado y abajo vas a ver qué notas salen.
             </p>
 
+            {/* 🔴 Plata de la factura que la nota no puede tocar: IM exige código de artículo. */}
+            {!!sinArticulo.length && (
+              <div className="cf-error cf-sinart">
+                <AlertTriangle size={15} />
+                <span>
+                  Esta factura tiene {sinArticulo.length === 1 ? 'un renglón escrito a mano' : `${sinArticulo.length} renglones escritos a mano`} por{' '}
+                  <b>{money(sinArticulo.reduce((s, r) => s + r.importe, 0))}</b>
+                  {' '}({sinArticulo.map(r => r.descripcion).join(', ')}) que <b>no entran</b> en la
+                  nota, porque InfoManager exige un código de artículo. Si hay que devolver eso
+                  también, esa parte va por InfoManager.
+                </span>
+              </div>
+            )}
+
             <table className="cf-tabla">
               <thead>
                 <tr>
                   <th>Producto</th><th className="n">Cantidad</th><th className="n">Precio</th>
+                  <th className="n">Desc.</th>
                   <th className="n">Importe</th><th className="n">Facturado</th><th />
                 </tr>
               </thead>
@@ -212,9 +241,12 @@ export function CorregirFacturaModal(
                         <input inputMode="decimal" value={String(f.precio)}
                                onChange={e => tocar(i, 'precio', e.target.value)} />
                       </td>
-                      <td className="n">{money(f.cantidad * f.precio)}</td>
+                      {/* 🪤 De sólo lectura: el descuento es el que trae la factura. Para corregirlo
+                          se toca el precio, que es lo que la oficina ya sabe hacer. */}
+                      <td className="n cf-desc">{f.descuento_porc ? `${f.descuento_porc}%` : '—'}</td>
+                      <td className="n">{money(importeDe(f))}</td>
                       <td className="n cf-antes">
-                        {orig ? money(orig.cantidad * orig.precio) : <span className="cf-nuevo">nuevo</span>}
+                        {orig ? money(importeDe(orig)) : <span className="cf-nuevo">nuevo</span>}
                       </td>
                       <td className="c">
                         <button className="cf-sacar" title="Sacar este producto" onClick={() => sacar(i)}>
@@ -228,8 +260,8 @@ export function CorregirFacturaModal(
                 {originales.filter(o => !filas.some(f => f.cod_articulo === o.cod_articulo)).map(o => (
                   <tr key={'out' + o.cod_articulo} className="sacado">
                     <td>{o.descripcion ?? `Artículo ${o.cod_articulo}`}</td>
-                    <td className="n">—</td><td className="n">—</td><td className="n">—</td>
-                    <td className="n cf-antes">{money(o.cantidad * o.precio)}</td>
+                    <td className="n">—</td><td className="n">—</td><td className="n">—</td><td className="n">—</td>
+                    <td className="n cf-antes">{money(importeDe(o))}</td>
                     <td className="c">
                       <button className="cf-sacar" title="Volver a ponerlo"
                               onClick={() => setFilas(fs => [...fs, { ...o }])}>
@@ -241,7 +273,7 @@ export function CorregirFacturaModal(
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={3}>TOTAL</td>
+                  <td colSpan={4}>TOTAL</td>
                   <td className="n">{money(totalNuevo)}</td>
                   <td className="n cf-antes">{money(totalOriginal)}</td>
                   <td />
@@ -272,7 +304,10 @@ export function CorregirFacturaModal(
                   <div className="cf-comp nc">
                     <b>Nota de crédito {factura.letra} · {money(vista.total_nc)}</b>
                     <ul>{vista.nc.map((r, i) => (
-                      <li key={i}>{r.descripcion ?? `Artículo ${r.cod_articulo}`} — {r.cantidad} × {money(r.precio)}</li>
+                      <li key={i}>
+                        {r.descripcion ?? `Artículo ${r.cod_articulo}`} — {r.cantidad} × {money(r.precio)}
+                        {r.descuento_porc ? ` − ${r.descuento_porc}%` : ''} = {money(importeDe(r))}
+                      </li>
                     ))}</ul>
                   </div>
                 )}
@@ -280,7 +315,10 @@ export function CorregirFacturaModal(
                   <div className="cf-comp nd">
                     <b>Nota de débito {factura.letra} · {money(vista.total_nd)}</b>
                     <ul>{vista.nd.map((r, i) => (
-                      <li key={i}>{r.descripcion ?? `Artículo ${r.cod_articulo}`} — {r.cantidad} × {money(r.precio)}</li>
+                      <li key={i}>
+                        {r.descripcion ?? `Artículo ${r.cod_articulo}`} — {r.cantidad} × {money(r.precio)}
+                        {r.descuento_porc ? ` − ${r.descuento_porc}%` : ''} = {money(importeDe(r))}
+                      </li>
                     ))}</ul>
                   </div>
                 )}

@@ -79,6 +79,14 @@ const MAX_DIAS_FACTURA = 6;
 /** El depósito del que sale la mercadería: es contra el que el remito valida stock. */
 const DEPOSITO_REMITO = Number(process.env.PEDIDO_DEPOSITO || 1);
 
+/**
+ * 🪤 InfoManager corta las observaciones en 500 caracteres, y al remito se le concatena DESPUÉS
+ * la marca `" [Remito Automático -FA:58785916]"` (~35), que es el único vínculo legible entre la
+ * factura y su remito desde las pantallas de IM. Dejando el texto en 400 la marca siempre entra,
+ * incluso si el vendedor escribió una novela en el pedido.
+ */
+const MAX_OBSERVACIONES = 400;
+
 /** Lo que le pasa a cada presupuesto cuando se apriete Facturar. */
 export type EstadoFacturacion = 'listo' | 'falta_remito' | 'facturado' | 'no_se_puede';
 
@@ -153,6 +161,8 @@ export async function prepararFacturacion(
     fecha: string | null; anulada: boolean | null; existe: boolean | null;
     // De quién es la venta. Va a la factura y al remito, arriba y en cada renglón.
     cod_vendedor?: string | null;
+    // Lo que escribió el vendedor en el pedido. Viaja a la factura y al remito.
+    observaciones?: string | null;
   }>();
   await Promise.all(aRevisar.map(async (f) => {
     const k = String(f.im_comprobante_id);
@@ -340,7 +350,15 @@ export async function prepararFacturacion(
         categoria_iva: cliente?.categoria_iva,
         cod_lista_precios: Number(items[0]?.cod_lista_precios) || PEDIDO_LISTA_FALLBACK,
         usuario,
-        observaciones: `Pedido ${f.im_numero ?? ''}`.trim(),
+        /**
+         * 🔑 LO QUE ESCRIBIÓ EL VENDEDOR VA A LA FACTURA. Mati (10/09/2026): *"necesito que la
+         * observación que los vendedores cargan en los presupuestos se pase a la factura
+         * también"*. Es donde ponen "FACTURAR A NOMBRE DE LA SRL" o "entregar el jueves", y
+         * hasta ahora se quedaba en el presupuesto. Viaja igual al remito, que es lo que lee el
+         * repartidor.
+         */
+        observaciones: [`Pedido ${f.im_numero ?? ''}`.trim(), String(cab?.observaciones ?? '').trim()]
+          .filter(Boolean).join(' - ').slice(0, MAX_OBSERVACIONES),
         origen_id: f.im_comprobante_id,
         total: Number(f.total ?? 0),
         cod_deposito: 1,
