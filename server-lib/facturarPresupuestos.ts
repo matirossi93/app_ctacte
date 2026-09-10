@@ -37,6 +37,7 @@ import type { DatosComprobante } from './facturarIM.js';
 import { usuarioIM } from './pedidos.js';
 import { vistaDeRango, invalidarVista } from './vistaPresupuestos.js';
 import { renglonesQueFaltan } from './remitoSigueALaFactura.js';
+import { totalDeRenglones } from './totalFacturado.js';
 // Emitir crea los remitos: la pantalla de hojas los tiene que ver ya mismo.
 import { invalidarRemitos } from './vistaRemitos.js';
 
@@ -901,6 +902,16 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
           fallados.push(`⚠️ ${quien}: InfoManager emitió la factura ${facturaNumero ?? ''} SIN el artículo ${faltan.join(', ')}, que sí estaba en el pedido. El remito sale igual que la factura, así que no se entrega de más — pero revisá ese pedido.`);
         }
         itemsRemito = dela;
+        /**
+         * 🔑 EL IMPORTE QUE SE MUESTRA PASA A SER EL DE LA FACTURA. Mati (10/09/2026): *"en la
+         * parte de facturación sigue figurando el importe original y en la hoja de ruta tampoco
+         * impacta"*. En URUEÑA el presupuesto decía $1.111.521,00 y la factura $1.073.534,08: el
+         * repartidor iba a cobrar por el papel equivocado.
+         */
+        const totalReal = totalDeRenglones(dela as any);
+        if (totalReal != null && Math.abs(totalReal - Number(base.total ?? 0)) > 0.02) {
+          base.total = totalReal;
+        }
       }
       const datosRemito = { ...(p.datos as any), items: itemsRemito, im_factura_id: f.im_factura_id ?? facturaId };
       let re = await emitirRemito(datosRemito);

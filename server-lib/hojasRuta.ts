@@ -330,7 +330,7 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
       .filter((id: string) => /^[0-9]+$/.test(id));
     const { data: emitidosImp } = idsImpresos.length
       ? await sb().from('presupuestos_facturados')
-          .select('im_comprobante_id, im_remito_id, im_remito_numero, im_factura_id, im_factura_numero, facturado_at')
+          .select('im_comprobante_id, im_remito_id, im_remito_numero, im_factura_id, im_factura_numero, facturado_at, total')
           .eq('tenant_id', TENANT_ID)
           .or(`im_comprobante_id.in.(${idsImpresos.join(',')}),im_remito_id.in.(${idsImpresos.join(',')})`)
       : { data: [] as any[] };
@@ -341,9 +341,15 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
     }
     const pedidos = pedidosCrudos.map((p: any) => {
       const e = vivoPor.get(String(p.im_comprobante_id));
+      /**
+       * 🔴 EL IMPORTE ES EL DE LA FACTURA, no el que se copió al armar la hoja. Mati (10/09/2026)
+       * sobre URUEÑA: *"en la hoja de ruta tampoco impacta esa modificación"* — el pedido decía
+       * $1.111.521,00 y la factura salió por $1.073.534,08. El repartidor cobra por este papel.
+       */
       return e
         ? { ...p, im_remito_numero: p.im_remito_numero ?? e.im_remito_numero,
-            im_factura_id: p.im_factura_id ?? e.im_factura_id, facturado_at: p.facturado_at ?? e.facturado_at }
+            im_factura_id: p.im_factura_id ?? e.im_factura_id, facturado_at: p.facturado_at ?? e.facturado_at,
+            total: e.facturado_at && e.total != null ? Number(e.total) : p.total }
         : p;
     });
 
