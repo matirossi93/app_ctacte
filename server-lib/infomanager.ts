@@ -1,4 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
+import type { ComprobantePendiente } from './saldoCliente.js';
 
 const BASE = process.env.INFOMANAGER_BASE_URL || 'https://impedidos.infomanager.com.ar/api/v1';
 const CLIENT_ID = process.env.INFOMANAGER_CLIENT_ID || 'ck_elmanantialsrl_base';
@@ -1394,6 +1395,43 @@ export interface DisponibleCliente {
 }
 
 /** GET /reportes/disponible_por_cliente — saldo + cupo de crédito del cliente. */
+/** Ver el 🪤 de `comprobantesPendientesCliente`: con 'S' el reporte vuelve vacío. */
+const TAG_PENDIENTES = process.env.IM_TAG_PENDIENTES || 'N';
+
+/**
+ * LOS COMPROBANTES QUE EL CLIENTE TODAVÍA NO PAGÓ.
+ *
+ * 🔴 Es la fuente correcta de la deuda, y NO es `disponible_por_cliente` —que devuelve el crédito
+ * disponible y se saltea los comprobantes más nuevos—. Medido el 10/09/2026: para BUSTOS daba
+ * $1.560.303,87 cuando debía $2.788.891,38, y para BACA daba 0 cuando tenía $47.436 a favor.
+ *
+ * Verificado contra `/reportes/saldos_clientes` en cuatro clientes: la suma de estos saldos da
+ * exactamente el `tot_saldo` de ese reporte. Dos fuentes independientes que coinciden al centavo.
+ *
+ * 🪤 `tag` es obligatorio y NO es el 'S' de los comprobantes: con 'S' devuelve la lista VACÍA y
+ * con cualquier otro valor devuelve los datos. Va 'N', que es el que se probó.
+ */
+export async function comprobantesPendientesCliente(
+  codCliente: number, codEmpresa = 1,
+): Promise<ComprobantePendiente[]> {
+  const cli = await imClient();
+  const { data } = await imGetRetry(
+    () => cli.get('/reportes/comprob_pendientes_clientes', {
+      params: { tag: TAG_PENDIENTES, codCliente, codEmpresa },
+    }),
+    `comprob_pendientes_clientes ${codCliente}`,
+  );
+  const filas = data?.results ?? data?.comprobantes ?? (Array.isArray(data) ? data : []);
+  return (filas as any[]).map(f => ({
+    id: String(f.id),
+    tipo_comprobante: String(f.tipo_comprobante ?? '').trim(),
+    saldo: Number(f.saldo ?? 0),
+    numero: f.numero != null ? String(f.numero) : null,
+    punto_de_venta: f.punto_de_venta != null ? String(f.punto_de_venta) : null,
+    fecha: typeof f.fecha_factura === 'string' ? f.fecha_factura.slice(0, 10) : null,
+  }));
+}
+
 export async function getDisponibleCliente(codCliente: number): Promise<DisponibleCliente | null> {
   const cli = await imClient();
   const { data } = await imGetRetry(

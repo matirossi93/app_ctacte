@@ -163,3 +163,7 @@
     .imp-tabla .escribir, .imp-tabla .saldo { background: #fff !important; }
     @page { margin: 8mm 7mm; }
 }
+
+/* La nota de crédito o débito de la entrega: se lee como un renglón aparte del pedido. */
+.imp-nota td { font-style: italic; }
+.imp-nota td.c, .imp-nota td.n { font-weight: 700; }

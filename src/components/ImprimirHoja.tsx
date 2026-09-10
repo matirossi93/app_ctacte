@@ -18,9 +18,15 @@ import './ImprimirHoja.css';
  */
 
 interface Comprobante { im_numero: number | null; im_remito_numero?: number | null; bultos: number; kg: number; total: number; facturado: boolean }
+/**
+ * 🔴 Las notas de crédito y débito de ESTA entrega. Mati (10/09/2026): *"la NC de Baca tiene que
+ * impactar en el importe total que se le va a entregar en ese pedido"*. El total del cliente ya
+ * viene ajustado del servidor; acá se muestra el renglón para que se entienda por qué.
+ */
+interface NotaFila { tipo: string; numero: number | null; total: number }
 interface ClienteFila {
     cod_cliente: number; cliente_nombre: string | null; saldo_anterior: number | null;
-    comprobantes: Comprobante[]; total: number; bultos: number; kg: number;
+    comprobantes: Comprobante[]; notas?: NotaFila[]; total: number; bultos: number; kg: number;
 }
 interface Fraccion { descripcion: string; cantidades: number[]; paquetes: number; kg: number }
 interface Datos {
@@ -119,7 +125,9 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
                             cliente entre dos páginas al imprimir, y las filas no se cruzan.
                             Antes iban todas en un <tbody> con fragments sin key. */}
                         {datos.clientes.map(c => {
-                            const filas = c.comprobantes.length;
+                            const notas = c.notas ?? [];
+                            // Las notas ocupan su propia fila: el rowSpan del total tiene que contarlas.
+                            const filas = c.comprobantes.length + notas.length;
                             return (
                             <tbody className="imp-grupo" key={c.cod_cliente}>
                                 {c.comprobantes.map((x, i) => (
@@ -145,6 +153,19 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
                                                 {c.saldo_anterior != null ? money(c.saldo_anterior) : '—'}
                                             </td>
                                         )}
+                                    </tr>
+                                ))}
+                                {/* 🔴 Lo que se le acreditó o se le cobró de más sobre este pedido.
+                                    Sin este renglón el repartidor cobra la factura entera. */}
+                                {notas.map((n, i) => (
+                                    <tr key={c.cod_cliente + '-nota-' + (n.numero ?? i)} className="imp-nota">
+                                        <td></td>
+                                        <td className="c">{n.tipo}{n.numero != null ? ` ${n.numero}` : ''}</td>
+                                        <td className="n">—</td>
+                                        <td className="n">
+                                            {money(/^NC/i.test(n.tipo) ? -Math.abs(n.total) : Math.abs(n.total))}
+                                        </td>
+                                        <td className="n escribir"></td>
                                     </tr>
                                 ))}
                             </tbody>

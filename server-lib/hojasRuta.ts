@@ -17,7 +17,7 @@ import type { JwtPayload } from './auth.js';
 import { puedeArmarHojasDeRuta } from './permisos.js';
 import {
   fetchVentas, fetchVentasItems, fetchArticulosCatalogo, fetchClientesIMCached,
-  fechaArgentina, getDisponibleCliente,
+  fechaArgentina, comprobantesPendientesCliente,
 } from './infomanager.js';
 import { pesoDeRenglones, cargaDelCamion } from './pesoComprobante.js';
 import { vistaDeRango, invalidarVista } from './vistaPresupuestos.js';
@@ -25,6 +25,7 @@ import { vistaRemitos, invalidarRemitos } from './vistaRemitos.js';
 import { armarFraccionado, totalesFraccionado } from './fraccionado.js';
 import { formatosDeBolsa } from './formatosBolsa.js';
 import { sugerirRepartos } from './sugerirRepartos.js';
+import { saldoAnteriorDeLaHoja, ajusteDeNotas } from './saldoCliente.js';
 
 /** Sólo la oficina. Devuelve true si ya contestó el 403. */
 function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
@@ -313,7 +314,7 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
       .filter((id: string) => /^[0-9]+$/.test(id));
     const { data: emitidosImp } = idsImpresos.length
       ? await sb().from('presupuestos_facturados')
-          .select('im_comprobante_id, im_remito_id, im_remito_numero, im_factura_numero, facturado_at')
+          .select('im_comprobante_id, im_remito_id, im_remito_numero, im_factura_id, im_factura_numero, facturado_at')
           .eq('tenant_id', TENANT_ID)
           .or(`im_comprobante_id.in.(${idsImpresos.join(',')}),im_remito_id.in.(${idsImpresos.join(',')})`)
       : { data: [] as any[] };
@@ -325,7 +326,8 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
     const pedidos = pedidosCrudos.map((p: any) => {
       const e = vivoPor.get(String(p.im_comprobante_id));
       return e
-        ? { ...p, im_remito_numero: p.im_remito_numero ?? e.im_remito_numero, facturado_at: p.facturado_at ?? e.facturado_at }
+        ? { ...p, im_remito_numero: p.im_remito_numero ?? e.im_remito_numero,
+            im_factura_id: p.im_factura_id ?? e.im_factura_id, facturado_at: p.facturado_at ?? e.facturado_at }
         : p;
     });
 
@@ -345,6 +347,7 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
         im_comprobante_id: p.im_comprobante_id, im_numero: p.im_numero,
         bultos: Number(p.bultos ?? 0), kg: Number(p.kg ?? 0), total: Number(p.total ?? 0),
         im_remito_numero: p.im_remito_numero ?? null,
+        im_factura_id: p.im_factura_id ?? null,
         facturado: !!p.facturado_at,
       });
       c.total += Number(p.total ?? 0);
@@ -356,33 +359,62 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
     }
 
     /**
-     * 🔴 EL SALDO ANTERIOR SE RECALCULA AL IMPRIMIR, NO SE IMPRIME EL CONGELADO.
+     * 🔴 LAS NOTAS DE CRÉDITO Y DÉBITO DE ESTA ENTREGA.
      *
-     * Mati (10/09/2026): *"los saldos de los clientes que tira en la hoja de ruta no son
-     * correctos"*. Y no lo eran: el número se guardaba cuando el pedido se metía en la hoja y no
-     * se volvía a mirar. Medido ese día contra InfoManager, con hojas armadas el día anterior:
-     * MERCADO tenía $732.783,68 guardado contra $1.223.064,96 real y AVILA $1.761.968,80 contra
-     * $1.355.626,77. Entre que se arma la hoja y sale el camión el cliente paga, se le factura
-     * otra cosa, o las dos.
+     * Mati (10/09/2026): *"la NC de Baca tiene que impactar en el importe total que se le va a
+     * entregar en ese pedido"*. Sin esto el repartidor le cobra la factura entera y el cliente
+     * paga de más algo que ya se le acreditó.
      *
-     * 🪤 Y hay que RESTAR lo de esta hoja. "Saldo anterior" es lo que el cliente debía ANTES de
-     * esta entrega, y la factura de este pedido YA está en su cuenta corriente cuando se imprime
-     * —la hoja se arma con remitos, que salen después de facturar—. Sin restarlo, el repartidor
-     * sumaría dos veces el pedido que lleva en el camión.
+     * El vínculo nota→factura vive de nuestro lado (`facturas_correcciones`): la API de IM no
+     * tiene ningún campo que lo guarde.
+     */
+    const facturasDeLaHoja = [...new Set(pedidos
+      .map((p: any) => p.im_factura_id).filter(Boolean).map(String))];
+    const notasPorFactura = new Map<string, Array<{ tipo: string; total: number; id: string; numero: number | null }>>();
+    if (facturasDeLaHoja.length) {
+      const { data: correcciones } = await sb().from('facturas_correcciones')
+        .select('im_factura_id, im_comprobante_id, tipo, numero, total')
+        .eq('tenant_id', TENANT_ID).in('im_factura_id', facturasDeLaHoja);
+      for (const n of correcciones ?? []) {
+        const k = String((n as any).im_factura_id);
+        if (!notasPorFactura.has(k)) notasPorFactura.set(k, []);
+        notasPorFactura.get(k)!.push({
+          tipo: String((n as any).tipo), total: Number((n as any).total ?? 0),
+          id: String((n as any).im_comprobante_id), numero: (n as any).numero ?? null,
+        });
+      }
+    }
+
+    /**
+     * 🔴 EL SALDO ANTERIOR SALE DE LOS COMPROBANTES IMPAGOS, NO DEL CRÉDITO DISPONIBLE.
      *
-     * Sólo se resta lo que está facturado: un remito sin factura todavía no tocó la cuenta.
-     * Si InfoManager no contesta, queda el guardado — es viejo, pero es lo que había.
+     * Mati (10/09/2026): *"siguen mal los saldos de las facturas adeudadas anteriores: tiene que
+     * ir únicamente el saldo anterior a la factura que está yendo en esa hoja de ruta"*.
+     *
+     * Se usaba `/reportes/disponible_por_cliente`, que devuelve otra cosa y se saltea los
+     * comprobantes más nuevos: para BUSTOS daba $1.560.303,87 cuando debía $2.788.891,38 y para
+     * BACA daba 0 cuando tenía $47.436 a favor. Ahora se suman los comprobantes que le quedan
+     * impagos —la fuente que cierra al centavo contra `/reportes/saldos_clientes`— y se sacan
+     * los de esta entrega: su factura y las notas que la corrigen.
+     *
+     * Si InfoManager no contesta queda el guardado: es viejo, pero es lo que había.
      */
     await Promise.all([...porCliente.values()].map(async (c: any) => {
+      const notas = c.comprobantes.flatMap((x: any) =>
+        x.im_factura_id ? (notasPorFactura.get(String(x.im_factura_id)) ?? []) : []);
+      // El total del camión ya descuenta la nota de crédito.
+      c.ajuste_notas = ajusteDeNotas(notas);
+      c.notas = notas.map((n: any) => ({ tipo: n.tipo, numero: n.numero, total: n.total }));
+      c.total = Math.round((Number(c.total ?? 0) + c.ajuste_notas) * 100) / 100;
       try {
-        const d = await getDisponibleCliente(Number(c.cod_cliente));
-        if (!d) return;
-        const enLaHoja = c.comprobantes
-          .filter((x: any) => x.facturado)
-          .reduce((s: number, x: any) => s + Number(x.total ?? 0), 0);
-        c.saldo_anterior = Math.round((Number(d.saldo) - enLaHoja) * 100) / 100;
+        const pendientes = await comprobantesPendientesCliente(Number(c.cod_cliente), Number((hoja as any).cod_empresa) || 1);
+        const deEstaEntrega = [
+          ...c.comprobantes.map((x: any) => x.im_factura_id).filter(Boolean),
+          ...notas.map((n: any) => n.id),
+        ];
+        c.saldo_anterior = saldoAnteriorDeLaHoja(pendientes, deEstaEntrega);
       } catch (e: any) {
-        console.warn(`[impresionHoja] sin saldo al día del cliente ${c.cod_cliente}, uso el guardado:`, e?.message);
+        console.warn(`[impresionHoja] sin deuda al día del cliente ${c.cod_cliente}, uso el guardado:`, e?.message);
       }
     }));
 
@@ -624,9 +656,11 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
 
     // El saldo del cliente: es JUSTO lo que hoy escriben a mano en la hoja impresa. Se consulta
     // de a uno porque IM no tiene un endpoint masivo; son pocos por hoja y se guarda el número.
+    // 🪤 De la MISMA fuente que la impresión: este número es el respaldo para cuando IM no
+    // conteste al imprimir, y guardar acá uno de otro reporte dejaba dos verdades distintas.
     const saldos = new Map<number, number | null>();
     await Promise.all([...new Set(entrada.map(p => Number(p.cod_cliente)))].map(async (cod) => {
-      try { const d = await getDisponibleCliente(cod); saldos.set(cod, d ? d.saldo : null); }
+      try { saldos.set(cod, saldoAnteriorDeLaHoja(await comprobantesPendientesCliente(cod), [])); }
       catch { saldos.set(cod, null); }   // sin saldo se imprime en blanco, como hoy
     }));
 

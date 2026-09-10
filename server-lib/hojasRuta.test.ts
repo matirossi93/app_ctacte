@@ -10,11 +10,13 @@ vi.hoisted(() => { process.env.INFOMANAGER_CLIENT_SECRET = 'test-secret'; });
 const m = vi.hoisted(() => ({
   sbMock: vi.fn(),
   getDisponibleCliente: vi.fn(),
+  comprobantesPendientesCliente: vi.fn(),
 }));
 
 vi.mock('./infomanager.js', () => ({
   fetchVentas: vi.fn(), fetchVentasItems: vi.fn(), fetchArticulosCatalogo: vi.fn(),
   fetchClientesIMCached: vi.fn(), getDisponibleCliente: m.getDisponibleCliente,
+  comprobantesPendientesCliente: m.comprobantesPendientesCliente,
   fechaArgentina: () => '2026-09-07',
 }));
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
@@ -53,6 +55,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   fakeSb();
   m.getDisponibleCliente.mockResolvedValue({ saldo: 12345.67 });
+  // La deuda sale de los comprobantes impagos: 12.000 + 345,67 = 12.345,67.
+  m.comprobantesPendientesCliente.mockResolvedValue([
+    { id: 'fa-vieja', tipo_comprobante: 'FA', saldo: 12000, numero: '1', punto_de_venta: '777', fecha: '2026-09-01' },
+    { id: 'fa-vieja-2', tipo_comprobante: 'FA', saldo: 345.67, numero: '2', punto_de_venta: '777', fecha: '2026-09-02' },
+  ]);
 });
 
 describe('quién entra al panel', () => {
@@ -110,7 +117,7 @@ describe('asignar pedidos a una hoja', () => {
     // Un cero dice "no debe nada" y el repartidor no le reclama. En blanco dice "fijate".
     tablas['hojas_ruta'] = { data: { id: 'h1', numero: 3395, estado: 'abierta' }, error: null };
     tablas['hojas_ruta_pedidos'] = { data: [], error: null };
-    m.getDisponibleCliente.mockRejectedValue(new Error('IM caído'));
+    m.comprobantesPendientesCliente.mockRejectedValue(new Error('IM caído'));
 
     const r = await llamar(asignarPedidos, { params: { id: 'h1' }, body: { pedidos: [PEDIDO] } });
 
