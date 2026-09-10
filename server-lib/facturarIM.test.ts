@@ -597,3 +597,54 @@ describe('los campos AFIP de la factura', () => {
     expect(b.afip_cond_vta).toBe(4);           // 4 = cuenta corriente, que es como factura el panel
   });
 });
+
+/**
+ * 🔴 LA NOTA DE CRÉDITO TAMBIÉN SALE POR CONTROLADOR FISCAL SIN ESTOS CAMPOS.
+ *
+ * Mati (10/09/2026): *"la NC se está generando en controlador fiscal, debería seguir la misma
+ * suerte de todo el otro circuito, que no involucre a AFIP, es interno"*.
+ *
+ * Es el mismo problema que tuvieron las facturas el 09/09 y se arregla igual: `emitirNota` nunca
+ * mandaba los campos AFIP, así que quedaban en `null`. Leídas 45 notas de la oficina del 15/08 al
+ * 10/09/2026 —las que SÍ salen internas— el patrón es:
+ *
+ *   afip_comprobantes_fe ""  (36 NC + 4 ND)      afip_tipdoc_fe  0  (45/45)
+ *   afip_conceptos_fe    1 en las NC, 0 en las ND  afip_cond_vta   0  (45/45)
+ *   afip_cod_barra       ""                        id_destino      1  (39/45)
+ *
+ * ⚠️ `talonario_manual` y `mueve_stock` quedan en `null` porque IM los descarta al crear por API,
+ * y NO son los que deciden: la factura A 1630 del panel también los tiene en null y sale interna.
+ */
+describe('los campos AFIP de la nota de crédito', () => {
+  it('🔴 la NC va con los mismos campos que las que hace la oficina', async () => {
+    const { emitirNotaCredito } = await import('./facturarIM.js');
+    const post = mockIM({ isCreated: true, venta: { id: 9, numero: 7 } });
+    await emitirNotaCredito({ ...DATOS, numero: 7 } as any);
+    const b = (post.mock.calls[0] as any[])[1];
+    expect(b.afip_comprobantes_fe).toBe('');
+    expect(b.afip_conceptos_fe).toBe(1);
+    expect(b.afip_tipdoc_fe).toBe(0);
+    expect(b.afip_cond_vta).toBe(0);
+    expect(b.afip_cod_barra).toBe('');
+  });
+
+  it('🔑 la ND lleva conceptos en 0: es lo que tienen las 4 de la oficina', async () => {
+    const { emitirNotaDebito } = await import('./facturarIM.js');
+    const post = mockIM({ isCreated: true, venta: { id: 9, numero: 745 } });
+    await emitirNotaDebito({ ...DATOS, numero: 745 } as any);
+    expect((post.mock.calls[0] as any[])[1].afip_conceptos_fe).toBe(0);
+  });
+
+  /**
+   * 🪤 El destino NO se elige: sale de `/puntos-de-venta`. Leído el 10/09/2026, la empresa 1
+   * tiene el 999 sólo con destino 3 y el 777 sólo con destino 1 — mandar otro da "no está
+   * relacionado a un punto de venta existente".
+   */
+  it('🪤 el destino va atado al punto de venta, no se inventa', async () => {
+    const { emitirNotaCredito } = await import('./facturarIM.js');
+    const post = mockIM({ isCreated: true, venta: { id: 9, numero: 7 } });
+    await emitirNotaCredito({ ...DATOS, numero: 7 } as any);
+    const b = (post.mock.calls[0] as any[])[1];
+    expect(b.id_destino).toBe(b.punto_de_venta === 999 ? 3 : 1);
+  });
+});

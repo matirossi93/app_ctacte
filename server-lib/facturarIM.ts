@@ -132,7 +132,7 @@ const PTO_VENTA_NC = Number(process.env.IM_PTO_VENTA_NC || 999);
  * que EXISTIR en `/puntos-de-venta` o IM contesta "no está relacionado a un punto de venta
  * existente". El 999 de la empresa 1 es destino 3; el 777 es destino 1.
  */
-const ID_DESTINO_NC = Number(process.env.IM_ID_DESTINO_NC || 3);
+const ID_DESTINO_NC = Number(process.env.IM_ID_DESTINO_NC || (PTO_VENTA_NC === 999 ? 3 : 1));
 /**
  * En el 999 IM asigna el correlativo solo con `numero: 0` (probado: NC B nº2, ND B nº1). En el
  * 777 no, y ahí hay que calcularlo. Con la variable en 0 se usa el camino de calcular.
@@ -702,6 +702,32 @@ export async function emitirNotaDebito(
  * tres caminos el 08/09/2026). Lo que sí hace la oficina es escribirlo en las observaciones, así
  * que quien llama manda ahí "SEGUN FACTURA 50401" y el vínculo exacto se guarda de nuestro lado.
  */
+/**
+ * 🔴 LOS CAMPOS AFIP DE LA NOTA. Sin ellos IM la manda al CONTROLADOR FISCAL.
+ *
+ * Mati (10/09/2026): *"la NC se está generando en controlador fiscal, debería seguir la misma
+ * suerte de todo el otro circuito, que no involucre a AFIP, es interno"*.
+ *
+ * Es el mismo problema que tuvieron las facturas el 09/09 y la misma solución: `emitirNota` no
+ * mandaba ninguno de estos campos y quedaban en `null`. Leídas 45 notas de la oficina del 15/08
+ * al 10/09/2026 —las que salen internas— el patrón es éste, y la única diferencia con las
+ * nuestras eran justamente estos cinco campos.
+ *
+ * `conceptos_fe` es lo único que cambia entre las dos: 1 en las 35 NC leídas, 0 en las 4 ND.
+ *
+ * ⚠️ `talonario_manual` y `mueve_stock` NO son los que deciden: la factura A 1630 del panel los
+ * tiene en `null` —IM los descarta al crear por API— y aun así sale interna.
+ */
+function camposAfipNota(tipo: 'NC' | 'ND') {
+  return {
+    afip_comprobantes_fe: '',
+    afip_conceptos_fe: tipo === 'NC' ? 1 : 0,
+    afip_tipdoc_fe: 0,
+    afip_cond_vta: 0,
+    afip_cod_barra: '',
+  };
+}
+
 async function emitirNota(
   tipo: 'NC' | 'ND',
   d: DatosComprobante & { numero?: number | null; observaciones?: string },
@@ -734,6 +760,8 @@ async function emitirNota(
       tipo_factura: letra,
       numero,
       punto_de_venta: PTO_VENTA_NC,
+      // 🔴 Sin esto la nota sale por el controlador fiscal (ver camposAfipNota).
+      ...camposAfipNota(tipo),
       condicion_venta_tipo: 2,
       talonario_manual: 'S',
       mueve_stock: 'N',
