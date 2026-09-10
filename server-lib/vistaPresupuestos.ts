@@ -63,6 +63,13 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
   const hit = _vistaCache.get(clave);
   if (!forzar && hit && Date.now() - hit.at < VISTA_TTL_MS) return hit.datos;
   {
+    /**
+     * ⏱️ Cuánto tardó, y en qué. Sin esto, cada vez que la pantalla se pone lenta hay que
+     * reproducirlo a mano contra IM desde el contenedor — y eso gasta cuota horaria de IM, que
+     * es justo lo que no sobra (10/09/2026).
+     */
+    const t0 = Date.now();
+    let tIM = 0;
     // 🪤 Esto miraba SÓLO la fecha exacta y se perdía la mayoría de los pedidos. Medido el
     // 07/09/2026: había 225 presupuestos vigentes y el panel mostraba 59. Los otros 166 eran
     // de días anteriores sin facturar y de días futuros — porque la oficina MUEVE la fecha del
@@ -137,11 +144,50 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
       }
     }
 
-    // Cuáles de estos presupuestos salieron de la app, para poder mostrar el vendedor y su error.
+    tIM = Date.now() - t0;
     const ids = presupuestos.map((p: any) => String(p.id));
-    const { data: nuestros } = await sb().from('pedidos_vendedor')
-      .select('id, im_presupuesto_id, cod_vendedor, estado, im_error')
-      .eq('tenant_id', TENANT_ID).in('im_presupuesto_id', ids);
+
+    /**
+     * 🔑 LAS CONSULTAS A SUPABASE VAN EN PARALELO, NO UNA ATRÁS DE LA OTRA.
+     *
+     * Mati (10/09/2026): *"sigue siendo muy lenta la parte de traer los presupuestos aprobados"*.
+     * Medido ese día desde el contenedor: eran 7 consultas encadenadas y **cada una cuesta ~240 ms
+     * de ida y vuelta**, sin importar si devuelve 0 filas o 88 — es latencia de red, no de la
+     * base. 7 × 240 = 1,79 s de la carga entera esperando a Supabase.
+     *
+     * Van en dos rondas porque las hojas y los retiros se buscan por presupuesto **y** por su
+     * remito, y ese id sale de la primera. Dos rondas ≈ 0,5 s.
+     *
+     * 🪤 `presupuestos_facturados` se pedía TRES veces con el mismo filtro y distintas columnas.
+     * Es una sola consulta con todas.
+     */
+    const [
+      { data: nuestros },
+      { data: revisiones },
+      { data: delRango },
+      { data: nuestrasFact },
+    ] = await Promise.all([
+      // Cuáles de estos presupuestos salieron de la app, para mostrar el vendedor y su error.
+      sb().from('pedidos_vendedor')
+        .select('id, im_presupuesto_id, cod_vendedor, estado, im_error')
+        .eq('tenant_id', TENANT_ID).in('im_presupuesto_id', ids),
+      // En qué quedó la revisión de la oficina. `null` = todavía no la miró nadie.
+      sb().from('presupuestos_revision')
+        .select('im_comprobante_id, estado, observacion, revisado_at')
+        .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids),
+      // Lo emitido de estos presupuestos: remito (para la hoja), salida de depósito y factura.
+      sb().from('presupuestos_facturados')
+        .select('im_comprobante_id, im_remito_id, im_remito_numero, facturado_at')
+        .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids),
+      /**
+       * 🪤 Ésta va SIN filtro de ids a propósito: es el índice de qué factura emitimos nosotros,
+       * y `buscarFacturasYaEmitidas` lo cruza contra las facturas vivas del rango para no acusar
+       * de duplicada a una factura que ya sabemos de quién es.
+       */
+      sb().from('presupuestos_facturados')
+        .select('im_comprobante_id, im_factura_id, im_factura_numero, im_factura_tipo')
+        .eq('tenant_id', TENANT_ID).not('im_factura_id', 'is', null),
+    ]);
     const mio = new Map((nuestros ?? []).map((p: any) => [String(p.im_presupuesto_id), p]));
 
     /**
@@ -203,10 +249,6 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
       console.warn('[vistaPresupuestos] no pude evaluar las listas:', e?.message);
     }
 
-    // En qué quedó la revisión de la oficina. `null` = todavía no la miró nadie.
-    const { data: revisiones } = await sb().from('presupuestos_revision')
-      .select('im_comprobante_id, estado, observacion, revisado_at')
-      .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
     const revisionPor = new Map((revisiones ?? []).map((r: any) => [String(r.im_comprobante_id), r]));
 
     /**
@@ -216,14 +258,17 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
      * `hojas_ruta_pedidos` no encuentra nada y el badge "en una hoja" no se mostraba nunca más.
      * Se busca el presupuesto **y** el remito que salió de él.
      */
-    const { data: emitidos } = await sb().from('presupuestos_facturados')
-      .select('im_comprobante_id, im_remito_id').eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
-    const remitoDe = new Map((emitidos ?? [])
+    const remitoDe = new Map((delRango ?? [])
       .filter((e: any) => e.im_remito_id)
       .map((e: any) => [String(e.im_comprobante_id), String(e.im_remito_id)]));
     const aBuscar = [...new Set([...ids, ...remitoDe.values()])];
-    const { data: asignados } = await sb().from('hojas_ruta_pedidos')
-      .select('im_comprobante_id, hoja_id').in('im_comprobante_id', aBuscar);
+    // Las dos que dependen del remito, juntas.
+    const [{ data: asignados }, { data: retiros }] = await Promise.all([
+      sb().from('hojas_ruta_pedidos')
+        .select('im_comprobante_id, hoja_id').in('im_comprobante_id', aBuscar),
+      sb().from('retiros_sucursal')
+        .select('im_comprobante_id').eq('tenant_id', TENANT_ID).in('im_comprobante_id', aBuscar),
+    ]);
     const hojaPorId = new Map((asignados ?? []).map((a: any) => [String(a.im_comprobante_id), String(a.hoja_id)]));
     const enHoja = new Map<string, string>();
     for (const id of ids) {
@@ -238,8 +283,6 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
      * pantalla no daba ninguna señal de que la acción hubiera hecho algo — y se los podía mandar
      * a una hoja igual, quedando en el camión Y en el mostrador (auditoría del 08/09/2026).
      */
-    const { data: retiros } = await sb().from('retiros_sucursal')
-      .select('im_comprobante_id').eq('tenant_id', TENANT_ID).in('im_comprobante_id', aBuscar);
     const retiroPorId = new Set((retiros ?? []).map((r: any) => String(r.im_comprobante_id)));
     const enRetiro = new Set<string>(ids.filter((id: string) =>
       retiroPorId.has(id) || (remitoDe.has(id) && retiroPorId.has(remitoDe.get(id)!))));
@@ -252,10 +295,7 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
      * eso significaba contar una demanda que el stock ya tenía descontada, o sea faltantes al
      * doble. Auditoría del 08/09/2026.
      */
-    const { data: facturados } = await sb().from('presupuestos_facturados')
-      .select('im_comprobante_id, im_remito_numero, facturado_at')
-      .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
-    const yaSalio = new Set((facturados ?? [])
+    const yaSalio = new Set((delRango ?? [])
       .filter((f: any) => f.im_remito_numero != null || f.facturado_at != null)
       .map((f: any) => String(f.im_comprobante_id)));
 
@@ -268,9 +308,6 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
      * están todos en `tipo_presupuesto: 'C'`. Se deduce comparando contra las facturas reales del
      * rango — mismo cliente, mismo importe al centavo.
      */
-    const { data: nuestrasFact } = await sb().from('presupuestos_facturados')
-      .select('im_comprobante_id, im_factura_id, im_factura_numero, im_factura_tipo')
-      .eq('tenant_id', TENANT_ID).not('im_factura_id', 'is', null);
     const nuestras = new Map((nuestrasFact ?? []).map((n: any) => [String(n.im_comprobante_id), {
       im_factura_id: n.im_factura_id ?? null,
       im_factura_numero: n.im_factura_numero ?? null,
@@ -439,6 +476,8 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
       ),
     };
     _vistaCache.set(clave, { at: Date.now(), datos });
+    const total = Date.now() - t0;
+    console.log(`[vistaDeRango] ${desde}..${hasta}: ${total} ms (IM ${tIM} ms · resto ${total - tIM} ms) · ${presupuestos.length} pedidos${forzar ? ' · forzado' : ''}`);
     return datos;
   }
 }

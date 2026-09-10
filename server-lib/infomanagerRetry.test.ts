@@ -26,6 +26,13 @@ function httpError(status?: number, code?: string): Error {
   return err;
 }
 
+/** El 500 con el que IM avisa que un comprobante fue borrado (verificado el 10/09/2026). */
+function sinDatos(id: number): Error {
+  const err: any = new Error('HTTP 500');
+  err.response = { status: 500, data: { mensaje: 'Ocurrió un error al obtener información.', detalles: `No se encontraron datos para el id: ${id}` } };
+  return err;
+}
+
 beforeEach(() => {
   vi.useFakeTimers();   // evita esperar los backoffs reales de 1s/2s
   vi.resetAllMocks();   // limpia implementaciones y colas *Once entre tests
@@ -70,6 +77,19 @@ describe('imGetRetry', () => {
     await vi.runAllTimersAsync();
     await rechazo;
     expect(fn).toHaveBeenCalledTimes(3);
+  });
+
+  /**
+   * 🔴 Mati (10/09/2026): *"sigo sin poder sacar a Bianconi, sigue diciendo que le falta el
+   * remito cuando no es así"*. La factura estaba BORRADA en IM, y IM avisa eso con un 500:
+   * `{"detalles":"No se encontraron datos para el id: 58779252"}`. Reintentarlo son 3 s de
+   * espera al pedo en cada carga de la pantalla, y el error final se lee como "no pude
+   * preguntar" en vez de "no está".
+   */
+  it('ante el 500 de "no se encontraron datos" NO reintenta: el comprobante no existe', async () => {
+    const fn = vi.fn().mockRejectedValue(sinDatos(58779252));
+    await expect(imGetRetry(fn, 'test-borrado')).rejects.toThrow('HTTP 500');
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });
 

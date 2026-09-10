@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import type { ComprobantePendiente } from './saldoCliente.js';
 import { cuerpoParaMoverFecha } from './moverFechaComprobante.js';
+import { comprobanteNoExiste, esComprobanteBorrado } from './comprobanteBorrado.js';
 
 const BASE = process.env.INFOMANAGER_BASE_URL || 'https://impedidos.infomanager.com.ar/api/v1';
 const CLIENT_ID = process.env.INFOMANAGER_CLIENT_ID || 'ck_elmanantialsrl_base';
@@ -79,13 +80,16 @@ export async function imGetRetry<T>(fn: () => Promise<T>, label: string, attempt
     } catch (err: any) {
       lastErr = err;
       const status = err?.response?.status;
-      const transitorio = status === undefined || status >= 500 || status === 429 || status === 401
-        || ['ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN'].includes(err?.code);
+      // 🪤 IM avisa "ese id no existe" con un 500 (ver comprobanteBorrado.ts). Reintentarlo son
+      // 3 s de espera al pedo por consulta, y la respuesta no va a cambiar.
+      const transitorio = !esComprobanteBorrado(err)
+        && (status === undefined || status >= 500 || status === 429 || status === 401
+        || ['ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN'].includes(err?.code));
       // IM puede matar sesiones server-side antes del exp del JWT y responder
       // 500 body vacío o 401 con token 'vigente' (incidente 06-07/07/2026)
       // → renovar credencial antes de reintentar. Se invalida incluso si ya no
       // quedan intentos: que el PRÓXIMO request arranque con login fresco.
-      if (status === 401 || (typeof status === 'number' && status >= 500)) invalidateImToken();
+      if (transitorio && (status === 401 || (typeof status === 'number' && status >= 500))) invalidateImToken();
       if (!transitorio || intento === attempts) break;
       const backoff = 1000 * Math.pow(2, intento - 1); // 1s, 2s, 4s
       console.warn(`[IM retry] ${label}: intento ${intento}/${attempts} falló (${status ?? err?.code ?? err?.message}); reintento en ${backoff}ms`);
@@ -1225,12 +1229,14 @@ export async function cabeceraComprobante(
       fecha_entrega: typeof c.fecha_entrega === 'string' && c.fecha_entrega.length >= 10 ? c.fecha_entrega.slice(0, 10) : null,
     };
   } catch (err: any) {
-    // 🔑 404 = el comprobante YA NO ESTÁ en IM. No es lo mismo que "no pude preguntar":
-    // los anulados se borran a mano seguido, así que un pedido puede quedar apuntando a un
-    // id muerto — y por el camino barato eso termina en un 500 sin explicación.
-    // `existe: null` es "no sé" (IM no contestó) y no habilita a nadie a asumir nada.
+    // 🔑 EL COMPROBANTE YA NO ESTÁ EN IM. No es lo mismo que "no pude preguntar": los anulados
+    // se borran a mano seguido, así que un pedido puede quedar apuntando a un id muerto.
+    // 🪤 IM lo dice de DOS formas y las dos cuentan: 404, o un 500 con "No se encontraron datos
+    // para el id" (ver comprobanteBorrado.ts). Tomar ese 500 por transitorio dejó el pedido de
+    // BIANCONI clavado en "falta remito" el 10/09/2026, sin forma de sacarlo desde la app.
+    // `existe: null` sigue siendo "no sé" (IM no contestó) y no habilita a nadie a asumir nada.
     return {
-      fecha: null, anulada: null, existe: err?.response?.status === 404 ? false : null, observaciones: null,
+      fecha: null, anulada: null, existe: comprobanteNoExiste(err) ? false : null, observaciones: null,
       numero: null, cod_cliente: null, cod_vendedor: null, cod_empresa: null,
       cod_lista_precios: null, punto_de_venta: null, usuario: null, tipo_presupuesto: null, fecha_entrega: null,
     };
