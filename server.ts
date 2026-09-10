@@ -22,7 +22,7 @@ import {
 import { hasSupabase, sb, TENANT_ID } from './server-lib/supabase.js';
 import { syncVentasMesActual, syncVentasMeses } from './server-lib/syncVentas.js';
 import { getMonthlyVentasRaw, getMonthlyItemsRaw, snapshotCacheStats } from './server-lib/snapshotCache.js';
-import { fetchArticulosCatalogo, imGetRetry, fetchVendedores, imClient } from './server-lib/infomanager.js';
+import { fetchArticulosCatalogo, fetchStockPorDeposito, imGetRetry, fetchVendedores, imClient } from './server-lib/infomanager.js';
 import {
   uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, editarRecibo, cuentasDebug, cuentasRefresh, cuentasEfectivo,
   reverificarMP, elegirMatchMP, procesarColaMP, caducarRecibosPendientes, mpConfig
@@ -1520,6 +1520,28 @@ if (PREWARM_BOOT) setTimeout(() => {
     import('./server-lib/cuentasResolver.js')
         .then(m => m.prewarmCuentasCache())
         .catch(err => console.warn('[pre-warm cuentas] fallo:', err?.message ?? err));
+    /**
+     * 🔑 EL CATÁLOGO Y EL STOCK, PARA QUE LA PRIMERA PANTALLA NO LOS PAGUE.
+     *
+     * Mati (10/09/2026): *"sigue siendo muy lenta la parte de traer los presupuestos aprobados"*.
+     * Medido con el log de `vistaDeRango` en producción: la PRIMERA carga después de un deploy
+     * son ~11 s, y 8,6 de esos son estos dos —catálogo 6.066 ms, stock 2.602 ms—, que se traen
+     * de cero porque el proceso arrancó recién. Como hoy se despliega varias veces por día, esa
+     * primera carga se la come la oficina una y otra vez.
+     *
+     * 🪤 Son DOS requests por arranque, no un barrido: el catálogo lo baja igual el prewarm del
+     * snapshot un minuto después (y con esto lo va a encontrar cacheado, así que no suma), y el
+     * stock no lo precalentaba nadie. Van acá, a los 3 s, y no en el prewarm de :60, justo
+     * porque el problema es el minuto que va del arranque a la primera pantalla.
+     */
+    const tCat = Date.now();
+    fetchArticulosCatalogo()
+        .then(m => console.log(`[pre-warm on start] catálogo: ${m.size} artículos en ${Date.now() - tCat}ms`))
+        .catch(err => console.warn('[pre-warm catálogo] fallo:', err?.message ?? err));
+    const tStock = Date.now();
+    fetchStockPorDeposito(Number(process.env.PEDIDO_DEPOSITO || 1))
+        .then(m => console.log(`[pre-warm on start] stock: ${m.size} artículos en ${Date.now() - tStock}ms`))
+        .catch(err => console.warn('[pre-warm stock] fallo:', err?.message ?? err));
 }, 3000);
 else console.log('Pre-warm de boot DESACTIVADO (PREWARM_BOOT=off)');
 console.log('Cron pre-warm /api/data: */8 * * * *');
