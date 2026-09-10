@@ -54,7 +54,7 @@ import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, 
 import { pendientesDelDia, arrastreDelDia, impresionHoja, sugerenciaDelDia, listarHojas, listarCamiones, crearHoja, editarHoja, borrarHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
 import { tableroFacturacion, previsualizarFacturacion, facturarSeleccion, liberarReclamo } from './server-lib/facturarPresupuestos.js';
 // Corregir una factura ya emitida, con notas de crédito y de débito.
-import { verFacturaParaCorregir, corregirFactura, historialCorrecciones, notaFinanciera } from './server-lib/correccionFactura.js';
+import { verFacturaParaCorregir, corregirFactura, historialCorrecciones, notaFinanciera, moverFechaFactura } from './server-lib/correccionFactura.js';
 import { marcarRetiro, quitarRetiro, marcarRetirado, listarRetiros, resumenRetiros } from './server-lib/retirosSucursal.js';
 import { listarChoferes, liquidacionMensual } from './server-lib/liquidacionChoferes.js';
 import { listarAjustes, crearAjuste, borrarAjuste, candidatasAVincular, vincularAjuste } from './server-lib/ajustesEntrega.js';
@@ -689,6 +689,8 @@ app.get('/api/facturacion/corregir/:idFactura/historial', requireJwt, (req: any,
 app.post('/api/facturacion/corregir', requireJwt, (req: any, res) => corregirFactura(req, res));
 // Una NC/ND que no saca mercadería: diferencia de cambio, intereses, bonificación.
 app.post('/api/facturacion/nota-financiera', requireJwt, (req: any, res) => notaFinanciera(req, res));
+// La fecha es uno de los tres campos que IM deja tocar de una factura emitida.
+app.put('/api/facturacion/:idFactura/fecha', requireJwt, (req: any, res) => moverFechaFactura(req, res));
 
 app.get('/api/presupuestos/fraccionado', requireJwt, (req: any, res) => fraccionadoDelRango(req, res));
 // 🪤 Antes de `/:comprobanteId`: si no, la ruta con parámetro se come "consolidado".

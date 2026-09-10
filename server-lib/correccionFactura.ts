@@ -32,8 +32,9 @@ import type { JwtPayload } from './auth.js';
 import { sb, TENANT_ID } from './supabase.js';
 import { puedeArmarHojasDeRuta } from './permisos.js';
 import {
-  fetchVentasItems, fetchClientesIMCon, cabeceraComprobante, fechaArgentina,
+  fetchVentasItems, fetchClientesIMCon, cabeceraComprobante, fechaArgentina, moverFechaComprobante,
 } from './infomanager.js';
+import { diaValido } from './moverFechaComprobante.js';
 import { emitirNotaCredito, emitirNotaDebito, letraDeFactura } from './facturarIM.js';
 import { usuarioIM } from './pedidos.js';
 import { invalidarVista } from './vistaPresupuestos.js';
@@ -669,6 +670,71 @@ export async function notaFinanciera(req: Request & { user?: JwtPayload }, res: 
   } catch (err: any) {
     console.error('[notaFinanciera]', err?.message);
     res.status(502).json({ error: `No se pudo emitir: ${err?.message ?? 'sin respuesta de InfoManager'}` });
+  }
+}
+
+/**
+ * PUT /api/facturacion/:idFactura/fecha — mover la fecha de una factura emitida.
+ *
+ * body: `{ fecha: '2026-09-12', mover_remito?: boolean }`
+ *
+ * Mati (10/09/2026): *"necesito que podamos editar la fecha de la factura dentro de la app"*.
+ *
+ * 🪤 EL REMITO VA CON ELLA por defecto. La hoja de ruta se arma con REMITOS, así que mover sólo
+ * la factura deja la mercadería en un día y el comprobante en otro, y el pedido desaparece de la
+ * hoja donde lo buscan. Se puede desactivar por si alguna vez hace falta separarlos.
+ */
+export async function moverFechaFactura(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  const id = String(req.params.idFactura ?? '').trim();
+  if (!/^\d+$/.test(id)) { res.status(400).json({ error: 'Falta la factura.' }); return; }
+  const moverRemito = req.body?.mover_remito !== false;
+
+  let fecha: string;
+  try { fecha = diaValido(req.body?.fecha); }
+  catch (e: any) { res.status(400).json({ error: e?.message ?? 'Fecha inválida.' }); return; }
+
+  try {
+    const cab = await cabeceraComprobante(id);
+    if (cab.existe === false) { res.status(404).json({ error: 'Esa factura ya no está en InfoManager.' }); return; }
+    if (cab.existe !== true) { res.status(502).json({ error: 'No pude leer la factura en InfoManager.' }); return; }
+    if (cab.anulada) { res.status(409).json({ error: 'Esa factura está anulada.' }); return; }
+    if (cab.fecha === fecha) { res.status(400).json({ error: `La factura ya está fechada el ${fecha}.` }); return; }
+
+    const r = await moverFechaComprobante(id, fecha);
+    if (!r.ok) { res.status(502).json({ error: r.error }); return; }
+
+    const avisos: string[] = [];
+    if (r.aviso) avisos.push(r.aviso);
+
+    /**
+     * 🔑 El remito, que es lo que el repartidor lleva y con lo que se arma la hoja de ruta. El
+     * vínculo factura→remito vive de nuestro lado.
+     */
+    let remito: { numero: number | null; fecha: string } | null = null;
+    if (moverRemito) {
+      const { data: fila } = await sb().from('presupuestos_facturados')
+        .select('im_remito_id, im_remito_numero')
+        .eq('tenant_id', TENANT_ID).eq('im_factura_id', id).maybeSingle();
+      const idRemito = (fila as any)?.im_remito_id;
+      if (idRemito) {
+        const rr = await moverFechaComprobante(String(idRemito), fecha);
+        if (rr.ok) {
+          remito = { numero: (fila as any)?.im_remito_numero ?? null, fecha: rr.fecha };
+          if (rr.aviso) avisos.push(rr.aviso);
+        } else {
+          // 🔴 La factura YA se movió: no se puede volver atrás en silencio.
+          avisos.push(`La factura quedó en ${fecha} pero el remito ${(fila as any)?.im_remito_numero ?? ''} NO se pudo mover: ${rr.error}. Movelo a mano en InfoManager.`);
+        }
+      }
+    }
+
+    // Las vistas van por rango de fechas: con la fecha cambiada, lo cacheado ya no sirve.
+    invalidarVista(); invalidarRemitos();
+    res.json({ ok: true, fecha, numero: cab.numero, remito, avisos });
+  } catch (err: any) {
+    console.error('[moverFechaFactura]', err?.message);
+    res.status(502).json({ error: `No se pudo mover la fecha: ${err?.message ?? 'sin respuesta de InfoManager'}` });
   }
 }
 

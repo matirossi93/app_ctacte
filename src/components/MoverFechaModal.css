@@ -1,0 +1,30 @@
+.mf-fondo {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+  display: flex; align-items: center; justify-content: center; z-index: 60; padding: 1rem;
+}
+.mf-modal {
+  background: var(--color-surface, #fff); border-radius: 8px; width: min(460px, 100%);
+  padding: 1rem 1.1rem; box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+}
+.mf-header { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.6rem; }
+.mf-header h3 { display: flex; align-items: center; gap: 0.4rem; font-size: 1rem; margin: 0; }
+.mf-header button { background: none; border: none; cursor: pointer; color: var(--color-text-muted); }
+.mf-nota { font-size: 0.85rem; color: var(--color-text-muted); line-height: 1.4; margin: 0 0 0.7rem; }
+.mf-campo { display: flex; flex-direction: column; gap: 0.2rem; margin-bottom: 0.6rem; }
+.mf-campo > span { font-size: 0.75rem; text-transform: uppercase; font-weight: 700; color: var(--color-text-muted); }
+.mf-campo input { padding: 0.45rem 0.5rem; border: 1px solid var(--color-border); border-radius: 4px; font-size: 0.95rem; }
+.mf-check { display: flex; align-items: center; gap: 0.45rem; font-size: 0.83rem; margin-bottom: 0.8rem; cursor: pointer; }
+.mf-check input { width: 15px; height: 15px; accent-color: #06652F; }
+.mf-pie { display: flex; gap: 0.5rem; justify-content: flex-end; }
+.mf-btn {
+  padding: 0.45rem 0.8rem; border-radius: 5px; border: 1px solid var(--color-border);
+  background: none; cursor: pointer; font-size: 0.85rem; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 0.35rem;
+}
+.mf-btn.primario { background: #06652F; border-color: #06652F; color: #fff; }
+.mf-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.mf-error, .mf-mal { display: flex; gap: 0.4rem; align-items: flex-start; color: #b45309; font-size: 0.85rem; margin: 0 0 0.5rem; }
+.mf-ok { display: flex; gap: 0.4rem; align-items: center; color: #06652F; font-size: 0.9rem; margin: 0 0 0.4rem; }
+.mf-cargando { display: flex; gap: 0.4rem; align-items: center; font-size: 0.85rem; color: var(--color-text-muted); }
+.mf-listo { display: flex; flex-direction: column; gap: 0.3rem; align-items: flex-start; }
+.mf-listo .mf-btn { margin-top: 0.5rem; align-self: flex-end; }

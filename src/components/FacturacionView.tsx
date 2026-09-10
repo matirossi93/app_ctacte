@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-    AlertTriangle, Loader2, RefreshCw, Receipt, CheckCircle2, X, FileWarning, Printer, Pencil, Search,
+    AlertTriangle, Loader2, RefreshCw, Receipt, CheckCircle2, X, FileWarning, Printer, Pencil, Search, CalendarDays,
 } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import { coincide } from '../utils/buscar';
@@ -8,6 +8,7 @@ import { imprimirComprobante } from '../utils/imprimirComprobante';
 import { useRecargarAlVolver } from '../utils/recargarAlVolver';
 import { FacturarModal } from './FacturarModal';
 import { CorregirFacturaModal } from './CorregirFacturaModal';
+import { MoverFechaModal } from './MoverFechaModal';
 import './FacturacionView.css';
 
 /**
@@ -70,6 +71,8 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
      * lento. Acá se edita la factura como si se pudiera y salen la NC y la ND solas.
      */
     const [corrigiendo, setCorrigiendo] = useState<string | null>(null);
+    /** Mover la fecha de una factura emitida: es uno de los tres campos que IM deja tocar. */
+    const [moviendoFecha, setMoviendoFecha] = useState<string | null>(null);
     const [totales, setTotales] = useState<any>(null);
     const [sinAprobar, setSinAprobar] = useState(0);
     const [cargando, setCargando] = useState(true);
@@ -271,6 +274,13 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                                 <Pencil size={14} /> Corregir
                                             </button>
                                         )}
+                                        {p.im_factura_id && (
+                                            <button className="fc-imprimir fc-fecha"
+                                                    title="Cambiar la fecha de la factura y su remito"
+                                                    onClick={() => setMoviendoFecha(String(p.im_factura_id))}>
+                                                <CalendarDays size={14} /> Fecha
+                                            </button>
+                                        )}
                                         {/* 🔑 Cada nota se ve y se imprime desde acá. Mati (10/09/2026):
                                             *"tiene que aparecer en el panel para poder verla y también
                                             tenemos que poder imprimirla a la NC"*. */}
@@ -321,6 +331,15 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                     onCerrar={() => setCorrigiendo(null)}
                     // Emitir una nota cambia el total del cliente: la pantalla tiene que releerlo.
                     onListo={() => void cargar(true)}
+                />
+            )}
+
+            {moviendoFecha && (
+                <MoverFechaModal
+                    idFactura={moviendoFecha}
+                    onCerrar={() => setMoviendoFecha(null)}
+                    // La fecha cambió: las vistas van por rango y hay que releerlas.
+                    onListo={() => { setMoviendoFecha(null); void cargar(true); }}
                 />
             )}
         </div>

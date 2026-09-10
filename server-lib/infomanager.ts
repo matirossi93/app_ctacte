@@ -1,5 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import type { ComprobantePendiente } from './saldoCliente.js';
+import { cuerpoParaMoverFecha } from './moverFechaComprobante.js';
 
 const BASE = process.env.INFOMANAGER_BASE_URL || 'https://impedidos.infomanager.com.ar/api/v1';
 const CLIENT_ID = process.env.INFOMANAGER_CLIENT_ID || 'ck_elmanantialsrl_base';
@@ -925,6 +926,76 @@ export async function anularComprobante(input: {
  * porque el campo tiene default y omitirlo dejaría el comprobante en un estado que no elegimos.
  * Verificado contra IM el 09/09/2026.
  */
+/**
+ * MOVER LA FECHA DE UN COMPROBANTE EMITIDO, sin perder nada de lo demás.
+ *
+ * Mati (10/09/2026): *"necesito que podamos editar la fecha de la factura dentro de la app"*.
+ *
+ * 🔴 NO usa `actualizarCabecera`: aquélla es para PRESUPUESTOS y fuerza `tipo_factura: 'X'`,
+ * `condicion_venta_tipo: 0` y ningún campo AFIP. Aplicada a una factura le borraría la letra y
+ * los cuatro campos que evitan que IM la imprima como comprobante fiscal.
+ *
+ * El cuerpo sale de la cabecera que el comprobante YA tiene (`cuerpoParaMoverFecha`), y después
+ * se relee para confirmar que la fecha quedó y que los campos AFIP siguen ahí: es un PUT que
+ * reemplaza, y darlo por bueno sin mirar es cómo se rompen las cosas en silencio con esta API.
+ */
+export async function moverFechaComprobante(
+  idComprobante: string | number, fechaNueva: string,
+): Promise<{ ok: true; fecha: string; aviso?: string } | { ok: false; error: string }> {
+  const cli = await imClient();
+  let previa: any;
+  try {
+    const { data } = await imGetRetry(() => cli.get(`/ventas/${idComprobante}`), `ventas/${idComprobante} para mover fecha`);
+    previa = data?.results ?? data?.venta ?? data ?? {};
+    if (!previa || previa.numero == null) return { ok: false, error: 'No pude leer el comprobante en InfoManager.' };
+  } catch (err: any) {
+    if (err?.response?.status === 404) return { ok: false, error: 'Ese comprobante ya no está en InfoManager.' };
+    return { ok: false, error: `No pude leer el comprobante: ${err?.message ?? 'sin respuesta'}` };
+  }
+
+  let cuerpo: ReturnType<typeof cuerpoParaMoverFecha>;
+  try { cuerpo = cuerpoParaMoverFecha(previa, fechaNueva); }
+  catch (e: any) { return { ok: false, error: e?.message ?? 'Fecha inválida.' }; }
+
+  try {
+    const { data } = await cli.put(`/ventas/${idComprobante}`, cuerpo);
+    // La regla de oro: 200 con el error adentro.
+    if (data?.error != null && Number(data.error) !== 0) {
+      return { ok: false, error: String(data.detalles ?? data.mensaje ?? 'IM rechazó el cambio de fecha') };
+    }
+    if (data?.mensaje && !data?.isUpdated && !data?.venta && !data?.id && !/correctamente/i.test(String(data.mensaje))) {
+      return { ok: false, error: String(data.detalles ?? data.mensaje) };
+    }
+  } catch (err: any) {
+    if (err?.response?.status === 401) invalidateImToken();
+    const raw = err?.response?.data;
+    return { ok: false, error: String(raw?.detalles ?? raw?.mensaje ?? err?.message ?? 'IM rechazó el cambio de fecha') };
+  }
+
+  /**
+   * 🔴 Se relee: el PUT reemplaza la cabecera entera y contesta "actualizado correctamente"
+   * aunque haya perdido campos por el camino. Si los AFIP se borraron hay que saberlo AHORA, no
+   * cuando alguien vaya a imprimir y le salga el comprobante fiscal.
+   */
+  try {
+    const { data } = await imGetRetry(() => cli.get(`/ventas/${idComprobante}`), `ventas/${idComprobante} verificación`);
+    const dsp = data?.results ?? data?.venta ?? data ?? {};
+    const quedó = typeof dsp.fecha === 'string' ? dsp.fecha.slice(0, 10) : null;
+    if (quedó !== cuerpo.fecha) {
+      return { ok: false, error: `InfoManager aceptó el cambio pero la fecha quedó en ${quedó ?? 'nada'}. No se movió.` };
+    }
+    const perdidos = (['afip_comprobantes_fe', 'afip_conceptos_fe', 'afip_tipdoc_fe', 'afip_cond_vta'] as const)
+      .filter(k => String(previa[k] ?? '') !== '' && String(dsp[k] ?? '') === '');
+    if (perdidos.length) {
+      return { ok: true, fecha: quedó, aviso: `La fecha se movió, pero InfoManager borró ${perdidos.join(', ')}. Avisá: esa factura puede salir como comprobante fiscal al imprimirla.` };
+    }
+    return { ok: true, fecha: quedó };
+  } catch {
+    // El cambio salió; sólo no se pudo confirmar. No se dice que falló algo que probablemente anduvo.
+    return { ok: true, fecha: cuerpo.fecha, aviso: 'Se mandó el cambio pero no pude releer el comprobante para confirmarlo. Verificalo en InfoManager.' };
+  }
+}
+
 export async function actualizarCabecera(input: {
   id: number | string;
   numero: number;
