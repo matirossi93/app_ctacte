@@ -33,6 +33,18 @@ vi.mock('./infomanager.js', () => ({
   // Se pide con los códigos de lo que se factura: un cliente nuevo no está cacheado.
   fetchClientesIMCon: m.fetchClientesIMCached,
   cabeceraComprobante: m.cabeceraComprobante,
+  /**
+   * Va contra el mismo mock de cabecera, así cada test decide qué comprobante sigue vigente
+   * simplemente contestando `anulada` / `existe` desde `cabeceraComprobante`.
+   */
+  comprobantesVigentes: async (ids: Iterable<string | number>) => {
+    const out = new Map<string, boolean | null>();
+    for (const id of ids) {
+      const c = await m.cabeceraComprobante(id);
+      out.set(String(id), c.existe === null ? null : (c.existe === false ? false : c.anulada === false));
+    }
+    return out;
+  },
   desconfirmarPresupuesto: m.desconfirmarPresupuesto,
   fechaArgentina: () => '2026-09-08',
 }));
@@ -703,5 +715,68 @@ describe('con la factura ya emitida, el remito se arma con SUS renglones', () =>
     const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
     expect(m.emitirRemito).not.toHaveBeenCalled();
     expect(String(r.body.fallados ?? '')).toMatch(/renglones/i);
+  });
+});
+
+/**
+ * 🔴 LO QUE SE ANULA EN INFOMANAGER TIENE QUE DEJAR DE FIGURAR COMO EMITIDO.
+ *
+ * Mati (10/09/2026): *"un cliente rechazó un pedido y tuvimos que anular una factura, lo hicimos
+ * por IM, pero ese cambio no se refleja en la app: la factura sigue apareciendo como vigente"*.
+ * InfoManager es la fuente: si la factura no está más, el pedido vuelve a estar para facturar.
+ */
+describe('lo anulado en InfoManager', () => {
+  const conRegistro = (extra: any) => {
+    tablas['presupuestos_facturados'] = {
+      data: [{ im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, ...extra }],
+      error: null,
+    };
+  };
+
+  it('🔴 con la factura anulada en IM, el pedido vuelve a estar para facturar', async () => {
+    conRegistro({ im_remito_id: 'r1', im_remito_numero: 77291, facturado_at: '2026-09-08T12:00:00Z' });
+    // IM dice que la factura ya no está vigente.
+    m.cabeceraComprobante.mockImplementation(async (id: any) => String(id) === 'f1'
+      ? { cod_vendedor: '3', fecha: '2026-09-08', anulada: true, existe: true, observaciones: null }
+      : { cod_vendedor: '3', fecha: '2026-09-08', anulada: false, existe: true, observaciones: null });
+    await prepararFacturacion(
+      [{ im_comprobante_id: '10', im_numero: 58300, cod_cliente: 1093, cliente_nombre: 'DIAZ',
+         total: 29771.58, fecha: '2026-09-08', im_factura_id: 'f1', im_factura_numero: 50360,
+         facturado_at: '2026-09-08T12:00:00Z', tiene_fila: true } as any],
+      'jorgelina',
+    );
+    // El registro que apuntaba a una factura que ya no existe se borra.
+    expect(escrituras.some(e => e.tabla === 'presupuestos_facturados' && e.op === 'delete')).toBe(true);
+  });
+
+  /**
+   * 🪤 EL CASO QUE NO PUEDE FALLAR MAL: si IM no contesta, `existe` es null y NO se toca nada.
+   * Borrar ahí sería tirar el registro de una factura que existe, y facturarla de nuevo.
+   */
+  it('🔴 si InfoManager no contesta, NO se borra ningún registro', async () => {
+    conRegistro({ im_remito_id: 'r1', im_remito_numero: 77291, facturado_at: '2026-09-08T12:00:00Z' });
+    m.cabeceraComprobante.mockResolvedValue({ fecha: null, anulada: null, existe: null, observaciones: null });
+    await prepararFacturacion(
+      [{ im_comprobante_id: '10', im_numero: 58300, cod_cliente: 1093, cliente_nombre: 'DIAZ',
+         total: 29771.58, fecha: '2026-09-08', im_factura_id: 'f1', im_factura_numero: 50360,
+         facturado_at: '2026-09-08T12:00:00Z', tiene_fila: true } as any],
+      'jorgelina',
+    );
+    expect(escrituras.some(e => e.op === 'delete')).toBe(false);
+  });
+
+  it('con el REMITO anulado y la factura viva, queda para hacer sólo el remito', async () => {
+    conRegistro({ im_remito_id: 'r1', im_remito_numero: 77291, facturado_at: '2026-09-08T12:00:00Z' });
+    m.cabeceraComprobante.mockImplementation(async (id: any) => String(id) === 'r1'
+      ? { cod_vendedor: '3', fecha: '2026-09-08', anulada: true, existe: true, observaciones: null }
+      : { cod_vendedor: '3', fecha: '2026-09-08', anulada: false, existe: true, observaciones: null });
+    const filas = [{ im_comprobante_id: '10', im_numero: 58300, cod_cliente: 1093, cliente_nombre: 'DIAZ',
+      total: 29771.58, fecha: '2026-09-08', im_factura_id: 'f1', im_factura_numero: 50360,
+      im_remito_id: 'r1', im_remito_numero: 77291, facturado_at: '2026-09-08T12:00:00Z', tiene_fila: true } as any];
+    await prepararFacturacion(filas, 'jorgelina');
+    // No se borra el registro: la factura sigue en pie. Se limpia el remito.
+    expect(escrituras.some(e => e.op === 'delete')).toBe(false);
+    expect(filas[0].facturado_at).toBeNull();
+    expect(filas[0].im_remito_id).toBeNull();
   });
 });

@@ -29,7 +29,7 @@ import type { JwtPayload } from './auth.js';
 import { puedeArmarHojasDeRuta } from './permisos.js';
 import {
   fetchVentasItems, fetchClientesIMCon, cabeceraComprobante, desconfirmarPresupuesto,
-  fetchVentas, fechaArgentina, fetchStockPorDeposito, fetchArticulosCatalogo,
+  fetchVentas, fechaArgentina, fetchStockPorDeposito, fetchArticulosCatalogo, comprobantesVigentes,
 } from './infomanager.js';
 import { buscarFacturasYaEmitidas } from './facturaYaEmitida.js';
 import { emitirFactura, emitirRemito, emitirRemitoMasivo, letraDeFactura, proximoNumeroFactura } from './facturarIM.js';
@@ -139,6 +139,13 @@ export async function prepararFacturacion(
    */
   const clientes = await fetchClientesIMCon(filas.map(f => f.cod_cliente)).catch(() => [] as any[]);
   const porCliente = new Map(clientes.map((c: any) => [Number(c.cod_cliente), c]));
+
+  /**
+   * 🔴 Lo anulado en InfoManager NO cuenta como emitido. Sin esto, un pedido cuya factura anularon
+   * en IM se quedaría para siempre en "ya facturado" y no se podría volver a facturar.
+   */
+  await sincronizarAnulados(filas).catch((err: any) =>
+    console.warn('[prepararFacturacion] no pude chequear anulados:', err?.message));
 
   const aRevisar = filas.filter(f => !f.facturado_at);
 
@@ -603,6 +610,61 @@ async function itemsDeLaFactura(idFactura: string): Promise<DatosComprobante['it
   }
 }
 
+/**
+ * 🔴 LO QUE SE ANULÓ EN INFOMANAGER TIENE QUE DEJAR DE FIGURAR COMO EMITIDO.
+ *
+ * Mati (10/09/2026): *"un cliente rechazó un pedido y tuvimos que anular una factura, lo hicimos
+ * por IM, pero ese cambio no se refleja en la app: la factura sigue apareciendo como vigente"*.
+ *
+ * InfoManager es la fuente: si la factura que registramos ya no está vigente, nuestro registro no
+ * apunta a nada y el pedido tiene que volver a estar disponible para facturar. Con el REMITO
+ * anulado la factura sigue en pie, así que sólo se borra la marca de terminado — el reintento
+ * hace únicamente el remito, que es el camino que ya existe.
+ *
+ * 🪤 Se toca la base SÓLO con una respuesta definitiva de IM. Un `null` es "no pude preguntar" y
+ * ahí no se borra nada: sería tirar el registro de una factura que existe.
+ *
+ * Devuelve los avisos para mostrar, y de paso deja las filas al día.
+ */
+async function sincronizarAnulados(filas: any[]): Promise<Map<string, string>> {
+  const avisos = new Map<string, string>();
+  const conComprobante = filas.filter(f => f.im_factura_id || f.im_remito_id);
+  if (!conComprobante.length) return avisos;
+
+  const vigencia = await comprobantesVigentes([
+    ...conComprobante.map(f => f.im_factura_id).filter(Boolean),
+    ...conComprobante.map(f => f.im_remito_id).filter(Boolean),
+  ]).catch(() => new Map<string, boolean | null>());
+
+  for (const f of conComprobante) {
+    const id = String(f.im_comprobante_id);
+    const fa = f.im_factura_id ? vigencia.get(String(f.im_factura_id)) : undefined;
+    const re = f.im_remito_id ? vigencia.get(String(f.im_remito_id)) : undefined;
+
+    if (fa === false) {
+      // La factura ya no existe: el registro entero deja de tener sentido.
+      const { error } = await sb().from('presupuestos_facturados')
+        .delete().eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id);
+      if (error) { console.error(`[sincronizarAnulados] no pude borrar el registro de ${id}:`, error.message); continue; }
+      f.im_factura_id = null; f.im_factura_numero = null; f.im_remito_id = null;
+      f.im_remito_numero = null; f.facturado_at = null; f.tiene_fila = false;
+      avisos.set(id, `la factura ${f.im_factura_numero ?? ''} se anuló en InfoManager: el pedido volvió a estar para facturar.`.trim());
+      continue;
+    }
+    if (re === false) {
+      // La factura sigue viva y el remito no: falta sólo el remito.
+      const { error } = await sb().from('presupuestos_facturados')
+        .update({ im_remito_id: null, im_remito_numero: null, facturado_at: null })
+        .eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id);
+      if (error) { console.error(`[sincronizarAnulados] no pude limpiar el remito de ${id}:`, error.message); continue; }
+      const nro = f.im_remito_numero;
+      f.im_remito_id = null; f.im_remito_numero = null; f.facturado_at = null;
+      avisos.set(id, `el remito ${nro ?? ''} se anuló en InfoManager: al apretar Facturar se hace sólo el remito.`.trim());
+    }
+  }
+  return avisos;
+}
+
 /** Suelta el reclamo cuando la emisión falló, para poder reintentar sin esperar los 5 minutos. */
 async function soltarReclamo(f: PresupuestoAFacturar): Promise<void> {
   const { error } = await sb().from('presupuestos_facturados')
@@ -912,7 +974,23 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
       .in('im_comprobante_id', aprobados.map((p: any) => String(p.im_comprobante_id)));
     // Sin esto, la pantalla mostraría como "para facturar" cosas que ya se facturaron.
     if (errEmitidos) { res.status(502).json({ error: `No pude leer qué se facturó ya: ${errEmitidos.message}` }); return; }
-    const porId = new Map((emitidos ?? []).map((e: any) => [String(e.im_comprobante_id), e]));
+    /**
+     * 🔴 Antes de mostrar nada: lo que se anuló en InfoManager deja de figurar como emitido.
+     * Mati (10/09/2026): un cliente rechazó un pedido, anularon la factura en IM y en la app
+     * seguía apareciendo como vigente.
+     */
+    const avisosAnulados = await sincronizarAnulados(
+      (emitidos ?? []).map((e: any) => ({ ...e, im_comprobante_id: String(e.im_comprobante_id) })),
+    ).catch((err: any) => {
+      console.warn('[tableroFacturacion] no pude chequear anulados:', err?.message);
+      return new Map<string, string>();
+    });
+    // `sincronizarAnulados` ya borró o limpió lo que hacía falta: se relee para no mostrar viejo.
+    const { data: alDia } = avisosAnulados.size
+      ? await sb().from('presupuestos_facturados').select('*').eq('tenant_id', TENANT_ID)
+          .in('im_comprobante_id', aprobados.map((p: any) => String(p.im_comprobante_id)))
+      : { data: emitidos };
+    const porId = new Map((alDia ?? []).map((e: any) => [String(e.im_comprobante_id), e]));
 
     const filas = aprobados.map((p: any) => {
       const e = porId.get(String(p.im_comprobante_id));
@@ -927,6 +1005,8 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
         facturado_at: e?.facturado_at ?? null,
         // Con la factura emitida y sin remito: el reintento hace SÓLO el remito.
         falta_remito: !!e?.im_factura_id && !e?.facturado_at,
+        // Lo que se anuló en InfoManager desde la última vez que se miró esta pantalla.
+        aviso_anulado: avisosAnulados.get(String(p.im_comprobante_id)) ?? null,
       };
     });
 

@@ -37,6 +37,11 @@ interface Fila {
     im_factura_id: string | null;
     im_remito_id: string | null;
     facturado_at: string | null;
+    /**
+     * 🔑 Lo que se anuló en InfoManager desde la última vez que se miró. Mati (10/09/2026): un
+     * cliente rechazó un pedido, anularon la factura en IM y acá seguía figurando como vigente.
+     */
+    aviso_anulado?: string | null;
     /** La factura salió y el remito no: el reintento hace SÓLO el remito. */
     falta_remito: boolean;
 }
@@ -126,6 +131,21 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                     )}
                 </div>
             </div>
+
+            {/* 🔴 Cambios hechos en InfoManager, no acá: si no se dicen, la pantalla miente. */}
+            {(() => {
+                const anulados = [...pendientes, ...facturados].filter(p => p.aviso_anulado);
+                if (!anulados.length) return null;
+                return (
+                    <div className="fc-aviso">
+                        <AlertTriangle size={15} />
+                        <span>
+                            <b>Cambió algo en InfoManager:</b>{' '}
+                            {anulados.map(p => `${p.cliente_nombre ?? p.cod_cliente} — ${p.aviso_anulado}`).join(' · ')}
+                        </span>
+                    </div>
+                );
+            })()}
 
             {/* Lo no aprobado no se puede facturar: se dice, para que no parezca que se perdió. */}
             {sinAprobar > 0 && (

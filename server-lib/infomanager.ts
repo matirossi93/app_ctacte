@@ -1132,6 +1132,36 @@ export async function buscarPresupuestoPorCompatibilidad(
   }
 }
 
+/**
+ * ¿Siguen VIGENTES estos comprobantes en InfoManager?
+ *
+ * Mati (10/09/2026): *"un cliente rechazó un pedido y tuvimos que anular una factura, lo hicimos
+ * por IM, pero ese cambio no se refleja en la app: la factura sigue apareciendo como vigente"*.
+ *
+ * Devuelve, por id: `true` = vigente · `false` = anulada o borrada · `null` = NO SE PUDO
+ * PREGUNTAR. El `null` es el que importa: quien llama no puede tratarlo como "anulada", porque
+ * borraría el registro de una factura que existe sólo porque IM no contestó.
+ */
+export async function comprobantesVigentes(
+  ids: Iterable<string | number>,
+): Promise<Map<string, boolean | null>> {
+  const unicos = [...new Set([...ids].map(String).filter(id => /^\d+$/.test(id)))];
+  const salida = new Map<string, boolean | null>();
+  // De a 10: son un GET cada uno y la pantalla espera. Con 25 facturas son tres tandas.
+  for (let i = 0; i < unicos.length; i += 10) {
+    await Promise.all(unicos.slice(i, i + 10).map(async (id) => {
+      try {
+        const c = await cabeceraComprobante(id);
+        // `existe: null` es "no sé": se propaga tal cual.
+        salida.set(id, c.existe === null ? null : (c.existe === false ? false : c.anulada === false));
+      } catch {
+        salida.set(id, null);
+      }
+    }));
+  }
+  return salida;
+}
+
 /** Sólo la fecha. La usa anularPedido, que no necesita el resto. */
 export async function fechaComprobante(idComprobante: string | number): Promise<string | null> {
   return (await cabeceraComprobante(idComprobante)).fecha;
