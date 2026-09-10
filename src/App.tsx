@@ -1,8 +1,21 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { LoginScreen } from './components/LoginScreen';
-import { VendorShell } from './components/VendorShell';
-import { RepartidorShell } from './components/RepartidorShell';
-import { OficinaShell } from './components/OficinaShell';
+
+/**
+ * 🔑 CADA ROL BAJA SÓLO SU APP. Mati (10/09/2026): *"veamos si es posible mejorar la velocidad de
+ * carga o de consulta en toda la app, hay que optimizarla al máximo"*.
+ *
+ * Los tres shells se importaban de una, así que el bundle era uno solo de ~1 MB y **todos**
+ * bajaban todo: un vendedor en el celular se descargaba la facturación, las hojas de ruta, las
+ * correcciones con notas y los PDF de la oficina, que nunca va a abrir. Con `lazy` cada rol pide
+ * su pedazo cuando entra.
+ *
+ * 🪤 Van por separado y no en un `import()` común: si compartieran archivo, volverían a viajar
+ * juntos y no habríamos ganado nada.
+ */
+const VendorShell = lazy(() => import('./components/VendorShell').then(m => ({ default: m.VendorShell })));
+const RepartidorShell = lazy(() => import('./components/RepartidorShell').then(m => ({ default: m.RepartidorShell })));
+const OficinaShell = lazy(() => import('./components/OficinaShell').then(m => ({ default: m.OficinaShell })));
 import { puedeVerPanelOficina, pidePanelOficina } from './utils/panelOficina';
 import { authHeaders, clearToken, getToken, getUser, setUser } from './utils/auth';
 import { sesionRechazada } from './utils/sesionInicial';
@@ -60,6 +73,20 @@ function App() {
             .catch(seguirConLaSesionGuardada);
     }, []);
 
+    /** El mismo spinner que ya se ve al validar la sesión: la espera se siente igual. */
+    const cargando = (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: 'var(--color-primary)' }}>
+            <div className="spinner">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <line x1="12" y1="2" x2="12" y2="6" /><line x1="12" y1="18" x2="12" y2="22" />
+                    <line x1="4.93" y1="4.93" x2="7.76" y2="7.76" /><line x1="16.24" y1="16.24" x2="19.07" y2="19.07" />
+                    <line x1="2" y1="12" x2="6" y2="12" /><line x1="18" y1="12" x2="22" y2="12" />
+                    <line x1="4.93" y1="19.07" x2="7.76" y2="16.24" /><line x1="16.24" y1="4.93" x2="19.07" y2="7.76" />
+                </svg>
+            </div>
+        </div>
+    );
+
     if (authState === 'checking') {
         return (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: 'var(--color-primary)' }}>
@@ -95,7 +122,7 @@ function App() {
     // propio, ese dominio apunta acá. El permiso de verdad lo aplica el backend en cada
     // endpoint; esto sólo elige qué dibujar.
     if (pidePanelOficina(location.pathname)) {
-        if (puedeVerPanelOficina(user.rol)) return <OficinaShell />;
+        if (puedeVerPanelOficina(user.rol)) return <Suspense fallback={cargando}><OficinaShell /></Suspense>;
         return (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: '0.8rem', padding: '1rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
                 <p>Este panel es de administración.</p>
@@ -107,9 +134,9 @@ function App() {
     // El repartidor solo carga y consulta comprobantes: no ve cobranzas,
     // objetivos ni comisiones. Tiene su propia pantalla acotada.
     if (user.rol === 'repartidor') {
-        return <RepartidorShell onLogout={() => { clearToken(); setAuthState('unauthenticated'); }} />;
+        return <Suspense fallback={cargando}><RepartidorShell onLogout={() => { clearToken(); setAuthState('unauthenticated'); }} /></Suspense>;
     }
-    return <VendorShell onLogout={() => { clearToken(); setAuthState('unauthenticated'); }} />;
+    return <Suspense fallback={cargando}><VendorShell onLogout={() => { clearToken(); setAuthState('unauthenticated'); }} /></Suspense>;
 }
 
 export default App;
