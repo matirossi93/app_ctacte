@@ -23,6 +23,7 @@ import { armarConsolidado } from './consolidadoArticulos.js';
 import { buscarFacturasYaEmitidas } from './facturaYaEmitida.js';
 import { evaluarPedido } from './listas.js';
 import { reglasActivas, descuentosActivos, catalogoParaListas } from './pedidos.js';
+import { esPedidoInternoDeSucursal } from './pedidosInternos.js';
 
 /** Depósito contra el que se controla el stock. 1 = Depósito General (Casa Central). */
 const DEPOSITO_CONTROL = Number(process.env.PEDIDO_DEPOSITO || 1);
@@ -98,6 +99,8 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
     const presupuestos = ventas.filter((v: any) =>
       String(v.tipo_comprobante ?? '').trim() === 'PR' &&
       String(v.anulada ?? '').trim().toUpperCase() !== 'S' &&
+      // 🔑 Fuera los pedidos internos a sucursales: no son ventas ni van en hoja de ruta.
+      !esPedidoInternoDeSucursal(v) &&
       Number(v.cod_empresa) === COD_EMPRESA_CASA_CENTRAL);
 
     // 🪤 Los renglones NO se piden por toda la ventana. Medido contra IM el 07/09/2026:
