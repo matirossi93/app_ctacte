@@ -52,6 +52,8 @@ export interface ArticuloInfo {
   descripcion: string;
   subrubro: string;
   es_bulto: boolean;
+  /** La cantidad representa kilos sueltos; una unidad pequeña nunca se convierte en granel. */
+  es_granel: boolean;
   /** Kilos que trae el bulto. 0 si se vende a granel. */
   kg_por_bulto: number;
   /**
@@ -176,22 +178,38 @@ export function clasificarArticulo(raw: {
   const base = {
     cod_articulo: raw.cod_articulo, descripcion, subrubro: String(raw.subrubro ?? '').trim(),
     es_fraccionado: RE_FRACCIONADO.test(descripcion) && !RE_BULTO_KG.test(descripcion),
+    es_granel: false,
   };
   const bulto = (kg: number) => ({ ...base, es_bulto: true, kg_por_bulto: kg });
+  const unidad = () => ({ ...base, es_bulto: false, kg_por_bulto: 0 });
+
+  // Cargos y códigos genéricos no representan mercadería para la promo.
+  if ([13818, 13819].includes(Number(raw.cod_articulo))) return unidad();
 
   // 1. La descripción manda: "X 21 KG" = bolsa de 21 kilos. Es el criterio que dio Mati.
   const mKg = RE_BULTO_KG.exec(descripcion);
   if (mKg) return bulto(Number(String(mKg[1]).replace(',', '.')));
   // 2. Caja o pack cerrado: es bulto, pero el número son unidades — los kilos salen de eq.
-  if (RE_BULTO_UD.test(descripcion) || RE_BULTO_PACK.test(descripcion)) return bulto(eq >= 2 ? eq : 0);
+  const pack = RE_BULTO_PACK.exec(descripcion);
+  // "Shampoo 2 EN 1 X 250 CC" contiene "1 X 250 CC", pero sigue siendo un envase.
+  if (RE_BULTO_UD.test(descripcion) || (pack && Number(pack[1]) > 1)) return bulto(eq >= 2 ? eq : 0);
   // 3. 🪤 Envase de consumo ("X 250 CC"): NO es bulto, por más que IM diga otra cosa. Hay
   //    shampoos y antiparasitarios cargados con unidad_de_medida "Bolsas" en el catálogo.
-  if (RE_ENVASE.test(descripcion)) return { ...base, es_bulto: false, kg_por_bulto: 0 };
+  if (RE_ENVASE.test(descripcion)) return unidad();
   // 4. Sin presentación en el nombre: una equivalencia de 2 o más ya es un bulto.
   if (eq >= 2) return bulto(eq);
   // 5. Último recurso, la unidad de medida cargada a mano.
   if (/bols|bulto|fardo|caja/.test(um)) return bulto(eq > 0 ? eq : 0);
-  return { ...base, es_bulto: false, kg_por_bulto: 0 };
+  // UM de kilos o presentación X KG. Algunos graneles reales (p. ej. MEZCLA GALLO
+  // PREMIUM) no tienen UM; su subrubro permite identificarlos. Una unidad explícita manda.
+  const porKilo = /^(?:por\s+)?(?:kg|kilos?|kilogramos?)\.?$/i.test(um);
+  const unidadExplicita = /\b(?:unidad(?:es)?|unid|uds?)\b/i.test(`${um} ${descripcion}`);
+  const familiaGranel = /^(?:cereales|forrajes|mezclas|legumbres|ma[ií]z|frutos\s*secos)$/i.test(base.subrubro);
+  // Condimentos mezcla granel, envases y venta por gramo. Sólo estos dos graneles
+  // del catálogo y la planilla tienen confirmada la venta por kilo con UM ausente.
+  const condimentoSinUM = [528, 731].includes(Number(raw.cod_articulo));
+  return { ...unidad(), es_granel: !unidadExplicita &&
+    (porKilo || base.es_fraccionado || (!um && (familiaGranel || condimentoSinUM))) };
 }
 
 /**
@@ -212,8 +230,10 @@ function medirRenglon(r: RenglonPedido, art: ArticuloInfo | undefined) {
   if (art?.es_bulto) {
     return { bultos: r.cantidad, kilos: art.kg_por_bulto > 0 ? r.cantidad * art.kg_por_bulto : 0, unidades: r.cantidad };
   }
-  // Granel: la cantidad ya viene en kilos. 20 kg o más suman UN bulto (no acumula).
-  return { bultos: r.cantidad >= KG_PARA_CONTAR_BULTO ? 1 : 0, kilos: r.cantidad, unidades: r.cantidad };
+  // Confirmado por Mati 11/09: desde 20 kg del mismo granel suma UN bulto.
+  // Collares, pipetas, shampoos y artículos desconocidos nunca representan kilos.
+  const kilos = art?.es_granel ? r.cantidad : 0;
+  return { bultos: kilos >= KG_PARA_CONTAR_BULTO ? 1 : 0, kilos, unidades: r.cantidad };
 }
 
 /**
