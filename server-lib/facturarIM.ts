@@ -51,8 +51,10 @@ export interface ItemAFacturar {
  * movimiento de mercadería. Tenemos un recuadro en las ventanas que cuando está asociado se hace
  * un tilde, y no se está haciendo"*.
  *
- * Leído de un remito REAL que generó IM (el 77298, de la factura 50362): el vínculo lo escribe
- * **en las observaciones**, con el id INTERNO de la factura:
+ * Leído de un remito REAL que generó IM (el 77298, de la factura 50362): deja una **referencia
+ * textual** en las observaciones, con el id INTERNO de la factura. 🪤 Esa referencia **no
+ * acredita una relación nativa** entre los comprobantes; es lo único que queda escrito y legible
+ * desde los dos lados:
  *
  *   observaciones: " [Remito Automático -FA:58764473]"
  *
@@ -160,8 +162,9 @@ const UNIDAD_NEGOCIO = Number(process.env.IM_UNIDAD_NEGOCIO || 1);
  *              el cálculo miraba todas las empresas y todos los destinos juntos, y en una
  *              instalación multiempresa el número podía venir de un talonario ajeno.
  *
- * 🪤 Una fila cuyo empresa/destino/tag no se pueda leer NO cuenta. Es la caída segura: quedarse
- * corto propone un número tomado —que IM rechaza y se ve— y pasarse saltea la serie en silencio.
+ * 🪤 Cada fila se clasifica en ajena / propia / desconocida (ver `clasificarFila`): una
+ * contradicción legible en cualquier dimensión la descarta, y sólo la duda real —sin ninguna
+ * contradicción y con algún dato ilegible— corta el cálculo.
  */
 export async function proximoNumeroFactura(
   letra: 'A' | 'B', puntoDeVenta: number, dias: number, tipo: 'FA' | 'NC' | 'ND', serie: SerieComprobante,
@@ -367,12 +370,8 @@ export async function emitirFactura(d: DatosComprobante): Promise<ResultadoEmisi
   }
   let numero = d.numero ?? await proximoNumeroFactura(letra, PTO_VENTA_FACTURA, 30, 'FA', serieFa);
   if (numero == null) {
-    /**
-     * 🪤 Sin número puede ser porque no hay ninguna en la ventana **o** porque algo no se pudo
-     * identificar. Decir sólo lo primero es afirmar de más, y un mensaje que promete una salida
-     * empuja a buscarla por otro lado: el 11/09 la oficina terminó editando facturas a mano ante
-     * errores genéricos.
-     */
+    // 🪤 `null` cubre dos casos —sin comprobantes en la ventana, o filas que no se pudieron
+    // identificar—, así que el mensaje no puede afirmar cuál fue ni prometer una salida.
     return { ok: false, error: `No pude determinar el próximo número de factura ${letra} del punto de venta ${PTO_VENTA_FACTURA} con los datos disponibles. No se envió la factura.` };
   }
 
@@ -695,7 +694,7 @@ export async function emitirRemitoMasivo(d: DatosComprobante): Promise<Resultado
  * mercadería que vuelve NO reingresa al stock por este camino. Es su criterio actual, no una
  * decisión nuestra — si algún día quieren que reingrese, es cambiar esta letra.
  *
- * 🪤 La API de IM **no tiene ningún campo** para relacionar la NC con su factura (verificado por
+ * 🪤 **Sin método documentado** para relacionar la NC con su factura por la API (probado por
  * tres caminos el 08/09/2026). Lo que sí hace la oficina es escribirlo en las observaciones:
  * de 724 NC en 90 días, 287 dicen "SEGUN HR 3210". Se respeta esa convención —así se lee igual
  * desde IM— y además el vínculo exacto se guarda de nuestro lado.
@@ -733,9 +732,13 @@ export async function emitirNotaDebito(
  * criterio actual de la oficina, copiado tal cual — si algún día quieren que reingrese, es
  * cambiar esta letra.
  *
- * 🪤 La API de IM **no tiene ningún campo** para relacionar la nota con su factura (verificado por
+ * 🪤 **Sin método documentado** para relacionar la nota con su factura por la API (probado por
  * tres caminos el 08/09/2026). Lo que sí hace la oficina es escribirlo en las observaciones, así
  * que quien llama manda ahí "SEGUN FACTURA 50401" y el vínculo exacto se guarda de nuestro lado.
+ *
+ * 🪤 `mueve_stock: 'N'` **no acredita el efecto sobre el stock**: hay recepción automática por
+ * devolución y campos que el Swagger no expone. Qué movimientos genera una nota hay que
+ * verificarlo contra los movimientos del artículo, no deducirlo de este campo.
  */
 /**
  * 🔴 LOS CAMPOS AFIP DE LA NOTA. Sin ellos IM la manda al CONTROLADOR FISCAL.
@@ -782,8 +785,8 @@ async function emitirNota(
   }
   const numero = d.numero ?? await proximoNumeroFactura(letra, PTO_VENTA_NC, 30, tipo, serieNota);
   if (numero == null || !Number.isSafeInteger(numero) || numero <= 0) {
-    // 🪤 Nada de 'emitila y vinculala': vincular una nota externa está soportado para las NC de
-    // una hoja, no para las ND. Prometer un camino que no existe es peor que no decir nada.
+    // 🪤 Sin 'emitila y vinculala': vincular una nota externa existe para las NC de una hoja, no
+    // para las ND.
     return { ok: false, error: `No pude determinar el próximo número de ${que} ${letra} del punto ${PTO_VENTA_NC} con los datos disponibles. No se envió la ${que}.` };
   }
 

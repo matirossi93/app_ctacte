@@ -1168,7 +1168,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
     /**
      * 🔑 LAS NOTAS DE CRÉDITO Y DÉBITO DE CADA FACTURA. Mati (10/09/2026): *"si se le hizo la NC
      * a Baca tiene que aparecer en el panel para poder verla"*. El vínculo nota→factura sólo
-     * existe de nuestro lado: la API de IM no tiene ningún campo que lo guarde.
+     * existe de nuestro lado: no hay método documentado en la API para guardarlo.
      */
     const idsFactura = [...new Set((alDia ?? []).map((e: any) => e.im_factura_id).filter(Boolean).map(String))];
     const notasPorFactura = new Map<string, any[]>();
