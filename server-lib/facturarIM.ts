@@ -690,9 +690,8 @@ export async function emitirRemitoMasivo(d: DatosComprobante): Promise<Resultado
  * 777): `condicion_venta_tipo: 2`, `talonario_manual: 'S'`, `tag: 'S'`, `genero_re_auto: 'S'`,
  * `cod_unidad_negocio_cab: 0` y, en el renglón, `cod_cuenta: 4100002`.
  *
- * ⚠️ `mueve_stock: 'N'` es lo que usa la oficina en sus NC, así que se copia tal cual: la
- * mercadería que vuelve NO reingresa al stock por este camino. Es su criterio actual, no una
- * decisión nuestra — si algún día quieren que reingrese, es cambiar esta letra.
+ * ⚠️ `mueve_stock: 'N'` se copia de esas NC porque es lo que usa la oficina (ver `emitirNota`
+ * para qué acredita y qué no).
  *
  * 🪤 **Sin método documentado** para relacionar la NC con su factura por la API (probado por
  * tres caminos el 08/09/2026). Lo que sí hace la oficina es escribirlo en las observaciones:
@@ -728,9 +727,7 @@ export async function emitirNotaDebito(
  * `condicion_venta_tipo: 2`, `talonario_manual: 'S'`, `tag: 'S'`, `cod_unidad_negocio_cab: 0` y,
  * en el renglón, `cod_cuenta: 4100002`.
  *
- * ⚠️ `mueve_stock: 'N'`: la mercadería que vuelve NO reingresa al stock por este camino. Es el
- * criterio actual de la oficina, copiado tal cual — si algún día quieren que reingrese, es
- * cambiar esta letra.
+ * ⚠️ `mueve_stock: 'N'` se copia de esas notas porque es lo que usa la oficina.
  *
  * 🪤 **Sin método documentado** para relacionar la nota con su factura por la API (probado por
  * tres caminos el 08/09/2026). Lo que sí hace la oficina es escribirlo en las observaciones, así
