@@ -5,7 +5,8 @@ import {
     AlertTriangle, Loader2, RefreshCw, Receipt, CheckCircle2, X, FileWarning, Printer, Pencil, Search, CalendarDays,
     DollarSign, Scale,
 } from 'lucide-react';
-import { authHeaders } from '../utils/auth';
+import { authHeaders, getToken, getUser } from '../utils/auth';
+import { FronteraSesion } from '../utils/fronteraSesion';
 import { coincide } from '../utils/buscar';
 import { imprimirComprobante } from '../utils/imprimirComprobante';
 import { useRecargarAlVolver } from '../utils/recargarAlVolver';
@@ -100,10 +101,25 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
     const [comparados, setComparados] = useState<Record<string, NonNullable<Fila['control_fa_re']> | 'cargando'>>({});
     /** Qué fila tiene el detalle abierto. Uno por vez: es información de consulta, no un panel fijo. */
     const [detalleControl, setDetalleControl] = useState<string | null>(null);
+    const panelControl = useRef<HTMLDivElement | null>(null);
+    /**
+     * 🪤 El panel va después de la tabla: con cincuenta facturas, tocar el botón de la primera
+     * dejaba el resultado fuera de la pantalla. Se acerca sólo cuando el detalle se abrió a
+     * pedido —`block: 'nearest'`, que no salta si ya se ve— y nunca en una carga automática.
+     */
+    useEffect(() => {
+        if (detalleControl) panelControl.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, [detalleControl, comparados]);
     const contexto = useRef(0);
     const enVuelo = useRef<AbortController | null>(null);
     /** De qué fila es la consulta en vuelo: hace falta para soltarle el "cargando" al abortarla. */
     const pidiendo = useRef<string | null>(null);
+    /**
+     * 🪤 Las filas VIGENTES, no las del render en que se apretó el botón. `compararPar` cierra
+     * sobre `pendientes`/`facturados` y al resolver sigue viendo esa foto: comparar la identidad
+     * contra ella no detecta jamás un cambio posterior, que es justo lo que hay que detectar.
+     */
+    const filasVigentes = useRef<Fila[]>([]);
 
     /** Todo resultado puntual habla de los comprobantes de ESE momento: si algo cambia, se olvida. */
     const olvidarComparados = useCallback(() => {
@@ -123,6 +139,13 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
         // 🪤 La identidad de los comprobantes AL PEDIR. Si la fila cambia de factura o de remito
         // mientras se consulta, la respuesta habla de otra cosa.
         const identidad = `${p.im_factura_id ?? ''}|${p.im_remito_id ?? ''}`;
+        /**
+         * 🪤 Y la sesión: `RepartoProvider` invalida sus lecturas al cambiar el storage, pero este
+         * estado es local y no se entera. Si alguien entra con otro usuario mientras la consulta
+         * viaja, su respuesta no puede aparecer detrás. La credencial queda en la petición y no
+         * se guarda, ni se muestra, ni se loguea.
+         */
+        const sesion = new FronteraSesion(getToken(), getUser()?.email ?? null);
         // 🔴 Al abortar el anterior hay que soltarle el "cargando": si no, ese botón queda
         // bloqueado hasta recargar la pantalla.
         if (enVuelo.current) {
@@ -135,7 +158,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
         setComparados(c => ({ ...c, [id]: 'cargando' }));
         setDetalleControl(id);
         const fallo = (texto: string) => ({ estado: 'no_verificado' as const, texto, diferencias: [], checked_at: null });
-        const vigente = () => mio === contexto.current && !ctrl.signal.aborted;
+        const vigente = () => mio === contexto.current && !ctrl.signal.aborted && sesion.coincide(getToken(), getUser()?.email ?? null);
         try {
             const r = await fetch(`/api/facturacion/comparar/${id}`, { headers: authHeaders(), signal: ctrl.signal });
             const d = await r.json().catch(() => null);
@@ -143,8 +166,9 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
             // 🪤 La respuesta tiene que hablar de esta fila Y de estos comprobantes. Si no, se dice
             // —dejarlo en "cargando" bloquearía el botón para siempre—.
             const otraFila = r.ok && d?.control && String(d.im_comprobante_id ?? '') !== String(id);
-            const fila = pendientes.concat(facturados).find(x => x.im_comprobante_id === id);
-            const cambio = fila && `${fila.im_factura_id ?? ''}|${fila.im_remito_id ?? ''}` !== identidad;
+            // Si la fila ya no está —se facturó otra cosa, cambió el filtro—, tampoco se afirma.
+            const fila = filasVigentes.current.find(x => x.im_comprobante_id === id);
+            const cambio = !fila || `${fila.im_factura_id ?? ''}|${fila.im_remito_id ?? ''}` !== identidad;
             setComparados(c => ({ ...c, [id]: otraFila || cambio
                 ? fallo('Los comprobantes cambiaron mientras se consultaba. Probá de nuevo.')
                 : r.ok && d?.control ? { ...d.control, checked_at: d.checked_at ?? null }
@@ -153,7 +177,9 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
             if (e?.name === 'AbortError') return;   // lo limpia quien abortó
             if (vigente()) setComparados(c => ({ ...c, [id]: fallo('No se pudo comparar: sin conexión.') }));
         } finally {
-            if (pidiendo.current === id) { enVuelo.current = null; pidiendo.current = null; }
+            // 🪤 Por el CONTROLLER, no por el id: dos consultas seguidas del mismo pedido tienen
+            // el mismo id, y la vieja le limpiaría el estado a la nueva.
+            if (enVuelo.current === ctrl) { enVuelo.current = null; pidiendo.current = null; }
         }
     }
 
@@ -166,8 +192,8 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
     const cargar = useCallback(async (refrescar = false, conservarDuranteLectura = false) => {
         const lectura = iniciarLectura(refrescar); if (!lectura) return;
         // 🪤 Lo comparado a pedido habla de los comprobantes que había: si se recarga, ya no
-        // se puede afirmar que siga valiendo.
-        contexto.current += 1; setComparados({});
+        // se puede afirmar que siga valiendo. Aborta lo que esté en vuelo y cierra el detalle.
+        olvidarComparados();
         const mismoRango = rangoSeleccion.current === `${desde}|${hasta}`;
         if (rangoSeleccion.current !== `${desde}|${hasta}`) { setSel(new Set()); rangoSeleccion.current = `${desde}|${hasta}`; }
         if (!conservarDuranteLectura || !mismoRango) { setPendientes([]); setFacturados([]); setTotales(null); }
@@ -225,6 +251,8 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
         p.cliente_nombre, p.im_numero, p.cod_cliente, p.im_factura_numero, p.im_remito_numero,
         ...(p.notas ?? []).map(n => `${n.tipo} ${n.numero ?? ''}`)]);
     const visibles = useMemo(() => pendientes.filter(buscar), [pendientes, busqueda]);
+    // El ref se mantiene al día con lo que hay AHORA en pantalla (ver `filasVigentes`).
+    useEffect(() => { filasVigentes.current = pendientes.concat(facturados); }, [pendientes, facturados]);
     const facturadosVisibles = useMemo(() => facturados.filter(buscar), [facturados, busqueda]);
 
     const idsSeleccionables = visibles.filter(p => !requiereConciliar(p)).map(p => p.im_comprobante_id);
@@ -455,56 +483,58 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                         ))}
                                     </td>
                                 </tr>
-                                {/**
-                                  * 🔑 EL RESULTADO SE LEE, EN CUALQUIER PANTALLA.
-                                  *
-                                  * Los códigos, las dos cantidades y a qué hora se miró. Un `title`
-                                  * no existe en el celular, que es donde más se consulta.
-                                  */}
-                                {detalleControl === p.im_comprobante_id && (() => {
-                                    const c = controlDe(p);
-                                    if (!c || c === 'cargando') return null;
-                                    return (
-                                        <tr className="fc-control-fila" key={`${p.im_comprobante_id}-control`}>
-                                            <td colSpan={6}>
-                                                <div className={`fc-control e-${c.estado}`}>
-                                                    <div className="fc-control-top">
-                                                        <Scale size={13} />
-                                                        <span>{c.texto}</span>
-                                                        {c.checked_at && (
-                                                            <span className="fc-control-hora">
-                                                                mirado a las {new Date(c.checked_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
-                                                            </span>
-                                                        )}
-                                                        <button className="fc-control-cerrar" onClick={() => setDetalleControl(null)} aria-label="Cerrar"><X size={13} /></button>
-                                                    </div>
-                                                    {!!c.diferencias.length && (
-                                                        <table className="fc-control-tabla">
-                                                            <thead><tr><th>Artículo</th><th className="n">Factura</th><th className="n">Remito</th></tr></thead>
-                                                            <tbody>
-                                                                {c.diferencias.map(d => (
-                                                                    <tr key={d.cod_articulo}>
-                                                                        <td>{d.cod_articulo}</td>
-                                                                        <td className="n">{d.factura}</td>
-                                                                        <td className="n">{d.remito}</td>
-                                                                    </tr>
-                                                                ))}
-                                                            </tbody>
-                                                        </table>
-                                                    )}
-                                                    {c.estado === 'no_verificado' && (
-                                                        <button className="fc-btn ghost chico" onClick={() => void compararPar(p)}>
-                                                            <RefreshCw size={13} /> Comparar contra InfoManager
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    );
-                                })()}
                             </React.Fragment>))}
                         </tbody>
                     </table></div>
+                    {/**
+                      * 🔑 EL DETALLE VA FUERA DE LA TABLA.
+                      *
+                      * Adentro quedaba dentro del scroll horizontal: en 390 px el panel arrancaba
+                      * cortado —«ntas: 378…»— y la tabla de cantidades no llegaba a verse. Acá
+                      * toma el ancho de la pantalla, así que se lee completo en el celular, que
+                      * es donde más se consulta.
+                      */}
+                    {(() => {
+                        const p = facturadosVisibles.find(f => f.im_comprobante_id === detalleControl);
+                        const c = p && controlDe(p);
+                        if (!p || !c || c === 'cargando') return null;
+                        return (
+                            <div className={`fc-control e-${c.estado}`} ref={panelControl}>
+                                <div className="fc-control-top">
+                                    <Scale size={14} />
+                                    <b className="fc-control-quien">{p.cliente_nombre ?? p.cod_cliente} · PR {p.im_numero ?? ''}</b>
+                                    <button className="fc-control-cerrar" onClick={() => setDetalleControl(null)} aria-label="Cerrar"><X size={14} /></button>
+                                </div>
+                                <p className="fc-control-texto">{c.texto}</p>
+                                {!!c.diferencias.length && (
+                                    <table className="fc-control-tabla">
+                                        <thead><tr><th>Artículo</th><th className="n">Factura</th><th className="n">Remito</th></tr></thead>
+                                        <tbody>
+                                            {c.diferencias.map(d => (
+                                                <tr key={d.cod_articulo}>
+                                                    <td>{d.cod_articulo}</td>
+                                                    <td className="n">{d.factura}</td>
+                                                    <td className="n">{d.remito}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                )}
+                                <div className="fc-control-pie">
+                                    {c.checked_at && (
+                                        <span className="fc-control-hora">
+                                            mirado a las {new Date(c.checked_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                                        </span>
+                                    )}
+                                    {c.estado === 'no_verificado' && (
+                                        <button className="fc-btn ghost chico" onClick={() => void compararPar(p)}>
+                                            <RefreshCw size={13} /> Comparar contra InfoManager
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })()}
                 </details>
             )}
 

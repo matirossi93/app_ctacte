@@ -168,20 +168,24 @@
  */
 .fc-control {
     border: 1px solid var(--color-border); border-left-width: 3px;
-    border-radius: var(--radius-sm); padding: 0.5rem 0.65rem; margin: 0.2rem 0 0.5rem;
-    background: var(--color-bg); font-size: 0.82rem;
+    border-radius: var(--radius-sm); padding: 0.6rem 0.7rem; margin: 0.5rem 0;
+    background: var(--color-bg); font-size: 0.85rem;
+    /* 🔴 Fuera de la tabla y de su scroll: tiene que entrar en el ancho de un celular. */
+    max-width: 100%; overflow-wrap: anywhere;
 }
+.fc-control-quien { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.fc-control-texto { margin: 0.4rem 0 0; }
+.fc-control-pie { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; margin-top: 0.5rem; }
 .fc-control.e-diferencias { border-left-color: #a33b26; background: #fbe9e7; }
 .fc-control.e-coinciden { border-left-color: #06652F; }
 .fc-control.e-no_verificado { border-left-color: #b45309; }
 .fc-control-top { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
-.fc-control-top > span:first-of-type { flex: 1 1 12rem; min-width: 0; }
-.fc-control-hora { color: var(--color-text-muted); font-size: 0.74rem; white-space: nowrap; }
+.fc-control-hora { color: var(--color-text-muted); font-size: 0.76rem; }
 .fc-control-cerrar { border: none; background: transparent; color: var(--color-text-muted); cursor: pointer; padding: 0.15rem; }
-.fc-control-tabla { width: auto; min-width: 16rem; margin-top: 0.45rem; border-collapse: collapse; }
+.fc-control-tabla { width: 100%; max-width: 22rem; margin-top: 0.5rem; border-collapse: collapse; }
 .fc-control-tabla th, .fc-control-tabla td { padding: 0.2rem 0.75rem 0.2rem 0; text-align: left; }
 .fc-control-tabla th { font-size: 0.72rem; text-transform: uppercase; color: var(--color-text-muted); font-weight: 700; }
 .fc-control-tabla .n { text-align: right; font-variant-numeric: tabular-nums; }
-.fc-control .fc-btn.chico { margin-top: 0.45rem; font-size: 0.78rem; padding: 0.25rem 0.5rem; }
+.fc-control .fc-btn.chico { font-size: 0.78rem; padding: 0.25rem 0.5rem; }
 .fc-imprimir.fc-comparar.e-diferencias { border-color: #a33b26; color: #a33b26; }
 .fc-imprimir.fc-comparar.e-coinciden { border-color: rgba(6, 101, 47, 0.4); color: #06652F; }
