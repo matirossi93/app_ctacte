@@ -38,6 +38,23 @@ try {
       await page.screenshot({path:`${out}/detalle-correcto.png`,fullPage:true});
     } finally { await ctx.close(); }
   });
+  await test('Aprobar usa la versión del detalle visible y bloquea borradores sin guardar',async()=>{
+    const {page,ctx}=await setup();
+    try {
+      let enviado=null,calls=0;
+      await page.route('**/api/presupuestos/101',r=>reply(r,{items:[item(11,'PRODUCTO REVISADO')],comprobante:{im_comprobante_id:'101',numero:101,cod_cliente:101,fecha:'2026-09-10',huella:'detalle-actual'}}));
+      await page.route('**/api/presupuestos/101/revision',r=>{calls++;enviado=r.request().postDataJSON();return reply(r,{error:'Conflicto simulado'},409);});
+      await page.locator('.pr-abrir').nth(0).click();
+      await page.locator('.ed-tabla tbody tr').filter({hasText:'PRODUCTO REVISADO'}).waitFor();
+      await page.getByRole('button',{name:'Aprobar',exact:true}).nth(0).click();
+      await page.getByText('Conflicto simulado',{exact:true}).waitFor();
+      assert(enviado?.huella==='detalle-actual','Se envió la versión vieja del listado');
+      await page.locator('.pr-detalle .ed-cant').fill('3');
+      await page.getByRole('button',{name:'Aprobar',exact:true}).nth(0).click();
+      await page.getByText('Guardá o descartá los cambios de este presupuesto antes de aprobarlo.',{exact:true}).waitFor();
+      assert(calls===1,'Se aprobó con cambios pendientes sin guardar');
+    } finally {await ctx.close();}
+  });
   await test('Respuesta de rango antiguo no reemplaza la actual', async()=>{
     const {page,ctx}=await setup();
     try {

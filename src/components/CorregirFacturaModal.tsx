@@ -270,7 +270,10 @@ export function CorregirFacturaModal(
         </div>}
         {pendiente && !resultado && (
           <div className="cf-error">
-            <span>Hay una operación {pendiente.estado === 'listo' ? 'pendiente de terminar' : 'por verificar'}. Las notas confirmadas no se vuelven a emitir.
+            <span>{pendiente.estado === 'listo' && pendiente.error && !pendiente.emitidos?.length
+                ? 'InfoManager rechazó el intento. Corregí el motivo indicado antes de retomarlo.'
+                : `Hay una operación ${pendiente.estado === 'listo' ? 'pendiente de terminar' : 'por verificar'}. Las notas confirmadas no se vuelven a emitir.`}
+              {pendiente.error && <p>{pendiente.error}</p>}
               {pendiente.puede_retomar && <button disabled={emitiendo} onClick={() => void enviar(pendiente.clase, pendiente.entrada, pendiente.motivo, pendiente.version ?? version)}>Retomar / verificar operación</button>}
               {pendiente.puede_cancelar && <button disabled={emitiendo} onClick={async () => {
                 if (!operacionGlobal.comenzar()) return; envioEnCurso.current = true; setEmitiendo(true);

@@ -645,12 +645,32 @@ describe('los campos AFIP de la nota de crédito', () => {
     const post = mockIM({ isCreated: true, venta: { id: 9, numero: 7 } });
     await emitirNotaCredito({ ...DATOS, numero: 7 } as any);
     const b = (post.mock.calls[0] as any[])[1];
-    expect(b.id_destino).toBe(b.punto_de_venta === 999 ? 3 : 1);
+    expect(b.id_destino).toBe(1);
+    expect(b.punto_de_venta).toBe(777);
   });
 });
 
 
 describe('respuesta ambigua después de POST: no habilita otra emisión', () => {
+  const sinPunto = 'Validaciones: \n• El usuario cargado (anto) no está relacionado a un punto de venta existente para el tipo de comprobante [NC - B].';
+  it('reconoce el rechazo de usuario sin punto de venta, sin reintentar la emisión', async () => {
+    const { comoError, interpretar, emitirNotaCredito } = await import('./facturarIM.js');
+    const error={response:{status:400,data:{detalles:sinPunto}}};
+    expect(comoError(error)).toMatchObject({ok:false,sinRespuesta:false});
+    expect(interpretar({detalles:sinPunto},'NC B')).toMatchObject({ok:false,sinRespuesta:false});
+    const post=mockIM(null,error);
+    expect(await emitirNotaCredito({...DATOS,usuario:'anto',numero:30080})).toMatchObject({ok:false,sinRespuesta:false});
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+  it.each([{isCreated:true},{id:123},{venta:{id:123}}])('un dato de emisión contradictorio mantiene la incertidumbre: %j', async extra => {
+    const {comoError}=await import('./facturarIM.js');
+    expect(comoError({response:{status:400,data:{detalles:sinPunto,...extra}}})).toMatchObject({ok:false,sinRespuesta:true});
+  });
+  it('no interpreta una validación genérica ni una desconexión como rechazo',async()=>{
+    const {comoError}=await import('./facturarIM.js');
+    expect(comoError({response:{status:400,data:{detalles:'Validaciones: no se pudo determinar el resultado'}}})).toMatchObject({ok:false,sinRespuesta:true});
+    expect(comoError({message:'socket hang up'})).toMatchObject({ok:false,sinRespuesta:true});
+  });
   it.each([{}, '', '<html>Bad gateway</html>', {isCreated:true},
     {mensaje:'El comprobante se procesó, pero no existe conexión al servicio de respuesta'}])('no confunde respuesta desconocida con rechazo: %j', async data => {
     const { interpretar } = await import('./facturarIM.js');
@@ -668,3 +688,30 @@ describe('respuesta ambigua después de POST: no habilita otra emisión', () => 
     expect(comoError({response:{status:500,data:{detalles:'Validaciones: • El número de comprobante [77377] ya existe para el punto de venta [7] y empresa [1].'}}})).toMatchObject({ok:false,sinRespuesta:false});
   });
 });
+
+ describe('NC/ND en el punto manual confirmado por oficina', () => {
+  it.each(['NC','ND'])('%s nunca avanza números después de una colisión', async tipo => {
+    const {emitirNotaCredito,emitirNotaDebito}=await import('./facturarIM.js');
+    const post=mockIM({isCreated:false,detalles:'Ya existe una factura con: punto_de_venta = 777 y numero = 30080'});
+    const r=await (tipo==='NC'?emitirNotaCredito:emitirNotaDebito)({...DATOS,numero:30080});
+    expect(r).toMatchObject({ok:false,sinRespuesta:false}); expect(post).toHaveBeenCalledTimes(1);
+    expect((post.mock.calls[0] as any[])[1]).toMatchObject({punto_de_venta:777,id_destino:1,numero:30080,tipo_comprobante:tipo});
+  });
+  it('un cero explícito no consume un correlativo automático',async()=>{
+    const {emitirNotaCredito}=await import('./facturarIM.js'); const post=mockIM({});
+    expect(await emitirNotaCredito({...DATOS,numero:0})).toMatchObject({ok:false}); expect(post).not.toHaveBeenCalled();
+  });
+ });
+
+ it('la colisión real del 777 es un rechazo: no queda incierta ni reintenta',async()=>{
+  const {comoError,emitirNotaCredito}=await import('./facturarIM.js');
+  const detalles="Validaciones: Ya existe una factura con: tag = 'S', cod_empresa = 1, id_destino = 1, punto_de_venta = 777, tipo_factura = 'B' y numero = 30059.";
+  const e={response:{status:400,data:{detalles}}}; const post=mockIM(null,e);
+  expect(await emitirNotaCredito({...DATOS,numero:30059})).toMatchObject({ok:false,sinRespuesta:false}); expect(post).toHaveBeenCalledTimes(1);
+  expect(comoError({response:{status:400,data:{detalles,id:123}}})).toMatchObject({sinRespuesta:true});
+ });
+ it.each([['IM_PTO_VENTA_NC','999'],['IM_ID_DESTINO_NC','3'],['IM_NUMERO_NC_AUTO','1']])('configuración antigua %s=%s no envía notas',async(key,value)=>{
+  vi.resetModules();vi.stubEnv(key,value);
+  try {const {emitirNotaCredito}=await import('./facturarIM.js');const post=mockIM({});expect(await emitirNotaCredito({...DATOS,numero:30080})).toMatchObject({ok:false});expect(post).not.toHaveBeenCalled();}
+  finally {vi.unstubAllEnvs();vi.resetModules();}
+ });

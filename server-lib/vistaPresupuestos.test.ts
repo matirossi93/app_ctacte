@@ -237,3 +237,12 @@ describe('sólo Casa Central', () => {
     expect(ids).toEqual(['999']);
   });
 });
+
+ it('la versión del listado conserva precios, IVA y texto para coincidir con el detalle revisado',async()=>{
+  const {huellaPresupuesto,exigirHuella}=await import('./versionPresupuesto.js');
+  const rs=[{...renglon(12,25)[0],precio_orig:1234.56,precio:925.92,iva_por:21}, {id_comprobante:'999',cod_articulo:0,cantidad:1,precio:50,detalle:'Flete'}];
+  m.fetchVentasItems.mockResolvedValue(rs);
+  const v=await vistaDeRango('2026-09-09','2026-09-09',true);
+  expect(v.pendientes[0].huella).toBe(huellaPresupuesto('999',PR,rs));
+  expect(()=>exigirHuella(v.pendientes[0].huella,huellaPresupuesto('999',PR,[{...rs[0],precio_orig:1500},rs[1]]))).toThrow('cambió');
+ });

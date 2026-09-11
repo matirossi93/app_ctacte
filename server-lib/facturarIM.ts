@@ -109,36 +109,12 @@ export type ResultadoEmision =
  */
 const PTO_VENTA_FACTURA = Number(process.env.IM_PTO_VENTA_FACTURA || 777);
 const PTO_VENTA_REMITO = Number(process.env.IM_PTO_VENTA_REMITO || 7);
-/**
- * 🔴 PUNTO DE VENTA DE LAS NOTAS DE CRÉDITO Y DÉBITO: EL 999, NO EL 777 DE LAS FACTURAS.
- *
- * IM valida la unicidad del número **sin mirar el tipo de comprobante**. Como cada tipo lleva su
- * propia serie y la de facturas B va por 50.422 mientras la de NC B va por 30.073, cada NC choca
- * contra una factura vieja del mismo número. Probado contra IM el 08 y el 09/09/2026:
- *
- *   NC B pv777 numero 0      -> ✗ "Ya existe una factura con ... numero = 30073"
- *   NC B pv777 numero 30073  -> ✗ el mismo error (no es el número que mandamos)
- *   ND B pv777 numero 0      -> ✗ "... numero = 742"
- *   **NC B pv999 destino 3** -> ✅ sale, y ahí IM sí le asigna el número solo
- *   **ND B pv999 destino 3** -> ✅ sale igual
- *
- * ⚠️ Emitir por otra serie es una DECISIÓN DE NEGOCIO, no técnica: es otro punto de venta ante
- * AFIP. Se le planteó así a Mati el 09/09/2026 y la tomó él (*"usemos ese punto de venta, no hay
- * problema"*). Queda en variables de entorno para volver al 777 sin deploy el día que Sistec
- * arregle la validación — y ese día `IM_NUMERO_NC_AUTO` vuelve a 0.
+/** Mati confirmó el 11/09/2026: las notas son internas, PV 777, destino Manual (1).
+ * El 999 es controlador fiscal y no se usa como salida alternativa a rechazos de la API.
  */
-const PTO_VENTA_NC = Number(process.env.IM_PTO_VENTA_NC || 999);
-/**
- * 🪤 El destino va atado al punto de venta: la combinación empresa+comprobante+destino+pv tiene
- * que EXISTIR en `/puntos-de-venta` o IM contesta "no está relacionado a un punto de venta
- * existente". El 999 de la empresa 1 es destino 3; el 777 es destino 1.
- */
-const ID_DESTINO_NC = Number(process.env.IM_ID_DESTINO_NC || (PTO_VENTA_NC === 999 ? 3 : 1));
-/**
- * En el 999 IM asigna el correlativo solo con `numero: 0` (probado: NC B nº2, ND B nº1). En el
- * 777 no, y ahí hay que calcularlo. Con la variable en 0 se usa el camino de calcular.
- */
-const NUMERO_NC_AUTO = String(process.env.IM_NUMERO_NC_AUTO ?? '1') === '1';
+const PTO_VENTA_NC = Number(process.env.IM_PTO_VENTA_NC || 777);
+const ID_DESTINO_NC = Number(process.env.IM_ID_DESTINO_NC || 1);
+const NUMERO_NC_AUTO = String(process.env.IM_NUMERO_NC_AUTO ?? '0') === '1';
 /**
  * ⚠️ La NC real de la oficina viene con `genero_re_auto: 'S'`, pero esa la creó la pantalla de
  * IM, no la API. El remito y el presupuesto —los dos verificados por API— mandan 'N', y una 'S'
@@ -204,6 +180,10 @@ export async function proximoNumeroFactura(
 
 /** Sólo una validación inequívoca permite reintentar un POST. */
 export function rechazoDefinitivo(mensaje: string): boolean {
+  if (/ya existe una (?:factura|nota) con:\s*tag\s*=\s*'S',\s*cod_empresa\s*=\s*\d+,\s*id_destino\s*=\s*\d+,\s*punto_de_venta\s*=\s*\d+,\s*tipo_factura\s*=\s*'[ABCX]'\s*y\s*numero\s*=\s*\d+/i.test(mensaje)) return true;
+  // Validación concreta de IM: el operador no tiene asociado el talonario. No es
+  // una pérdida de respuesta y no debe dejar la operación bloqueada como incierta.
+  if (/el usuario cargado \([^\r\n)]+\) no est[aá] relacionado a un punto de venta existente para el tipo de comprobante \[(?:NC|ND|FA|RE)\s*-\s*(?:A|B|C|X)\]/i.test(mensaje)) return true;
   return /art[ií]culos sin stock suficiente:\s*\[|el art[ií]culo c[óo]digo \[\d+\] (?:no existe|no pertenece a la lista de precios \[\d+\])|ya existe una (?:factura|nota) con los siguientes datos|el n[uú]mero de comprobante \[\d+\] ya existe para el punto de venta \[\d+\] y empresa \[\d+\]/i.test(mensaje);
 }
 function rechazoEstructurado(data: any): boolean {
@@ -753,20 +733,18 @@ async function emitirNota(
   if (!letra) {
     return { ok: false, error: `No se puede saber qué letra de ${que} le corresponde al cliente ${d.cod_cliente} (condición de IVA: ${d.categoria_iva ?? 'sin cargar'}). Hacela a mano.` };
   }
-  /**
-   * 🔑 En el punto 999 IM asigna el correlativo solo con `numero: 0` — probado el 09/09/2026
-   * (NC B nº2, ND B nº1). En el 777 no lo asigna y hay que calcularlo, así que ese camino se
-   * conserva detrás de `IM_NUMERO_NC_AUTO` para el día que se vuelva allá.
-   */
-  let numero = d.numero ?? (NUMERO_NC_AUTO ? 0 : await proximoNumeroFactura(letra, PTO_VENTA_NC, 30, tipo));
-  if (numero == null) {
-    return { ok: false, error: `No pude averiguar el próximo número de ${que} ${letra} del punto ${PTO_VENTA_NC}: no hay ninguna emitida en los últimos 30 días. Hacela a mano.` };
+  if (PTO_VENTA_NC !== 777 || ID_DESTINO_NC !== 1 || NUMERO_NC_AUTO) {
+    return { ok: false, error: 'Las NC/ND deben usar el punto 777, destino Manual (1), con numeración de su propia serie. Corregí la configuración de la app. No se envió la nota.' };
+  }
+  const numero = d.numero ?? await proximoNumeroFactura(letra, PTO_VENTA_NC, 30, tipo);
+  if (numero == null || !Number.isSafeInteger(numero) || numero <= 0) {
+    return { ok: false, error: `No pude verificar el próximo número de ${que} ${letra} del punto 777. Emitila en InfoManager y vinculala desde el panel.` };
   }
 
   const fecha = fechaPedida(d);
   const cli = await imClient();
   let items = renglones(d.items, d.cod_vendedor);
-  // Mismo criterio que la factura: si otro tomó el número mientras tanto, se sube al siguiente.
+  // Sólo el rechazo de una lista admite ajustar el payload. Nunca avanzar la serie por colisión.
   for (let intento = 0; intento < 3; intento++) {
     const payload = {
       ...cabecera(d, fecha),
@@ -795,7 +773,7 @@ async function emitirNota(
     const reintentar = (error: string): boolean => {
       // 🪤 Sólo el choque de NUMERACIÓN sube el número. Un "ya existe" por otra cosa haría subir
       // tres veces y terminar diciendo "los números ya estaban usados", que sería mentira.
-      if (/ya existe una nota/i.test(error)) { numero = Number(numero) + 1; return true; }
+      if (/ya existe|n[uú]mero.*existe/i.test(error)) return false;
       const art = articuloFueraDeLista(error);
       if (art != null) { items = sinListaDelArticulo(items, art); return true; }
       return false;
