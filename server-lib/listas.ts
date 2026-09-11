@@ -133,7 +133,7 @@ export interface ResultadoPedido {
 }
 
 const NOMBRE_LISTA: Record<number, string> = { 9: 'Minorista', 11: 'Sucursales', 12: 'L1', 13: 'L2', 14: 'L3', 15: 'L4' };
-const normalizar = (s: string) => s.trim().replace(/\s+/g, ' ').toLocaleLowerCase('es-AR');
+const normalizar = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 export const nombreLista = (cod: number) => NOMBRE_LISTA[cod] ?? `lista ${cod}`;
 /**
  * Igual, pero con el nombre entero. Los avisos del vendedor van cortos ("está en L2") porque
