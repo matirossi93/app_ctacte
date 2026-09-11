@@ -479,11 +479,23 @@
 /**
  * 🔑 La salida cuando el envío fue rechazado (11/09/2026).
  *
- * Va al lado del botón de enviar, no compitiendo con él: borde y sin relleno, para que se lea
- * como "la otra opción" y no como la acción principal. El pedido se conserva igual.
+ * Se lee como "la otra opción" y no como la acción principal: borde y sin relleno. El pedido se
+ * conserva igual.
+ *
+ * 🔴 LA FILA TIENE QUE PODER BAJAR DE RENGLÓN. Primera versión: `margin-left:auto` + `nowrap`
+ * sobre una fila sin `wrap`. Medido por Astra en el navegador a 390 px —el ancho real de un
+ * celular, que es desde donde carga el vendedor—: `.ped-footer` quedaba con scrollWidth 535
+ * contra 390 de ancho visible, y **"Guardar cambios" empezaba en x=412, entero fuera del
+ * modal**. El botón principal, invisible, en la pantalla donde más se usa.
+ *
+ * 🪤 No estaba "recortado" sino DESPLAZADO, así que medir `scrollWidth > clientWidth` sobre el
+ * botón no lo veía. Se mide comparando su rectángulo contra el del modal (ver
+ * browser-pedido-rechazado.mjs).
+ *
+ * Con `wrap` y una base de 12rem: en 390 cada botón se queda con su renglón, en 560 y más van
+ * los dos juntos. Nada se sale.
  */
-.ped-footer-row .ped-salida {
-    white-space: nowrap;
-    margin-left: auto;
-    margin-right: 0.5rem;
-}
+.ped-footer-row { flex-wrap: wrap; }
+.ped-footer-row .ped-total { flex: 1 1 auto; min-width: 0; }
+.ped-footer-row .ped-salida,
+.ped-footer-row .ped-confirm { flex: 1 1 12rem; min-width: 0; }

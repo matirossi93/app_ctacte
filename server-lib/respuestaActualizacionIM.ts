@@ -10,11 +10,29 @@ import { idIM } from './identidadIM.js';
  * presupuesto: el nuevo se creó, el viejo se anuló bien, y la app igual le dijo que habían
  * quedado los dos vivos y que avisara a la oficina.
  */
-const CONFIRMACION_EN_TEXTO = /se actualiz(?:ó|o|aron)\s+correctamente/i;
+/**
+ * 🔴 LA CONFIRMACIÓN TIENE QUE SER EL CUERPO ENTERO, NO UN FRAGMENTO.
+ *
+ * Astra (11/09/2026): la primera versión buscaba *"se actualizó correctamente"* en cualquier
+ * parte del texto, sin anclar. Eso acepta como éxito la frase que dice exactamente lo
+ * contrario —**"NO se actualizó correctamente"**— y cualquier HTML o respuesta que cite la
+ * confirmación antes de explicar un error.
+ *
+ * Leer un rechazo como éxito es peor que el bug que esto vino a arreglar: aquél avisaba de más
+ * y alguien iba a mirar; éste da por guardado lo que no se guardó, y nadie mira nunca.
+ *
+ * Se aceptan sólo las dos confirmaciones completas que IM devuelve, con acento o sin él —los
+ * espacios se normalizan y el punto final es opcional—. Cualquier otro string sigue siendo
+ * incertidumbre.
+ */
+const CONFIRMACION_EN_TEXTO = /^(?:el registro se actualiz[óo]|los registros se actualizaron) correctamente\.?$/i;
+
+/** Espacios, saltos de línea y tabulaciones colapsados a uno solo, y sin bordes. */
+const normalizar = (t: string) => t.replace(/\s+/g, ' ').trim();
 
 /** No interpretar un HTTP 200 vacío como escritura confirmada. */
 export function interpretarActualizacionIM(data: any): { ok: true; raw: any } | { ok: false; error: string; raw: any; sinRespuesta: boolean } {
-  if (typeof data === 'string' && CONFIRMACION_EN_TEXTO.test(data)) return { ok: true, raw: data };
+  if (typeof data === 'string' && CONFIRMACION_EN_TEXTO.test(normalizar(data))) return { ok: true, raw: data };
   const id = data?.id ?? data?.venta?.id;
   const error = String(data?.detalles ?? data?.mensaje ?? 'InfoManager no confirmó la actualización. Verificá el comprobante antes de continuar.');
   const rechazo = data?.isUpdated === false;

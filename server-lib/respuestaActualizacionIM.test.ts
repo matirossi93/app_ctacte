@@ -33,3 +33,69 @@ describe('confirmación explícita de PUT', () => {
     expect(interpretarActualizacionIM({ isUpdated: false, id: 123 })).toMatchObject({ ok: false, sinRespuesta: true });
   });
 });
+
+/**
+ * 🔴 UN FRAGMENTO NO ES UNA CONFIRMACIÓN.
+ *
+ * Astra (11/09/2026), revisando el fix del texto plano: la regex buscaba el fragmento
+ * *"se actualizó correctamente"* en cualquier parte del cuerpo, sin anclar. Eso acepta como
+ * éxito la frase que dice exactamente lo contrario —"NO se actualizó correctamente"— y
+ * cualquier página HTML o respuesta que cite la confirmación antes de explicar un error.
+ *
+ * Leer un rechazo como éxito es peor que el bug original: el original avisaba de más y alguien
+ * iba a mirar; éste da por guardado lo que no se guardó y nadie mira nunca.
+ *
+ * Sólo se aceptan las confirmaciones COMPLETAS que IM devuelve de verdad.
+ */
+describe('sólo la confirmación completa cuenta como éxito', () => {
+  it('🔑 las dos que manda IM, con acento y sin acento', () => {
+    for (const t of [
+      'El registro se actualizó correctamente.',
+      'El registro se actualizo correctamente.',
+      'Los registros se actualizaron correctamente.',
+      '  El registro se actualizó correctamente.  ',
+      'El  registro   se actualizó\n correctamente.',
+      'El registro se actualizó correctamente',
+    ]) {
+      expect(interpretarActualizacionIM(t).ok, t).toBe(true);
+    }
+  });
+
+  it('🔴 la NEGACIÓN no es un éxito', () => {
+    for (const t of [
+      'No se actualizó correctamente.',
+      'El registro no se actualizó correctamente.',
+      'El registro NO se actualizó correctamente, verifique los datos.',
+    ]) {
+      const r = interpretarActualizacionIM(t);
+      expect(r.ok, t).toBe(false);
+      if (!r.ok) expect(r.sinRespuesta).toBe(true);
+    }
+  });
+
+  it('🔴 la confirmación citada y después un error, tampoco', () => {
+    for (const t of [
+      'El registro se actualizó correctamente. Pero el comprobante quedó con errores.',
+      'Se esperaba "El registro se actualizó correctamente." y hubo un fallo.',
+      'Error: el registro se actualizó correctamente sólo parcialmente.',
+    ]) {
+      const r = interpretarActualizacionIM(t);
+      expect(r.ok, t).toBe(false);
+      if (!r.ok) expect(r.sinRespuesta).toBe(true);
+    }
+  });
+
+  it('🔴 una página HTML que contenga la frase, tampoco', () => {
+    const r = interpretarActualizacionIM('<html><body><p>El registro se actualizó correctamente.</p></body></html>');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.sinRespuesta).toBe(true);
+  });
+
+  it('🔴 un string cualquiera sigue siendo incertidumbre', () => {
+    for (const t of ['', 'ok', 'Se superó el límite de solicitudes por hora para este cliente']) {
+      const r = interpretarActualizacionIM(t);
+      expect(r.ok, t).toBe(false);
+      if (!r.ok) expect(r.sinRespuesta).toBe(true);
+    }
+  });
+});
