@@ -1,5 +1,6 @@
 /** Servidor local y fixtures cerradas: jamás usa la configuración E2E de producción. */
 import { spawn } from 'node:child_process';
+import { stripVTControlCharacters } from 'node:util';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,7 +27,7 @@ try {
   let ready = false;
   for(let i=0;i<100;i++) {
     if (failed) throw new Error(`El preview no pudo iniciar: ${startup}`);
-    if (startup.includes(`127.0.0.1:${port}`)) {
+    if (stripVTControlCharacters(startup).includes(`127.0.0.1:${port}`)) {
       const r = await fetch(base + '/reparto').catch(() => null);
       if (r?.ok && (await r.text()).includes('id="root"')) { ready=true; break; }
     }
