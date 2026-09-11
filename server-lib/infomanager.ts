@@ -1443,7 +1443,16 @@ export function parsearItemsComprobante(data: any): ItemComprobante[] {
 export async function leerComprobante(id: string | number) {
   const cli = await imClient();
   const { data } = await imGetRetry(() => cli.get(`/ventas/${id}`), `ventas/${id} completo`);
-  return { cabecera: parsearCabeceraComprobante(data), items: parsearItemsComprobante(data), crudos: renglonesCrudos(data) };
+  const c = data?.results ?? data?.venta ?? data ?? {};
+  return {
+    cabecera: parsearCabeceraComprobante(data), items: parsearItemsComprobante(data), crudos: renglonesCrudos(data),
+    /**
+     * 🪤 El id que devolvió IM, crudo. `parsearCabeceraComprobante` no lo conserva, así que quien
+     * compara termina inyectando el id que pidió — y si el cuerpo era de otro comprobante, lo da
+     * por bueno. `null` cuando la respuesta no lo trae: eso no contradice nada.
+     */
+    idDevuelto: c?.id ?? null,
+  };
 }
 
 /**

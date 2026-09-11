@@ -88,8 +88,9 @@ function agregar(rs: RenglonEvidencia[]): Agregado | 'unidad' | null {
   const porArticulo = new Map<number, number>();
   for (const r of rs) {
     const cod = cantidadExplicita(r.cod_articulo);
-    // Sin código no se puede aparear con nada del otro lado.
-    if (cod === null || !Number.isInteger(cod) || cod <= 0) return null;
+    // 🪤 Entero SEGURO: los códigos son int64 y dos distintos fuera del rango exacto de JS
+    // colapsarían en el mismo número — se aparearían renglones que no son el mismo artículo.
+    if (cod === null || !Number.isSafeInteger(cod) || cod <= 0) return null;
     if (NO_FISICOS.has(cod)) continue;
     if (bloqueaPorUnidad(r)) return 'unidad';
     const cant = cantidadExplicita(r.cantidad);

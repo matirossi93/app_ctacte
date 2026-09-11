@@ -56,8 +56,8 @@ const num = (v: unknown) => {
   const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
   return Number.isFinite(n) ? n : null;
 };
-/** Positivo y legible: un 0 o un ilegible no acreditan identidad. */
-const idPositivo = (v: unknown) => { const n = num(v); return n !== null && n > 0 ? n : null; };
+/** Entero positivo y seguro: un 0, un 1.5 o un ilegible no acreditan identidad. */
+export const idPositivo = (v: unknown) => { const n = num(v); return n !== null && n > 0 && Number.isSafeInteger(n) ? n : null; };
 
 /**
  * ¿La cabecera leída es el comprobante que dice nuestro registro?

@@ -47,11 +47,15 @@ vi.mock('./pedidos.js', () => ({
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
 
 const { vistaDeRango, invalidarVista } = await import('./vistaPresupuestos.js');
+const { EVIDENCIA } = await import('./evidenciaComprobantes.js');
+
+/** Qué devuelve cada tabla. Vacío salvo que un test diga otra cosa. */
+let tablasSb: Record<string, any[]> = {};
 
 function fakeSb() {
   m.sbMock.mockImplementation(() => ({
-    from: () => {
-      const res = { data: [], error: null };
+    from: (t: string) => {
+      const res = { data: tablasSb[t] ?? [], error: null };
       const q: any = {
         then: (r: any, j: any) => Promise.resolve(res).then(r, j),
         maybeSingle: () => Promise.resolve(res),
@@ -78,6 +82,7 @@ const renglon = (cod_lista_precios: number, descuento_porc = 0) => ([{
 beforeEach(() => {
   vi.clearAllMocks();
   invalidarVista();
+  tablasSb = {};
   fakeSb();
   m.fetchVentas.mockResolvedValue([PR]);
   // Los tres salen del cache en producción; acá se responden al toque salvo que un test los frene.
@@ -358,5 +363,70 @@ describe('los clientes se solapan con el resto', () => {
 
     soltarClientes([]);
     await vista;
+  });
+});
+
+/**
+ * 🔑 LA EVIDENCIA SALE DE LO QUE YA SE LEYÓ, Y NO SE FILTRA A LA RESPUESTA.
+ *
+ * Probar `proyectarEvidencia` sola no dice nada de la conexión: lo que importa es que la vista
+ * real la arme sin pedir nada nuevo y que no viaje al navegador.
+ */
+describe('la evidencia para comparar factura y remito', () => {
+  beforeEach(() => {
+    invalidarVista(); vi.clearAllMocks();
+    tablasSb = {};
+    fakeSb();
+    m.fetchArticulosCatalogo.mockResolvedValue(CATALOGO);
+    m.fetchStockPorDeposito.mockResolvedValue(new Map([[1, 999]]));
+    m.fetchClientesIMCon.mockResolvedValue([]);
+    m.reglasActivas.mockResolvedValue([]);
+    m.descuentosActivos.mockResolvedValue([]);
+  });
+
+  const PR_VIVO = { id: '1', tipo_comprobante: 'PR', cod_cliente: 7, cod_empresa: 1, fecha: '2026-09-01', total: 100, anulada: 'N' };
+  const FA = { id: '20', tipo_comprobante: 'FA', tipo_factura: 'B', numero: 50420, cod_cliente: 7, cod_empresa: 1, fecha: '2026-09-01', anulada: 'N' };
+  const RE = { id: '30', tipo_comprobante: 'RE', numero: 77397, cod_cliente: 7, cod_empresa: 1, fecha: '2026-09-01', anulada: 'N' };
+
+  async function conEvidencia() {
+    m.fetchVentas.mockResolvedValue([PR_VIVO, FA, RE]);
+    m.fetchVentasItems.mockResolvedValue([
+      { id_comprobante: '1', cod_articulo: 1, cantidad: 10, cod_lista_precios: 12 },
+      { id_comprobante: '20', cod_articulo: 509, cantidad: 1, cod_lista_precios: 12 },
+      { id_comprobante: '30', cod_articulo: 509, cantidad: 1, cod_lista_precios: 12 },
+      { id_comprobante: '30', cod_articulo: 378, cantidad: null, cod_lista_precios: 12 },
+    ]);
+    return vistaDeRango('2026-09-01', '2026-09-01');
+  }
+
+  it('🔑 armarla no cuesta ninguna consulta extra a InfoManager', async () => {
+    await conEvidencia();
+    // Las de siempre: el listado del rango y los renglones del único día con pedidos.
+    expect(m.fetchVentas).toHaveBeenCalledTimes(1);
+    expect(m.fetchVentasItems).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔑 no se filtra a la respuesta: JSON.stringify no la ve', async () => {
+    const datos = await conEvidencia();
+    const json = JSON.stringify(datos);
+    expect(json).not.toContain('cabeceras');
+    expect(json).not.toContain('77397');
+    expect(Object.keys(datos)).not.toContain('evidencia');
+  });
+
+  it('🔑 la cantidad viaja CRUDA: un null no se convierte en 0', async () => {
+    tablasSb = { presupuestos_facturados: [{ im_comprobante_id: '1', im_factura_id: '20', im_remito_id: '30' }] };
+    const datos = await conEvidencia();
+    const ev = (datos as any)[EVIDENCIA];
+    const renglones = ev.renglones.get('30');
+    expect(renglones.find((r: any) => Number(r.cod_articulo) === 378).cantidad).toBeNull();
+  });
+
+  it('🪤 sin pares vinculados no se conserva nada', async () => {
+    const datos = await conEvidencia();
+    const ev = (datos as any)[EVIDENCIA];
+    // Sin pares en la base, no hay nada que guardar: el PR y sus renglones no entran.
+    expect(ev.cabeceras.size).toBe(0);
+    expect(ev.renglones.size).toBe(0);
   });
 });

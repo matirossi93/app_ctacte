@@ -104,15 +104,22 @@ function canonico(x: unknown): string {
   if (x && typeof x === 'object') return `{${Object.entries(x).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => JSON.stringify(k) + ':' + canonico(v)).join(',')}}`;
   return JSON.stringify(x);
 }
-/** Rechazo conocido de IM777: el validador cruza la serie de notas con facturas.
- * Sólo orientar a emisión externa tras rechazo confirmado; nunca ante incertidumbre.
+/**
+ * ¿El rechazo que devolvió IM es el de numeración del punto 777?
+ *
+ * 🪤 Reconoce el TEXTO del rechazo, y no concluye nada sobre cómo está implementada esa
+ * validación del otro lado. Sólo se marca ante un rechazo confirmado; ante incertidumbre, no.
  */
 function conflictoNumeracionNota(o: OperacionFactura): boolean {
   return o.estado === 'listo' && !o.resultado_por_conciliar &&
     ['NC', 'ND'].includes(o.componentes[o.indice]?.tipo) &&
     /ya existe una (?:factura|nota) con:\s*tag\s*=\s*'S',\s*cod_empresa\s*=\s*1,\s*id_destino\s*=\s*1,\s*punto_de_venta\s*=\s*777,\s*tipo_factura\s*=\s*'[AB]'\s*y\s*numero\s*=\s*\d+/i.test(o.error ?? '');
 }
-const GUIA_NUMERACION_NOTA = 'InfoManager rechazó la nota por un conflicto de numeración en el punto 777. Reintentar desde la app no lo resuelve. Verificá en InfoManager si ya existe la nota que necesitás; si falta, emití allí sólo la nota pendiente. Después hay que conciliar su comprobante con esta operación.';
+/**
+ * 🪤 Factual: dice QUÉ rechazó IM y qué mirar, sin prometer que emitir desde InfoManager
+ * destrabe, que eso no está verificado. La causa del rechazo sigue en revisión.
+ */
+const GUIA_NUMERACION_NOTA = 'InfoManager rechazó la nota por un conflicto de numeración en el punto 777. Antes de otro intento, revisá el punto de venta, el talonario y el número. Y revisá en InfoManager si ya existe otra nota antes de conciliar.';
 export function resumenOperacion(o: OperacionFactura) {
   const conflicto = conflictoNumeracionNota(o);
   return { id: o.id, clase: o.clase, estado: o.estado, entrada: o.peticion.entrada, motivo: o.peticion.motivo,

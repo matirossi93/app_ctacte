@@ -168,3 +168,9 @@ describe('lo que NO es una cantidad', () => {
     expect(compararFacturaRemito(fa, re).estado).toBe('no_verificado');
   });
 });
+
+it('🔑 un código fuera del entero seguro no se aparea: dos distintos colapsarían en uno', () => {
+  const a = [r(9007199254740993, 1)];          // 2^53+1, indistinguible de 2^53 en JS
+  expect(compararFacturaRemito(a, a).estado).toBe('no_verificado');
+  expect(compararFacturaRemito([r(1.5, 1)], [r(1.5, 1)]).estado).toBe('no_verificado');
+});

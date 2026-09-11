@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import type { JwtPayload } from './auth.js';
 import { sb, TENANT_ID } from './supabase.js';
 import { leerComprobante } from './infomanager.js';
-import { compararPar, type CabeceraMinima, type Evidencia } from './evidenciaComprobantes.js';
+import { compararPar, idPositivo, type CabeceraMinima, type Evidencia } from './evidenciaComprobantes.js';
 import { textoControl } from './controlFacturaRemito.js';
 import { frenaSiNoPuede } from './facturarPresupuestos.js';
 
@@ -27,6 +27,11 @@ export async function compararFacturaConRemito(req: Request & { user?: JwtPayloa
     if (!par?.im_factura_id || !par?.im_remito_id) {
       res.status(409).json({ error: 'Ese pedido no tiene factura y remito vinculados.' }); return;
     }
+    // 🪤 Antes de gastar dos GET: los ids tienen que ser ids. Un valor ilegible pediría
+    // `/ventas/undefined` y el error que volviera no diría nada útil.
+    if (!idPositivo(par.im_factura_id) || !idPositivo(par.im_remito_id)) {
+      res.status(409).json({ error: 'Los comprobantes vinculados no tienen un identificador válido.' }); return;
+    }
 
     const [fa, re] = await Promise.all([
       leerComprobante(String(par.im_factura_id)),
@@ -38,11 +43,29 @@ export async function compararFacturaConRemito(req: Request & { user?: JwtPayloa
      * alguien pudo corregir la factura o rehacer el remito, y contestar sobre los comprobantes
      * viejos sería afirmar algo que ya no es.
      */
-    const { data: ahora } = await sb().from('presupuestos_facturados')
-      .select('im_factura_id, im_remito_id').eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id).maybeSingle();
-    if (String(ahora?.im_factura_id ?? '') !== String(par.im_factura_id) ||
-        String(ahora?.im_remito_id ?? '') !== String(par.im_remito_id)) {
+    const CAMPOS = ['im_factura_id', 'im_remito_id', 'im_factura_numero', 'im_factura_tipo', 'im_remito_numero', 'cod_cliente', 'cod_empresa'] as const;
+    const { data: ahora, error: errRelectura } = await sb().from('presupuestos_facturados')
+      .select(CAMPOS.join(', ')).eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id).maybeSingle();
+    // 🪤 No poder releer NO es lo mismo que "cambió": lo primero es un problema nuestro (502),
+    // lo segundo un conflicto real (409). En los dos casos no se contesta un resultado.
+    if (errRelectura) { res.status(502).json({ error: `No pude confirmar el vínculo: ${errRelectura.message}` }); return; }
+    const cambio = !ahora || CAMPOS.some(k => String((ahora as any)[k] ?? '') !== String((par as any)[k] ?? ''));
+    if (cambio) {
       res.status(409).json({ error: 'Los comprobantes de este pedido cambiaron mientras se consultaba. Actualizá y probá de nuevo.' });
+      return;
+    }
+
+    /**
+     * 🔴 ¿El cuerpo que contestó IM es del comprobante que se pidió?
+     *
+     * Si la respuesta trae un id y NO es el que se pidió, se está mirando otro comprobante. Una
+     * respuesta sin id no contradice nada —hay formas viejas que no lo traen— y ahí alcanza con
+     * la identidad, que se exige completa igual.
+     */
+    const contradice = (leido: any, pedido: string) =>
+      leido?.idDevuelto != null && String(leido.idDevuelto).trim() !== '' && String(leido.idDevuelto).trim() !== pedido;
+    if (contradice(fa, String(par.im_factura_id)) || contradice(re, String(par.im_remito_id))) {
+      res.status(502).json({ error: 'InfoManager devolvió un comprobante distinto del que se pidió. No se comparó nada.' });
       return;
     }
 
