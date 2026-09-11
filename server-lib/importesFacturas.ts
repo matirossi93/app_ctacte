@@ -1,7 +1,11 @@
-import { cabeceraComprobante, fetchVentas, type VentaRaw } from './infomanager.js';
+import { cabeceraComprobante, fetchVentas, type CabeceraComprobante, type VentaRaw } from './infomanager.js';
 import { importesPuntuales as puntuales } from './cacheImportesFacturas.js';
 export { invalidarImportesFacturas } from './cacheImportesFacturas.js';
-type Opciones = { ventas?: VentaRaw[]; desde?: string; hasta?: string; actualizar?: boolean; tolerarErrores?: boolean };
+type Opciones = {
+  ventas?: VentaRaw[]; desde?: string; hasta?: string; actualizar?: boolean; tolerarErrores?: boolean;
+  /** Lector compartido por petición: sin esto, una FA fuera del rango se pide dos veces. */
+  leerCabecera?: (id: string) => Promise<CabeceraComprobante>;
+};
 const dia = (v: unknown) => /^\d{4}-\d{2}-\d{2}/.test(String(v ?? '')) ? String(v).slice(0, 10) : null;
 
 /** El total de la FA vigente manda sobre PR, remito y snapshots. Nunca escribe en IM ni
@@ -43,11 +47,20 @@ export async function actualizarImportesFacturas<T extends Record<string, any>>(
     await Promise.all(faltantes.slice(i, i + 4).map(async id => {
       try {
       if (!/^\d+$/.test(id)) throw new Error('La factura vinculada no tiene un identificador válido. Revisá su asociación.');
-      const c = await puntuales.obtener(id, async () => {
-        const cab = await cabeceraComprobante(id);
+      /**
+       * 🪤 Con un lector de petición NO se pasa por el cache global.
+       *
+       * `puntuales.obtener` devuelve el total cacheado SIN invocar el lector: la vigencia
+       * quedaría leída de la cabecera nueva y el importe de una vieja, que es justo lo contrario
+       * de compartir una sola lectura. Las rutas que no inyectan lector conservan su cache.
+       */
+      const normalizar = (cab: any) => {
         if (cab.existe !== true || cab.anulada !== false || cab.total == null) throw new Error(`No pude verificar el importe actual de la factura ${id} en InfoManager. Actualizá antes de continuar.`);
         return { ...cab, id, anulada: 'N' };
-      }, { actualizar: opciones.actualizar });
+      };
+      const c = opciones.leerCabecera
+        ? normalizar(await opciones.leerCabecera(id))
+        : await puntuales.obtener(id, async () => normalizar(await cabeceraComprobante(id)), { actualizar: opciones.actualizar });
       porId.set(id, c);
       } catch (e) {
         if (!opciones.tolerarErrores) throw e;

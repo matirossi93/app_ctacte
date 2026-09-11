@@ -44,10 +44,11 @@ vi.mock('./infomanager.js', () => { const fuente = {
    * Va contra el mismo mock de cabecera, así cada test decide qué comprobante sigue vigente
    * simplemente contestando `anulada` / `existe` desde `cabeceraComprobante`.
    */
-  comprobantesVigentes: async (ids: Iterable<string | number>) => {
+  comprobantesVigentes: async (ids: Iterable<string | number>, _rango?: any, leerCabecera?: (id: string) => Promise<any>) => {
     const out = new Map<string, boolean | null>();
     for (const id of ids) {
-      const c = await m.cabeceraComprobante(id);
+      // Respeta el lector compartido por petición, igual que el real.
+      const c = leerCabecera ? await leerCabecera(String(id)) : await m.cabeceraComprobante(id);
       out.set(String(id), c.existe === null ? null : (c.existe === false ? false : c.anulada === false));
     }
     return out;
@@ -369,16 +370,47 @@ describe('el tablero de la etapa 2', () => {
   });
 
   /**
-   * 🪤 La lectura compartida NO puede ser un punto único de falla nuevo: si se cae, cada uno
-   * tiene que volver a su camino de siempre. (Que IM no conteste NUNCA sigue dando 502: el
-   * tablero no se puede armar sin las ventas, y eso no cambió.)
+   * 🪤 La lectura compartida no puede ser un punto único de falla: si se cae, cada consumidor
+   * vuelve a su camino de siempre. Acá se observa el de los importes, que es el único real en
+   * este test — `vistaDeRango` está mockeada y su propio fallback se prueba en
+   * vistaPresupuestos.test.ts.
    */
-  it('si la lectura compartida falla, la vista vuelve a pedirla por su cuenta', async () => {
-    tablas.presupuestos_facturados={data:[],error:null};
-    m.fetchVentas.mockRejectedValueOnce(new Error('IM sin respuesta')).mockResolvedValue([]);
+  it('si la lectura compartida falla, los importes la piden por su cuenta', async () => {
+    tablas.presupuestos_facturados={data:[{im_comprobante_id:'10',im_factura_id:'20',cod_cliente:430,cod_empresa:1,total:100,facturado_at:'2026-09-11',estado_emision:'completo'}],error:null};
+    m.fetchVentas.mockRejectedValueOnce(new Error('IM sin respuesta'))
+      .mockResolvedValue([{id:'20',tipo_comprobante:'FA',cod_cliente:430,cod_empresa:1,total:100,anulada:'N'}]);
     const r=await llamar(tableroFacturacion,{method:'GET',query:{desde:'2026-09-01',hasta:'2026-09-16'}});
     expect(r.status).toBe(200);
-    expect(m.fetchVentas).toHaveBeenCalledTimes(2);   // la que falló, y la que la vista rehízo
+    expect(m.fetchVentas).toHaveBeenCalledTimes(2);   // la compartida que falló, y la de importes
+  });
+
+  /**
+   * 🔑 UNA FA FUERA DEL RANGO SE LEE UNA SOLA VEZ.
+   *
+   * No está en el listado de `/ventas` del rango, así que el control de vigencia y la
+   * actualización de importes la piden cada uno por su cuenta: eran dos GET de la misma cabecera
+   * en la misma carga.
+   */
+  it('🔑 una FA fuera del rango es UN solo GET de cabecera', async () => {
+    tablas.presupuestos_facturados={data:[{im_comprobante_id:'10',im_factura_id:'999',im_factura_numero:50444,cod_cliente:430,cod_empresa:1,total:100,facturado_at:'2026-09-11',estado_emision:'completo'}],error:null};
+    // El listado del rango NO la trae: es de otro día.
+    m.fetchVentas.mockResolvedValue([]);
+    m.cabeceraComprobante.mockResolvedValue({existe:true,anulada:false,total:100,tipo_comprobante:'FA',cod_cliente:430,cod_empresa:1});
+    const r=await llamar(tableroFacturacion,{method:'GET'});
+    expect(r.status).toBe(200);
+    expect(m.cabeceraComprobante).toHaveBeenCalledTimes(1);
+  });
+
+  it('🪤 si esa lectura falla, el error llega a los dos y no se repite el GET', async () => {
+    tablas.presupuestos_facturados={data:[{im_comprobante_id:'10',im_factura_id:'999',im_factura_numero:50444,cod_cliente:430,cod_empresa:1,total:100,facturado_at:'2026-09-11',estado_emision:'completo'}],error:null};
+    m.fetchVentas.mockResolvedValue([]);
+    m.cabeceraComprobante.mockRejectedValue(new Error('IM sin respuesta'));
+    const r=await llamar(tableroFacturacion,{method:'GET'});
+    // 🔴 Lo que importa: no afirma un importe que no pudo verificar, y no repite el GET.
+    expect(m.cabeceraComprobante).toHaveBeenCalledTimes(1);
+    const fila = [...(r.body.pendientes ?? []), ...(r.body.facturados ?? [])][0];
+    if (r.status === 200) expect(fila?.total ?? null).toBeNull();
+    else expect(r.status).toBe(502);
   });
 
   it('falla visible si se pierde la lectura inicial de vínculos', async () => {

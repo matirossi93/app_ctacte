@@ -309,6 +309,14 @@ describe('el listado del rango se comparte dentro de la petición', () => {
     expect(m.fetchVentas).toHaveBeenCalledTimes(1);
   });
 
+  it('🔑 si la lectura compartida se cae, la vista la pide por su cuenta', async () => {
+    m.fetchVentas.mockResolvedValueOnce([]);
+    // Quien llama ya la manejó y resolvió a `undefined`: no es un array, es "no la tengo".
+    const r = await vistaDeRango('2026-09-01', '2026-09-16', false, Promise.resolve(undefined));
+    expect(m.fetchVentas).toHaveBeenCalledTimes(1);
+    expect(r.pendientes).toEqual([]);
+  });
+
   it('🪤 un listado vacío es un listado, no "no me pasaron nada"', async () => {
     const r = await vistaDeRango('2026-09-01', '2026-09-16', false, []);
     expect(m.fetchVentas).not.toHaveBeenCalled();

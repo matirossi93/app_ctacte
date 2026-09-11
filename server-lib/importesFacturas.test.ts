@@ -60,3 +60,39 @@ it('lectura tolerante ante caída conserva filas desconocidas y no dispara una c
  expect(r).toMatchObject({total:null,importe_fuente:'no_verificado'});
  expect(m.cabecera).not.toHaveBeenCalled();
 });
+
+/**
+ * 🔑 CON UN LECTOR DE PETICIÓN, EL CACHE GLOBAL NO MANDA.
+ *
+ * `puntuales.obtener` devuelve el total cacheado sin invocar al lector. Si esta ruta lo usara,
+ * la vigencia saldría de la cabecera nueva y el importe de una vieja — justo lo contrario de
+ * compartir una sola lectura.
+ */
+it('🔑 con lector de petición gana la lectura de ESTA petición, no el cache caliente',async()=>{
+ // La FA es de otro día: no está en el listado del rango, va por el camino puntual.
+ m.ventas.mockResolvedValue([]);
+ // Cache caliente con 100.
+ m.cabecera.mockResolvedValue({...actual,total:100,anulada:false,existe:true});
+ const [previo]=await actualizarImportesFacturas([{...original}]);
+ expect(previo.total).toBe(100);
+ expect(m.cabecera).toHaveBeenCalledTimes(1);
+
+ // Y ahora una lectura de petición que dice 200.
+ const leerCabecera=vi.fn(async()=>({...actual,total:200,anulada:false,existe:true} as any));
+ const [r]=await actualizarImportesFacturas([{...original}],{leerCabecera});
+ expect(r.total).toBe(200);
+ expect(leerCabecera).toHaveBeenCalledTimes(1);
+ expect(m.cabecera).toHaveBeenCalledTimes(1);   // no volvió al camino global
+});
+
+it('🪤 un lector que no sabe NO se rescata con el valor cacheado',async()=>{
+ m.ventas.mockResolvedValue([]);
+ m.cabecera.mockResolvedValue({...actual,total:100,anulada:false,existe:true});
+ await actualizarImportesFacturas([{...original}]);   // deja 100 en el cache
+
+ const leerCabecera=vi.fn(async()=>({existe:null,anulada:null,total:null} as any));
+ const [r]=await actualizarImportesFacturas([{...original}] as any[],{leerCabecera,tolerarErrores:true});
+ expect(r.total).toBeNull();
+ expect(r.importe_fuente).toBe('no_verificado');
+ expect(r.total_snapshot).toBe(1111521);
+});

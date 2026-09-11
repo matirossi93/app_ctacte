@@ -1,4 +1,5 @@
 import { actualizarImportesFacturas } from './importesFacturas.js';
+import { cabecerasCompartidas } from './cabecerasCompartidas.js';
 import { leerComprobante, invalidarIM } from './infomanager.js';
 /**
  * ETAPA 2 DEL CIRCUITO: facturar los presupuestos aprobados.
@@ -664,7 +665,7 @@ async function itemsDeLaFactura(idFactura: string, leidos?: any[]): Promise<Dato
  *
  * Devuelve los avisos para mostrar, y de paso deja las filas al día.
  */
-async function sincronizarAnulados(filas: any[], rango?: { desde: string; hasta: string; ventas?: any[] }): Promise<Map<string, string>> {
+async function sincronizarAnulados(filas: any[], rango?: { desde: string; hasta: string; ventas?: any[] }, leerCabecera?: any): Promise<Map<string, string>> {
   const avisos = new Map<string, string>();
   const conComprobante = filas.filter(f => f.im_factura_id || f.im_remito_id);
   if (!conComprobante.length) return avisos;
@@ -677,7 +678,7 @@ async function sincronizarAnulados(filas: any[], rango?: { desde: string; hasta:
   const vigencia = await comprobantesVigentes([
     ...conComprobante.map(f => f.im_factura_id).filter(Boolean),
     ...conComprobante.map(f => f.im_remito_id).filter(Boolean),
-  ], rango).catch(() => new Map<string, boolean | null>());
+  ], rango, leerCabecera).catch(() => new Map<string, boolean | null>());
 
   for (const f of conComprobante) {
     const id = String(f.im_comprobante_id);
@@ -1099,6 +1100,9 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
      * Si falla, no se corta nada: cada uno vuelve a su camino de siempre y decide qué hacer.
      */
     const ventasPendientes = fetchVentas(desde, hasta, { actualizar: refrescar }).catch(() => undefined);
+    // Una sola lectura de cada cabecera en esta petición: las FA fuera del rango las piden tanto
+    // el control de vigencia como la actualización de importes.
+    const leerCabecera = cabecerasCompartidas();
     const vista = await vistaDeRango(desde, hasta, refrescar, ventasPendientes);
     // Acá sí se espera: los dos usos que siguen la necesitan resuelta. Ya está en vuelo desde
     // arriba, así que normalmente no cuesta nada.
@@ -1128,6 +1132,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
       (emitidos ?? []).map((e: any) => ({ ...e, im_comprobante_id: String(e.im_comprobante_id) })),
       // Las facturas del rango que se está mirando salen del listado, sin un GET por cada una.
       { desde, hasta, ventas: ventasDelRango },
+      leerCabecera,
     ).catch((err: any) => {
       console.warn('[tableroFacturacion] no pude chequear anulados:', err?.message);
       return new Map<string, string>();
@@ -1138,7 +1143,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
           .in('im_comprobante_id', emitidos.map((e: any) => String(e.im_comprobante_id)))
       : { data: emitidos, error: null };
     if (errAlDia) { res.status(502).json({ error: `No pude releer las facturas actualizadas: ${errAlDia.message}` }); return; }
-    const actuales = await actualizarImportesFacturas(alDia ?? [], { ventas: ventasDelRango ?? await fetchVentas(desde, hasta), actualizar: refrescar });
+    const actuales = await actualizarImportesFacturas(alDia ?? [], { ventas: ventasDelRango ?? await fetchVentas(desde, hasta), actualizar: refrescar, leerCabecera });
     const porId = new Map(actuales.map((e: any) => [String(e.im_comprobante_id), e]));
 
     /**

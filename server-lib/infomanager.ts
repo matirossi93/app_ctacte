@@ -7,6 +7,7 @@ import { interpretarActualizacionIM } from './respuestaActualizacionIM.js';
 import type { ComprobantePendiente } from './saldoCliente.js';
 import { cuerpoParaMoverFecha } from './moverFechaComprobante.js';
 import { comprobanteNoExiste, esComprobanteBorrado } from './comprobanteBorrado.js';
+import { vigenciaDeCabecera, vigenciaSegunAnulada } from './vigenciaComprobante.js';
 
 const BASE = process.env.INFOMANAGER_BASE_URL || 'https://impedidos.infomanager.com.ar/api/v1';
 const CLIENT_ID = process.env.INFOMANAGER_CLIENT_ID || 'ck_elmanantialsrl_base';
@@ -1351,6 +1352,8 @@ export async function comprobantesVigentes(
    * vieja o una que ya no está.
    */
   rango?: { desde: string; hasta: string; ventas?: VentaRaw[] },
+  /** Lector compartido por petición: sin esto, una FA fuera del rango se pide dos veces. */
+  leerCabecera: (id: string) => Promise<CabeceraComprobante> = cabeceraComprobante,
 ): Promise<Map<string, boolean | null>> {
   const unicos = [...new Set([...ids].map(String).filter(id => /^\d+$/.test(id)))];
   const salida = new Map<string, boolean | null>();
@@ -1368,7 +1371,10 @@ export async function comprobantesVigentes(
         const v = porId.get(id);
         // 🪤 No estar en el listado NO es "no existe": puede ser de otra fecha. Se va a preguntar.
         if (!v) { faltan.push(id); continue; }
-        salida.set(id, String(v.anulada ?? '').trim().toUpperCase() !== 'S');
+        const vig = vigenciaSegunAnulada(v.anulada);
+        // 🪤 Sin `anulada` legible no se sabe, y "no sé" no se resuelve con un GET que va a decir
+        // lo mismo: se propaga. Quien decide borrar algo sólo actúa con un `false`.
+        salida.set(id, vig);
       }
     } catch {
       // Si el listado falla se cae al camino de siempre: es más lento, pero contesta.
@@ -1380,9 +1386,10 @@ export async function comprobantesVigentes(
   for (let i = 0; i < faltan.length; i += 10) {
     await Promise.all(faltan.slice(i, i + 10).map(async (id) => {
       try {
-        const c = await cabeceraComprobante(id);
-        // `existe: null` es "no sé": se propaga tal cual.
-        salida.set(id, c.existe === null ? null : (c.existe === false ? false : c.anulada === false));
+        const c = await leerCabecera(id);
+        // 🔴 Tres estados: vigente / anulado / no se sabe. Un "no sé" leído como "anulado" hace
+        // que `sincronizarAnulados` borre el vínculo PR↔FA, que es el único que existe.
+        salida.set(id, vigenciaDeCabecera(c));
       } catch {
         salida.set(id, null);
       }
