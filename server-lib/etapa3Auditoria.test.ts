@@ -233,6 +233,7 @@ describe('la hoja se arma con REMITOS', () => {
    * remitos, y lo que sale en el camión son los 29.
    */
   it('🔑 guarda el remito como tal: el comprobante que llega YA ES el remito', async () => {
+    m.cabeceraComprobante.mockResolvedValue({tipo_comprobante:'FA',cod_cliente:1011,cod_empresa:1,total:324155.07,existe:true,anulada:false});
     tablas['hojas_ruta'] = { data: { id: 'h1', numero: 3395, fecha: '2026-09-08', estado: 'abierta' }, error: null };
     tablas['hojas_ruta_pedidos'] = { data: [], error: null };
     tablas['retiros_sucursal'] = { data: [], error: null };

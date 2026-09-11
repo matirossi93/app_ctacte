@@ -28,6 +28,7 @@ export interface ArticuloFraccionado {
 }
 
 export interface LineaFraccionado {
+  cod_articulo: number;
   descripcion: string;
   /** Cada cantidad es UN paquete a preparar. De mayor a menor: se arrancan por las grandes. */
   cantidades: number[];
@@ -126,7 +127,7 @@ export function armarFraccionado(
   /** El formato de bolsa de cada producto a granel, deducido de los pedidos (formatosBolsa.ts). */
   formatos?: Map<number, number>,
 ): LineaFraccionado[] {
-  const porProducto = new Map<string, { paquetes: number[]; bolsas: number; formato: number | null }>();
+  const porProducto = new Map<number, { descripcion: string; paquetes: number[]; bolsas: number; formato: number | null }>();
   for (const r of renglones ?? []) {
     const cod = Number(r.cod_articulo);
     const art = catalogo.get(cod);
@@ -135,8 +136,8 @@ export function armarFraccionado(
     const formato = formatos?.get(cod) ?? null;
     if (!seFracciona(art, formato)) continue;
 
-    if (!porProducto.has(art.descripcion)) porProducto.set(art.descripcion, { paquetes: [], bolsas: 0, formato });
-    const acc = porProducto.get(art.descripcion)!;
+    if (!porProducto.has(cod)) porProducto.set(cod, { descripcion: art.descripcion, paquetes: [], bolsas: 0, formato });
+    const acc = porProducto.get(cod)!;
     if (acc.formato == null && formato != null) acc.formato = formato;
 
     /**
@@ -149,12 +150,12 @@ export function armarFraccionado(
     else acc.bolsas += p.bolsas;
   }
   return [...porProducto.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
+    .sort((a, b) => a[1].descripcion.localeCompare(b[1].descripcion) || a[0] - b[0])
     // Un producto que sólo tenía bolsas enteras no se fracciona, pero igual se informa.
-    .map(([descripcion, acc]) => {
+    .map(([cod_articulo, acc]) => {
       const l = acc.paquetes.slice().sort((a, b) => b - a);
       return {
-        descripcion, cantidades: l, paquetes: l.length,
+        cod_articulo, descripcion: acc.descripcion, cantidades: l, paquetes: l.length,
         kg: dos(l.reduce((s, x) => s + x, 0)),
         bolsas_enteras: acc.bolsas,
         formato_bolsa: acc.formato,

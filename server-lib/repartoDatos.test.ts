@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const m=vi.hoisted(()=>({ventas:vi.fn(),items:vi.fn(),catalogo:vi.fn(),clientes:vi.fn(),tablas:{} as Record<string,any>}));
 vi.mock('./infomanager.js',()=>({fetchVentas:m.ventas,fetchVentasItems:m.items,fetchArticulosCatalogo:m.catalogo,fetchClientesIMCached:m.clientes}));
 vi.mock('./supabase.js',()=>({TENANT_ID:'t',sb:()=>({from:(t:string)=>{const q:any={then:(r:any)=>Promise.resolve(m.tablas[t]??{data:[],error:null}).then(r)};for(const k of ['range','order','select','eq','or','in','not']) q[k]=()=>q;return q;}})}));
-import { verificarEntregas, enriquecerEntregas, notasDeHoja, netoNotas, leerPaginas } from './repartoDatos.js';
+import { verificarEntregas, enriquecerEntregas, enriquecerHojas, notasDeHoja, netoNotas, leerPaginas } from './repartoDatos.js';
 const venta=(id:number,tipo:string,extra={})=>({id,tipo_comprobante:tipo,cod_empresa:1,cod_cliente:7,fecha:'2026-09-11',numero:id,total:80,anulada:'N',...extra});
 beforeEach(()=>{vi.clearAllMocks();m.tablas={};m.items.mockResolvedValue([{id_comprobante:10,cod_articulo:3,cantidad:2}]);m.catalogo.mockResolvedValue(new Map([[3,{equivalencia_um:25}]]));m.clientes.mockResolvedValue([{cod_cliente:7,nombre:'Cliente verificado'}]);});
 describe('entregas verificadas',()=>{
@@ -37,4 +37,23 @@ it('cantidad ilegible de IM queda como peso incompleto aunque el browser mande p
  m.ventas.mockResolvedValue([venta(10,'RE')]);m.items.mockResolvedValue([{id_comprobante:'10',cod_articulo:3,cantidad:'dato ilegible'}]);
  const [p]=await verificarEntregas([{im_comprobante_id:'10',fecha:'2026-09-11',peso_completo:true,kg:50}]);
  expect(p).toMatchObject({kg:0,peso_completo:false,renglones_sin_peso:1});
+});
+
+it('hoja abierta sigue FA editada; cerrada mantiene base histórica sin consultar su FA',async()=>{
+ m.tablas.presupuestos_facturados={data:[{im_comprobante_id:'1',im_remito_id:'10',im_factura_id:'20',cod_cliente:7,cod_empresa:1,total:100,facturado_at:'2026-09-11'}, {im_comprobante_id:'2',im_remito_id:'11',im_factura_id:'21',cod_cliente:7,cod_empresa:1,total:200,facturado_at:'2026-09-11'}],error:null};
+ m.ventas.mockResolvedValue([venta(20,'FA',{total:80}),venta(21,'FA',{total:30})]);
+ const filas=await enriquecerHojas([{estado:'abierta',hojas_ruta_pedidos:[{im_comprobante_id:'10',cod_cliente:7,cod_empresa:1,total:100,fecha:'2026-09-11'}]}, {estado:'cerrada',hojas_ruta_pedidos:[{im_comprobante_id:'11',cod_cliente:7,cod_empresa:1,total:200,fecha:'2026-09-11'}]}]);
+ expect(filas.find(f=>f.im_comprobante_id==='10').total).toBe(80);expect(filas.find(f=>f.im_comprobante_id==='11').total).toBe(200);
+ m.ventas.mockClear();await enriquecerHojas([{estado:'cerrada',hojas_ruta_pedidos:[{im_comprobante_id:'11',cod_cliente:7,cod_empresa:1,total:200}]}]);expect(m.ventas).not.toHaveBeenCalled();
+});
+
+it('la misma hoja conserva el total vigente al pasar de abierta a cerrada',async()=>{
+ m.tablas.presupuestos_facturados={data:[{im_comprobante_id:'1',im_remito_id:'10',im_factura_id:'20',cod_cliente:7,cod_empresa:1,total:100,facturado_at:'2026-09-11'}],error:null};
+ const h:any={estado:'abierta',hojas_ruta_pedidos:[{im_comprobante_id:'10',cod_cliente:7,cod_empresa:1,total:100,fecha:'2026-09-11'}]};
+ m.ventas.mockResolvedValue([venta(20,'FA',{total:80})]);
+ const abierta=await enriquecerHojas([h]);expect(abierta[0].total).toBe(80);
+ h.estado='cerrada';h.cierres_importes=[{pedidos:[{im_comprobante_id:'10',cod_cliente:7,cod_empresa:1,im_factura_id:'20',total:80}]}];
+ m.ventas.mockClear();m.ventas.mockRejectedValue(Error('IM caído'));m.tablas.presupuestos_facturados.data[0].total=999;
+ const cerrada=await enriquecerHojas([h]);expect(cerrada[0].total).toBe(80);expect(cerrada[0].total_snapshot).toBe(100);expect(m.ventas).not.toHaveBeenCalled();
+ h.estado='abierta';m.ventas.mockResolvedValue([venta(20,'FA',{total:70})]);expect((await enriquecerHojas([h]))[0].total).toBe(70);
 });

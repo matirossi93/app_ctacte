@@ -33,7 +33,7 @@ async function setup(width=1440, options={}) {
     if(u.pathname==='/api/pedidos/precio') return reply(route,{ok:true,cod_lista:Number(u.searchParams.get('cod_lista')),precio:{precio_vta:1000}});
     if(u.pathname==='/api/presupuestos') return reply(route,presupuestos());
     if(u.pathname==='/api/presupuestos/consolidado') return reply(route,{articulos:[],totales:{articulos:0,faltantes:0,sin_renglones:0}});
-    if(u.pathname==='/api/presupuestos/fraccionado') return reply(route,{completo:true,dias_faltantes:[],comprobantes_sin_items:[],comprobantes:2,fraccionado:[{descripcion:'ALPISTE AUDITORÍA',cantidades:[5,10,15],paquetes:3,kg:30,bolsas_enteras:0,formato_bolsa:30}],totales:{productos:1,paquetes:3,kg:30}});
+    if(u.pathname==='/api/presupuestos/fraccionado') return reply(route,{completo:true,dias_faltantes:[],comprobantes_sin_items:[],comprobantes:2,fraccionado:[{cod_articulo:73125,descripcion:'ALPISTE AUDITORÍA',cantidades:[5,10,15],paquetes:3,kg:30,bolsas_enteras:0,formato_bolsa:30}],totales:{productos:1,paquetes:3,kg:30}});
     if(u.pathname==='/api/facturacion') return reply(route,{pendientes:rows,facturados:[],sin_aprobar:0,totales:{pendientes:2,importe_pendiente:300000}});
     if(u.pathname==='/api/hojas-ruta/camiones') return reply(route,{camiones:[{id:'c1',nombre:'Camión 5000',capacidad_kg:5000}]});
     if(u.pathname==='/api/choferes') return reply(route,{choferes:[{id:'ch1',nombre:'Chofer auditoría'}]});

@@ -1,3 +1,4 @@
+import { invalidarImportesFacturas } from './cacheImportesFacturas.js';
 import { parsearPendientesCliente } from './respuestaPendientesCliente.js';
 import { LecturasCompartidas, lecturaLimitada, pausarLecturas } from './lecturasCompartidas.js';
 import axios, { AxiosInstance } from 'axios';
@@ -206,7 +207,7 @@ function diasEntre(desde: string, hasta: string): number {
 }
 
 /** Lo llaman los caminos que acaban de cambiar algo en IM y necesitan releer sin cache. */
-export function invalidarCacheVentas(): void { lecturasVentas.invalidar(); }
+export function invalidarCacheVentas(): void { lecturasVentas.invalidar(); invalidarImportesFacturas(); }
 
 export async function fetchVentas(
   desde: string, hasta: string,
@@ -1159,6 +1160,7 @@ export function parsePrecioLista(data: any, codArticulo: number): PrecioLista | 
  */
 /** Lo que se sabe de la cabecera de un comprobante de IM. */
 export interface CabeceraComprobante {
+  total?: number | null;
   tipo_comprobante?: string | null;
   tipo_factura?: string | null;
   fecha: string | null;
@@ -1199,6 +1201,7 @@ export function parsearCabeceraComprobante(data: any): CabeceraComprobante {
        * crear uno nuevo y anular el viejo — y para eso hay que saber de quién era, de qué
        * empresa y con qué lista se armó.
        */
+      total: c.total != null && String(c.total).trim() !== '' && Number.isFinite(Number(c.total)) ? Number(c.total) : null,
       numero: num(c.numero),
       cod_cliente: num(c.cod_cliente),
       cod_vendedor: c.cod_vendedor != null ? String(c.cod_vendedor) : null,

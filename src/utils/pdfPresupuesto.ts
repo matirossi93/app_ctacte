@@ -256,13 +256,14 @@ export function generarPresupuestoPdf(d: DatosPresupuesto): { blob: Blob; nombre
   // La columna de descuento sólo aparece si hay alguno: una columna de ceros es ruido.
   const hayDescuento = conImportes && d.items.some((i) => Number(i.descuento_porc) > 0);
   const cabecera = !conImportes
-    ? ['Producto', 'Cant.']
+    ? ['Código', 'Producto', 'Cant.']
     : hayDescuento
-      ? ['Producto', 'Cant.', 'Precio unit.', 'Desc.', 'Subtotal']
-      : ['Producto', 'Cant.', 'Precio unit.', 'Subtotal'];
+      ? ['Código', 'Producto', 'Cant.', 'Precio unit.', 'Desc.', 'Subtotal']
+      : ['Código', 'Producto', 'Cant.', 'Precio unit.', 'Subtotal'];
 
   const filas = d.items.map((i) => {
     const base = [
+      Number(i.cod_articulo) > 0 ? String(i.cod_articulo) : '—',
       i.descripcion ?? `Artículo ${i.cod_articulo}`,
       String(Number(i.cantidad)),
     ];
@@ -311,11 +312,11 @@ export function generarPresupuestoPdf(d: DatosPresupuesto): { blob: Blob; nombre
     ...(A_COLOR ? { alternateRowStyles: { fillColor: BEIGE } } : {}),
     columnStyles: !conImportes
       // Sin precios, la cantidad se corre a la derecha del todo y el producto se lleva el resto.
-      ? { 0: { cellWidth: 'auto', fontStyle: 'bold' }, 1: { halign: 'right', cellWidth: 22, fontStyle: 'bold' } }
+      ? { 0: { cellWidth: 13 }, 1: { cellWidth: 'auto', fontStyle: 'bold' }, 2: { halign: 'right', cellWidth: 22, fontStyle: 'bold' } }
       : hayDescuento
         // 🔑 La descripción y el importe en negrita: son las dos columnas que se leen de un vistazo.
-        ? { 0: { cellWidth: 'auto', fontStyle: 'bold' }, 1: { halign: 'right', cellWidth: 14, fontStyle: 'bold' }, 2: { halign: 'right', cellWidth: 25 }, 3: { halign: 'right', cellWidth: 13 }, 4: { halign: 'right', cellWidth: 27, fontStyle: 'bold' } }
-        : { 0: { cellWidth: 'auto', fontStyle: 'bold' }, 1: { halign: 'right', cellWidth: 15, fontStyle: 'bold' }, 2: { halign: 'right', cellWidth: 28 }, 3: { halign: 'right', cellWidth: 30, fontStyle: 'bold' } },
+        ? { 0: { cellWidth: 13 }, 1: { cellWidth: 'auto', fontStyle: 'bold' }, 2: { halign: 'right', cellWidth: 14, fontStyle: 'bold' }, 3: { halign: 'right', cellWidth: 25 }, 4: { halign: 'right', cellWidth: 13 }, 5: { halign: 'right', cellWidth: 27, fontStyle: 'bold' } }
+        : { 0: { cellWidth: 13 }, 1: { cellWidth: 'auto', fontStyle: 'bold' }, 2: { halign: 'right', cellWidth: 15, fontStyle: 'bold' }, 3: { halign: 'right', cellWidth: 28 }, 4: { halign: 'right', cellWidth: 30, fontStyle: 'bold' } },
   });
 
   // ── Total ──

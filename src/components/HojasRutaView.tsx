@@ -186,7 +186,8 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
         setCargandoHojas(true); setErrorHojas(null);
         if (!antes) setHojas([]);
         try {
-            const h = await fetch(historico ? `/api/hojas-ruta?todas=1${antes ? `&antes=${antes}` : ''}` : `/api/hojas-ruta?desde=${desde}&hasta=${hasta}`, { headers: authHeaders(), signal: lectura.signal });
+            const url = historico ? `/api/hojas-ruta?todas=1${antes ? `&antes=${antes}` : ''}` : `/api/hojas-ruta?desde=${desde}&hasta=${hasta}`;
+            const h = await fetch(`${url}${forzar ? '&refrescar=1' : ''}`, { headers: authHeaders(), signal: lectura.signal });
             const d = await h.json().catch(() => null);
             if (!lectura.vigente()) return;
             if (!h.ok) throw new Error(d?.error ?? 'No se pudieron consultar las hojas');

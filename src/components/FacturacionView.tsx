@@ -88,10 +88,11 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
 
     const rangoSeleccion = useRef(`${desde}|${hasta}`);
     const { iniciar: iniciarLectura } = useLecturaVigente(`${desde}|${hasta}`);
-    const cargar = useCallback(async (refrescar = false) => {
+    const cargar = useCallback(async (refrescar = false, conservarDuranteLectura = false) => {
         const lectura = iniciarLectura(refrescar); if (!lectura) return;
+        const mismoRango = rangoSeleccion.current === `${desde}|${hasta}`;
         if (rangoSeleccion.current !== `${desde}|${hasta}`) { setSel(new Set()); rangoSeleccion.current = `${desde}|${hasta}`; }
-        setPendientes([]); setFacturados([]); setTotales(null);
+        if (!conservarDuranteLectura || !mismoRango) { setPendientes([]); setFacturados([]); setTotales(null); }
         avisarRecarga();
         setCargando(true); setError(null);
         try {
@@ -109,6 +110,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
             lectura.confirmar();
         } catch (e: any) {
             if (!lectura.vigente()) return;
+            setPendientes([]); setFacturados([]); setTotales(null);
             setError(e?.message ?? 'Error de conexión');
         } finally {
             if (lectura.vigente()) setCargando(false);
@@ -369,7 +371,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
             {corrigiendo && (
                 <CorregirFacturaModal
                     idFactura={corrigiendo}
-                    onCerrar={() => setCorrigiendo(null)}
+                    onCerrar={() => { setCorrigiendo(null); void cargar(true, true); }}
                     // Emitir una nota cambia el total del cliente: la pantalla tiene que releerlo.
                     onListo={() => void cargar(true)}
                 />

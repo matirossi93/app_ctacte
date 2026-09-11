@@ -1,6 +1,6 @@
 import {beforeEach,expect,it,vi} from 'vitest';
 const m=vi.hoisted(()=>({pendientes:vi.fn(),tablas:{} as Record<string,any>,rpc:vi.fn()}));
-vi.mock('./infomanager.js',()=>({fechaArgentina:()=> '2026-09-11',fetchVentas:vi.fn(async()=>[]),fetchVentasItems:vi.fn(async()=>[{id_comprobante:'10',cod_articulo:3,cantidad:1}]),fetchArticulosCatalogo:vi.fn(async()=>new Map([[3,{descripcion:'Alpiste',unidad_de_medida:'Kilos',equivalencia_um:1}]])),fetchClientesIMCached:vi.fn(async()=>[]),comprobantesPendientesCliente:m.pendientes}));
+vi.mock('./infomanager.js',()=>({fechaArgentina:()=> '2026-09-11',fetchVentas:vi.fn(async()=>[{id:'20',tipo_comprobante:'FA',cod_cliente:7,cod_empresa:1,anulada:'N',total:80}]),fetchVentasItems:vi.fn(async()=>[{id_comprobante:'10',cod_articulo:3,cantidad:1}]),fetchArticulosCatalogo:vi.fn(async()=>new Map([[3,{descripcion:'Alpiste',unidad_de_medida:'Kilos',equivalencia_um:1}]])),fetchClientesIMCached:vi.fn(async()=>[]),comprobantesPendientesCliente:m.pendientes}));
 vi.mock('./formatosBolsa.js',()=>({formatosDeBolsa:()=>new Map()}));
 vi.mock('./supabase.js',()=>({TENANT_ID:'t',sb:()=>({rpc:m.rpc,from:(t:string)=>{const q:any={then:(r:any)=>Promise.resolve({data:m.tablas[t]??[],error:null}).then(r),maybeSingle:async()=>({data:m.tablas[t],error:null})};for(const k of ['range','order','select','eq','in','or','not','order'])q[k]=()=>q;return q;}})}));
 import {impresionHoja} from './hojasRuta.js';

@@ -23,9 +23,11 @@ try {
   await ctx.close();
  }
  const {page,ctx}=await setup();
- await page.route('**/api/presupuestos/fraccionado?**',r=>reply(r,{completo:true,dias_faltantes:[],comprobantes_sin_items:[],comprobantes:120,fraccionado:Array.from({length:120},(_,i)=>({descripcion:'PRODUCTO FRACCIONADO '+String(i+1).padStart(3,'0'),cantidades:[5,10,15],paquetes:3,kg:30,bolsas_enteras:0,formato_bolsa:30})),totales:{productos:120,paquetes:360,kg:3600}}));
+ await page.route('**/api/presupuestos/fraccionado?**',r=>reply(r,{completo:true,dias_faltantes:[],comprobantes_sin_items:[],comprobantes:120,fraccionado:Array.from({length:120},(_,i)=>({cod_articulo:73000+i,descripcion:'PRODUCTO FRACCIONADO '+String(i+1).padStart(3,'0'),cantidades:[5,10,15],paquetes:3,kg:30,bolsas_enteras:0,formato_bolsa:30})),totales:{productos:120,paquetes:360,kg:3600}}));
  await page.locator('.of-tabs button').filter({hasText:'Fraccionado'}).click();
  await page.getByText('PRODUCTO FRACCIONADO 120',{exact:true}).waitFor();
+ assert(await page.getByRole('columnheader',{name:'Código',exact:true}).isVisible(),'Falta código de artículo');
+ assert(await page.getByRole('cell',{name:'73000',exact:true}).isVisible(),'No se imprime el código del producto');
  await page.pdf({path:`${out}/fraccionado-120-productos.pdf`,format:'A4',printBackground:true});
  await ctx.close();
 } finally {await fs.writeFile(`${out}/browser-extra-resultados.json`,JSON.stringify(results,null,2));await browser.close();}

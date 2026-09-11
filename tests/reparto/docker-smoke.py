@@ -52,7 +52,7 @@ try:
     check('SQLite y subida temporal escriben con uid1000', True)
     metadata = json.loads(execute("const fs=require('node:fs');console.log(JSON.stringify({files:fs.readdirSync('/app'),info:JSON.parse(fs.readFileSync('/app/dist-server/build-info.json','utf8'))}))"))
     check('la imagen no contiene .env, git ni código fuente TypeScript', not any(n.startswith('.env') or n in ['.git','src','server-lib','server.ts'] for n in metadata['files']))
-    check('metadata incluye esquema41 y hash esperado', metadata['info'] == {'version': expected, 'schema': 41})
+    check('metadata incluye esquema42 y hash esperado', metadata['info'] == {'version': expected, 'schema': 42})
     state = json.loads(subprocess.run(['docker','inspect',container,'--format','{{json .HostConfig}}'],text=True,capture_output=True,check=True).stdout)
     check('contenedor realmente aislado sin red', state['NetworkMode'] == 'none')
     print(json.dumps({'scope':'imagen real, red deshabilitada, datos efímeros','passed':len(checks),'checks':checks},ensure_ascii=False,indent=2))

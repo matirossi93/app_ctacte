@@ -284,7 +284,7 @@ describe('no emitir dos veces lo mismo', () => {
     // El caso real: la factura salió y el remito falló. Reintentar emitiendo las dos le factura
     // dos veces al cliente y consume otro número fiscal.
     tablas['presupuestos_facturados'] = {
-      data: [{ estado_emision:'remito_pendiente', im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null }],
+      data: [{ estado_emision:'remito_pendiente', im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null, cod_cliente:1093,cod_empresa:1 }],
       error: null,
     };
     const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
@@ -338,6 +338,14 @@ describe('no emitir dos veces lo mismo', () => {
 });
 
 describe('el tablero de la etapa 2', () => {
+  it('una edición de la factura en IM reemplaza el importe guardado del tablero',async()=>{
+    tablas.presupuestos_facturados={data:[{im_comprobante_id:'10',im_factura_id:'20',im_factura_numero:50444,cod_cliente:430,cod_empresa:1,total:1111521,facturado_at:'2026-09-11',estado_emision:'completo'}],error:null};
+    m.fetchVentas.mockResolvedValue([{id:'20',tipo_comprobante:'FA',cod_cliente:430,cod_empresa:1,total:1073534.08,anulada:'N'}]);
+    const r=await llamar(tableroFacturacion,{method:'GET'});
+    expect(r.status).toBe(200);expect(r.body.facturados[0].total).toBe(1073534.08);
+    expect(escrituras).toEqual([]);expect(m.emitirFactura).not.toHaveBeenCalled();
+  });
+
   it('falla visible si se pierde la lectura inicial de vínculos', async () => {
     tablas.presupuestos_facturados={data:null,error:{message:'sin conexión'}};
     const r=await llamar(tableroFacturacion,{method:'GET'});
@@ -355,7 +363,8 @@ describe('el tablero de la etapa 2', () => {
   it.each([null, { estado: 'observado' }])('conserva una factura emitida aunque la revisión actual sea %j', async revision => {
     m.vistaDeRango.mockResolvedValue({ ...VISTA_BASE, pendientes: [presu({revision, controles_completos:false, total:999})] });
     tablas.presupuestos_facturados = {data:[{im_comprobante_id:'10',im_factura_id:'f1',im_factura_numero:50424,
-      im_remito_id:'r1',facturado_at:'2026-09-09',estado_emision:'completo',total:123}],error:null};
+      im_remito_id:'r1',facturado_at:'2026-09-09',estado_emision:'completo',total:123,cod_cliente:1093,cod_empresa:1}],error:null};
+    m.fetchVentas.mockResolvedValue([{id:'f1',tipo_comprobante:'FA',cod_cliente:1093,cod_empresa:1,anulada:'N',total:123}]);
     const r=await llamar(tableroFacturacion,{method:'GET'});
     expect(r.status).toBe(200);
     expect(r.body.facturados).toHaveLength(1);
@@ -368,8 +377,9 @@ describe('el tablero de la etapa 2', () => {
   it('recupera el historial aunque el presupuesto ya no esté en la vista (retiro o PR anulado)', async () => {
     m.vistaDeRango.mockResolvedValue({...VISTA_BASE,pendientes:[]});
     tablas.presupuestos_facturados={data:[{im_comprobante_id:'10',im_factura_id:'f1',im_factura_numero:50420,
-      cliente_nombre:'CLIENTE HISTORICO',cod_cliente:1054,fecha:'2026-09-09',total:230674.18,
+      cliente_nombre:'CLIENTE HISTORICO',cod_cliente:1054,cod_empresa:1,fecha:'2026-09-09',total:230674.18,
       facturado_at:'2026-09-09',estado_emision:'completo'}],error:null};
+    m.fetchVentas.mockResolvedValue([{id:'f1',tipo_comprobante:'FA',cod_cliente:1054,cod_empresa:1,anulada:'N',total:230674.18}]);
     const r=await llamar(tableroFacturacion,{method:'GET'});
     expect(r.body.facturados).toHaveLength(1);
     expect(r.body.facturados[0]).toMatchObject({cliente_nombre:'CLIENTE HISTORICO',im_factura_id:'f1'});
@@ -394,9 +404,10 @@ describe('el tablero de la etapa 2', () => {
 
   it('🔴 separa lo que sólo espera el remito', async () => {
     tablas['presupuestos_facturados'] = {
-      data: [{ estado_emision:'remito_pendiente', im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null }],
+      data: [{ estado_emision:'remito_pendiente', im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null, cod_cliente:1093,cod_empresa:1 }],
       error: null,
     };
+    m.fetchVentas.mockResolvedValue([{id:'f1',tipo_comprobante:'FA',cod_cliente:1093,cod_empresa:1,anulada:'N',total:123}]);
     const r = await llamar(tableroFacturacion, { method: 'GET', query: {} });
     expect(r.body.pendientes[0].falta_remito).toBe(true);
     expect(r.body.totales.falta_remito).toBe(1);
@@ -799,7 +810,7 @@ describe('con la factura ya emitida, el remito se arma con SUS renglones', () =>
   /** La factura ya salió: falta el remito. Es el estado en el que estaban los dos pedidos. */
   const faltaElRemito = () => {
     tablas['presupuestos_facturados'] = {
-      data: [{ estado_emision:'remito_pendiente', im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null }],
+      data: [{ estado_emision:'remito_pendiente', im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null, cod_cliente:1093,cod_empresa:1 }],
       error: null,
     };
   };
