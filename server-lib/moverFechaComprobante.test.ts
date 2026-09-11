@@ -92,3 +92,55 @@ describe('cuerpoParaMoverFecha', () => {
     expect(cuerpoParaMoverFecha(FACTURA, '2026-09-12T00:00:00').fecha).toBe('2026-09-12');
   });
 });
+
+/**
+ * 🔴 UN DEFAULT EN UN PUT QUE REEMPLAZA TODO ES CORRUPCIÓN SILENCIOSA.
+ *
+ * Astra (11/09/2026), después de mandar un PUT con un body inválido a un comprobante real para
+ * ver qué contestaba IM: *"IM contestó 'actualizado correctamente' y me pisó todos los campos —
+ * el comprobante quedó con número −1, tipo ZZ, fecha 0000-00-00 y punto de venta 999.
+ * `PUT /ventas/{id}` no valida nada y sobrescribe número, tipo, fecha y punto de venta"*.
+ *
+ * Acá los valores salían todos de la cabecera de IM, que es lo correcto, PERO con `??` y un
+ * `Number()` que cae en 0: si la cabecera llegaba incompleta, el PUT escribía `numero: 0`,
+ * `punto_de_venta: 0` o convertía un remito en factura B — y IM lo aceptaba sin chistar.
+ *
+ * Ahora falta un identificador, no hay PUT.
+ */
+describe('cabecera incompleta: no se inventa nada', () => {
+  const completa = {
+    tipo_comprobante: 'RE', tipo_factura: 'X', numero: 77442, punto_de_venta: 3,
+    tag: 'S', condicion_venta_tipo: 1, observaciones: 'algo', fac_electronica: 0,
+    anulada: 'N', fecha: '2026-09-10',
+  };
+
+  it('🔑 sin tipo_comprobante NO se arma el cuerpo (convertiría un remito en factura)', () => {
+    expect(() => cuerpoParaMoverFecha({ ...completa, tipo_comprobante: null }, '2026-09-12')).toThrow(/tipo/i);
+    expect(() => cuerpoParaMoverFecha({ ...completa, tipo_comprobante: '' }, '2026-09-12')).toThrow(/tipo/i);
+  });
+
+  it('🔑 sin número NO se arma el cuerpo (lo dejaría en 0)', () => {
+    expect(() => cuerpoParaMoverFecha({ ...completa, numero: null }, '2026-09-12')).toThrow(/número/i);
+    expect(() => cuerpoParaMoverFecha({ ...completa, numero: '' }, '2026-09-12')).toThrow(/número/i);
+    expect(() => cuerpoParaMoverFecha({ ...completa, numero: 0 }, '2026-09-12')).toThrow(/número/i);
+  });
+
+  it('🔑 sin punto de venta NO se arma el cuerpo (lo movería al pv 0)', () => {
+    expect(() => cuerpoParaMoverFecha({ ...completa, punto_de_venta: null }, '2026-09-12')).toThrow(/punto de venta/i);
+    expect(() => cuerpoParaMoverFecha({ ...completa, punto_de_venta: '' }, '2026-09-12')).toThrow(/punto de venta/i);
+  });
+
+  it('🪤 la letra no se inventa: si vino vacía va vacía, NO "B"', () => {
+    const c = cuerpoParaMoverFecha({ ...completa, tipo_factura: null }, '2026-09-12');
+    expect(c.tipo_factura).toBe('');
+    expect(c.tipo_comprobante).toBe('RE');
+  });
+
+  it('una cabecera completa sigue saliendo igual que siempre', () => {
+    const c = cuerpoParaMoverFecha(completa, '2026-09-12');
+    expect(c).toMatchObject({
+      fecha: '2026-09-12', tipo_comprobante: 'RE', tipo_factura: 'X',
+      numero: 77442, punto_de_venta: 3, anulada: 'N',
+    });
+  });
+});

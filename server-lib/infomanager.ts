@@ -1088,6 +1088,18 @@ export async function moverFechaComprobante(
     if (quedó !== cuerpo.fecha) {
       return { ok: false, error: `InfoManager aceptó el cambio pero la fecha quedó en ${quedó ?? 'nada'}. No se movió.` };
     }
+    /**
+     * 🔴 ¿SIGUE SIENDO EL MISMO COMPROBANTE? Astra (11/09/2026) probó un PUT con body inválido
+     * sobre un comprobante real y IM contestó "actualizado correctamente" **después de pisarle
+     * número, tipo y punto de venta**. No valida nada. Si alguna vez pasa, esto lo dice en el
+     * momento en vez de dejarlo corrupto y que se descubra cuando no aparezca en ningún listado.
+     */
+    const cambiado = ([
+      ['número', 'numero'], ['tipo', 'tipo_comprobante'], ['punto de venta', 'punto_de_venta'],
+    ] as const).filter(([, k]) => String(dsp[k] ?? '') !== String((cuerpo as any)[k] ?? ''));
+    if (cambiado.length) {
+      return { ok: false, error: `🔴 InfoManager dijo que lo actualizó pero le cambió ${cambiado.map(([n]) => n).join(', ')} al comprobante ${cuerpo.numero}. Revisalo en InfoManager AHORA.` };
+    }
     const perdidos = (['afip_comprobantes_fe', 'afip_conceptos_fe', 'afip_tipdoc_fe', 'afip_cond_vta'] as const)
       .filter(k => String(previa[k] ?? '') !== '' && String(dsp[k] ?? '') === '');
     if (perdidos.length) {

@@ -62,13 +62,38 @@ export function cuerpoParaMoverFecha(cab: CabeceraCruda, fechaNueva: string) {
     const n = Number(v);
     return Number.isFinite(n) ? n : porDefecto;
   };
+
+  /**
+   * 🔴 LO QUE IDENTIFICA AL COMPROBANTE NO SE INVENTA: SI FALTA, NO HAY PUT.
+   *
+   * Astra (11/09/2026), después de mandarle a IM un PUT con un body inválido sobre un
+   * comprobante real para ver qué contestaba: *"IM contestó 'actualizado correctamente' y me
+   * pisó todos los campos — quedó con número −1, tipo ZZ, fecha 0000-00-00 y punto de venta
+   * 999. `PUT /ventas/{id}` no valida nada y sobrescribe número, tipo, fecha y punto de venta"*.
+   *
+   * Acá todo salía de la cabecera de IM, que es lo correcto, pero con `??` y un `Number()` que
+   * cae en 0. Con una cabecera incompleta eso escribía `numero: 0`, `punto_de_venta: 0` o
+   * convertía un remito en factura B — y IM lo aceptaba sin chistar, porque no valida. Un PUT
+   * que REEMPLAZA la cabecera entera no puede llevar un valor adivinado: si el dato no está,
+   * lo único seguro es no escribir.
+   */
+  const tipo = String(cab.tipo_comprobante ?? '').trim();
+  if (!tipo) throw new Error('InfoManager no devolvió el tipo de comprobante: no se toca la fecha (cambiarlo lo convertiría en otra cosa).');
+  const numero = num(cab.numero, 0);
+  if (!(numero > 0)) throw new Error('InfoManager no devolvió el número del comprobante: no se toca la fecha (quedaría en 0).');
+  const pv = String(cab.punto_de_venta ?? '').trim();
+  if (!pv || !Number.isFinite(Number(pv))) throw new Error('InfoManager no devolvió el punto de venta: no se toca la fecha (quedaría en el 0).');
+
   return {
     fecha,
     // Los nueve obligatorios, tal como los tiene el comprobante.
-    tipo_comprobante: String(cab.tipo_comprobante ?? 'FA'),
-    tipo_factura: String(cab.tipo_factura ?? 'B'),
-    numero: num(cab.numero),
-    punto_de_venta: num(cab.punto_de_venta),
+    tipo_comprobante: tipo,
+    // 🪤 La letra NO lleva default: inventar 'B' sobre una factura A le cambia el IVA al cliente.
+    // Vacía se manda vacía —hay comprobantes que no tienen letra, como los remitos—, pero nunca
+    // una distinta de la que tiene.
+    tipo_factura: String(cab.tipo_factura ?? ''),
+    numero,
+    punto_de_venta: Number(pv),
     tag: String(cab.tag ?? 'S'),
     condicion_venta_tipo: num(cab.condicion_venta_tipo),
     observaciones: String(cab.observaciones ?? '').slice(0, 500),
