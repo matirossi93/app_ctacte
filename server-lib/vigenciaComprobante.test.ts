@@ -70,3 +70,27 @@ describe('parsearAnulada', () => {
     expect(vigenciaDeCabecera({ existe: true, anulada: parsearAnulada('S') })).toBe(false);
   });
 });
+
+/**
+ * 🔴 La coerción a string convierte un dato ilegible en una respuesta definitiva:
+ * `String(["S"])` es `"S"`, y un array pasaba como "anulado" — con eso el flujo real limpia el
+ * remito de un pedido despachado. Encontrado por Astra en revisión.
+ */
+describe('sólo texto o booleano deciden', () => {
+  it('🔑 un array que se coerce a "S" NO es anulado', () => {
+    expect(parsearAnulada(['S'])).toBeNull();
+    expect(vigenciaSegunAnulada(['S'])).toBeNull();
+    expect(vigenciaDeCabecera({ existe: true, anulada: parsearAnulada(['S']) })).toBeNull();
+  });
+
+  it('🔑 ni un array que se coerce a "N" es vigente', () => {
+    expect(parsearAnulada(['N'])).toBeNull();
+    expect(vigenciaSegunAnulada(['N'])).toBeNull();
+  });
+
+  it('objetos, números y anidados tampoco', () => {
+    for (const v of [{ toString: () => 'S' }, [['S']], 0, 1, new String('S')]) {
+      expect(parsearAnulada(v as any), JSON.stringify(v)).toBeNull();
+    }
+  });
+});

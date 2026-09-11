@@ -21,7 +21,10 @@
  */
 export function parsearAnulada(anulada: unknown): boolean | null {
   if (anulada === true || anulada === false) return anulada;
-  const t = String(anulada ?? '').trim().toUpperCase();
+  // 🪤 Sólo texto. `String(["S"])` es "S" y un array pasaría como anulado: la coerción convierte
+  // un dato ilegible en una respuesta definitiva, que es justo lo que esto viene a evitar.
+  if (typeof anulada !== 'string') return null;
+  const t = anulada.trim().toUpperCase();
   if (t === 'S') return true;
   if (t === 'N') return false;
   return null;
@@ -29,12 +32,8 @@ export function parsearAnulada(anulada: unknown): boolean | null {
 
 /** `anulada` tal como viene de IM: 'S' / 'N' en el listado, booleano ya parseado en la cabecera. */
 export function vigenciaSegunAnulada(anulada: unknown): boolean | null {
-  if (anulada === true) return false;                       // anulado
-  if (anulada === false) return true;                       // vigente
-  const t = String(anulada ?? '').trim().toUpperCase();
-  if (t === 'S') return false;
-  if (t === 'N') return true;
-  return null;                                              // ausente o ilegible: no se sabe
+  const a = parsearAnulada(anulada);
+  return a === null ? null : !a;
 }
 
 /** La misma regla para una cabecera leída de a una: `existe` manda sobre todo lo demás. */
