@@ -210,12 +210,15 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
     }
 
     async function revisar(p: Presupuesto, estado: 'aprobado' | 'observado', observacion?: string) {
+        if (estado === 'aprobado' && reparto.borradores.has(`base:${p.im_comprobante_id}`)) {
+            setAviso('Guardá o descartá los cambios de este presupuesto antes de aprobarlo.'); return;
+        }
         if (!operacion.comenzar()) return;
         setTrabajando(p.im_comprobante_id); setAviso(null);
         try {
             const r = await fetch(`/api/presupuestos/${p.im_comprobante_id}/revision`, {
                 method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({ estado, observacion, huella: p.huella, im_numero: p.im_numero, cod_cliente: p.cod_cliente }),
+                body: JSON.stringify({ estado, observacion, huella: detalle?.id === p.im_comprobante_id ? detalle.huella : p.huella, im_numero: p.im_numero, cod_cliente: p.cod_cliente }),
             });
             const d = await r.json().catch(() => null);
             if (!r.ok) { setAviso(d?.error ?? 'No se pudo guardar la revisión'); return; }

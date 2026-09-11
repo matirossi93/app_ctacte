@@ -134,6 +134,9 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false) {
           const k = String((it as any).id_comprobante);
           if (!renglones.has(k)) renglones.set(k, []);
           renglones.get(k)!.push({
+            // La versión se compara con el detalle de IM: conservar precios, IVA y texto.
+            // Proyectar sólo peso/lista producía una huella distinta para el mismo PR.
+            ...it,
             cod_articulo: Number((it as any).cod_articulo),
             cantidad: (it as any).cantidad,
             equivalencia_um: cat.get(Number((it as any).cod_articulo))?.equivalencia_um,
