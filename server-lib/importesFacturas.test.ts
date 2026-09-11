@@ -51,12 +51,12 @@ it('un importe no verificable en lectura no oculta otras entregas ni muestra tot
  const r=await actualizarImportesFacturas([original,mala],{ventas,tolerarErrores:true});
  expect(r[0].total).toBe(1073534.08);
  expect(r[1]).toMatchObject({total:null,total_snapshot:1111521,importe_fuente:'no_verificado'});
- expect(r[1].importe_error).toContain('50422');
+ expect(r[1]).toMatchObject({importe_error:expect.stringContaining('50422')});
  await expect(actualizarImportesFacturas([original,mala],{ventas})).rejects.toThrow('50422');
 });
 it('lectura tolerante ante caída conserva filas desconocidas y no dispara una consulta por cada FA',async()=>{
  m.ventas.mockRejectedValue(Error('IM no responde'));
  const [r]=await actualizarImportesFacturas([original],{tolerarErrores:true});
- expect(r.total).toBeNull();expect(r.importe_fuente).toBe('no_verificado');
+ expect(r).toMatchObject({total:null,importe_fuente:'no_verificado'});
  expect(m.cabecera).not.toHaveBeenCalled();
 });
