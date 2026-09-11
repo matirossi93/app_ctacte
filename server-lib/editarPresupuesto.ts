@@ -241,15 +241,38 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
        * pasó. Las dos viajan juntas porque es el mismo PUT: mandar una sola pisaría la otra.
        */
       let avisoCab: string | null = null;
-      if ((cambiaObs || cambiaFecha) && cab.numero != null && cab.punto_de_venta != null) {
-        resultadoConocido = false;
-        const o = await actualizarCabecera({
-          id, numero: cab.numero, punto_de_venta: cab.punto_de_venta,
-          fecha: fechaNueva ?? cab.fecha ?? fechaArgentina(),
-          observaciones: obsNueva ?? cab.observaciones ?? '',
-        });
-        if (o.ok || rechazoEdicionConfirmado(o)) resultadoConocido = true;
-        if (!o.ok) avisoCab = `Se guardaron las cantidades, pero NO ${cambiaFecha ? 'la fecha' : 'las observaciones'}: ${o.error}`;
+      if (cambiaObs || cambiaFecha) {
+        const qué = cambiaFecha ? 'la fecha' : 'las observaciones';
+        /**
+         * 🔴 ESTE PUT REEMPLAZA LA CABECERA ENTERA: LO QUE FALTE NO SE ADIVINA.
+         *
+         * Astra (11/09/2026): *"`cabeceraComprobante` puede devolver `fecha: null` con
+         * `existe: true`. Si alguien edita sólo las observaciones, el PUT le escribe la fecha de
+         * HOY al presupuesto. Como la fecha decide en qué día de reparto entra el pedido, eso lo
+         * mueve de día sin que nadie se entere — y no falla, así que nadie lo ve"*.
+         *
+         * La fecha caía en `?? fechaArgentina()`, que es exactamente el `?? 'FA'` que se sacó de
+         * `cuerpoParaMoverFecha` el mismo día. El camino de al lado —anular el viejo al
+         * recrear— ya exigía `cab.fecha`; éste no.
+         *
+         * 🪤 Y si falta algo NO alcanza con no escribir: hasta ahora el `if` simplemente no
+         * entraba y la respuesta salía `ok: true` sin aviso, o sea que la pantalla decía que
+         * había guardado las observaciones sin haberlas guardado. Ahora se dice.
+         */
+        if (cab.numero == null || cab.punto_de_venta == null || !cab.fecha) {
+          const falta = cab.numero == null ? 'el número'
+            : cab.punto_de_venta == null ? 'el punto de venta' : 'la fecha';
+          avisoCab = `Se guardaron las cantidades, pero NO ${qué}: InfoManager no devolvió ${falta} del presupuesto, y ese PUT reescribe la cabecera entera.`;
+        } else {
+          resultadoConocido = false;
+          const o = await actualizarCabecera({
+            id, numero: cab.numero, punto_de_venta: cab.punto_de_venta,
+            fecha: fechaNueva ?? cab.fecha,
+            observaciones: obsNueva ?? cab.observaciones ?? '',
+          });
+          if (o.ok || rechazoEdicionConfirmado(o)) resultadoConocido = true;
+          if (!o.ok) avisoCab = `Se guardaron las cantidades, pero NO ${qué}: ${o.error}`;
+        }
       }
       invalidarIM(); invalidarVista(); invalidarRemitos();
       res.json({

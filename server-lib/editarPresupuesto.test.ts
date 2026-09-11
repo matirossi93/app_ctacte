@@ -553,3 +553,62 @@ it.each([false, true])('libera rechazo explícito y conserva lock con resultado 
   const llamadas = m.sbMock.mock.results.flatMap((r: any) => r.value.rpc.mock.calls);
   expect(llamadas.some((c: any[]) => c[0] === 'soltar_presupuesto')).toBe(!incierto);
 });
+
+/**
+ * 🔴 SIN FECHA EN LA CABECERA, EL PUT LE ESCRIBÍA LA DE HOY.
+ *
+ * Astra (11/09/2026), revisando el guard de `actualizarCabecera`: *"`cabeceraComprobante` puede
+ * devolver `fecha: null` con `existe: true`. Si alguien edita sólo las observaciones,
+ * `fechaNueva` es null, `cab.fecha` es null, y el PUT le escribe la fecha de hoy al presupuesto.
+ * Como la fecha decide en qué día de reparto entra el pedido, eso lo mueve de día sin que nadie
+ * se entere — y no falla, así que nadie lo ve"*.
+ *
+ * Es la misma familia que el `?? 'FA'` de `cuerpoParaMoverFecha`: en un PUT que reemplaza la
+ * cabecera entera, un default es una escritura silenciosa. El camino de al lado (anular el viejo
+ * al recrear) ya exigía `cab.fecha`; éste no.
+ */
+describe('la cabecera llega sin fecha', () => {
+  const soloItems = () => ITEMS_IM.map(i => ({
+    cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista_precios: 13,
+    descuento_porc: 0, precio: i.precio,
+  }));
+
+  it('🔑 no se le escribe la fecha de hoy: no se manda el PUT', async () => {
+    m.cabeceraComprobante.mockResolvedValue({ ...CAB_OK, fecha: null });
+    m.actualizarCabecera.mockResolvedValue({ ok: true, raw: {} });
+    await llamar({ observaciones: 'llamar antes de salir', items: soloItems() });
+    expect(m.actualizarCabecera).not.toHaveBeenCalled();
+  });
+
+  it('🔑 y se avisa: las cantidades se guardaron, las observaciones no', async () => {
+    m.cabeceraComprobante.mockResolvedValue({ ...CAB_OK, fecha: null });
+    const r = await llamar({ observaciones: 'llamar antes de salir', items: soloItems() });
+    expect(r.status).toBe(200);
+    expect(r.body.aviso).toMatch(/NO las observaciones/i);
+    expect(r.body.aviso).toMatch(/fecha/i);
+  });
+
+  /** Lo mismo con los otros dos identificadores, que ya cortaban pero en silencio. */
+  it('🪤 sin número tampoco se escribe, y ahora también se avisa', async () => {
+    m.cabeceraComprobante.mockResolvedValue({ ...CAB_OK, numero: null });
+    const r = await llamar({ observaciones: 'algo', items: soloItems() });
+    expect(m.actualizarCabecera).not.toHaveBeenCalled();
+    expect(r.body.aviso).toMatch(/número/i);
+  });
+
+  it('🪤 sin punto de venta, igual', async () => {
+    m.cabeceraComprobante.mockResolvedValue({ ...CAB_OK, punto_de_venta: null });
+    const r = await llamar({ observaciones: 'algo', items: soloItems() });
+    expect(m.actualizarCabecera).not.toHaveBeenCalled();
+    expect(r.body.aviso).toMatch(/punto de venta/i);
+  });
+
+  it('con la cabecera completa sigue guardando como siempre, sin aviso', async () => {
+    m.actualizarCabecera.mockResolvedValue({ ok: true, raw: {} });
+    const r = await llamar({ observaciones: 'llamar antes de salir', items: soloItems() });
+    expect(m.actualizarCabecera).toHaveBeenCalledWith(expect.objectContaining({
+      fecha: '2026-09-09', observaciones: 'llamar antes de salir',
+    }));
+    expect(r.body.aviso).toBeNull();
+  });
+});
