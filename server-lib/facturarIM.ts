@@ -367,7 +367,13 @@ export async function emitirFactura(d: DatosComprobante): Promise<ResultadoEmisi
   }
   let numero = d.numero ?? await proximoNumeroFactura(letra, PTO_VENTA_FACTURA, 30, 'FA', serieFa);
   if (numero == null) {
-    return { ok: false, error: `No pude averiguar el próximo número de factura ${letra} del punto de venta ${PTO_VENTA_FACTURA}: no hay ninguna emitida en los últimos 30 días. Facturá a mano.` };
+    /**
+     * 🪤 Sin número puede ser porque no hay ninguna en la ventana **o** porque algo no se pudo
+     * identificar. Decir sólo lo primero es afirmar de más, y un mensaje que promete una salida
+     * empuja a buscarla por otro lado: el 11/09 la oficina terminó editando facturas a mano ante
+     * errores genéricos.
+     */
+    return { ok: false, error: `No pude determinar el próximo número de factura ${letra} del punto de venta ${PTO_VENTA_FACTURA} con los datos disponibles. No se envió la factura.` };
   }
 
   const fecha = fechaPedida(d);
@@ -776,7 +782,9 @@ async function emitirNota(
   }
   const numero = d.numero ?? await proximoNumeroFactura(letra, PTO_VENTA_NC, 30, tipo, serieNota);
   if (numero == null || !Number.isSafeInteger(numero) || numero <= 0) {
-    return { ok: false, error: `No pude verificar el próximo número de ${que} ${letra} del punto 777. Emitila en InfoManager y vinculala desde el panel.` };
+    // 🪤 Nada de 'emitila y vinculala': vincular una nota externa está soportado para las NC de
+    // una hoja, no para las ND. Prometer un camino que no existe es peor que no decir nada.
+    return { ok: false, error: `No pude determinar el próximo número de ${que} ${letra} del punto ${PTO_VENTA_NC} con los datos disponibles. No se envió la ${que}.` };
   }
 
   const fecha = fechaPedida(d);
