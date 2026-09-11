@@ -107,6 +107,16 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
     const [aviso, setAviso] = useState<string | null>(null);
     const [filtro, setFiltro] = useState<Filtro>('sin_revisar');
     /**
+     * `reparto.borradores` es un Map pelado: escribirlo no re-renderiza. Esto es sólo el
+     * disparador del render — la verdad sigue siendo el Map, que se lee en cada pasada porque
+     * también lo limpian `onGuardado` y el cierre de sesión.
+     *
+     * 🔴 Sólo se dispara cuando pasa de limpio a sucio o al revés: el
+     * editor llama a `onBorrador` en cada tecla, y disparar siempre re-crearía el callback en
+     * cada render — un efecto del hijo que lo tenga en sus deps entraría en loop.
+     */
+    const [, refrescarBorradores] = useState(0);
+    /**
      * El buscador. Mati (09/09/2026): *"se hace una fila interminable"*. Filtra lo que ya está en
      * pantalla —por cliente o por número— sin volver a consultar InfoManager.
      */
@@ -300,7 +310,12 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                                 stock: it.stock,
                                             }))}
                                             onCancelar={cerrarDetalle}
-                                            onBorrador={(sucio) => { if (sucio) reparto.borradores.set(`base:${base.id}`, base); else reparto.borradores.delete(`base:${base.id}`); }}
+                                            onBorrador={(sucio) => {
+                                                const k = `base:${base.id}`;
+                                                if (reparto.borradores.has(k) === sucio) return;   // sin cambio real, sin render
+                                                if (sucio) reparto.borradores.set(k, base); else reparto.borradores.delete(k);
+                                                refrescarBorradores(v => v + 1);
+                                            }}
                                             onGuardado={(r) => {
                                                 setAviso(r.aviso ?? (r.modo === 'recreado'
                                                     ? `Listo: se rehizo el presupuesto y ahora es el ${r.im_numero ?? ''}. Como cambió, quedó sin revisar.`
@@ -311,12 +326,28 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                             }}
                                         /></>);
     }
+    // 🪤 Se deriva en CADA render, sin memoizar: el Map también se limpia desde `onGuardado` y al
+    // cerrar sesión, y un `useMemo` atado al contador no vería esos cambios. El contador es sólo
+    // el disparador del render, no la fuente de verdad.
     const borradores = [...reparto.borradores.entries()].filter(([k]) => k.startsWith('base:')).map(([, v]) => v as NonNullable<typeof detalle>);
 
     return (
         <fieldset disabled={reparto.ocupado} className="pr-root" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             {!!borradores.length && <div className="pr-aviso" role="status">Borradores sin guardar: {borradores.map(b => <button key={b.id} disabled={reparto.ocupado} onClick={() => { if (!reparto.puedeNavegar()) return; controlDetalle.current.invalidar(); abiertoRef.current = b.id; setAbierto(b.id); setDetalle(b); }}>{`Retomar PR ${b.numero ?? b.id}`}</button>)}</div>}
-            {detalle && !visibles.some(p => p.im_comprobante_id === detalle.id) && <div className="pr-detalle"><p>Borrador del PR {detalle.numero ?? detalle.id}, fuera del filtro actual.</p>{renderEditor(detalle)}</div>}
+            {/**
+              * 🔴 "Borrador" SÓLO con cambios sin guardar de verdad. La condición de este panel
+              * es "hay un detalle abierto y no está en la lista filtrada", que también se cumple
+              * al aprobar —aprobar lo saca de `sin_revisar`— sin haber tocado nada. Y en ese
+              * camino nunca puede haber borrador: `revisar()` no deja aprobar si hay uno vivo.
+              */}
+            {detalle && !visibles.some(p => p.im_comprobante_id === detalle.id) && (
+                <div className="pr-detalle">
+                    <p className="pr-detalle-motivo">{reparto.borradores.has(`base:${detalle.id}`)
+                        ? `Borrador del PR ${detalle.numero ?? detalle.id}: tiene cambios sin guardar.`
+                        : `Detalle del PR ${detalle.numero ?? detalle.id}, fuera del filtro actual.`}</p>
+                    {renderEditor(detalle)}
+                </div>
+            )}
             <div className="pr-top">
                 <button className="pr-btn ghost" onClick={() => void cargar(true)} disabled={cargando}>
                     <RefreshCw size={15} className={cargando ? 'spin' : ''} /> Actualizar

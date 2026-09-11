@@ -79,7 +79,7 @@ try {
       await page.locator('.ped-bloqueo').filter({hasText:'operación en curso'}).waitFor();
       assert(puts.length === 1, `Mandó ${puts.length} PUT en vez de uno`);
 
-      const salida = page.getByRole('button',{name:'Cerrar y conservar borrador'});
+      const salida = page.getByRole('button',{name:'Cerrar sin perder los cambios'});
       await salida.waitFor();
       assert(await salida.isEnabled(), 'La salida aparece pero deshabilitada');
       /**
@@ -121,7 +121,7 @@ try {
     const {page,ctx} = await editorConRechazo(560);
     try {
       await page.locator('.ped-confirm').click();
-      await page.getByRole('button',{name:'Cerrar y conservar borrador'}).waitFor();
+      await page.getByRole('button',{name:'Cerrar sin perder los cambios'}).waitFor();
       assert(!await seSale(page,'.ped-confirm'), 'Se sale "Guardar cambios" en 560');
       assert(!await seSale(page,'.ped-salida'), 'Se sale la salida en 560');
       assert(!await pieDesborda(page), 'El pie desborda en 560');

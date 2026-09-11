@@ -55,6 +55,83 @@ try {
       assert(calls===1,'Se aprobó con cambios pendientes sin guardar');
     } finally {await ctx.close();}
   });
+  /**
+   * 🔴 Mati (11/09/2026), después de aprobar un presupuesto: *"¿qué es borrador?"*.
+   *
+   * El cartel de abajo salía por tener el detalle abierto y fuera del filtro, sin mirar si había
+   * cambios. Como aprobar saca al presupuesto de "sin revisar", abrir uno para mirarlo y
+   * aprobarlo ya lo disparaba. Y en ese camino nunca puede ser cierto: `revisar()` frena la
+   * aprobación cuando hay un borrador vivo.
+   */
+  await test('Aprobar un PR abierto sin editar NO lo llama borrador', async()=>{
+    const {page,ctx}=await setup();
+    try {
+      await page.route('**/api/presupuestos/101',r=>reply(r,{items:[item(11,'PRODUCTO LIMPIO')],comprobante:{im_comprobante_id:'101',numero:101,cod_cliente:101,fecha:'2026-09-10',huella:'v101'}}));
+      await page.route('**/api/presupuestos/101/revision',r=>reply(r,{ok:true}));
+      await page.locator('.pr-abrir').nth(0).click();
+      await page.locator('.ed-tabla tbody tr').filter({hasText:'PRODUCTO LIMPIO'}).waitFor();
+      // Aprobar lo saca de "sin revisar", que es el filtro por defecto: el panel de abajo aparece.
+      await page.getByRole('button',{name:'Aprobar',exact:true}).nth(0).click();
+      await page.locator('.pr-detalle').waitFor();
+      const texto = await page.locator('.pr-detalle-motivo').innerText();
+      assert(!/borrador/i.test(texto), `Sigue diciendo borrador sin cambios: "${texto}"`);
+      assert(/fuera del filtro/i.test(texto), `Perdió la explicación de por qué está abajo: "${texto}"`);
+      // Y el aviso de borradores REALES de arriba no se inventa ninguno.
+      assert(await page.getByText('Borradores sin guardar:').count()===0,'Inventó un borrador sin guardar');
+      // 🔑 Se aprobó de verdad: está en Aprobados, no sólo ausente de la palabra.
+      await page.getByRole('button',{name:/^Aprobados/}).click();
+      await page.locator('.pr-fila').filter({hasText:'CLIENTE ALFA'}).waitFor();
+    } finally {await ctx.close();}
+  });
+
+  /**
+   * 🪤 Astra (11/09/2026): `reparto.borradores` es un Map pelado y escribirlo no re-renderiza.
+   * Si se edita DESPUÉS de que el detalle quedó fuera del filtro, el cartel seguía afirmando lo
+   * que ya no era cierto. Se prueba el ciclo entero sin tocar el filtro en el medio.
+   */
+  await test('El cartel se actualiza al ensuciar y al revertir, sin tocar el filtro', async()=>{
+    const {page,ctx}=await setup();
+    try {
+      await page.route('**/api/presupuestos/101',r=>reply(r,{items:[item(11,'PRODUCTO LIMPIO')],comprobante:{im_comprobante_id:'101',numero:101,cod_cliente:101,fecha:'2026-09-10',huella:'v101'}}));
+      await page.route('**/api/presupuestos/101/revision',r=>reply(r,{ok:true}));
+      await page.locator('.pr-abrir').nth(0).click();
+      await page.locator('.pr-detalle .ed-cant').waitFor();
+      const original = await page.locator('.pr-detalle .ed-cant').inputValue();
+      await page.getByRole('button',{name:'Aprobar',exact:true}).nth(0).click();
+      await page.locator('.pr-detalle-motivo').waitFor();
+      assert(!/borrador/i.test(await page.locator('.pr-detalle-motivo').innerText()),'Arranca diciendo borrador');
+
+      // Ensuciar ACÁ ABAJO, con el detalle ya fuera del filtro.
+      await page.locator('.pr-detalle .ed-cant').fill('7');
+      await page.locator('.pr-detalle-motivo').filter({hasText:/borrador/i}).waitFor();
+      assert(await page.getByText('Borradores sin guardar:').isVisible(),'No apareció el aviso de borradores reales');
+
+      // Y al volver al valor original tiene que dejar de decirlo.
+      await page.locator('.pr-detalle .ed-cant').fill(original);
+      await page.locator('.pr-detalle-motivo').filter({hasText:/^Detalle del PR/}).waitFor();
+      assert(await page.getByText('Borradores sin guardar:').count()===0,'Quedó un borrador después de revertir');
+    } finally {await ctx.close();}
+  });
+
+  /** La otra cara: con un cambio de verdad, el cartel SÍ tiene que avisar y proteger. */
+  await test('Con cambios sin guardar sí dice borrador y no se pierden al filtrar', async()=>{
+    const {page,ctx}=await setup();
+    try {
+      await page.route('**/api/presupuestos/101',r=>reply(r,{items:[item(11,'PRODUCTO EDITADO')],comprobante:{im_comprobante_id:'101',numero:101,cod_cliente:101,fecha:'2026-09-10',huella:'v101'}}));
+      await page.locator('.pr-abrir').nth(0).click();
+      await page.locator('.pr-detalle .ed-cant').waitFor();
+      await page.locator('.pr-detalle .ed-cant').fill('7');
+      // Se lo saca del filtro por búsqueda, sin aprobarlo: el borrador tiene que sobrevivir.
+      await page.locator('.pr-buscador input').fill('CLIENTE BETA');
+      await page.locator('.pr-detalle').waitFor();
+      const texto = await page.locator('.pr-detalle-motivo').innerText();
+      assert(/borrador/i.test(texto), `No avisa que hay cambios sin guardar: "${texto}"`);
+      assert(/sin guardar/i.test(texto), `No dice que son cambios sin guardar: "${texto}"`);
+      assert(await page.locator('.pr-detalle .ed-cant').inputValue()==='7','Se perdió el cambio al filtrar');
+      assert(await page.getByText('Borradores sin guardar:').isVisible(),'Perdió el aviso de borradores reales');
+    } finally {await ctx.close();}
+  });
+
   await test('Respuesta de rango antiguo no reemplaza la actual', async()=>{
     const {page,ctx}=await setup();
     try {

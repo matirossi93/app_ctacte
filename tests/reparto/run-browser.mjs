@@ -1,7 +1,7 @@
 /** Servidor local y fixtures cerradas: jamás usa la configuración E2E de producción. */
 import { spawn } from 'node:child_process';
 import { stripVTControlCharacters } from 'node:util';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const repo = path.resolve(process.env.REPARTO_TEST_REPO || process.argv[2] || '.');
@@ -10,6 +10,40 @@ const port = 4189;
 const base = `http://127.0.0.1:${port}`;
 const output = path.resolve(process.env.REPARTO_TEST_OUTPUT || path.join(repo, 'tests/artifacts-reparto'));
 await mkdir(output, { recursive: true });
+
+/**
+ * 🔴 CORRER CONTRA UN BUILD VIEJO DA FALSOS NEGATIVOS, Y CUESTAN HORAS.
+ *
+ * El 11/09/2026 `browser-listas.mjs` falló dos casos durante toda una tarde. No era el producto
+ * ni la fixture: `dist-server/server-lib/listas.js` era 14 horas más viejo que su `.ts`, así que
+ * el mock de `/api/pedidos/validar` —que importa `evaluarPedido` del compilado— respondía con la
+ * versión anterior. En CI no pasa, porque ahí `npm run build` y `build:server` corren antes
+ * (ci.yml). Corriendo a mano es fácil olvidarse.
+ *
+ * No se compila acá: eso duplicaría el trabajo del CI y dejaría el harness lento. Se avisa y se
+ * corta, que es lo único que hacía falta para no perder la tarde.
+ */
+async function masNuevo(dir, exts) {
+  let top = 0;
+  const entradas = await readdir(dir, { recursive: true, withFileTypes: true }).catch(() => []);
+  for (const e of entradas) {
+    if (!e.isFile() || !exts.some(x => e.name.endsWith(x))) continue;
+    const { mtimeMs } = await stat(path.join(e.parentPath ?? e.path, e.name)).catch(() => ({ mtimeMs: 0 }));
+    if (mtimeMs > top) top = mtimeMs;
+  }
+  return top;
+}
+for (const [fuente, exts, compilado, comando] of [
+  ['src', ['.ts', '.tsx', '.css'], 'dist/index.html', 'npm run build'],
+  ['server-lib', ['.ts'], 'dist-server/server.js', 'npm run build:server'],
+]) {
+  const { mtimeMs: hecho } = await stat(path.join(repo, compilado)).catch(() => ({ mtimeMs: 0 }));
+  if (!hecho) throw new Error(`Falta ${compilado}. Corré: ${comando}`);
+  const cambiado = await masNuevo(path.join(repo, fuente), exts);
+  if (cambiado > hecho) {
+    throw new Error(`${fuente}/ cambió después de compilarse (${compilado} quedó viejo). Corré: ${comando}`);
+  }
+}
 const env = { ...process.env, REPARTO_TEST_REPO: repo, REPARTO_TEST_URL: base, REPARTO_TEST_OUTPUT: output };
 const preview = spawn(process.execPath, [path.join(repo,'node_modules/vite/bin/vite.js'),'preview','--host','127.0.0.1','--port',String(port),'--strictPort'], { cwd: repo, env, stdio: ['ignore','pipe','pipe'] });
 let startup = '';

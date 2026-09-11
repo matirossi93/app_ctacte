@@ -1258,7 +1258,10 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                   */}
                                 {fallo && (
                                     <button className="ped-secondary ped-salida" disabled={enviando} onClick={onClose}>
-                                        Cerrar y conservar borrador
+                                        {/* 🪤 El texto nombra lo que se conserva, sin jerga: "borrador"
+                                            no dice nada del otro lado de la pantalla, y al lado de un
+                                            error se lee como "descartar". */}
+                                        {editando ? 'Cerrar sin perder los cambios' : 'Cerrar sin perder el pedido'}
                                     </button>
                                 )}
                                 <button className="ped-confirm" disabled={!cart.length || enviando || bloqueos.length > 0 || renglonesSinPrecio.length > 0} onClick={confirmar}>
