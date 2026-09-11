@@ -1086,11 +1086,19 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
     const todos = [...vista.pendientes, ...vista.asignados];
     const aprobados = todos.filter((p: any) => p.revision?.estado === 'aprobado');
 
-    const { data: emitidos, error: errEmitidos } = await sb().from('presupuestos_facturados')
-      .select('*').eq('tenant_id', TENANT_ID)
-      .in('im_comprobante_id', aprobados.map((p: any) => String(p.im_comprobante_id)));
-    // Sin esto, la pantalla mostraría como "para facturar" cosas que ya se facturaron.
+    // La aprobación habilita una emisión NUEVA. Nunca decide si una factura ya emitida
+    // aparece: un stock incompleto o un PR retirado de la vista no borra su historia.
+    const lecturas = await Promise.all([
+      sb().from('presupuestos_facturados').select('*').eq('tenant_id', TENANT_ID)
+        .in('im_comprobante_id', todos.map((p: any) => String(p.im_comprobante_id))),
+      sb().from('presupuestos_facturados').select('*').eq('tenant_id', TENANT_ID)
+        .eq('cod_empresa', Number(process.env.PEDIDO_EMPRESA_DEFAULT || 1))
+        .gte('fecha', desde).lte('fecha', hasta).not('im_factura_id', 'is', null),
+    ]);
+    const errEmitidos = lecturas.find(r => r.error)?.error;
     if (errEmitidos) { res.status(502).json({ error: `No pude leer qué se facturó ya: ${errEmitidos.message}` }); return; }
+    const emitidos = [...new Map(lecturas.flatMap(r => r.data ?? [])
+      .map((e: any) => [String(e.im_comprobante_id), e])).values()];
     /**
      * 🔴 Antes de mostrar nada: lo que se anuló en InfoManager deja de figurar como emitido.
      * Mati (10/09/2026): un cliente rechazó un pedido, anularon la factura en IM y en la app
@@ -1105,10 +1113,11 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
       return new Map<string, string>();
     });
     // `sincronizarAnulados` ya borró o limpió lo que hacía falta: se relee para no mostrar viejo.
-    const { data: alDia } = avisosAnulados.size
+    const { data: alDia, error: errAlDia } = avisosAnulados.size
       ? await sb().from('presupuestos_facturados').select('*').eq('tenant_id', TENANT_ID)
-          .in('im_comprobante_id', aprobados.map((p: any) => String(p.im_comprobante_id)))
-      : { data: emitidos };
+          .in('im_comprobante_id', emitidos.map((e: any) => String(e.im_comprobante_id)))
+      : { data: emitidos, error: null };
+    if (errAlDia) { res.status(502).json({ error: `No pude releer las facturas actualizadas: ${errAlDia.message}` }); return; }
     const porId = new Map((alDia ?? []).map((e: any) => [String(e.im_comprobante_id), e]));
 
     /**
@@ -1135,7 +1144,22 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
       }
     }
 
-    const filas = aprobados.map((p: any) => {
+    const porPresupuesto = new Map(todos.map((p: any) => [String(p.im_comprobante_id), p]));
+    const bases = new Map(aprobados.map((p: any) => [String(p.im_comprobante_id), p]));
+    for (const e of alDia ?? []) {
+      if (!e.im_factura_id) continue;
+      // El importe pertenece a la factura, aunque luego hayan editado su presupuesto.
+      const p: any = porPresupuesto.get(String(e.im_comprobante_id));
+      bases.set(String(e.im_comprobante_id), {
+        ...p, im_comprobante_id: String(e.im_comprobante_id),
+        im_numero: e.im_numero ?? p?.im_numero ?? null,
+        cod_cliente: e.cod_cliente ?? p?.cod_cliente,
+        cliente_nombre: e.cliente_nombre ?? p?.cliente_nombre ?? `Cliente ${e.cod_cliente}`,
+        fecha: e.fecha ?? p?.fecha ?? null, total: Number(e.total ?? p?.total ?? 0),
+        bultos: Number(e.bultos ?? p?.bultos ?? 0), kg: Number(e.kg ?? p?.kg ?? 0),
+      });
+    }
+    const filas = [...bases.values()].map((p: any) => {
       const e = porId.get(String(p.im_comprobante_id));
       return {
         ...p,
@@ -1147,7 +1171,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
         im_remito_id: e?.im_remito_id ?? null,
         facturado_at: e?.facturado_at ?? null,
         // Con la factura emitida y sin remito: el reintento hace SÓLO el remito.
-        falta_remito: !!e?.im_factura_id && !e?.facturado_at,
+        falta_remito: !!e?.im_factura_id && !e?.facturado_at && e?.estado_emision === 'remito_pendiente',
         estado_emision: e?.estado_emision ?? null,
         // Lo que se anuló en InfoManager desde la última vez que se miró esta pantalla.
         aviso_anulado: avisosAnulados.get(String(p.im_comprobante_id)) ?? null,
@@ -1168,7 +1192,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
         falta_remito: filas.filter(f => f.falta_remito).length,
       },
       // Lo que todavía no se aprobó, para que se vea por qué no está en la lista.
-      sin_aprobar: todos.length - aprobados.length,
+      sin_aprobar: todos.filter((p: any) => p.revision?.estado !== 'aprobado' && !porId.get(String(p.im_comprobante_id))?.im_factura_id).length,
     });
   } catch (err: any) {
     console.error('[tableroFacturacion]', err?.message);

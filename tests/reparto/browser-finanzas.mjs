@@ -1,6 +1,27 @@
 import fs from 'node:fs/promises';
 import {browser,results,out,base,user,row,rows,presupuestos,item,reply,setup,assert,test} from './browser-fixtures.mjs';
 try {
+ await test('Facturas emitidas sin stock no vuelven a Sin revisar y permiten abrir la corrección', async()=>{
+  const emitida={...row('103','CLIENTE YA FACTURADO'),controles_completos:false,revision:null,
+    factura:{im_factura_id:'503',numero:50424,tipo:'FA B',origen:'nuestra'}};
+  const {page,ctx}=await setup(1440,{beforeGoto:async page=>{
+    await page.route('**/api/presupuestos?**',r=>reply(r,presupuestos([rows[0],emitida])));
+  }});
+  try {
+   assert(!(await page.getByText('CLIENTE YA FACTURADO',{exact:true}).count()),'Emitida reapareció sin revisar');
+   await page.locator('.pr-filtros button').filter({hasText:'Todos'}).click();
+   await page.getByText('CLIENTE YA FACTURADO',{exact:true}).waitFor();
+   await page.route('**/api/facturacion?**',r=>reply(r,{pendientes:[],facturados:[{...emitida,im_factura_id:'503',im_factura_numero:50424,
+     im_remito_numero:77404,facturado_at:'2026-09-09',notas:[]}],totales:{pendientes:0,facturados:1}}));
+   await page.route('**/api/facturacion/corregir/503',r=>reply(r,{factura:{id:'503',numero:50424,letra:'B',cliente_nombre:emitida.cliente_nombre,fecha:'2026-09-10'},
+     version:0,operacion:null,renglones:[{cod_articulo:11,descripcion:'PRODUCTO A',cantidad:10,precio:100,descuento_porc:0}]}));
+   await page.locator('.of-tabs button').filter({hasText:'Facturación'}).click();
+   await page.locator('.fc-facturados summary').click();
+   await page.getByRole('button',{name:'Corregir',exact:true}).click();
+   await page.locator('.cf-tabla').waitFor();
+   assert(await page.locator('.cf-modal').getByText(/50424/).count()>0,'No abre la factura correcta');
+  } finally {await ctx.close();}
+ });
  await test('Corrección detecta cambio de productos con el mismo importe total', async()=>{
   const {page,ctx}=await setup();
   try {

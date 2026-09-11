@@ -50,6 +50,7 @@ interface Fila {
     aviso_anulado?: string | null;
     /** La factura salió y el remito no: el reintento hace SÓLO el remito. */
     falta_remito: boolean;
+    estado_emision?: string | null;
 }
 
 /**
@@ -62,6 +63,7 @@ const ajusteNotas = (notas?: Array<{ tipo: string; total: number }>) =>
 
 const money = (n: number) => '$' + Math.round(n).toLocaleString('es-AR');
 const dia = (f: string | null) => (f ? `${f.slice(8, 10)}/${f.slice(5, 7)}` : '—');
+const requiereConciliar = (p: Fila) => ['anulado', 'incierto', 'factura_emitiendo', 'remito_emitiendo'].includes(p.estado_emision ?? '');
 
 export function FacturacionView({ desde, hasta }: { desde: string; hasta: string }) {
     const [pendientes, setPendientes] = useState<Fila[]>([]);
@@ -137,7 +139,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
         localStorage.setItem('fc_remito_sin_importe', remitoValorizado ? '0' : '1');
     }, [remitoValorizado]);
 
-    const elegidos = useMemo(() => pendientes.filter(p => sel.has(p.im_comprobante_id)), [pendientes, sel]);
+    const elegidos = useMemo(() => pendientes.filter(p => !requiereConciliar(p) && sel.has(p.im_comprobante_id)), [pendientes, sel]);
     const importeElegido = elegidos.reduce((s, p) => s + Number(p.total ?? 0), 0);
     const buscar = (p: Fila) => coincide(busqueda, [
         p.cliente_nombre, p.im_numero, p.cod_cliente, p.im_factura_numero, p.im_remito_numero,
@@ -145,7 +147,8 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
     const visibles = useMemo(() => pendientes.filter(buscar), [pendientes, busqueda]);
     const facturadosVisibles = useMemo(() => facturados.filter(buscar), [facturados, busqueda]);
 
-    const seleccion = seleccionVisible(visibles.map(p => p.im_comprobante_id), sel);
+    const idsSeleccionables = visibles.filter(p => !requiereConciliar(p)).map(p => p.im_comprobante_id);
+    const seleccion = seleccionVisible(idsSeleccionables, sel);
     const todosElegidos = seleccion.todos;
 
     function toggle(id: string) {
@@ -222,7 +225,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                     type="checkbox" title="Elegir todos"
                                     checked={todosElegidos}
                                     ref={el => { if (el) el.indeterminate = seleccion.parcial; }}
-                                    onChange={() => setSel(s => alternarVisibles(visibles.map(p => p.im_comprobante_id), s))}
+                                    onChange={() => setSel(s => alternarVisibles(idsSeleccionables, s))}
                                 />
                             </th>
                             <th>Cliente</th><th>Pedido</th><th>Fecha</th>
@@ -233,7 +236,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                         {visibles.map(p => (
                             <tr key={p.im_comprobante_id} className={sel.has(p.im_comprobante_id) ? 'sel' : ''}>
                                 <td className="c">
-                                    <input aria-label={`Elegir ${p.cliente_nombre} PR ${p.im_numero ?? p.im_comprobante_id}`} type="checkbox" checked={sel.has(p.im_comprobante_id)} onChange={() => toggle(p.im_comprobante_id)} />
+                                    <input aria-label={`Elegir ${p.cliente_nombre} PR ${p.im_numero ?? p.im_comprobante_id}`} type="checkbox" disabled={requiereConciliar(p)} checked={sel.has(p.im_comprobante_id)} onChange={() => toggle(p.im_comprobante_id)} />
                                 </td>
                                 <td>{p.cliente_nombre}</td>
                                 <td className="fc-pr">PR {p.im_numero ?? '—'}</td>
@@ -242,7 +245,9 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                 <td className="n">{Math.round(p.kg)}</td>
                                 <td className="n">{money(p.total)}</td>
                                 <td>
-                                    {p.falta_remito
+                                    {requiereConciliar(p)
+                                        ? <span className="fc-badge grave">{p.estado_emision === 'anulado' ? 'factura anulada · requiere conciliación' : 'emisión por verificar'}</span>
+                                        : p.falta_remito
                                         ? <span className="fc-badge grave">falta el remito (FA {p.im_factura_numero})</span>
                                         : <span className="fc-badge">aprobado</span>}
                                 </td>
