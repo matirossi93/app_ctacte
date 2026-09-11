@@ -8,7 +8,9 @@ La migración035 ya habilita L3 desde20unidades y L4 desde30 para Flecky+Fullcat
 
 La suma ahora usa las reglas efectivas de cada artículo: incluye códigos explícitos con el mismo nombre comercial y excluye los espejos minoristas X KG que no pertenecen al control. Los kg de esos espejos no se interpretan como unidades de bolsa.
 
-El audio habla de unidades cerradas. Se pidió aclarar si conserva la excepción previa20kggranel=1bulto y si incluye unidades pequeñas cerradas. Hasta resolverlo no se cambió ese conteo general. El caso20collares que el motor previo trata como1bulto queda pendiente de esa definición, sin ocultarlo ni declarar completo ese ajuste.
+Matías confirmó el 11/09 que desde 20 kg del mismo artículo a granel cuenta un único bulto: 60 kg siguen siendo uno. Se suman sus renglones antes de aplicar el umbral, sin mezclar kilos de artículos distintos. Los productos pequeños (collares, pipetas y shampoos) no cuentan como bultos, aunque se lleven 20 o 100 unidades. Conservan sus condiciones comerciales por unidades.
+
+El clasificador distingue bolsas, granel y unidades. Conserva graneles reales con unidad de medida ausente; en Condimentos se usan los casos conocidos 528 y 731, porque esa familia también contiene envases y ventas por gramo. Los códigos genéricos y cargos 13818/13819 no participan. La descripción «shampoo 2 en 1 X 250 CC» ya no se interpreta como un pack.
 
 ## Errores corregidos
 
