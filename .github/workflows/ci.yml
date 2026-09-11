@@ -78,6 +78,9 @@ jobs:
       - name: Verificar versión publicada y esquema listo
         env:
           EXPECTED_BUILD: ${{ needs.build-and-test.outputs.build }}
+          # El CDN puede devolver HTML a los runners. Comprobar también el origen con
+          # el mismo hostname/certificado; esto no modifica las reglas de Cloudflare.
+          REPARTO_DEPLOY_ORIGIN: 72.60.144.175
         run: node scripts/verificar-despliegue.mjs
   lint:
     name: Lint (informativo)

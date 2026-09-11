@@ -239,15 +239,21 @@ async function silenciarSiElPrecioYaEstaBien(
  */
 export async function validarListasPedido(req: Request & { user?: JwtPayload }, res: Response) {
   try {
-    const items = (Array.isArray(req.body?.items) ? req.body.items : [])
-      .map((it: any) => ({ cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad), cod_lista: Number(it.cod_lista), descuento: Number(it.descuento_porc) || 0 }))
-      .filter((it: any) => it.cod_articulo > 0 && it.cantidad > 0);
+    if (!Array.isArray(req.body?.items)) { res.status(400).json({ error: 'Faltan los renglones a controlar.' }); return; }
+    const items = req.body.items.map((it: any) => ({ cod_articulo: Number(it?.cod_articulo), cantidad: Number(it?.cantidad), cod_lista: Number(it?.cod_lista), descuento: Number(it?.descuento_porc ?? 0) }));
+    // No filtrar: cambiaría los índices y un aviso terminaría bajo otro producto.
+    if (items.some((it: any) => !Number.isInteger(it.cod_articulo) || it.cod_articulo <= 0 || !Number.isFinite(it.cantidad) || it.cantidad <= 0 || !LISTAS_VALIDAS.has(it.cod_lista) || !Number.isFinite(it.descuento) || it.descuento < 0 || it.descuento > 100)) {
+      res.status(400).json({ error: 'Completá las cantidades, listas y descuentos antes de controlar.' }); return;
+    }
     if (!items.length) { res.json({ ok: true, bultos: 0, promo_general: false, avisos: [] }); return; }
     // El front debounce 400 ms y aborta el pedido anterior, pero eso solo corta el socket: sin
     // esto el server seguia barriendo IM renglon por renglon para una respuesta ya descartada.
     let cortado = false;
-    req.on('close', () => { cortado = true; });
-    const r = await controlarListas(items, { abortado: () => cortado });
+    req.on('aborted', () => { cortado = true; });
+    // El close del request también ocurre al terminar de leer un POST válido.
+    // Lo que cancela el trabajo es que se cierre la respuesta antes de enviarla.
+    res.on?.('close', () => { if (!res.writableEnded) cortado = true; });
+    const r = await controlarListas(items, { silenciar: req.body?.solo_reglas !== true, abortado: () => cortado });
     if (cortado) return;
     if (!r) { res.json({ ok: true, sin_control: true, bultos: 0, promo_general: false, avisos: [] }); return; }
     res.json({ ok: true, ...r });

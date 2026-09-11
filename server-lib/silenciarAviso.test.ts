@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import express from 'express';
+import { createServer } from 'node:http';
 
 /**
  * `silenciarSiElPrecioYaEstaBien` apaga el aviso "le estás cobrando de más" cuando el renglón
@@ -92,4 +94,27 @@ describe('🪤 el aviso se silencia con el descuento DE SU renglón (Mati 27/08)
     expect(r.avisos[1].severidad).toBe('cliente');
     expect(r.avisos[1].mensaje).toBeTruthy();
   });
+});
+
+it('un POST recibido completo responde después de evaluar; req.close no es un aborto', async () => {
+  const app = express(); app.use(express.json());
+  app.post('/validar', (req, res) => { void validarListasPedido(req, res); });
+  const server = createServer(app);
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  getPrecioLista.mockImplementationOnce(async () => { await new Promise(r => setTimeout(r, 30)); return { precio_vta: 1000 }; });
+  try {
+    const port = (server.address() as { port: number }).port;
+    const r = await fetch(`http://127.0.0.1:${port}/validar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ cod_articulo: 1001, cantidad: 2, cod_lista: 12, descuento_porc: 30 }] }), signal: AbortSignal.timeout(2000) });
+    expect(r.status).toBe(200);
+    expect((await r.json()).avisos[0].idx).toBe(0);
+  } finally { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); }
+});
+
+it('una cantidad incompleta no elimina filas ni desplaza el aviso a otro producto', async () => {
+  let body: any; let status = 200;
+  const req: any = { body: { items: [{ cod_articulo: 1001, cantidad: 0, cod_lista: 12 }, { cod_articulo: 1001, cantidad: 3, cod_lista: 12 }] }, on() {} };
+  const res: any = { status: (s: number) => { status = s; return res; }, json: (b: any) => { body = b; } };
+  await validarListasPedido(req, res);
+  expect(status).toBe(400);
+  expect(body.avisos).toBeUndefined();
 });

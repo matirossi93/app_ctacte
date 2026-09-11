@@ -29,7 +29,7 @@ vi.mock('./infomanager.js', () => { const fuente = {
   anularComprobante: m.anularComprobante,
   actualizarCabecera: m.actualizarCabecera,
   fetchArticulosCatalogo: vi.fn(async () => new Map([[1, { descripcion: 'ALPISTE X 30 KG', iva_por:0 }],[3,{iva_por:0}],[13819,{iva_por:0}]])),
-  getPrecioLista: vi.fn(async(cod:number) => ({cod_articulo:cod,iva:0,iva_verificada:0})),
+  getPrecioLista: vi.fn(async(cod:number) => ({cod_articulo:cod,precio_vta:100,iva:0,iva_verificada:0})),
   fechaArgentina: () => '2026-09-09',
 }; return { ...fuente, invalidarIM: vi.fn(), leerComprobante: async (id: string) => ({ cabecera: await (fuente as any).cabeceraComprobante(id), items: await (fuente as any).getItemsComprobante(id) }) }; });
 vi.mock('./vistaPresupuestos.js', () => ({ invalidarVista: vi.fn(), vistaDeRango: vi.fn() }));
