@@ -236,8 +236,9 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false) {
           const conDescuento = (rs[a.idx]?.descuento_porc ?? 0) > 0;
           if (a.severidad === 'margen') g.pierde_margen += 1;
           else if (a.severidad === 'cliente' && !conDescuento) g.cobra_de_mas += 1;
-          else if (a.severidad === 'cliente') continue;
-          if (a.mensaje) textos.push(a.mensaje);
+          // Las oportunidades de mejor precio son comentarios para el vendedor, no
+          // tareas de revisión para oficina. El descuento se controla de todos modos.
+          if (a.severidad === 'margen' && a.mensaje) textos.push(a.mensaje);
           // El descuento fuera de tope es otro problema, y ese no depende de la lista.
           if (a.mensaje_descuento) textos.push(a.mensaje_descuento);
         }
@@ -491,4 +492,3 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false) {
     return datos;
   }
 }
-

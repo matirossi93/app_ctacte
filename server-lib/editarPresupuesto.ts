@@ -39,6 +39,7 @@ import {
 import { invalidarVista } from './vistaPresupuestos.js';
 import { huellaPresupuesto, exigirHuella, exigirTipoEmpresa, bloquearPresupuesto, desbloquearPresupuesto, invalidarAprobacion, rechazoEdicionConfirmado, ErrorVersion } from './versionPresupuesto.js';
 import { invalidarRemitos } from './vistaRemitos.js';
+import { verificarPreciosEditados } from './verificarPrecioEditado.js';
 
 function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
   if (!puedeArmarHojasDeRuta(String(req.user?.rol ?? ''))) {
@@ -214,6 +215,11 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
         error: `Este presupuesto tiene ${notasIM.length} renglón(es) sin código escritos en InfoManager (${notasIM.map(n => `"${n.detalle ?? 'sin texto'}"`).join(', ')}). Rehacerlo los borraría, y la API de InfoManager no los puede volver a cargar. Cambiá sólo cantidades acá, o hacé el cambio en InfoManager.`,
       });
       return;
+    }
+
+    if (!mismoSurtido) {
+      try { await verificarPreciosEditados(items, imItems, COD_COSTO_DISTRIBUCION); }
+      catch (e: any) { res.status(409).json({ error: e?.message ?? 'No se pudo verificar el precio de la lista elegida.' }); return; }
     }
 
     // ── Camino barato: sólo cambiaron cantidades ──────────────────────────────

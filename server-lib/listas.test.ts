@@ -185,14 +185,14 @@ describe('evaluarPedido — los dos tipos de error', () => {
     // 1 sola bolsa de Ganave: sin promo general, le toca L1. El vendedor puso L2.
     const r = evaluarPedido([{ cod_articulo: 1, cantidad: 1, cod_lista: 13 }], c, REGLAS);
     expect(r.avisos[0].severidad).toBe('margen');
-    expect(r.avisos[0].mensaje).toContain('más barato');
+    expect(r.avisos[0].mensaje).toContain('hasta L1; está en L2');
   });
 
   it('lista MÁS BAJA teniendo derecho = le cobró de más al cliente', () => {
     // 25 kg de alpiste dan L2, pero el vendedor lo dejó en L1.
     const r = evaluarPedido([{ cod_articulo: 400, cantidad: 25, cod_lista: 12 }], c, REGLAS);
     expect(r.avisos[0].severidad).toBe('cliente');
-    expect(r.avisos[0].mensaje).toContain('cobrando de más');
+    expect(r.avisos[0].mensaje).toContain('es decisión del vendedor');
   });
 
   it('cuando coincide no dice nada', () => {

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     X, Search, User, ShoppingCart, Plus, Minus, Trash2, Send, Loader2,
     CheckCircle2, AlertCircle, ArrowLeft, PackageSearch, Wallet, Ban,
-    Package, AlertTriangle, Pencil, ChevronRight, Share2,
+    AlertTriangle, Pencil, ChevronRight, Share2,
 } from 'lucide-react';
 import { authHeaders, getUser } from '../utils/auth';
 import { borrarBorrador, cuandoSeGuardo, guardarBorrador, leerBorrador } from '../utils/borradorPedido';
@@ -12,6 +12,8 @@ import { hayPedidoEnCurso } from '../utils/pedidoEnCurso';
 import { aplicarPrecioDeLista } from '../utils/precioDeLista';
 import { mensajeSinPrecio } from '../utils/mensajeSinPrecio';
 import './PedidosApp.css';
+import { DetalleCalculoListas } from './DetalleCalculoListas';
+import type { ResultadoPedido } from '../../server-lib/listas';
 
 interface Props {
     onClose: () => void;
@@ -96,6 +98,7 @@ interface AvisoLista {
 }
 interface ControlListas {
     bultos: number; promo_general: boolean; avisos: AvisoLista[];
+    lineas?: ResultadoPedido['lineas'];
     /**
      * Qué carrito produjo estos avisos (los uid de los renglones, en orden).
      *
@@ -446,7 +449,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     /** Pedido cuyo PDF se está armando. jsPDF pesa, así que el módulo se importa recién acá. */
     const [pdfDe, setPdfDe] = useState<string | null>(null);
     /** Identidad del carrito actual. Cambia al agregar, borrar o reordenar renglones. */
-    const firmaCarrito = useMemo(() => cart.map(i => i.uid).join('|'), [cart]);
+    const firmaCarrito = useMemo(() => JSON.stringify(cart.map(i => [i.uid, i.cod_articulo, i.cantidad, i.cod_lista, i.descuento || 0])), [cart]);
     useEffect(() => { setMsgBloqueo(null); setFallo(null); }, [cart]);
     useEffect(() => {
         if (!cart.length) { setControl(null); return; }
@@ -464,8 +467,12 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                 const d = await r.json();
                 // La firma del carrito que ORIGINO este pedido: si el vendedor ya toco algo,
                 // la respuesta llega vieja y los avisos no se muestran hasta la proxima vuelta.
-                if (d?.ok) setControl({ ...d, firma: firmaCarrito });
-            } catch { /* si falla el control el pedido sigue igual: avisa, no frena */ }
+                if (ctrl.signal.aborted) return;
+                if (!r.ok || !d?.ok) throw new Error('Control no disponible');
+                setControl({ ...d, firma: firmaCarrito });
+            } catch {
+                if (!ctrl.signal.aborted) setControl({ firma: firmaCarrito, sin_control: true, bultos: 0, promo_general: false, avisos: [] });
+            }
         }, 400);
         return () => { clearTimeout(timer); ctrl.abort(); };
     }, [cart]);
@@ -476,7 +483,8 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     const controlVigente = control?.firma === firmaCarrito ? control : null;
     const avisoDe = (idx: number) => { const a = controlVigente?.avisos?.[idx]; return a?.mensaje ? a : undefined; };
     const descDe = (idx: number) => controlVigente?.avisos?.[idx];
-    const faltanBultos = control ? Math.max(0, 10 - control.bultos) : 0;
+    const sugerencias = controlVigente?.avisos.filter(a => a.severidad === 'cliente' && a.lista_sugerida != null) ?? [];
+    const notasDescuento = [...new Set(controlVigente?.avisos.filter(a => !a.mensaje_descuento).map(a => a.nota_descuento).filter(Boolean) ?? [])];
     /** ¿El pedido lleva algo que hoy no hay en el depósito? Avisa, no frena. */
     const hayRenglonesSinStock = cart.some(i => i.sinStock);
     // El control AVISA, no frena (Mati lo dio de baja el 27/08 mientras la parametrización
@@ -1039,20 +1047,21 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
 
                             {/* Cuántos bultos lleva y cuánto le falta para la promo general.
                                 Le sirve al vendedor para cerrar la venta, no solo para no equivocarse. */}
-                            {control?.sin_control && (
+                            {controlVigente?.sin_control && (
                                 <div className="ped-promo aviso">
                                     <AlertTriangle size={15} />
                                     <span>No pude chequear las listas en este momento. Revisá vos el pedido antes de enviarlo.</span>
                                 </div>
                             )}
-                            {control && !control.sin_control && (
-                                <div className={`ped-promo ${control.promo_general ? 'on' : ''}`}>
-                                    <Package size={15} />
-                                    {control.promo_general
-                                        ? <span><b>{control.bultos} bultos</b> · promoción general activa: Lista 2 habilitada</span>
-                                        : <span><b>{control.bultos} {control.bultos === 1 ? 'bulto' : 'bultos'}</b> · {faltanBultos} más para la Lista 2</span>}
-                                </div>
-                            )}
+                            {controlVigente && !controlVigente.sin_control && <DetalleCalculoListas control={controlVigente} />}
+                            {notasDescuento.map(n => <p className="ped-condicion" key={n}>{n}</p>)}
+                            {!!sugerencias.length && <details className="ped-sugerencias">
+                                <summary>Mejores precios disponibles ({sugerencias.length})</summary>
+                                {sugerencias.map(a => <div key={cart[a.idx]?.uid}>
+                                    <span>{a.mensaje}</span>
+                                    <button onClick={() => { const i = cart[a.idx]; if (i) void setLista(i.uid, i.cod_articulo, a.lista_sugerida!); }}>Poner {NOMBRE_LISTA[a.lista_sugerida!]}</button>
+                                </div>)}
+                            </details>}
 
                             {/* El último cargado va ARRIBA: en un presupuesto largo el renglón
                                 nuevo quedaba abajo de todo y había que scrollear para tocarle la
@@ -1104,7 +1113,7 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                             onClick={() => setQty(i.uid, Math.floor(i.cantidad) + 1)}><Plus size={16} /></button>
                                     </div>
                                     <select
-                                        className={`ped-cart-lista${av ? ' alerta' : ''}`}
+                                        className={`ped-cart-lista${av?.severidad === 'margen' ? ' alerta' : ''}`}
                                         value={i.cod_lista}
                                         onChange={e => setLista(i.uid, i.cod_articulo, Number(e.target.value))}
                                         title="Lista de precios de este renglón"
@@ -1142,20 +1151,14 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                                             )}
                                         </div>
                                     )}
-                                    {dsc?.nota_descuento && !dsc.mensaje_descuento && (
-                                        <div className="ped-aviso nota">
-                                            <AlertCircle size={14} />
-                                            <span>{dsc.nota_descuento}</span>
-                                        </div>
-                                    )}
-                                    {av && av.lista_sugerida != null && (
+                                    {av?.severidad === 'margen' && av.lista_sugerida != null && (
                                         /* 🔑 Mati, 08/09: vender MÁS CARO de lo que corresponde es decisión
                                            del vendedor, no un incumplimiento — "dejáselo solo como
                                            comentario". Lo que se marca en rojo es vender por DEBAJO del
                                            precio que pone la empresa. El aviso sigue estando porque le
                                            sirve para no perder la venta, pero no grita. */
                                         <div className={`ped-aviso ${av.severidad}`}>
-                                            {av.severidad === 'cliente' ? <AlertCircle size={14} /> : <AlertTriangle size={14} />}
+                                            <AlertTriangle size={14} />
                                             <span>{av.mensaje}</span>
                                             {/* Botón y no :hover: las sucursales cargan desde el celular. */}
                                             <button onClick={() => setLista(i.uid, i.cod_articulo, av.lista_sugerida!)}>

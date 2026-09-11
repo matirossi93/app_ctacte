@@ -4,6 +4,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { Save, Trash2, Plus, Search, AlertTriangle, Loader2, X } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import './EditorPresupuesto.css';
+import { useControlListas } from '../utils/useControlListas';
+import { DetalleCalculoListas } from './DetalleCalculoListas';
+import { aplicarPrecioDeLista } from '../utils/precioDeLista';
 
 /**
  * EDITAR EL PRESUPUESTO SIN IR A INFOMANAGER.
@@ -20,6 +23,7 @@ import './EditorPresupuesto.css';
  */
 
 export interface ItemEditable {
+    uid?: string;
     /** El id del renglón en IM. Los que se agregan acá todavía no tienen. */
     id?: number;
     /**
@@ -80,7 +84,7 @@ export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, items
     const operacion = useOperacionReparto('Guardar presupuesto');
     const claveBorrador = `editor:${comprobanteId}`;
     const previo = reparto.borradores.get(claveBorrador);
-    const [items, setItems] = useState<ItemEditable[]>(() => previo?.items ?? itemsOriginales.map(i => ({ ...i })));
+    const [items, setItems] = useState<ItemEditable[]>(() => (previo?.items ?? itemsOriginales).map((i: ItemEditable) => ({ ...i, uid: i.uid ?? crypto.randomUUID() })));
     const [observaciones, setObservaciones] = useState<string>(previo?.observaciones ?? observacionesOriginales ?? '');
     const [fecha, setFecha] = useState<string>(previo?.fecha ?? fechaOriginal ?? '');
     const [busqueda, setBusqueda] = useState('');
@@ -88,6 +92,35 @@ export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, items
     const [buscando, setBuscando] = useState(false);
     const [guardando, setGuardando] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [intentoPrecio, setIntentoPrecio] = useState(0);
+    const [erroresPrecio, setErroresPrecio] = useState<Record<string, string>>({});
+    const porCotizar = items.filter(i => i.cod_articulo !== COD_COSTO_DISTRIBUCION && i.precio == null);
+    const claveCotizacion = JSON.stringify(porCotizar.map(i => ({ uid: i.uid!, cod_articulo: i.cod_articulo, cod_lista: i.cod_lista_precios })));
+    useEffect(() => {
+        const pendientes = JSON.parse(claveCotizacion) as Array<{ uid: string; cod_articulo: number; cod_lista: number }>;
+        if (!pendientes.length) return;
+        const ctrl = new AbortController();
+        setErroresPrecio({});
+        void (async () => {
+            for (const p of pendientes) {
+                if (ctrl.signal.aborted) return;
+                try {
+                    const r = await fetch(`/api/pedidos/precio?cod_articulo=${p.cod_articulo}&cod_lista=${p.cod_lista}`, { headers: authHeaders(), signal: ctrl.signal });
+                    const d = await r.json();
+                    if (ctrl.signal.aborted) return;
+                    const cambio = r.ok ? aplicarPrecioDeLista({ precio: 0 }, d, p.cod_lista) : null;
+                    if (!cambio) throw new Error('No se pudo consultar el precio.');
+                    if (cambio.sinPrecio) throw new Error('Sin precio en esta lista. Elegí otra lista.');
+                    setItems(xs => xs.map(i => i.uid === p.uid && i.cod_lista_precios === p.cod_lista && i.precio == null ? { ...i, precio: cambio.precio } : i));
+                } catch (e: any) {
+                    if (!ctrl.signal.aborted) setErroresPrecio(xs => ({ ...xs, [p.uid]: e?.message ?? 'No se pudo consultar el precio.' }));
+                }
+            }
+        })();
+        return () => ctrl.abort();
+    }, [claveCotizacion, intentoPrecio]);
+    const control = useControlListas(items.map(i => ({ cod_articulo: i.cod_articulo, cantidad: Number(i.cantidad), cod_lista: Number(i.cod_lista_precios), descuento_porc: Number(i.descuento_porc ?? 0) })), comprobanteId);
+    const avisosLista = control?.datos?.avisos.flatMap(a => [a.severidad === 'margen' ? a.mensaje : null, a.mensaje_descuento].filter((x): x is string => !!x)) ?? [];
 
     /**
      * 🔑 Si cambia el surtido, la lista o un descuento, el presupuesto se rehace y CAMBIA DE
@@ -111,7 +144,9 @@ export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, items
 
     function cambiar(idx: number, campo: keyof ItemEditable, valor: any) {
         if (operacion.enCurso.current) return;
-        setItems(xs => xs.map((x, i) => i === idx ? { ...x, [campo]: valor } : x));
+        setItems(xs => xs.map((x, i) => i === idx ? { ...x, [campo]: valor,
+            ...(campo === 'cod_lista_precios' && x.cod_lista_precios !== valor && x.cod_articulo !== COD_COSTO_DISTRIBUCION ? { precio: null } : {}),
+        } : x));
     }
 
     async function buscar() {
@@ -135,13 +170,14 @@ export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, items
 
     function agregar(a: ArticuloBuscado) {
         setItems(xs => [...xs, {
+            uid: crypto.randomUUID(),
             cod_articulo: a.cod_articulo,
             descripcion: a.descripcion,
             cantidad: 1,
             // La lista del último renglón: casi siempre el pedido entero va en la misma.
             cod_lista_precios: xs[xs.length - 1]?.cod_lista_precios ?? 12,
             descuento_porc: 0,
-            precio: a.precio_venta,
+            precio: null,
             equivalencia_um: a.equivalencia_um,
             unidad_de_medida: a.unidad_de_medida,
         }]);
@@ -202,12 +238,14 @@ export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, items
                 <div className="ed-aviso">
                     <AlertTriangle size={14} />
                     <span>
-                        Cambiaste la lista, un descuento o los productos. InfoManager no deja hacer eso sobre
-                        el mismo presupuesto, así que al guardar se <b>crea uno nuevo y se anula el {numero ?? 'actual'}</b>.
-                        El número va a cambiar.
+                        Al guardar se <b>crea un presupuesto nuevo y se anula el {numero ?? 'actual'}</b>. El número cambia.
                     </span>
                 </div>
             )}
+
+            {control?.datos && <DetalleCalculoListas control={control.datos} />}
+            {control?.error && <div className="ed-aviso"><AlertTriangle size={14} /><span>{control.error}</span></div>}
+            {!!avisosLista.length && <div className="ed-aviso error"><AlertTriangle size={14} /><div>{avisosLista.map((a, i) => <div key={i}>{a}</div>)}</div></div>}
 
             <div style={{ overflowX: 'auto', maxWidth: '100%' }}><table className="ed-tabla">
                 <thead>
@@ -222,7 +260,7 @@ export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, items
                 </thead>
                 <tbody>
                     {items.map((it, idx) => (
-                        <tr key={`${it.cod_articulo}-${it.id ?? 'nuevo'}-${idx}`} className={it.id == null ? 'ed-nuevo' : ''}>
+                        <tr key={it.uid} className={it.id == null ? 'ed-nuevo' : ''}>
                             <td>
                                 {it.descripcion}
                                 {it.equivalencia_um != null && it.equivalencia_um !== 1 && (
@@ -259,7 +297,9 @@ export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, items
                                            onChange={e => cambiar(idx, 'precio', e.target.value.replace(',', '.'))} />
                                 ) : it.precio != null
                                     ? money(Number(it.precio) * Number(it.cantidad) * (1 - (Number(it.descuento_porc) || 0) / 100))
-                                    : '—'}
+                                    : <span className="ed-precio-pendiente">{erroresPrecio[it.uid!] ?? 'Consultando precio…'}
+                                        {erroresPrecio[it.uid!] && <button type="button" className="ed-btn ghost chico" onClick={() => setIntentoPrecio(n => n + 1)}>Reintentar</button>}
+                                      </span>}
                             </td>
                             <td className="n">
                                 {/* Sacar de verdad: el renglón desaparece. No queda en cantidad 0. */}
@@ -294,6 +334,7 @@ export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, items
                 <button className="ed-btn ghost chico ed-libre-btn"
                         disabled={items.some(i => i.cod_articulo === COD_COSTO_DISTRIBUCION)}
                         onClick={() => setItems(xs => [...xs, {
+                            uid: crypto.randomUUID(),
                             cod_articulo: COD_COSTO_DISTRIBUCION, descripcion: 'COSTO DE DISTRIBUCION', cantidad: 1,
                             cod_lista_precios: xs[xs.length - 1]?.cod_lista_precios ?? 12,
                             descuento_porc: 0, precio: null,
@@ -334,13 +375,13 @@ export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, items
             </div>
 
             <div className="ed-pie">
-                <span className="ed-total">Total estimado <b>{money(total)}</b></span>
+                <span className="ed-total">Total estimado <b>{porCotizar.length ? 'Pendiente de precio' : money(total)}</b></span>
                 {hayCambios && <button className="ed-btn ghost chico" onClick={() => {
                     if (operacion.enCurso.current || !confirm('¿Descartar los cambios sin guardar de este presupuesto?')) return;
                     reparto.borradores.delete(claveBorrador); onBorrador(false); onCancelar();
                 }}>Descartar cambios</button>}
                 <button className="ed-btn ghost chico" onClick={() => { if (!operacion.enCurso.current) onCancelar(); }} disabled={guardando}>Cerrar</button>
-                <button className="ed-btn chico" onClick={() => void guardar()} disabled={guardando || !hayCambios}>
+                <button className="ed-btn chico" onClick={() => void guardar()} disabled={guardando || !hayCambios || !!porCotizar.length}>
                     {guardando ? <Loader2 size={14} className="ed-girando" /> : <Save size={14} />}
                     {seRecrea ? ' Guardar (rehace el presupuesto)' : ' Guardar cantidades'}
                 </button>

@@ -1,0 +1,4 @@
+.listas-calculo { margin: .4rem 0; color: var(--color-text-muted, #666); font-size: .78rem; }
+.listas-calculo summary { cursor: pointer; padding: .5rem 0; }
+.listas-calculo > div { padding: 0 .7rem; border-left: 2px solid var(--color-border, #ddd); }
+.listas-calculo p { margin: .45rem 0; line-height: 1.45; }

@@ -189,7 +189,13 @@
   cursor: pointer;
   min-height: 28px;
 }
-.ped-cart-lista.alerta { border-color: var(--color-warning); border-width: 2px; }
+.ped-cart-lista.alerta { border-color: var(--color-danger); border-width: 2px; }
+.ped-condicion { color: var(--color-text-muted); font-size: .78rem; margin: .4rem 0; }
+.ped-sugerencias { color: var(--color-text-muted); font-size: .78rem; margin: .4rem 0; }
+.ped-sugerencias summary { cursor: pointer; padding: .5rem 0; }
+.ped-sugerencias > div { display: flex; align-items: center; gap: .5rem; padding: .45rem 0; }
+.ped-sugerencias span { flex: 1; }
+.ped-sugerencias button { border: 1px solid var(--color-border); color: inherit; background: transparent; border-radius: 5px; padding: .5rem; cursor: pointer; flex-shrink: 0; }
 
 /* Buscador acotado a casa central: cuando no encuentra nada, ofrece ampliar. */
 .ped-sin-resultados {

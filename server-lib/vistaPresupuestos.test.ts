@@ -129,6 +129,16 @@ describe('los avisos de lista se recalculan contra InfoManager', () => {
     m.fetchVentasItems.mockResolvedValue(renglon(12));
     const v = await vistaDeRango('2026-09-09', '2026-09-09', true);
     expect(v.pendientes[0].gravedad.cobra_de_mas).toBe(1);
+    expect(v.pendientes[0].avisos).toEqual([]); // comentario comercial, no trabajo de oficina
+  });
+
+  it('una lista más cara con descuento no oculta un descuento fuera de condición', async () => {
+    m.reglasActivas.mockResolvedValue([
+      { nombre: 'SEMILLAS', match_tipo: 'subrubro', match_valor: 'Semillas', cod_lista: 13, condicion: 'min', umbral: 20, unidad: 'kg', ambito: 'articulo' },
+    ]);
+    m.fetchVentasItems.mockResolvedValue(renglon(12, 90));
+    const v = await vistaDeRango('2026-09-09', '2026-09-09', true);
+    expect(v.pendientes[0].avisos).toEqual([expect.stringContaining('no tiene descuentos habilitados')]);
   });
 
   /**

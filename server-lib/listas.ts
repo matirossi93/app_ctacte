@@ -128,9 +128,12 @@ export interface ResultadoPedido {
   bultos: number;
   promo_general: boolean;
   avisos: AvisoRenglon[];
+  /** Totales comerciales, una sola entrada por línea aunque tenga varios subrubros. */
+  lineas?: Array<{ nombre: string; unidades: number; condiciones: string[] }>;
 }
 
 const NOMBRE_LISTA: Record<number, string> = { 9: 'Minorista', 11: 'Sucursales', 12: 'L1', 13: 'L2', 14: 'L3', 15: 'L4' };
+const normalizar = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 export const nombreLista = (cod: number) => NOMBRE_LISTA[cod] ?? `lista ${cod}`;
 /**
  * Igual, pero con el nombre entero. Los avisos del vendedor van cortos ("está en L2") porque
@@ -275,8 +278,16 @@ function reglasDe(art: ArticuloInfo | undefined, reglas: ReglaLista[]): ReglaLis
   // condiciones de la línea — pero se vende fraccionado al público, con otra lógica.
   // Solo se controla si Mati le puso una regla por código propio (el filtro de arriba).
   if (art.es_fraccionado) return [];
-  const sub = art.subrubro.toLowerCase();
-  return reglas.filter(g => g.match_tipo === 'subrubro' && g.match_valor.toLowerCase() === sub);
+  const sub = normalizar(art.subrubro);
+  return reglas.filter(g => g.match_tipo === 'subrubro' && normalizar(g.match_valor) === sub);
+}
+
+function descuentosDe(art: ArticuloInfo | undefined, reglas: ReglaDescuento[]): ReglaDescuento[] {
+  if (!art) return [];
+  const propias = reglas.filter(g => g.match_tipo === 'articulo' && Number(g.match_valor) === art.cod_articulo);
+  if (propias.length) return propias;
+  if (art.es_fraccionado) return [];
+  return reglas.filter(g => g.match_tipo === 'subrubro' && normalizar(g.match_valor) === normalizar(art.subrubro));
 }
 
 /**
@@ -290,26 +301,19 @@ function evaluarDescuento(
   art: ArticuloInfo | undefined,
   techo: number,
   propio: { bultos: number; kilos: number },
-  linea: { bultos: number; kilos: number },
+  porLinea: Map<string, { bultos: number; kilos: number }>,
   reglasDescuento: ReglaDescuento[],
   nombre: string,
 ): Pick<AvisoRenglon, 'descuento' | 'descuento_max' | 'mensaje_descuento' | 'nota_descuento'> {
   const puesto = Math.max(0, Number(r.descuento) || 0);
 
-  const mias = art
-    ? (() => {
-        const porArt = reglasDescuento.filter(g => g.match_tipo === 'articulo' && Number(g.match_valor) === art.cod_articulo);
-        if (porArt.length) return porArt;
-        const sub = art.subrubro.toLowerCase();
-        return reglasDescuento.filter(g => g.match_tipo === 'subrubro' && g.match_valor.toLowerCase() === sub);
-      })()
-    : [];
+  const mias = descuentosDe(art, reglasDescuento);
 
   // De las que aplican a este renglón, gana el tope más alto.
   const aplican = mias.filter((g) => {
     if (g.requiere_lista != null && r.cod_lista !== g.requiere_lista) return false;
     if (g.requiere_mejor_lista && r.cod_lista !== techo) return false;
-    const base = g.ambito === 'linea' ? linea : propio;
+    const base = g.ambito === 'linea' ? (porLinea.get(normalizar(g.nombre)) ?? propio) : propio;
     return base.bultos >= g.desde_cantidad;
   });
   const max = aplican.reduce((m, g) => Math.max(m, g.porcentaje_max), 0);
@@ -356,26 +360,33 @@ export function evaluarPedido(
   // condición "5 de la misma línea" no se cumplía nunca: el motor marcaba las dos filas
   // como "estás vendiendo más barato" y BLOQUEABA una venta legítima.
   // La línea es el `nombre` de la regla, que es el mismo para todos sus subrubros.
-  const lineaDeSubrubro = new Map<string, string>();
-  for (const g of reglas) {
-    if (g.match_tipo === 'subrubro') lineaDeSubrubro.set(g.match_valor.toLowerCase(), g.nombre);
-  }
-  const claveLinea = (art: ArticuloInfo | undefined) => {
-    if (!art?.subrubro) return null;
-    const sub = art.subrubro.toLowerCase();
-    return lineaDeSubrubro.get(sub) ?? sub;
-  };
-
   // Se mide por artículo y no por renglón: ver medirPorArticulo. Si el vendedor parte la
   // cantidad de un producto en dos renglones, el cliente igual se lleva la suma.
   const porArticulo = medirPorArticulo(renglones, catalogo);
-
+  const reglasPorArticulo = new Map<number, ReglaLista[]>();
+  const porLineaDescuento = new Map<string, { bultos: number; kilos: number }>();
   const porLinea = new Map<string, { bultos: number; kilos: number; unidades: number }>();
   for (const [cod, m] of porArticulo) {
-    const k = claveLinea(catalogo.get(cod));
-    if (!k) continue;
-    const acc = porLinea.get(k) ?? { bultos: 0, kilos: 0, unidades: 0 };
-    porLinea.set(k, { bultos: acc.bultos + m.bultos, kilos: acc.kilos + m.kilos, unidades: acc.unidades + m.unidades });
+    const propias = reglasDe(catalogo.get(cod), reglas);
+    reglasPorArticulo.set(cod, propias);
+    for (const k of new Set(descuentosDe(catalogo.get(cod), reglasDescuento).map(g => normalizar(g.nombre)))) {
+      const acc = porLineaDescuento.get(k) ?? { bultos: 0, kilos: 0 };
+      porLineaDescuento.set(k, { bultos: acc.bultos + m.bultos, kilos: acc.kilos + m.kilos });
+    }
+    // El nombre comercial une subrubros y códigos explícitos. Un espejo X KG excluido
+    // no aporta kilos como si fueran bolsas de Flecky/Fullcat. Cada artículo suma una vez.
+    for (const k of new Set(propias.map(g => normalizar(g.nombre)))) {
+      const acc = porLinea.get(k) ?? { bultos: 0, kilos: 0, unidades: 0 };
+      porLinea.set(k, { bultos: acc.bultos + m.bultos, kilos: acc.kilos + m.kilos, unidades: acc.unidades + m.unidades });
+    }
+  }
+
+  const lineas: NonNullable<ResultadoPedido['lineas']> = [];
+  for (const [k, medida] of porLinea) {
+    const propias = reglas.filter(g => normalizar(g.nombre) === k && g.ambito === 'linea' && (g.condicion === 'min' || g.condicion === 'max'));
+    if (!propias.length) continue;
+    const condiciones = [...new Set(propias.map(g => `${nombreLista(g.cod_lista)}: ${g.condicion === 'min' ? 'desde' : 'menos de'} ${g.umbral} ${g.unidad === 'kg' ? 'kg' : g.unidad === 'bulto' ? 'bultos' : 'unidades'}`))];
+    lineas.push({ nombre: propias[0].nombre, unidades: medida.unidades, condiciones });
   }
 
   const avisos = renglones.map<AvisoRenglon>((r, idx) => {
@@ -383,22 +394,19 @@ export function evaluarPedido(
     const nombre = art?.descripcion || `artículo ${r.cod_articulo}`;
     // Lo que se lleva el cliente de ESTE artículo, contando todos sus renglones.
     const propio = porArticulo.get(r.cod_articulo) ?? medirRenglon(r, art);
-    const kLinea = claveLinea(art);
-    const linea = (kLinea && porLinea.get(kLinea)) || propio;
-
-    const misReglas = reglasDe(art, reglas);
+    const misReglas = reglasPorArticulo.get(r.cod_articulo) ?? [];
     if (!misReglas.length) {
       // Sin regla de LISTA, pero puede tener regla de DESCUENTO: son dos cosas distintas.
       return { idx, cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: null,
         severidad: 'sin_regla', mensaje: null,
-        ...evaluarDescuento(r, art, LISTA_BASE, propio, linea, reglasDescuento, nombre) };
+        ...evaluarDescuento(r, art, LISTA_BASE, propio, porLineaDescuento, reglasDescuento, nombre) };
     }
 
     const cumple = misReglas.filter((g) => {
       if (g.condicion === 'libre') return true;
       if (g.condicion === 'promo_general') return promoGeneral;
       const umbral = Number(g.umbral ?? 0);
-      const base = g.ambito === 'linea' ? linea : propio;
+      const base = g.ambito === 'linea' ? (porLinea.get(normalizar(g.nombre)) ?? propio) : propio;
       const valor = g.unidad === 'kg' ? base.kilos
         : g.unidad === 'unidad' ? base.unidades
         : base.bultos;
@@ -424,23 +432,23 @@ export function evaluarPedido(
     const porCantidad = cumple.filter((g) => !OPCIONALES.has(g.condicion)).map((g) => g.cod_lista);
     const derecho = porCantidad.length ? Math.max(...porCantidad) : LISTA_BASE;
 
-    const desc = evaluarDescuento(r, art, techo, propio, linea, reglasDescuento, nombre);
+    const desc = evaluarDescuento(r, art, techo, propio, porLineaDescuento, reglasDescuento, nombre);
 
     if (r.cod_lista > techo) {
       return { idx, cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: techo,
         severidad: 'margen',
-        mensaje: `${nombre}: está en ${nombreLista(r.cod_lista)} pero por esta cantidad le corresponde ${nombreLista(techo)}. Le estás vendiendo más barato de lo que corresponde.`,
+        mensaje: `${nombre}: por esta cantidad le corresponde hasta ${nombreLista(techo)}; está en ${nombreLista(r.cod_lista)}.`,
         ...desc };
     }
     if (r.cod_lista < derecho) {
       return { idx, cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: derecho,
         severidad: 'cliente',
-        mensaje: `${nombre}: tiene derecho a ${nombreLista(derecho)} y está en ${nombreLista(r.cod_lista)}. Le estás cobrando de más.`,
+        mensaje: `${nombre}: ${nombreLista(derecho)} disponible por cantidad. Usar ${nombreLista(r.cod_lista)} es decisión del vendedor.`,
         ...desc };
     }
     return { idx, cod_articulo: r.cod_articulo, lista_elegida: r.cod_lista, lista_sugerida: techo,
       severidad: 'ok', mensaje: null, ...desc };
   });
 
-  return { bultos, promo_general: promoGeneral, avisos };
+  return { bultos, promo_general: promoGeneral, avisos, lineas };
 }

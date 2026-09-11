@@ -201,10 +201,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
 
             {/* Lo no aprobado no se puede facturar: se dice, para que no parezca que se perdió. */}
             {sinAprobar > 0 && (
-                <div className="fc-aviso">
-                    <AlertTriangle size={15} />
-                    <span>Hay <b>{sinAprobar}</b> presupuesto(s) sin aprobar en estos días. Se revisan en <b>Presupuestos</b> y recién ahí se pueden facturar.</span>
-                </div>
+                <p className="fc-nota"><b>{sinAprobar}</b> sin aprobar · Revisalos en Presupuestos.</p>
             )}
             {error && <div className="fc-aviso error"><AlertTriangle size={15} /><span>{error}</span></div>}
 

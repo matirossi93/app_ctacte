@@ -27,6 +27,7 @@
     padding: 0.6rem 0.8rem; border-radius: var(--radius-md); font-size: 0.86rem;
 }
 .fc-aviso.error { background: #fbe9e7; color: #8a2a1a; border-color: #e0a89e; }
+.fc-nota { margin: .5rem 0; color: var(--color-text-muted, #666); font-size: .8rem; }
 
 .fc-cargando, .fc-vacio {
     display: flex; align-items: center; justify-content: center; gap: 0.5rem;

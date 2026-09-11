@@ -29,6 +29,8 @@ async function setup(width=1440, options={}) {
     if(!u.pathname.startsWith('/api/')) return route.continue();
     seen.push(u.pathname+u.search);
     if(u.pathname==='/api/me') return reply(route,{ok:true,user});
+    if(u.pathname==='/api/pedidos/validar') return reply(route,{ok:true,bultos:2,promo_general:false,avisos:[],lineas:[]});
+    if(u.pathname==='/api/pedidos/precio') return reply(route,{ok:true,cod_lista:Number(u.searchParams.get('cod_lista')),precio:{precio_vta:1000}});
     if(u.pathname==='/api/presupuestos') return reply(route,presupuestos());
     if(u.pathname==='/api/presupuestos/consolidado') return reply(route,{articulos:[],totales:{articulos:0,faltantes:0,sin_renglones:0}});
     if(u.pathname==='/api/presupuestos/fraccionado') return reply(route,{completo:true,dias_faltantes:[],comprobantes_sin_items:[],comprobantes:2,fraccionado:[{descripcion:'ALPISTE AUDITORÍA',cantidades:[5,10,15],paquetes:3,kg:30,bolsas_enteras:0,formato_bolsa:30}],totales:{productos:1,paquetes:3,kg:30}});
