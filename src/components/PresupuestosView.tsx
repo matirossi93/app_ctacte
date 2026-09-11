@@ -198,6 +198,7 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
     const visibles = useMemo(() => filas.filter(p => {
         if (!coincide(busqueda, [p.cliente_nombre, p.im_numero, p.cod_cliente])) return false;
         if (filtro === 'todos') return true;
+        if (p.factura?.origen === 'nuestra') return false;
         if (filtro === 'sin_revisar') return !p.revision;
         if (filtro === 'aprobados') return p.revision?.estado === 'aprobado';
         return p.revision?.estado === 'observado';
@@ -347,9 +348,9 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
             {/* El filtro por estado es la pantalla: lo que importa es qué FALTA revisar. */}
             <div className="pr-filtros">
                 {([
-                    ['sin_revisar', 'Sin revisar', filas.filter(f => !f.revision).length],
-                    ['aprobados', 'Aprobados', filas.filter(f => f.revision?.estado === 'aprobado').length],
-                    ['observados', 'Observados', filas.filter(f => f.revision?.estado === 'observado').length],
+                    ['sin_revisar', 'Sin revisar', filas.filter(f => f.factura?.origen !== 'nuestra' && !f.revision).length],
+                    ['aprobados', 'Aprobados', filas.filter(f => f.factura?.origen !== 'nuestra' && f.revision?.estado === 'aprobado').length],
+                    ['observados', 'Observados', filas.filter(f => f.factura?.origen !== 'nuestra' && f.revision?.estado === 'observado').length],
                     ['todos', 'Todos', filas.length],
                 ] as Array<[Filtro, string, number]>).map(([k, txt, n]) => (
                     <button key={k} className={filtro === k ? 'on' : ''} onClick={() => setFiltro(k)}>

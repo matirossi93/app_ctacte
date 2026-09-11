@@ -77,6 +77,8 @@ let escrituras: Array<{ tabla: string; op: string; valor: any }> = [];
 let errorAlEscribir: any = null;
 /** Si está seteado, el reclamo previo a emitir choca: otro usuario lo tomó primero. */
 let errorAlReclamar: any = null;
+let lecturasEmitidos = 0;
+let fallaRelecturaEmitidos = false;
 
 function fakeSb() {
   m.sbMock.mockImplementation(() => ({
@@ -84,7 +86,8 @@ function fakeSb() {
     from: (t: string) => {
       const res = tablas[t] ?? { data: null, error: null };
       const q: any = {
-        then: (r: any, j: any) => Promise.resolve(res).then(r, j),
+        then: (r: any, j: any) => Promise.resolve(t === 'presupuestos_facturados' && ++lecturasEmitidos >= 3 && fallaRelecturaEmitidos
+          ? {data:null,error:{message:'relectura interrumpida'}} : res).then(r, j),
         maybeSingle: () => Promise.resolve(res),
         upsert: (v: any) => {
           escrituras.push({ tabla: t, op: 'upsert', valor: v });
@@ -103,7 +106,7 @@ function fakeSb() {
         update: (v: any) => { escrituras.push({ tabla: t, op: 'update', valor: v }); const w: any = { ...q, select: () => Promise.resolve({ data: errorAlEscribir ? null : [{im_comprobante_id:'10'}], error: errorAlEscribir }) }; for (const k of ['eq','is','in']) w[k]=()=>w; return w; },
         delete: () => { escrituras.push({ tabla: t, op: 'delete', valor: null }); return q; },
       };
-      for (const k of ['select', 'eq', 'in', 'order', 'limit', 'is', 'not', 'or']) q[k] = () => q;
+      for (const k of ['select', 'eq', 'in', 'order', 'limit', 'is', 'not', 'or', 'gte', 'lte']) q[k] = () => q;
       return q;
     },
   }));
@@ -137,6 +140,7 @@ const RENGLON_FA = { ...RENGLON, id_comprobante: 'f1' };
 
 beforeEach(() => {
   tablas = {}; escrituras = []; errorAlEscribir = null; errorAlReclamar = null;
+  lecturasEmitidos = 0; fallaRelecturaEmitidos = false;
   vi.clearAllMocks();
   fakeSb();
   m.rpc.mockResolvedValue({data:true,error:null});
@@ -334,6 +338,50 @@ describe('no emitir dos veces lo mismo', () => {
 });
 
 describe('el tablero de la etapa 2', () => {
+  it('falla visible si se pierde la lectura inicial de vínculos', async () => {
+    tablas.presupuestos_facturados={data:null,error:{message:'sin conexión'}};
+    const r=await llamar(tableroFacturacion,{method:'GET'});
+    expect(r.status).toBe(502); expect(r.body.pendientes).toBeUndefined();
+  });
+  it('falla visible si se pierde la relectura posterior a una anulación', async () => {
+    tablas.presupuestos_facturados={data:[{im_comprobante_id:'10',im_factura_id:'f1',im_remito_id:'r1',
+      facturado_at:'2026-09-09',estado_emision:'completo'}],error:null};
+    m.cabeceraComprobante.mockResolvedValue({existe:true,anulada:true});
+    fallaRelecturaEmitidos=true;
+    const r=await llamar(tableroFacturacion,{method:'GET'});
+    expect(r.status).toBe(502); expect(r.body.pendientes).toBeUndefined();
+    expect(r.body.error).toContain('relectura interrumpida');
+  });
+  it.each([null, { estado: 'observado' }])('conserva una factura emitida aunque la revisión actual sea %j', async revision => {
+    m.vistaDeRango.mockResolvedValue({ ...VISTA_BASE, pendientes: [presu({revision, controles_completos:false, total:999})] });
+    tablas.presupuestos_facturados = {data:[{im_comprobante_id:'10',im_factura_id:'f1',im_factura_numero:50424,
+      im_remito_id:'r1',facturado_at:'2026-09-09',estado_emision:'completo',total:123}],error:null};
+    const r=await llamar(tableroFacturacion,{method:'GET'});
+    expect(r.status).toBe(200);
+    expect(r.body.facturados).toHaveLength(1);
+    expect(r.body.facturados[0]).toMatchObject({im_factura_numero:50424,total:123,im_factura_id:'f1'});
+    expect(r.body.pendientes).toEqual([]);
+    expect(r.body.sin_aprobar).toBe(0);
+    expect(m.emitirFactura).not.toHaveBeenCalled();
+  });
+
+  it('recupera el historial aunque el presupuesto ya no esté en la vista (retiro o PR anulado)', async () => {
+    m.vistaDeRango.mockResolvedValue({...VISTA_BASE,pendientes:[]});
+    tablas.presupuestos_facturados={data:[{im_comprobante_id:'10',im_factura_id:'f1',im_factura_numero:50420,
+      cliente_nombre:'CLIENTE HISTORICO',cod_cliente:1054,fecha:'2026-09-09',total:230674.18,
+      facturado_at:'2026-09-09',estado_emision:'completo'}],error:null};
+    const r=await llamar(tableroFacturacion,{method:'GET'});
+    expect(r.body.facturados).toHaveLength(1);
+    expect(r.body.facturados[0]).toMatchObject({cliente_nombre:'CLIENTE HISTORICO',im_factura_id:'f1'});
+    expect(r.body.pendientes).toEqual([]);
+  });
+
+  it('una factura anulada o incierta no se anuncia como sólo falta remito', async () => {
+    tablas.presupuestos_facturados={data:[{im_comprobante_id:'10',im_factura_id:'f1',estado_emision:'anulado',facturado_at:null}],error:null};
+    const r=await llamar(tableroFacturacion,{method:'GET'});
+    expect(r.body.pendientes[0].falta_remito).toBe(false);
+    expect(r.body.pendientes[0].estado_emision).toBe('anulado');
+  });
   it('🔴 muestra sólo lo aprobado, y avisa cuántos quedan sin aprobar', async () => {
     m.vistaDeRango.mockResolvedValue({
       ...VISTA_BASE,
