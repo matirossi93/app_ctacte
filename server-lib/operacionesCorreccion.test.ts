@@ -281,3 +281,49 @@ it('NC externa de entrega bloquea cantidades pero permite nota financiera indepe
   const fin={im_factura_id:'101',tipo:'NC',importe:10,motivo:'Interés',emitir:true,operacion_id:id(2),version:0};
   expect((await llamar(fin,notaFinanciera)).body.ok).toBe(true);
 });
+
+/**
+ * 🔑 EMISIÓN CON NÚMERO AUTOMÁTICO: EL ID SE GUARDA AUNQUE FALTE EL NÚMERO.
+ *
+ * Con numeración automática el número lo asigna InfoManager. Si la respuesta no lo trae, el
+ * emisor devuelve `numero: null` conservando el id. Lo que NO puede pasar es que un éxito sin
+ * número se pierda o se convierta en rechazo: la nota ya salió y sin el id no se la encuentra.
+ */
+describe('éxito sin número: se conserva el id', () => {
+  it('🔑 la nota queda registrada con numero null y el id de IM', async () => {
+    m.nc.mockResolvedValue({ ok: true, id: '58900001', numero: null, tipo: 'NC B', raw: {} });
+    const r = await llamar(cuerpo(8));
+    expect(r.code).toBe(200);
+    // Lo guardado…
+    expect(notas).toHaveLength(1);
+    expect(notas[0]).toMatchObject({ id: '58900001', numero: null });
+    // …y lo que se le devuelve a quien llamó: el id viaja, el número no se inventa.
+    expect(r.body.emitidos).toMatchObject([{ id: '58900001', numero: null }]);
+    expect(m.nc).toHaveBeenCalledTimes(1);
+  });
+
+  /** 🪤 Repetir la MISMA petición ya completa devuelve el éxito existente, no un conflicto. */
+  it('🔑 repetir la misma petición completa devuelve lo ya emitido', async () => {
+    m.nc.mockResolvedValue({ ok: true, id: '58900001', numero: null, tipo: 'NC B', raw: {} });
+    await llamar(cuerpo(8));
+    const segunda = await llamar(cuerpo(8));
+    expect(segunda.code).toBe(200);
+    expect(segunda.body.emitidos).toMatchObject([{ id: '58900001', numero: null }]);
+    expect(m.nc).toHaveBeenCalledTimes(1);
+  });
+
+  it('🪤 un éxito CON número sigue guardándolo', async () => {
+    m.nc.mockResolvedValue({ ok: true, id: '58900002', numero: 30100, tipo: 'NC B', raw: {} });
+    const r = await llamar(cuerpo(8));
+    expect(r.code).toBe(200);
+    expect(notas[0]).toMatchObject({ id: '58900002', numero: 30100 });
+    expect(r.body.emitidos).toMatchObject([{ id: '58900002', numero: 30100 }]);
+  });
+
+  /** 🪤 Un éxito que IM no identifica NO se registra: sin id la nota queda huérfana. */
+  it('🔑 un éxito sin id se trata como incierto, no como nota emitida', async () => {
+    m.nc.mockResolvedValue({ ok: true, id: null, numero: 30100, tipo: 'NC B', raw: {} } as any);
+    await llamar(cuerpo(8));
+    expect(notas).toHaveLength(0);
+  });
+});

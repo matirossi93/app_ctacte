@@ -12,7 +12,7 @@ import { idIM } from './identidadIM.js';
  * `reference_im_api_facturar_remitos_20260907` en la memoria.
  */
 import { imClient, fetchVentas, fetchVentasParaNumeracion, fechaArgentina, horaArgentina } from './infomanager.js';
-import { claveDeSerie, objetivoValido, proximoDeLaSerie, type SerieComprobante } from './serieNumeracion.js';
+import { claveDeSerie, idSeguro, objetivoValido, proximoDeLaSerie, type SerieComprobante } from './serieNumeracion.js';
 
 /** Cómo factura cada tipo de cliente. Sale de 3.887 facturas reales de la semana del 01/09. */
 export type CategoriaIva = 'CF' | 'RI' | 'RM' | string;
@@ -772,16 +772,30 @@ async function emitirNota(
   if (!letra) {
     return { ok: false, error: `No se puede saber qué letra de ${que} le corresponde al cliente ${d.cod_cliente} (condición de IVA: ${d.categoria_iva ?? 'sin cargar'}). Hacela a mano.` };
   }
-  if (PTO_VENTA_NC !== 777 || ID_DESTINO_NC !== 1 || NUMERO_NC_AUTO) {
-    return { ok: false, error: 'Las NC/ND deben usar el punto 777, destino Manual (1), con numeración de su propia serie. Corregí la configuración de la app. No se envió la nota.' };
+  // 🔴 El punto y el destino NO son configurables: 777 / Manual (1). El 999 es controlador
+  // fiscal y no se usa como salida alternativa a un rechazo de la API.
+  if (PTO_VENTA_NC !== 777 || ID_DESTINO_NC !== 1) {
+    return { ok: false, error: 'Las NC/ND deben usar el punto 777, destino Manual (1). Corregí la configuración de la app. No se envió la nota.' };
   }
   const serieNota: SerieComprobante = { cod_empresa: d.cod_empresa, id_destino: ID_DESTINO_NC, tag: 'S' };
   // 🔴 Igual que la factura: un `numero` precalculado no exime de acreditar su talonario.
   if (!objetivoValido(serieNota, PTO_VENTA_NC, letra, tipo)) {
     return { ok: false, error: `No se puede determinar el talonario de la ${que} (empresa, destino o punto de venta ilegibles).`, raw: null };
   }
-  const numero = d.numero ?? await proximoNumeroFactura(letra, PTO_VENTA_NC, 30, tipo, serieNota);
-  if (numero == null || !Number.isSafeInteger(numero) || numero <= 0) {
+  /**
+   * 🔑 DOS MODOS DE NUMERAR, Y LA VALIDACIÓN VA CON EL MODO.
+   *
+   * · Manual (por defecto): el número lo calculamos de la serie y tiene que ser un entero
+   *   positivo. Sin él no se envía nada.
+   * · Automático (`IM_NUMERO_NC_AUTO=1`): se manda `0` explícito **para pedirle a InfoManager que
+   *   lo asigne**. Ahí el 0 no es un número inválido, es la forma de pedirlo — y que se pida no
+   *   significa que la emisión en el 777 esté acreditada.
+   *
+   * 🪤 En automático se ignora un `d.numero` que venga de afuera: mezclar los dos modos en una
+   * misma emisión es pedir un número y a la vez decir cuál.
+   */
+  const numero = NUMERO_NC_AUTO ? 0 : (d.numero ?? await proximoNumeroFactura(letra, PTO_VENTA_NC, 30, tipo, serieNota));
+  if (!NUMERO_NC_AUTO && (numero == null || !Number.isSafeInteger(numero) || numero <= 0)) {
     // 🪤 Sin 'emitila y vinculala': vincular una nota externa existe para las NC de una hoja, no
     // para las ND.
     return { ok: false, error: `No pude determinar el próximo número de ${que} ${letra} del punto ${PTO_VENTA_NC} con los datos disponibles. No se envió la ${que}.` };
@@ -827,7 +841,15 @@ async function emitirNota(
       const { data } = await cli.post('/ventas', payload);
       const r = interpretar(data, `${tipo} ${letra}`);
       if (!r.ok && !r.sinRespuesta && intento < 2 && reintentar(r.error)) continue;
-      return r.ok ? { ...r, numero: r.numero ?? numero } : r;
+      /**
+       * 🔴 En automático el número lo sabe IM, no nosotros. Si la respuesta no lo trae, queda
+       * `null`: rellenarlo con el 0 que mandamos sería publicar un número que no existe. El id y
+       * el resto del resultado se conservan igual, así que el journal registra la nota emitida
+       * aunque su número haya que buscarlo después.
+       */
+      // 🪤 `r.numero` viene del cuerpo de IM sin normalizar: un 0, un `true` o un string vacío
+      // pasarían por número confirmado. Sólo un entero seguro positivo lo es.
+      return r.ok ? { ...r, numero: NUMERO_NC_AUTO ? idSeguro(r.numero) : (idSeguro(r.numero) ?? numero) } : r;
     } catch (err: any) {
       const e = comoError(err);
       if (!e.ok && !e.sinRespuesta && intento < 2 && reintentar(e.error)) continue;

@@ -713,7 +713,9 @@ describe('respuesta ambigua después de POST: no habilita otra emisión', () => 
   expect(await emitirNotaCredito({...DATOS,numero:30059})).toMatchObject({ok:false,sinRespuesta:false}); expect(post).toHaveBeenCalledTimes(1);
   expect(comoError({response:{status:400,data:{detalles,id:123}}})).toMatchObject({sinRespuesta:true});
  });
- it.each([['IM_PTO_VENTA_NC','999'],['IM_ID_DESTINO_NC','3'],['IM_NUMERO_NC_AUTO','1']])('configuración antigua %s=%s no envía notas',async(key,value)=>{
+ // 🔄 `IM_NUMERO_NC_AUTO=1` salió de esta lista: pasó a ser un modo soportado (ver
+ // 'numeración automática de notas'). El punto y el destino siguen sin ser configurables.
+ it.each([['IM_PTO_VENTA_NC','999'],['IM_ID_DESTINO_NC','3']])('configuración inválida %s=%s no envía notas',async(key,value)=>{
   vi.resetModules();vi.stubEnv(key,value);
   try {const {emitirNotaCredito}=await import('./facturarIM.js');const post=mockIM({});expect(await emitirNotaCredito({...DATOS,numero:30080})).toMatchObject({ok:false});expect(post).not.toHaveBeenCalled();}
   finally {vi.unstubAllEnvs();vi.resetModules();}
@@ -890,5 +892,176 @@ describe('el contexto se valida aunque el número venga dado', () => {
   it('con una empresa válida sí emite', async () => {
     const { post } = await emitir('factura', { cod_empresa: 1 });
     expect(post).toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔑 MODO AUTOMÁTICO DE NUMERACIÓN (`IM_NUMERO_NC_AUTO=1`).
+ *
+ * El default sigue siendo manual —el número sale de la serie—. En automático se manda `0` y lo
+ * asigna InfoManager, y ahí el 0 NO es un número inválido: es la forma de pedirlo.
+ *
+ * 🪤 No se encontró en los registros revisados un ensayo de esta combinación con los cinco
+ * campos AFIP. Que no conste no prueba que funcione: esto habilita el camino, no lo resuelve.
+ */
+describe('numeración automática de notas', () => {
+  const emitirCon = async (env: Record<string, string | undefined>, datos: any = {}) => {
+    vi.resetModules();
+    // 🪤 `Object.assign(process.env, {X: undefined})` deja el string "undefined", que NO es
+    // ausencia. Se usa stubEnv para poner y `delete` para sacar, y se restaura en el finally.
+    for (const [k, v] of Object.entries(env)) {
+      if (v === undefined) delete process.env[k]; else vi.stubEnv(k, v);
+    }
+    const post = vi.fn(async () => ({ data: datos.respuesta ?? { id: '58900001', numero: 30079 } }));
+    const get = vi.fn(async () => ({ data: { results: datos.ventas ?? [] } }));
+    vi.mocked(axios.create).mockReturnValue({ post, get, put: vi.fn(), interceptors: { request: { use: vi.fn() } } } as any);
+    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+    const { emitirNotaCredito } = await import('./facturarIM.js');
+    try {
+      const emitir = datos.tipo === 'ND' ? (await import('./facturarIM.js')).emitirNotaDebito : emitirNotaCredito;
+      const r = await emitir({
+        cod_empresa: 1, cod_cliente: 1039, cod_vendedor: 2, usuario: 'anto', categoria_iva: 'CF',
+        cod_lista_precios: 12, total: 100, items: [{ cod_articulo: 610, cantidad: 1, precio: 100, iva_por: 21, descuento_porc: 0 }],
+        ...datos.nota,
+      } as any);
+      return { r, post, get };
+    } finally { vi.unstubAllEnvs(); vi.resetModules(); }
+  };
+
+  it('🔑 con AUTO se manda numero 0 y NO se consulta la serie', async () => {
+    const { r, post, get } = await emitirCon({ IM_NUMERO_NC_AUTO: '1' });
+    expect((post.mock.calls[0] as any[])[1].numero).toBe(0);
+    expect(get).not.toHaveBeenCalled();   // no hace falta buscar el próximo
+    expect(r.ok).toBe(true);
+  });
+
+  it('🪤 y se ignora un número que venga de afuera: no se piden las dos cosas', async () => {
+    const { post } = await emitirCon({ IM_NUMERO_NC_AUTO: '1' }, { nota: { numero: 44444 } });
+    expect((post.mock.calls[0] as any[])[1].numero).toBe(0);
+  });
+
+  /** 🔴 Si IM no devuelve el número, el 0 local NO puede pasar por número confirmado. */
+  it('🔑 éxito sin número: queda null y se CONSERVA el id', async () => {
+    const { r } = await emitirCon({ IM_NUMERO_NC_AUTO: '1' }, { respuesta: { id: '58900001' } });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.id).toBe('58900001');
+      expect(r.numero).toBeNull();
+      expect(r.numero).not.toBe(0);
+    }
+  });
+
+  it('🔑 y si IM devuelve el número, ése manda', async () => {
+    const { r } = await emitirCon({ IM_NUMERO_NC_AUTO: '1' }, { respuesta: { id: '58900001', numero: 30100 } });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.numero).toBe(30100);
+  });
+
+  /** 🔑 La ND usa el mismo camino: el modo no puede quedar sólo para las NC. */
+  it('🔑 la ND también emite en automático, con numero 0', async () => {
+    const { r, post } = await emitirCon({ IM_NUMERO_NC_AUTO: '1' }, { tipo: 'ND', respuesta: { id: '58900003', numero: 746 } });
+    expect(r.ok).toBe(true);
+    const p = (post.mock.calls[0] as any[])[1];
+    expect(p.tipo_comprobante).toBe('ND');
+    expect(p.numero).toBe(0);
+  });
+
+  /**
+   * 🔴 El payload del modo automático tiene que ser el MISMO que el manual salvo el número: es
+   * exactamente la combinación que no consta probada.
+   */
+  it('🔑 conserva punto 777, destino 1, los cinco campos AFIP y el descuento explícito', async () => {
+    const { post } = await emitirCon({ IM_NUMERO_NC_AUTO: '1' });
+    const p = (post.mock.calls[0] as any[])[1];
+    expect(p).toMatchObject({
+      punto_de_venta: 777, id_destino: 1, tag: 'S', talonario_manual: 'S', condicion_venta_tipo: 2,
+      afip_comprobantes_fe: '', afip_conceptos_fe: 1, afip_tipdoc_fe: 0, afip_cond_vta: 0, afip_cod_barra: '',
+    });
+    expect(p.items[0]).toHaveProperty('descuento_porc', 0);
+  });
+
+  it('🪤 una respuesta ambigua no se reintenta: un solo POST', async () => {
+    const { r, post } = await emitirCon({ IM_NUMERO_NC_AUTO: '1' }, { respuesta: { isCreated: true, mensaje: 'sin confirmar' } });
+    expect(post).toHaveBeenCalledTimes(1);
+    if (!r.ok) expect(r.sinRespuesta).toBe(true);
+  });
+
+  it('🪤 un rechazo por número existente NO se reintenta, tampoco en automático', async () => {
+    const { r, post } = await emitirCon({ IM_NUMERO_NC_AUTO: '1' }, {
+      respuesta: { isCreated: false, error: -1, detalles: 'Ya existe una factura con: numero = 30079' },
+    });
+    expect(r.ok).toBe(false);
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔑 el default sigue siendo MANUAL: sin la variable, se calcula de la serie', async () => {
+    const { r, post, get } = await emitirCon({ IM_NUMERO_NC_AUTO: undefined }, {
+      ventas: [{ tipo_comprobante: 'NC', tipo_factura: 'B', punto_de_venta: 777, cod_empresa: 1, id_destino: 1, tag: 'S', numero: 30078 }],
+    });
+    expect(r.ok).toBe(true);
+    expect(get).toHaveBeenCalled();
+    expect((post.mock.calls[0] as any[])[1].numero).toBe(30079);
+  });
+
+  it('🪤 en manual, sin número de serie NO se emite', async () => {
+    const { r, post } = await emitirCon({ IM_NUMERO_NC_AUTO: undefined }, { ventas: [] });
+    expect(r.ok).toBe(false);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('🔴 el punto y el destino siguen sin ser configurables, ni con AUTO', async () => {
+    for (const env of [{ IM_PTO_VENTA_NC: '999' }, { IM_ID_DESTINO_NC: '3' }]) {
+      const { r, post } = await emitirCon({ IM_NUMERO_NC_AUTO: '1', ...env });
+      expect(r.ok, JSON.stringify(env)).toBe(false);
+      expect(post, JSON.stringify(env)).not.toHaveBeenCalled();
+    }
+  });
+});
+
+/** 🪤 El número que devuelve IM viene sin normalizar: sólo un entero seguro positivo lo es. */
+describe('el número devuelto por IM se normaliza', () => {
+  const conRespuesta = async (respuesta: any, auto = true) => {
+    vi.resetModules();
+    const previo = { ...process.env };
+    if (auto) process.env.IM_NUMERO_NC_AUTO = '1'; else delete process.env.IM_NUMERO_NC_AUTO;
+    vi.mocked(axios.create).mockReturnValue({
+      post: vi.fn(async () => ({ data: respuesta })),
+      get: vi.fn(async () => ({ data: { results: [{ tipo_comprobante: 'NC', tipo_factura: 'B', punto_de_venta: 777, cod_empresa: 1, id_destino: 1, tag: 'S', numero: 30078 }] } })),
+      put: vi.fn(), interceptors: { request: { use: vi.fn() } },
+    } as any);
+    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+    const { emitirNotaCredito } = await import('./facturarIM.js');
+    const r = await emitirNotaCredito({
+      cod_empresa: 1, cod_cliente: 1039, cod_vendedor: 2, usuario: 'anto', categoria_iva: 'CF',
+      cod_lista_precios: 12, total: 100, items: [{ cod_articulo: 610, cantidad: 1, precio: 100, iva_por: 21 }],
+    } as any);
+    process.env = previo;
+    return r;
+  };
+
+  it('🔑 un "123" de texto sí es un número', async () => {
+    const r = await conRespuesta({ id: '1', numero: '123' });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.numero).toBe(123);
+  });
+
+  it('🔑 el 0 explícito NO lo es: queda null con el id intacto', async () => {
+    const r = await conRespuesta({ id: '58900001', numero: 0 });
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.numero).toBeNull(); expect(r.id).toBe('58900001'); }
+  });
+
+  it('🔑 ni `true`, ni un negativo, ni vacío, ni NaN', async () => {
+    for (const n of [true, -5, '', '   ', NaN, [30079], {}]) {
+      const r = await conRespuesta({ id: '58900001', numero: n });
+      expect(r.ok, JSON.stringify(n)).toBe(true);
+      if (r.ok) { expect(r.numero, JSON.stringify(n)).toBeNull(); expect(r.id).toBe('58900001'); }
+    }
+  });
+
+  it('🪤 en MANUAL, un número ilegible de IM cae al calculado, no a null', async () => {
+    const r = await conRespuesta({ id: '58900001', numero: true }, false);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.numero).toBe(30079);
   });
 });
