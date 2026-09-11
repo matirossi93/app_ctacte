@@ -1350,7 +1350,7 @@ export async function comprobantesVigentes(
    * Los que no aparezcan en el rango se preguntan de a uno, como antes: puede ser una factura
    * vieja o una que ya no está.
    */
-  rango?: { desde: string; hasta: string },
+  rango?: { desde: string; hasta: string; ventas?: VentaRaw[] },
 ): Promise<Map<string, boolean | null>> {
   const unicos = [...new Set([...ids].map(String).filter(id => /^\d+$/.test(id)))];
   const salida = new Map<string, boolean | null>();
@@ -1358,7 +1358,10 @@ export async function comprobantesVigentes(
   let faltan = unicos;
   if (rango && unicos.length) {
     try {
-      const listado = await fetchVentas(rango.desde, rango.hasta);
+      // 🔑 `rango.ventas` es el listado que quien llama YA leyó en esta misma petición. Sin eso
+      // el tablero pide el mismo rango tres veces, y por encima de 10 días no hay cache que las
+      // una: son tres lecturas completas.
+      const listado = rango.ventas ?? await fetchVentas(rango.desde, rango.hasta);
       const porId = new Map(listado.map(v => [String(v.id), v]));
       faltan = [];
       for (const id of unicos) {

@@ -17,6 +17,9 @@ const m = vi.hoisted(() => ({
   fetchVentasItems: vi.fn(),
   reglasActivas: vi.fn(),
   descuentosActivos: vi.fn(),
+  fetchClientesIMCon: vi.fn(),
+  fetchArticulosCatalogo: vi.fn(),
+  fetchStockPorDeposito: vi.fn(),
 }));
 
 /** ALPISTE a granel: 30 kg por bolsa. Con 20 kg o más corresponde L1 (12); con menos, L2 (13). */
@@ -31,10 +34,10 @@ vi.mock('./infomanager.js', () => ({
   invalidarCacheItems: vi.fn(),
   fetchVentas: m.fetchVentas,
   fetchVentasItems: m.fetchVentasItems,
-  fetchArticulosCatalogo: vi.fn(async () => CATALOGO),
+  fetchArticulosCatalogo: m.fetchArticulosCatalogo,
   // Se pide con los códigos del rango: un cliente recién creado no está en el cache.
-  fetchClientesIMCon: vi.fn(async () => [{ cod_cliente: 7, razon_social: 'FORRAJERIA EL SOL' }]),
-  fetchStockPorDeposito: vi.fn(async () => new Map([[1, 999]])),
+  fetchClientesIMCon: m.fetchClientesIMCon,
+  fetchStockPorDeposito: m.fetchStockPorDeposito,
 }));
 vi.mock('./pedidos.js', () => ({
   reglasActivas: m.reglasActivas,
@@ -77,6 +80,11 @@ beforeEach(() => {
   invalidarVista();
   fakeSb();
   m.fetchVentas.mockResolvedValue([PR]);
+  // Los tres salen del cache en producción; acá se responden al toque salvo que un test los frene.
+  m.fetchArticulosCatalogo.mockResolvedValue(CATALOGO);
+  m.fetchStockPorDeposito.mockResolvedValue(new Map([[1, 999]]));
+  // Se pide con los códigos del rango: un cliente recién creado no está en el cache.
+  m.fetchClientesIMCon.mockResolvedValue([{ cod_cliente: 7, razon_social: 'FORRAJERIA EL SOL' }]);
   // 30 kg de ALPISTE: por cantidad le corresponde L1 (12).
   m.reglasActivas.mockResolvedValue([
     { nombre: 'SEMILLAS', match_tipo: 'subrubro', match_valor: 'Semillas', cod_lista: 12, condicion: 'min', umbral: 20, unidad: 'kg', ambito: 'articulo' },
@@ -246,3 +254,101 @@ describe('sólo Casa Central', () => {
   expect(v.pendientes[0].huella).toBe(huellaPresupuesto('999',PR,rs));
   expect(()=>exigirHuella(v.pendientes[0].huella,huellaPresupuesto('999',PR,[{...rs[0],precio_orig:1500},rs[1]]))).toThrow('cambió');
  });
+
+/**
+ * 🔑 EL MISMO RANGO NO SE LEE TRES VECES EN UNA PETICIÓN.
+ *
+ * El tablero de facturación necesita el listado de `/ventas` en tres lugares: la vista, el
+ * control de anulados y la actualización de importes. Hasta 10 días el cache los une; más
+ * largos NO se cachean —`MAX_DIAS_CACHE_VENTAS` existe para que los meses del snapshot no
+ * dupliquen la memoria del proceso— y eran tres lecturas completas del mismo rango.
+ */
+describe('el listado del rango se comparte dentro de la petición', () => {
+  beforeEach(() => {
+    invalidarVista(); vi.clearAllMocks();
+    m.fetchArticulosCatalogo.mockResolvedValue(CATALOGO);
+    m.fetchStockPorDeposito.mockResolvedValue(new Map([[1, 999]]));
+    m.fetchClientesIMCon.mockResolvedValue([]);
+    m.fetchVentas.mockResolvedValue([]);
+    m.fetchVentasItems.mockResolvedValue([]);
+    m.reglasActivas.mockResolvedValue([]);
+    m.descuentosActivos.mockResolvedValue([]);
+  });
+
+  /**
+   * 🪤 Astra (11/09/2026): pasar el ARRAY ya resuelto obligaría al llamador a esperar las ventas
+   * antes de entrar acá, y eso las serializa contra el catálogo y el stock —que hoy arrancan
+   * juntos, y el catálogo es el más lento de los tres—. El arreglo saldría más caro que el
+   * problema. Por eso se acepta la promesa y se consume adentro.
+   */
+  it('🔑 el catálogo y el stock arrancan SIN esperar a las ventas', async () => {
+    let soltarVentas: (v: any) => void = () => {};
+    const ventasPendientes = new Promise<any[]>(r => { soltarVentas = r; });
+    let catalogoPedido = false, stockPedido = false;
+    m.fetchArticulosCatalogo.mockImplementation(async () => { catalogoPedido = true; return CATALOGO; });
+    m.fetchStockPorDeposito.mockImplementation(async () => { stockPedido = true; return new Map([[1, 999]]); });
+
+    const vista = vistaDeRango('2026-09-01', '2026-09-16', false, ventasPendientes);
+    for (let i = 0; i < 20 && !(catalogoPedido && stockPedido); i++) await new Promise(r => setTimeout(r, 5));
+    expect(catalogoPedido, 'el catálogo esperó a las ventas').toBe(true);
+    expect(stockPedido, 'el stock esperó a las ventas').toBe(true);
+    expect(m.fetchVentas).not.toHaveBeenCalled();
+
+    soltarVentas([]);
+    await vista;
+  });
+
+  it('🔑 con el listado provisto NO vuelve a pedir /ventas', async () => {
+    const ventas = [{ id: '1', tipo_comprobante: 'PR', cod_cliente: 1, cod_empresa: 1, fecha: '2026-09-01', total: 100, anulada: 'N' }];
+    await vistaDeRango('2026-09-01', '2026-09-16', false, ventas as any);
+    expect(m.fetchVentas).not.toHaveBeenCalled();
+  });
+
+  it('sin listado provisto lo pide, como siempre', async () => {
+    await vistaDeRango('2026-09-01', '2026-09-16');
+    expect(m.fetchVentas).toHaveBeenCalledTimes(1);
+  });
+
+  it('🪤 un listado vacío es un listado, no "no me pasaron nada"', async () => {
+    const r = await vistaDeRango('2026-09-01', '2026-09-16', false, []);
+    expect(m.fetchVentas).not.toHaveBeenCalled();
+    expect(r.pendientes).toEqual([]);
+  });
+});
+
+/**
+ * 🔑 Los clientes NO bloquean a los renglones: no dependen de ellos, y esperarlos primero suma
+ * su tiempo al de todo lo demás en vez de solaparlo.
+ */
+describe('los clientes se solapan con el resto', () => {
+  beforeEach(() => {
+    invalidarVista(); vi.clearAllMocks();
+    m.fetchArticulosCatalogo.mockResolvedValue(CATALOGO);
+    m.fetchStockPorDeposito.mockResolvedValue(new Map([[1, 999]]));
+    m.fetchClientesIMCon.mockResolvedValue([]);
+    m.fetchVentas.mockResolvedValue([]);
+    m.fetchVentasItems.mockResolvedValue([]);
+    m.reglasActivas.mockResolvedValue([]);
+    m.descuentosActivos.mockResolvedValue([]);
+  });
+
+  it('🔑 los renglones arrancan mientras los clientes siguen pendientes', async () => {
+    let soltarClientes: (v: any) => void = () => {};
+    const clientesPendiente = new Promise(r => { soltarClientes = r; });
+    m.fetchClientesIMCon.mockReturnValueOnce(clientesPendiente as any);
+    m.fetchVentas.mockResolvedValueOnce([
+      { id: '1', tipo_comprobante: 'PR', cod_cliente: 1, cod_empresa: 1, fecha: '2026-09-01', total: 100, anulada: 'N' },
+    ] as any);
+
+    let itemsPedidos = false;
+    m.fetchVentasItems.mockImplementation(async () => { itemsPedidos = true; return []; });
+
+    const vista = vistaDeRango('2026-09-01', '2026-09-01');
+    // Sin soltar los clientes todavía, los renglones ya tienen que haberse pedido.
+    for (let i = 0; i < 20 && !itemsPedidos; i++) await new Promise(r => setTimeout(r, 5));
+    expect(itemsPedidos, 'los renglones esperaron a los clientes').toBe(true);
+
+    soltarClientes([]);
+    await vista;
+  });
+});

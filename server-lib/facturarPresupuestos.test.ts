@@ -346,6 +346,41 @@ describe('el tablero de la etapa 2', () => {
     expect(escrituras).toEqual([]);expect(m.emitirFactura).not.toHaveBeenCalled();
   });
 
+  /**
+   * 🔑 EL LISTADO DEL RANGO SE LEE UNA VEZ POR PETICIÓN.
+   *
+   * Esta pantalla lo necesita en tres lugares —la vista, el control de anulados y los importes—
+   * y cada uno lo pedía por su cuenta. Hasta 10 días el cache de `/ventas` las unía; más largos
+   * no se cachean y eran tres lecturas completas del mismo rango en una sola carga.
+   *
+   * 🪤 Se pasa la PROMESA, no el array resuelto: esperarla antes de la vista serializaría las
+   * ventas contra el catálogo y el stock, que dentro arrancan juntos.
+   */
+  it('🔑 lee /ventas una sola vez y la comparte con la vista', async () => {
+    tablas.presupuestos_facturados={data:[{im_comprobante_id:'10',im_factura_id:'20',im_factura_numero:50444,cod_cliente:430,cod_empresa:1,total:1111521,facturado_at:'2026-09-11',estado_emision:'completo'}],error:null};
+    m.fetchVentas.mockResolvedValue([{id:'20',tipo_comprobante:'FA',cod_cliente:430,cod_empresa:1,total:1073534.08,anulada:'N'}]);
+    const r=await llamar(tableroFacturacion,{method:'GET',query:{desde:'2026-09-01',hasta:'2026-09-16'}});
+    expect(r.status).toBe(200);
+    expect(m.fetchVentas).toHaveBeenCalledTimes(1);
+    // Y lo que se le pasa a la vista es esa misma lectura, sin esperarla antes de entrar.
+    const cuarto = m.vistaDeRango.mock.calls[0][3];
+    expect(cuarto, 'la vista no recibió el listado compartido').toBeDefined();
+    expect(typeof (cuarto as any)?.then, 'se le pasó el array resuelto en vez de la promesa').toBe('function');
+  });
+
+  /**
+   * 🪤 La lectura compartida NO puede ser un punto único de falla nuevo: si se cae, cada uno
+   * tiene que volver a su camino de siempre. (Que IM no conteste NUNCA sigue dando 502: el
+   * tablero no se puede armar sin las ventas, y eso no cambió.)
+   */
+  it('si la lectura compartida falla, la vista vuelve a pedirla por su cuenta', async () => {
+    tablas.presupuestos_facturados={data:[],error:null};
+    m.fetchVentas.mockRejectedValueOnce(new Error('IM sin respuesta')).mockResolvedValue([]);
+    const r=await llamar(tableroFacturacion,{method:'GET',query:{desde:'2026-09-01',hasta:'2026-09-16'}});
+    expect(r.status).toBe(200);
+    expect(m.fetchVentas).toHaveBeenCalledTimes(2);   // la que falló, y la que la vista rehízo
+  });
+
   it('falla visible si se pierde la lectura inicial de vínculos', async () => {
     tablas.presupuestos_facturados={data:null,error:{message:'sin conexión'}};
     const r=await llamar(tableroFacturacion,{method:'GET'});

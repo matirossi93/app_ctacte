@@ -57,8 +57,24 @@ const _vistaCache = new Map<string, { at: number; datos: any }>();
 export function invalidarVista() { vistasCompartidas.invalidar(); }
 
 const vistasCompartidas = new LecturasCompartidas<any>();
-export function vistaDeRango(desde: string, hasta: string, forzar = false): Promise<any> { return vistasCompartidas.obtener(`${desde}|${hasta}`, () => armarVistaRango(desde,hasta,forzar), {actualizar:forzar}); }
-async function armarVistaRango(desde: string, hasta: string, forzar = false) {
+/**
+ * @param ventasYaLeidas El listado de `/ventas` del rango, si quien llama YA lo tiene.
+ *
+ * 🔑 El tablero de facturación pide el MISMO rango tres veces en una sola petición: acá, en el
+ * control de anulados y al actualizar importes. Hasta 10 días el cache las une y no se nota;
+ * más largos no se cachean —`MAX_DIAS_CACHE_VENTAS` existe para que los meses del snapshot no
+ * dupliquen la memoria del proceso— y son **tres lecturas completas del mismo rango**.
+ *
+ * Compartirlo dentro de la petición alcanza: no se toca el TTL ni se reutiliza una lectura
+ * anterior a una escritura.
+ *
+ * 🪤 Acepta una PROMESA, no sólo el array ya resuelto. Si el llamador la esperara antes de
+ * entrar acá, serializaría las ventas contra el catálogo y el stock, que hoy arrancan juntos —y
+ * el catálogo es el más lento de los tres (6 s medidos en frío)—. Pasando la promesa, el
+ * `Promise.all` de adentro la consume mientras los otros dos ya están en vuelo.
+ */
+export function vistaDeRango(desde: string, hasta: string, forzar = false, ventasYaLeidas?: any[] | Promise<any[] | undefined>): Promise<any> { return vistasCompartidas.obtener(`${desde}|${hasta}`, () => armarVistaRango(desde,hasta,forzar,ventasYaLeidas), {actualizar:forzar}); }
+async function armarVistaRango(desde: string, hasta: string, forzar = false, ventasYaLeidas?: any[] | Promise<any[] | undefined>) {
   const clave = `${desde}|${hasta}`;
 
   {
@@ -76,7 +92,8 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false) {
     // desde antes. Un pedido que no aparece en la pantalla no entra en ninguna hoja y nadie
     // se entera hasta que llama el cliente.
     const [ventas, cat, stockInicial] = await Promise.all([
-      fetchVentas(desde, hasta, { actualizar: forzar }),
+      // 🔑 Si quien llama ya lo está leyendo, se consume esa lectura (ver `ventasYaLeidas`).
+      Promise.resolve(ventasYaLeidas).then(v => v ?? fetchVentas(desde, hasta, { actualizar: forzar })),
       fetchArticulosCatalogo(),
       // Sin stock la pantalla igual sirve: se avisa que no se pudo consultar, no se inventa.
       // 🪤 `forzar` va también acá: el cache de stock dura 10 minutos y sin esto el botón
@@ -90,10 +107,13 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false) {
      * cliente dado de alta hace un rato no está en el cache (dura 30 min) y la pantalla mostraba
      * *"Cliente 1347"* en vez de *"LEAL, Paulina (Este)"* (Mati, 09/09/2026). Normalmente sale
      * del cache y no cuesta nada; sólo va a buscarlo si falta alguno.
+     *
+     * 🔑 Pero NO se espera acá: lo que sigue —los renglones del día y las cinco consultas a
+     * Supabase— no depende de los clientes, y esperarlos primero suma su tiempo al de todo lo
+     * demás en vez de solaparlo. Se espera recién al armar las filas, que es donde se usan.
      */
-    const clientes = await fetchClientesIMCon(ventas.map((v: any) => v.cod_cliente)).catch(() => []);
+    const clientesPendientes = fetchClientesIMCon(ventas.map((v: any) => v.cod_cliente)).catch(() => []);
 
-    const porCliente = new Map(clientes.map((c: any) => [Number(c.cod_cliente), c]));
     // El formato de bolsa de cada producto a granel: lo que haya cacheado, sin esperar.
     const formatos = formatosDeBolsa();
 
@@ -348,6 +368,9 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false) {
       if (!vivosPorClienteDia.has(k)) vivosPorClienteDia.set(k, []);
       vivosPorClienteDia.get(k)!.push(String(p.id));
     }
+
+    // Acá sí hacen falta: para este punto ya se trajeron los renglones y se leyó Supabase.
+    const porCliente = new Map((await clientesPendientes).map((c: any) => [Number(c.cod_cliente), c]));
 
     const filas = presupuestos.map((p: any) => {
       const c = porCliente.get(Number(p.cod_cliente));

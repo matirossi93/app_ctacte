@@ -664,7 +664,7 @@ async function itemsDeLaFactura(idFactura: string, leidos?: any[]): Promise<Dato
  *
  * Devuelve los avisos para mostrar, y de paso deja las filas al día.
  */
-async function sincronizarAnulados(filas: any[], rango?: { desde: string; hasta: string }): Promise<Map<string, string>> {
+async function sincronizarAnulados(filas: any[], rango?: { desde: string; hasta: string; ventas?: any[] }): Promise<Map<string, string>> {
   const avisos = new Map<string, string>();
   const conComprobante = filas.filter(f => f.im_factura_id || f.im_remito_id);
   if (!conComprobante.length) return avisos;
@@ -1083,7 +1083,26 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
   if (frenaSiNoPuede(req, res)) return;
   try {
     const { desde, hasta } = rango(req);
-    const vista = await vistaDeRango(desde, hasta, req.query.refrescar === '1');
+    const refrescar = req.query.refrescar === '1';
+    /**
+     * 🔑 EL LISTADO DEL RANGO SE LEE UNA VEZ Y SE COMPARTE EN ESTA PETICIÓN.
+     *
+     * Esta pantalla lo necesitaba en tres lugares —la vista, el control de anulados y la
+     * actualización de importes— y cada uno lo pedía por su cuenta. Hasta 10 días el cache de
+     * `/ventas` las unía; más largos no se cachean (los meses del snapshot duplicarían la
+     * memoria del proceso) y eran **tres lecturas completas del mismo rango** en una sola carga.
+     *
+     * 🪤 Se arranca ACÁ y se pasa la PROMESA hacia abajo, sin esperarla. Esperarla antes de la
+     * vista serializaría las ventas contra el catálogo y el stock, que dentro arrancan juntos —y
+     * el catálogo solo son 6 s en frío—: el arreglo saldría más caro que el problema.
+     *
+     * Si falla, no se corta nada: cada uno vuelve a su camino de siempre y decide qué hacer.
+     */
+    const ventasPendientes = fetchVentas(desde, hasta, { actualizar: refrescar }).catch(() => undefined);
+    const vista = await vistaDeRango(desde, hasta, refrescar, ventasPendientes);
+    // Acá sí se espera: los dos usos que siguen la necesitan resuelta. Ya está en vuelo desde
+    // arriba, así que normalmente no cuesta nada.
+    const ventasDelRango = await ventasPendientes;
     const todos = [...vista.pendientes, ...vista.asignados];
     const aprobados = todos.filter((p: any) => p.revision?.estado === 'aprobado');
 
@@ -1108,7 +1127,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
     const avisosAnulados = await sincronizarAnulados(
       (emitidos ?? []).map((e: any) => ({ ...e, im_comprobante_id: String(e.im_comprobante_id) })),
       // Las facturas del rango que se está mirando salen del listado, sin un GET por cada una.
-      { desde, hasta },
+      { desde, hasta, ventas: ventasDelRango },
     ).catch((err: any) => {
       console.warn('[tableroFacturacion] no pude chequear anulados:', err?.message);
       return new Map<string, string>();
@@ -1119,7 +1138,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
           .in('im_comprobante_id', emitidos.map((e: any) => String(e.im_comprobante_id)))
       : { data: emitidos, error: null };
     if (errAlDia) { res.status(502).json({ error: `No pude releer las facturas actualizadas: ${errAlDia.message}` }); return; }
-    const actuales = await actualizarImportesFacturas(alDia ?? [], { ventas: await fetchVentas(desde, hasta), actualizar: req.query.refrescar === '1' });
+    const actuales = await actualizarImportesFacturas(alDia ?? [], { ventas: ventasDelRango ?? await fetchVentas(desde, hasta), actualizar: refrescar });
     const porId = new Map(actuales.map((e: any) => [String(e.im_comprobante_id), e]));
 
     /**
