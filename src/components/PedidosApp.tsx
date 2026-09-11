@@ -609,6 +609,27 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
 
     // ── Confirmar ───────────────────────────────────────────────────────────
     const [enviando, setEnviando] = useState(false);
+
+    /**
+     * 🔑 SALIR CON ESCAPE, SALVO MIENTRAS SE ESTÁ ENVIANDO.
+     *
+     * El modal se podía quedar sin salida usable: el click afuera no cierra cuando hay carrito
+     * —a propósito, para no perder el pedido— y el único cierre era la ✕ del encabezado. Cuando
+     * el backend rechaza el envío (por ejemplo el 409 de "este presupuesto tiene una operación
+     * en curso"), el vendedor se queda mirando un error en rojo sin una salida a la vista.
+     *
+     * 🪤 Mientras `enviando` NO cierra: el POST ya salió y el pedido puede estar entrando a
+     * InfoManager. Cerrar ahí no cancelaría nada —no hay forma de cancelar— y sólo taparía el
+     * resultado.
+     *
+     * Cerrar no pierde nada: el borrador se guarda solo en cada cambio del carrito y sólo se
+     * borra cuando el pedido entró de verdad o cuando se arranca uno nuevo.
+     */
+    useEffect(() => {
+        const alTeclado = (e: KeyboardEvent) => { if (e.key === 'Escape' && !enviando) onClose(); };
+        window.addEventListener('keydown', alTeclado);
+        return () => window.removeEventListener('keydown', alTeclado);
+    }, [enviando, onClose]);
     // Motivo por el que el backend rechazó el último envío. Se limpia al tocar el carrito.
     const [msgBloqueo, setMsgBloqueo] = useState<string | null>(null);
     /**
@@ -1221,6 +1242,25 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
                             )}
                             <div className="ped-footer-row">
                                 <div className="ped-total">Total <b>{money(total)}</b><span className="ped-total-nota">IM recalcula al facturar</span></div>
+                                {/**
+                                  * 🔑 LA SALIDA, AL LADO DEL BOTÓN QUE NO FUNCIONÓ.
+                                  *
+                                  * Aparece cuando el envío fue rechazado: es el momento en que el
+                                  * vendedor necesita salir y no sabe cómo. El caso que lo motivó es
+                                  * el 409 de "este presupuesto tiene una operación en curso", que
+                                  * no se arregla reintentando — hay que salir y avisar a la oficina.
+                                  *
+                                  * 🪤 El texto dice lo que hace. "Cerrar" a secas, al lado de un
+                                  * error, se lee como "descartar el pedido" y nadie lo toca.
+                                  *
+                                  * No cancela NADA en InfoManager: si el POST llegó, el pedido está
+                                  * allá y se ve en «Mis pedidos». Acá sólo se cierra la pantalla.
+                                  */}
+                                {fallo && (
+                                    <button className="ped-secondary ped-salida" disabled={enviando} onClick={onClose}>
+                                        Cerrar y conservar borrador
+                                    </button>
+                                )}
                                 <button className="ped-confirm" disabled={!cart.length || enviando || bloqueos.length > 0 || renglonesSinPrecio.length > 0} onClick={confirmar}>
                                         {enviando ? <><Loader2 className="spin" size={18} /> Enviando…</> : <><Send size={18} /> {editando ? 'Guardar cambios' : 'Confirmar pedido'}</>}
                                 </button>

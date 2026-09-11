@@ -475,3 +475,15 @@
     border: 1px solid #eec045;
     vertical-align: middle;
 }
+
+/**
+ * 🔑 La salida cuando el envío fue rechazado (11/09/2026).
+ *
+ * Va al lado del botón de enviar, no compitiendo con él: borde y sin relleno, para que se lea
+ * como "la otra opción" y no como la acción principal. El pedido se conserva igual.
+ */
+.ped-footer-row .ped-salida {
+    white-space: nowrap;
+    margin-left: auto;
+    margin-right: 0.5rem;
+}
