@@ -1,4 +1,8 @@
+import { parsearPendientesCliente } from './respuestaPendientesCliente.js';
+import { LecturasCompartidas, lecturaLimitada, pausarLecturas } from './lecturasCompartidas.js';
 import axios, { AxiosInstance } from 'axios';
+import { idIM, ivaExplicita } from './identidadIM.js';
+import { interpretarActualizacionIM } from './respuestaActualizacionIM.js';
 import type { ComprobantePendiente } from './saldoCliente.js';
 import { cuerpoParaMoverFecha } from './moverFechaComprobante.js';
 import { comprobanteNoExiste, esComprobanteBorrado } from './comprobanteBorrado.js';
@@ -76,12 +80,17 @@ export async function imGetRetry<T>(fn: () => Promise<T>, label: string, attempt
   let lastErr: any;
   for (let intento = 1; intento <= attempts; intento++) {
     try {
-      return await fn();
+      return await lecturaLimitada(fn);
     } catch (err: any) {
       lastErr = err;
       const status = err?.response?.status;
       // 🪤 IM avisa "ese id no existe" con un 500 (ver comprobanteBorrado.ts). Reintentarlo son
       // 3 s de espera al pedo por consulta, y la respuesta no va a cambiar.
+      if (err?.retryable === false) break;
+      const rawPausa = err?.response?.headers?.['retry-after'];
+      const segundos = Number(rawPausa);
+      const espera = Number.isFinite(segundos) && segundos >= 0 ? segundos * 1000 : Date.parse(String(rawPausa)) - Date.now();
+      if (status === 429) { pausarLecturas(Number.isFinite(espera) && espera > 0 ? espera : 30_000); break; }
       const transitorio = !esComprobanteBorrado(err)
         && (status === undefined || status >= 500 || status === 429 || status === 401
         || ['ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN'].includes(err?.code));
@@ -188,7 +197,7 @@ const MAX_DIAS_CACHE_VENTAS = 10;
  * saltea todos.
  */
 const CACHE_VENTAS_MS = 90_000;
-const _cacheVentas = new Map<string, { at: number; filas: VentaRaw[] }>();
+const lecturasVentas = new LecturasCompartidas<VentaRaw[]>();
 
 function diasEntre(desde: string, hasta: string): number {
   const a = Date.parse(`${desde}T00:00:00Z`), b = Date.parse(`${hasta}T00:00:00Z`);
@@ -197,7 +206,7 @@ function diasEntre(desde: string, hasta: string): number {
 }
 
 /** Lo llaman los caminos que acaban de cambiar algo en IM y necesitan releer sin cache. */
-export function invalidarCacheVentas(): void { _cacheVentas.clear(); }
+export function invalidarCacheVentas(): void { lecturasVentas.invalidar(); }
 
 export async function fetchVentas(
   desde: string, hasta: string,
@@ -207,23 +216,10 @@ export async function fetchVentas(
    * el remito por su número. Con una lista de hace 40 segundos diría "lo aceptó pero no lo
    * encontré" sobre un remito que existe, y alguien lo emitiría dos veces.
    */
-  opts?: { codEmpresa?: number; limit?: number; sinCache?: boolean },
+  opts?: { codEmpresa?: number; limit?: number; sinCache?: boolean; actualizar?: boolean },
 ): Promise<VentaRaw[]> {
-  const cacheable = !opts?.sinCache && diasEntre(desde, hasta) <= MAX_DIAS_CACHE_VENTAS;
-  const clave = `${desde}|${hasta}|${opts?.codEmpresa ?? 'all'}`;
-  if (cacheable) {
-    const hit = _cacheVentas.get(clave);
-    if (hit && Date.now() - hit.at < CACHE_VENTAS_MS) return hit.filas;
-  }
-  const filas = await fetchVentasSinCache(desde, hasta, opts);
-  // Lo recién leído sin cache también sirve para el próximo que pida el mismo rango.
-  if (cacheable || opts?.sinCache) {
-    // 🪤 Un cache sin techo crece con cada rango distinto que alguien mire. 40 entradas de
-    // rangos cortos es memoria despreciable y cubre de sobra el uso de una jornada.
-    if (_cacheVentas.size > 40) _cacheVentas.clear();
-    _cacheVentas.set(clave, { at: Date.now(), filas });
-  }
-  return filas;
+  return lecturasVentas.obtener(`${desde}|${hasta}|${opts?.codEmpresa ?? 'all'}`, () => fetchVentasSinCache(desde, hasta, opts),
+    { actualizar: opts?.actualizar, verificar: opts?.sinCache, cachear: diasEntre(desde, hasta) <= MAX_DIAS_CACHE_VENTAS });
 }
 
 async function fetchVentasSinCache(desde: string, hasta: string, opts?: { codEmpresa?: number; limit?: number }): Promise<VentaRaw[]> {
@@ -244,7 +240,7 @@ async function fetchVentasSinCache(desde: string, hasta: string, opts?: { codEmp
     page += 1;
     if (page > 200) {
       console.warn(`fetchVentas: safety break en page ${page}, total=${all.length}`);
-      break;
+      throw new Error('InfoManager devolvió demasiadas páginas: consulta incompleta');
     }
   }
   return all;
@@ -290,27 +286,17 @@ export interface VentaItem {
  * filas contra ~760— y era la única consulta grande que se pedía entera cada vez. La vista de
  * presupuestos la hace por cada día del rango, y el tablero de facturación vuelve a hacerla.
  */
-const _cacheItems = new Map<string, { at: number; filas: VentaItem[] }>();
+const lecturasItems = new LecturasCompartidas<VentaItem[]>();
 
 /** Lo llaman los caminos que acaban de escribir en IM. Va junto con `invalidarCacheVentas`. */
-export function invalidarCacheItems(): void { _cacheItems.clear(); }
+export function invalidarCacheItems(): void { lecturasItems.invalidar(); }
 
 export async function fetchVentasItems(
   desde: string, hasta: string,
-  opts?: { codEmpresa?: number; limit?: number; sinCache?: boolean },
+  opts?: { codEmpresa?: number; limit?: number; sinCache?: boolean; actualizar?: boolean },
 ): Promise<VentaItem[]> {
-  const cacheable = !opts?.sinCache && diasEntre(desde, hasta) <= MAX_DIAS_CACHE_VENTAS;
-  const clave = `${desde}|${hasta}|${opts?.codEmpresa ?? 'all'}`;
-  if (cacheable) {
-    const hit = _cacheItems.get(clave);
-    if (hit && Date.now() - hit.at < CACHE_VENTAS_MS) return hit.filas;
-  }
-  const filas = await fetchVentasItemsSinCache(desde, hasta, opts);
-  if (cacheable || opts?.sinCache) {
-    if (_cacheItems.size > 40) _cacheItems.clear();
-    _cacheItems.set(clave, { at: Date.now(), filas });
-  }
-  return filas;
+  return lecturasItems.obtener(`${desde}|${hasta}|${opts?.codEmpresa ?? 'all'}`, () => fetchVentasItemsSinCache(desde, hasta, opts),
+    { actualizar: opts?.actualizar, verificar: opts?.sinCache, cachear: diasEntre(desde, hasta) <= MAX_DIAS_CACHE_VENTAS });
 }
 
 async function fetchVentasItemsSinCache(desde: string, hasta: string, opts?: { codEmpresa?: number; limit?: number }): Promise<VentaItem[]> {
@@ -333,7 +319,7 @@ async function fetchVentasItemsSinCache(desde: string, hasta: string, opts?: { c
     page += 1;
     if (page > 200) {
       console.warn(`fetchVentasItems: safety break en page ${page}, total=${all.length}`);
-      break;
+      throw new Error('InfoManager devolvió demasiadas páginas: consulta incompleta');
     }
   }
   return all;
@@ -350,19 +336,18 @@ async function fetchVentasItemsSinCache(desde: string, hasta: string, opts?: { c
  * Los hits siguientes son <1ms desde el cache.
  */
 interface ArticuloMini {
-  cod_rubro: number | null; descripcion: string; precio_venta: number;
+  cod_rubro: number | null; descripcion: string; precio_venta: number; iva_por: number | null;
   // Los usa el control de listas: el subrubro es la "línea" comercial (Ganave, Rosco…) contra
   // la que Mati escribió las condiciones, y los otros dos deciden si el artículo va por bulto
   // o por kilo — lo que define cuántos bultos tiene el pedido para la promo general.
   subrubro: string; unidad_de_medida: string | null; equivalencia_um: number | null;
 }
-let _articulosCache: { map: Map<number, ArticuloMini>; fetchedAt: number } | null = null;
+
 const ARTICULOS_TTL_MS = 60 * 60 * 1000;
 
-export async function fetchArticulosCatalogo(force = false): Promise<Map<number, ArticuloMini>> {
-  if (!force && _articulosCache && (Date.now() - _articulosCache.fetchedAt) < ARTICULOS_TTL_MS) {
-    return _articulosCache.map;
-  }
+const lecturasCatalogo = new LecturasCompartidas<Map<number, ArticuloMini>>(ARTICULOS_TTL_MS, 1);
+export function fetchArticulosCatalogo(force = false) { return lecturasCatalogo.obtener('catalogo', () => leerArticulosCatalogo(), { actualizar: force }); }
+async function leerArticulosCatalogo(): Promise<Map<number, ArticuloMini>> {
   const cli = await imClient();
   const map = new Map<number, ArticuloMini>();
   // 🪤 04/09/2026. Esto salía de `/articulos/stock`, que sólo devuelve los artículos con FICHA
@@ -391,6 +376,7 @@ export async function fetchArticulosCatalogo(force = false): Promise<Map<number,
       const eq = Number(r.equivalencia_um);
       map.set(cod, {
         cod_rubro: Number.isFinite(codRubro as number) ? codRubro : null,
+        iva_por: r.iva_por != null && r.iva_por !== '' && Number.isFinite(Number(r.iva_por)) ? Number(r.iva_por) : null,
         descripcion: String(r.descripcion ?? r.nombre ?? '').trim(),
         precio_venta: Number.isFinite(precio) ? precio : 0,
         subrubro: String(r.subrubro ?? '').trim(),
@@ -400,13 +386,12 @@ export async function fetchArticulosCatalogo(force = false): Promise<Map<number,
     }
     if (rows.length < 1000) break;
     page += 1;
-    if (page > TOPE_PAGINAS) console.warn(`[fetchArticulosCatalogo] corte de seguridad en la página ${TOPE_PAGINAS}, total=${map.size}`);
+    if (page > TOPE_PAGINAS) throw new Error(`Catálogo incompleto: supera ${TOPE_PAGINAS} páginas.`);
   }
-  _articulosCache = { map, fetchedAt: Date.now() };
   return map;
 }
 
-export function invalidateArticulosCatalogo(): void { _articulosCache = null; }
+export function invalidateArticulosCatalogo(): void { lecturasCatalogo.invalidar(); }
 
 /**
  * Códigos de artículo que existen en UN depósito. Cacheado 1h, igual que el catálogo.
@@ -453,11 +438,12 @@ export async function fetchArticulosDeDeposito(codDeposito: number): Promise<Set
  * TTL corto: a diferencia del catálogo, esto cambia con cada venta.
  */
 const STOCK_TTL_MS = 10 * 60 * 1000;
-const _stockCache = new Map<number, { stock: Map<number, number>; fetchedAt: number }>();
 
-export async function fetchStockPorDeposito(codDeposito: number, force = false): Promise<Map<number, number>> {
-  const hit = _stockCache.get(codDeposito);
-  if (!force && hit && Date.now() - hit.fetchedAt < STOCK_TTL_MS) return hit.stock;
+
+const lecturasStock = new LecturasCompartidas<Map<number, number>>(STOCK_TTL_MS);
+export function fetchStockPorDeposito(codDeposito: number, force = false) { return lecturasStock.obtener(String(codDeposito), () => leerStockPorDeposito(codDeposito), { actualizar: force }); }
+export function invalidarIM() { invalidarCacheVentas(); invalidarCacheItems(); lecturasStock.invalidar(); lecturasSaldos.invalidar(); invalidarCacheNumeracion(); }
+async function leerStockPorDeposito(codDeposito: number): Promise<Map<number, number>> {
   const cli = await imClient();
   const { data } = await imGetRetry(
     () => cli.get(`/depositos/stock_por_deposito/${codDeposito}`), `stock_por_deposito/${codDeposito}`);
@@ -468,7 +454,6 @@ export async function fetchStockPorDeposito(codDeposito: number, force = false):
     const q = Number(r.stock ?? r.existencia ?? r.cantidad);
     if (Number.isFinite(c) && Number.isFinite(q)) stock.set(c, q);
   }
-  _stockCache.set(codDeposito, { stock, fetchedAt: Date.now() });
   return stock;
 }
 
@@ -532,7 +517,7 @@ export async function crearRecibo(input: CrearReciboInput): Promise<{ ok: true; 
     // resultado es DESCONOCIDO — el recibo pudo haberse creado igual del lado
     // de IM (incidente HASAN 18/07/2026). Distinto de un rechazo real (4xx con
     // body de validaciones). El caller decide el mensaje según este flag.
-    return { ok: false, error: `HTTP ${status ?? '?'}: ${err?.message ?? 'unknown'}`, raw, sinRespuesta: !err?.response };
+    return { ok: false, error: `HTTP ${status ?? '?'}: ${err?.message ?? 'unknown'}`, raw, sinRespuesta: !(status === 401 || status === 403 || raw?.isCreated === false) };
   }
 }
 
@@ -940,8 +925,8 @@ export async function crearPresupuesto(input: CrearPresupuestoInput): Promise<Pr
       console.error(`[crearPresupuesto] isCreated=false: IM devolvió el presupuesto existente nº ${num} en vez de crear uno (cod_compatibilidad ${payload.cod_compatibilidad} repetido)`);
       return { ok: false, error: `InfoManager no creó el presupuesto: devolvió el nº ${num}, que ya existía (código de compatibilidad ${payload.cod_compatibilidad} repetido).`, raw: data };
     }
-    if (data?.isCreated === true || venta?.id) {
-      const id = String(venta?.id ?? data?.id ?? '');
+    if ((data?.isCreated === true || venta?.id) && idIM(venta?.id ?? data?.id)) {
+      const id = idIM(venta?.id ?? data?.id)!;
       const numero = venta?.numero ?? data?.numero ?? null;
       console.log(`[crearPresupuesto] OK · id=${id} numero=${numero}`);
       return { ok: true, id, numero, raw: data };
@@ -949,7 +934,7 @@ export async function crearPresupuesto(input: CrearPresupuestoInput): Promise<Pr
     // 200 pero sin isCreated → error de negocio en el body
     const msg = data?.mensaje || data?.detalles || 'IM no confirmó la creación (sin isCreated)';
     console.error('[crearPresupuesto] 200 sin isCreated:', JSON.stringify(data).slice(0, 400));
-    return { ok: false, error: typeof msg === 'string' ? msg : JSON.stringify(msg), raw: data };
+    return { ok: false, error: typeof msg === 'string' ? msg : JSON.stringify(msg), raw: data, sinRespuesta: true };
   } catch (err: any) {
     const raw = err?.response?.data;
     const status = err?.response?.status;
@@ -959,7 +944,7 @@ export async function crearPresupuesto(input: CrearPresupuestoInput): Promise<Pr
     const detalle = raw?.errores
       ? raw.errores.map((e: any) => `${e.campo}: ${(e.mensajes || []).join(', ')}`).join(' · ')
       : (raw?.detalles ? JSON.stringify(raw.detalles).slice(0, 300) : (raw?.mensaje || err?.message || 'unknown'));
-    return { ok: false, error: `HTTP ${status ?? '?'}: ${detalle}`, raw, sinRespuesta: !err?.response };
+    return { ok: false, error: `HTTP ${status ?? '?'}: ${detalle}`, raw, sinRespuesta: !(status === 401 || status === 403 || raw?.isCreated === false) };
   }
 }
 
@@ -991,25 +976,14 @@ export async function anularComprobante(input: {
   try {
     const cli = await imClient();
     const { data } = await cli.put(`/ventas/${input.id}`, body);
-    // 🪤 Era la única escritura del archivo que daba por buena la respuesta sin mirar el
-    // body, contra la trampa que está documentada tres funciones más arriba: IM contesta 200
-    // IGUAL con el error adentro. Importa porque editarPedido anula y DESPUÉS crea el
-    // reemplazo: si la anulación fallaba en silencio quedaban DOS presupuestos vivos del
-    // mismo pedido.
-    if (data?.error != null && Number(data.error) !== 0) {
-      return { ok: false, error: String(data.detalles ?? data.mensaje ?? 'IM rechazó la anulación'), raw: data };
-    }
-    if (data?.mensaje && !data?.isUpdated && !data?.venta && !data?.id) {
-      return { ok: false, error: String(data.detalles ?? data.mensaje), raw: data };
-    }
-    return { ok: true, raw: data };
+    return interpretarActualizacionIM(data);
   } catch (err: any) {
     const raw = err?.response?.data;
     const status = err?.response?.status;
     // Token vencido: los GET lo invalidan solos (imGetRetry), las escrituras no. Sin esto el
     // proximo intento sale con la misma credencial muerta y vuelve a fallar igual.
     if (status === 401) invalidateImToken();
-    return { ok: false, error: `HTTP ${status ?? '?'}: ${raw?.detalles ?? raw?.mensaje ?? err?.message ?? 'unknown'}`, raw, sinRespuesta: !err?.response };
+    return { ok: false, error: `HTTP ${status ?? '?'}: ${raw?.detalles ?? raw?.mensaje ?? err?.message ?? 'unknown'}`, raw, sinRespuesta: !(status === 401 || status === 403 || raw?.isCreated === false) };
   }
 }
 
@@ -1121,14 +1095,7 @@ export async function actualizarCabecera(input: {
   try {
     const cli = await imClient();
     const { data } = await cli.put(`/ventas/${input.id}`, body);
-    // La regla de oro: 200 con el error adentro.
-    if (data?.error != null && Number(data.error) !== 0) {
-      return { ok: false, error: String(data.detalles ?? data.mensaje ?? 'IM rechazó el cambio'), raw: data };
-    }
-    if (data?.mensaje && !data?.isUpdated && !data?.venta && !data?.id && !/correctamente/i.test(String(data.mensaje))) {
-      return { ok: false, error: String(data.detalles ?? data.mensaje), raw: data };
-    }
-    return { ok: true, raw: data };
+    return interpretarActualizacionIM(data);
   } catch (err: any) {
     const status = err?.response?.status;
     if (status === 401) invalidateImToken();
@@ -1142,6 +1109,7 @@ export interface PrecioLista {
   descripcion: string;
   precio_vta: number;
   iva: number;
+  iva_verificada?: number | null;
   precio_con_iva: number;
   cod_rubro?: number;
   rubro?: string;
@@ -1170,6 +1138,7 @@ export function parsePrecioLista(data: any, codArticulo: number): PrecioLista | 
     descripcion: String(row.descripcion ?? ''),
     precio_vta: precio,
     iva: Number(row.iva ?? 0),
+    iva_verificada: ivaExplicita(row.iva),
     precio_con_iva: Number(row.precio_con_iva ?? precio),
     cod_rubro: row.cod_rubro != null ? Number(row.cod_rubro) : undefined,
     rubro: row.rubro ?? undefined,
@@ -1190,6 +1159,8 @@ export function parsePrecioLista(data: any, codArticulo: number): PrecioLista | 
  */
 /** Lo que se sabe de la cabecera de un comprobante de IM. */
 export interface CabeceraComprobante {
+  tipo_comprobante?: string | null;
+  tipo_factura?: string | null;
   fecha: string | null;
   /** `null` = no se pudo preguntar. NO es lo mismo que "no está anulada". */
   anulada: boolean | null;
@@ -1208,18 +1179,15 @@ export interface CabeceraComprobante {
   fecha_entrega: string | null;
 }
 
-export async function cabeceraComprobante(
-  idComprobante: string | number,
-): Promise<CabeceraComprobante> {
-  try {
-    const cli = await imClient();
-    const { data } = await imGetRetry(() => cli.get(`/ventas/${idComprobante}`), `ventas/${idComprobante} cabecera`);
+export function parsearCabeceraComprobante(data: any): CabeceraComprobante {
     const c = data?.results ?? data?.venta ?? data ?? {};
     const f = c.fecha;
     const a = c.anulada;
     const o = c.observaciones;
     const num = (v: unknown) => (v == null || v === '' ? null : Number(v));
     return {
+      tipo_comprobante: c.tipo_comprobante == null ? null : String(c.tipo_comprobante).trim().toUpperCase(),
+      tipo_factura: c.tipo_factura == null ? null : String(c.tipo_factura).trim().toUpperCase(),
       fecha: typeof f === 'string' && f.length >= 10 ? f.slice(0, 10) : null,
       anulada: a == null ? null : String(a).trim().toUpperCase() === 'S',
       existe: true,
@@ -1241,6 +1209,15 @@ export async function cabeceraComprobante(
       tipo_presupuesto: c.tipo_presupuesto != null ? String(c.tipo_presupuesto) : null,
       fecha_entrega: typeof c.fecha_entrega === 'string' && c.fecha_entrega.length >= 10 ? c.fecha_entrega.slice(0, 10) : null,
     };
+}
+
+export async function cabeceraComprobante(
+  idComprobante: string | number,
+): Promise<CabeceraComprobante> {
+  try {
+    const cli = await imClient();
+    const { data } = await imGetRetry(() => cli.get(`/ventas/${idComprobante}`), `ventas/${idComprobante} cabecera`);
+    return parsearCabeceraComprobante(data);
   } catch (err: any) {
     // 🔑 EL COMPROBANTE YA NO ESTÁ EN IM. No es lo mismo que "no pude preguntar": los anulados
     // se borran a mano seguido, así que un pedido puede quedar apuntando a un id muerto.
@@ -1386,14 +1363,13 @@ export interface ItemComprobante {
   precio_orig: number;
   descuento_porc: number;
   iva_por: number;
+  iva_verificada?: number | null;
   /** El texto del renglón. En los que no tienen artículo es lo único que dice qué son. */
   detalle: string | null;
 }
 
-export async function getItemsComprobante(idComprobante: string | number): Promise<ItemComprobante[]> {
-  const cli = await imClient();
-  const { data } = await imGetRetry(() => cli.get(`/ventas/${idComprobante}`), `ventas/${idComprobante}`);
-  const items: any[] = data?.items ?? data?.results?.items ?? [];
+export function parsearItemsComprobante(data: any): ItemComprobante[] {
+  const items: any[] = data?.items ?? data?.results?.items ?? data?.venta?.items ?? [];
   return items.map((it) => ({
     id: Number(it.id),
     cod_articulo: Number(it.cod_articulo) || 0,
@@ -1404,8 +1380,20 @@ export async function getItemsComprobante(idComprobante: string | number): Promi
     precio_orig: Number(it.precio_orig ?? 0) || Number(it.precio ?? 0) || 0,
     descuento_porc: Number(it.descuento_porc ?? 0) || 0,
     iva_por: Number(it.iva_por ?? 0) || 0,
+    iva_verificada: ivaExplicita(it.iva_por),
     detalle: typeof it.detalle === 'string' && it.detalle.trim() ? it.detalle.trim() : null,
   }));
+}
+export async function leerComprobante(id: string | number) {
+  const cli = await imClient();
+  const { data } = await imGetRetry(() => cli.get(`/ventas/${id}`), `ventas/${id} completo`);
+  return { cabecera: parsearCabeceraComprobante(data), items: parsearItemsComprobante(data) };
+}
+
+export async function getItemsComprobante(idComprobante: string | number): Promise<ItemComprobante[]> {
+  const cli = await imClient();
+  const { data } = await imGetRetry(() => cli.get(`/ventas/${idComprobante}`), `ventas/${idComprobante}`);
+  return parsearItemsComprobante(data);
 }
 
 /** ¿El presupuesto ya se facturó? 404 = no tiene factura vinculada (no es un error). */
@@ -1464,11 +1452,7 @@ export async function actualizarPresupuestoCantidades(
   const cli = await imClient();
   try {
     const { data } = await cli.put(`/presupuestos/${idPresupuesto}`, { items });
-    // IM devuelve 200 igual con error de negocio en el body (mismo patrón que el resto).
-    if (data?.error != null && Number(data.error) !== 0) {
-      return { ok: false, error: String(data.detalles ?? data.mensaje ?? 'IM rechazó la actualización'), raw: data };
-    }
-    return { ok: true, raw: data };
+    return interpretarActualizacionIM(data);
   } catch (err: any) {
     return { ok: false, error: err?.message ?? 'sin respuesta de IM', raw: err?.response?.data };
   }
@@ -1616,7 +1600,10 @@ const TAG_PENDIENTES = process.env.IM_TAG_PENDIENTES || 'N';
  * 🪤 `tag` es obligatorio y NO es el 'S' de los comprobantes: con 'S' devuelve la lista VACÍA y
  * con cualquier otro valor devuelve los datos. Va 'N', que es el que se probó.
  */
-export async function comprobantesPendientesCliente(
+const lecturasSaldos = new LecturasCompartidas<ComprobantePendiente[]>(0);
+export function comprobantesPendientesCliente(codCliente: number, codEmpresa = 1) { return lecturasSaldos.obtener(`${codEmpresa}|${codCliente}`, () => leerPendientesCliente(codCliente, codEmpresa), { cachear: false }); }
+
+async function leerPendientesCliente(
   codCliente: number, codEmpresa = 1,
 ): Promise<ComprobantePendiente[]> {
   const cli = await imClient();
@@ -1626,15 +1613,7 @@ export async function comprobantesPendientesCliente(
     }),
     `comprob_pendientes_clientes ${codCliente}`,
   );
-  const filas = data?.results ?? data?.comprobantes ?? (Array.isArray(data) ? data : []);
-  return (filas as any[]).map(f => ({
-    id: String(f.id),
-    tipo_comprobante: String(f.tipo_comprobante ?? '').trim(),
-    saldo: Number(f.saldo ?? 0),
-    numero: f.numero != null ? String(f.numero) : null,
-    punto_de_venta: f.punto_de_venta != null ? String(f.punto_de_venta) : null,
-    fecha: typeof f.fecha_factura === 'string' ? f.fecha_factura.slice(0, 10) : null,
-  }));
+  return parsearPendientesCliente(data);
 }
 
 export async function getDisponibleCliente(codCliente: number): Promise<DisponibleCliente | null> {

@@ -1,3 +1,4 @@
+import { respuestaReparto } from './test-helpers/repartoRpc.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
@@ -22,6 +23,9 @@ vi.mock('./infomanager.js', () => ({
   comprobantesPendientesCliente: m.comprobantesPendientesCliente,
   fechaArgentina: () => '2026-09-07',
 }));
+vi.mock('./repartoDatos.js', async original => ({ ...(await original<any>()),
+  verificarEntregas: async (filas: any[]) => filas.map(p => ({ ...p, cod_empresa: 1, tipo: 'RE', tipo_comprobante: 'RE', datos_consultados_at: '2026-09-11', fecha: p.fecha ?? '2026-09-08' })),
+}));
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
 
 const { crearHoja, asignarPedidos, listarCamiones } = await import('./hojasRuta.js');
@@ -31,6 +35,7 @@ let insertados: Array<[string, any]> = [];
 
 function fakeSb() {
   m.sbMock.mockImplementation(() => ({
+    rpc: respuestaReparto(() => tablas, (tabla, op, valor, filtros) => { insertados.push([tabla, valor]); }),
     from: (t: string) => {
       const res = tablas[t] ?? { data: null, error: null };
       const q: any = {
@@ -40,7 +45,7 @@ function fakeSb() {
         upsert: (v: any) => { insertados.push([t, v]); return q; },
         delete: () => q,
       };
-      for (const k of ['select', 'eq', 'in', 'order', 'limit', 'not', 'or']) q[k] = () => q;
+      for (const k of ['range', 'or', 'select', 'eq', 'in', 'order', 'limit', 'not', 'or']) q[k] = () => q;
       return q;
     },
   }));
@@ -48,7 +53,7 @@ function fakeSb() {
 
 function llamar(fn: any, { rol = 'administrativo', params = {}, body = {}, query = {} } = {}) {
   let status = 200; let out: any;
-  const req: any = { user: { rol, sub: 'u1' }, params, body, query };
+  const req: any = { user: { rol, sub: 'u1' }, params, body: { version_esperada:1, ...body }, query: { version_esperada:1, ...query } };
   const res: any = { status: (s: number) => { status = s; return res; }, json: (b: any) => { out = b; } };
   return fn(req, res).then(() => ({ status, body: out }));
 }
@@ -102,7 +107,7 @@ describe('asignar pedidos a una hoja', () => {
     expect(insertados).toHaveLength(0);   // no se tocó nada
   });
 
-  it('🔴 guarda el SALDO del cliente como snapshot', async () => {
+  it('🔴 sin factura identificada no calcula saldo anterior por aproximación', async () => {
     // Es justo el dato que hoy escriben a mano en la hoja impresa.
     tablas['hojas_ruta'] = { data: { id: 'h1', numero: 3395, estado: 'abierta' }, error: null };
     tablas['hojas_ruta_pedidos'] = { data: [], error: null };
@@ -111,7 +116,7 @@ describe('asignar pedidos a una hoja', () => {
 
     expect(r.status).toBe(200);
     const fila = insertados.find(([t]) => t === 'hojas_ruta_pedidos')![1][0];
-    expect(fila.saldo_anterior).toBe(12345.67);
+    expect(fila.saldo_anterior).toBeNull();
     expect(fila.kg).toBe(250);
     expect(fila.im_comprobante_id).toBe('58700637');
   });

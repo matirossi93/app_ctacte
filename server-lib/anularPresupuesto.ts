@@ -1,3 +1,5 @@
+import { bloquearPresupuesto, desbloquearPresupuesto, invalidarAprobacion, exigirTipoEmpresa, rechazoEdicionConfirmado } from './versionPresupuesto.js';
+import { invalidarIM } from './infomanager.js';
 /**
  * ANULAR UN PRESUPUESTO DESDE EL PANEL.
  *
@@ -30,15 +32,18 @@ export async function anularPresupuesto(req: Request & { user?: JwtPayload }, re
   if (!/^\d+$/.test(id)) { res.status(400).json({ error: 'Falta el pedido.' }); return; }
   const motivo = String(req.body?.motivo ?? '').trim().slice(0, 150);
 
+  let token: string | null = null; let conocido = true;
   try {
+    token = await bloquearPresupuesto(id, 'anular');
     /**
      * 🔴 LO PRIMERO: que no esté facturado. Anular el presupuesto de una factura emitida deja la
      * factura sin el pedido que la explica, y el panel lo vuelve a ofrecer para facturar.
      */
-    const { data: emitido } = await sb().from('presupuestos_facturados')
-      .select('im_factura_numero, im_factura_id, im_remito_numero')
+    const { data: emitido, error: errEmitido } = await sb().from('presupuestos_facturados')
+      .select('im_factura_numero, im_factura_id, im_remito_numero,estado_emision')
       .eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id).maybeSingle();
-    if ((emitido as any)?.im_factura_id) {
+    if (errEmitido) throw new Error(errEmitido.message);
+    if ((emitido as any)?.im_factura_id || emitido?.estado_emision) {
       res.status(409).json({
         error: `Ese pedido ya está facturado (FA ${(emitido as any).im_factura_numero ?? ''}). Para deshacerlo hay que anular la factura en InfoManager, o corregirla con una nota de crédito.`,
       });
@@ -51,6 +56,10 @@ export async function anularPresupuesto(req: Request & { user?: JwtPayload }, re
     if (cab.existe !== true) { res.status(502).json({ error: 'No pude verificar el pedido en InfoManager. Probá de nuevo en un rato.' }); return; }
     if (cab.anulada === true) { res.status(409).json({ error: 'Ese pedido ya está anulado en InfoManager.' }); return; }
 
+    if (cab.anulada !== false) { res.status(502).json({ error: 'No pude verificar si el presupuesto sigue vigente. No se anuló.' }); return; }
+    exigirTipoEmpresa(cab, 'PR');
+    await invalidarAprobacion(id);
+    conocido = false;
     const r = await anularComprobante({
       id,
       numero: Number(cab.numero) || 0,
@@ -59,6 +68,7 @@ export async function anularPresupuesto(req: Request & { user?: JwtPayload }, re
       tipo_comprobante: 'PR',
       observaciones: (motivo ? `ANULADO: ${motivo}` : 'Anulado desde el panel de oficina').slice(0, 500),
     });
+    conocido = r.ok || rechazoEdicionConfirmado(r);
     if (!r.ok) {
       console.error(`[anularPresupuesto] PR ${cab.numero}: ${r.error}`);
       res.status(502).json({ error: `InfoManager no lo anuló: ${r.error}` });
@@ -70,6 +80,9 @@ export async function anularPresupuesto(req: Request & { user?: JwtPayload }, re
     res.json({ ok: true, numero: cab.numero ?? null });
   } catch (err: any) {
     console.error('[anularPresupuesto]', err?.message);
-    res.status(502).json({ error: `No se pudo anular: ${err?.message ?? 'sin respuesta de InfoManager'}` });
+    res.status(err.status ?? 502).json({ error: `No se pudo anular: ${err?.message ?? 'sin respuesta de InfoManager'}` });
+  } finally {
+    if (token && conocido) await desbloquearPresupuesto(id, token);
+    invalidarIM(); invalidarVista(); invalidarRemitos();
   }
 }

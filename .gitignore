@@ -38,3 +38,6 @@ tokens.json
 tests/screenshots/
 tests/playwright-report/
 test-results/
+
+# Evidencia local del circuito de reparto
+tests/artifacts-reparto/

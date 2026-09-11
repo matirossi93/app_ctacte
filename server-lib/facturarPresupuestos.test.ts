@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.hoisted(() => { process.env.INFOMANAGER_CLIENT_SECRET = 'test-secret'; });
 
 const m = vi.hoisted(() => ({
-  fetchVentas: vi.fn(async () => [] as any[]),
+  fetchVentas: vi.fn(async (..._args: any[]) => [] as any[]),
   sbMock: vi.fn(),
   vistaDeRango: vi.fn(),
   cabeceraComprobante: vi.fn(),
@@ -22,10 +22,12 @@ const m = vi.hoisted(() => ({
   desconfirmarPresupuesto: vi.fn(),
   emitirFactura: vi.fn(),
   emitirRemito: vi.fn(),
+  emitirRemitoMasivo: vi.fn(),
+  rpc: vi.fn(),
   proximoNumeroFactura: vi.fn(),
 }));
 
-vi.mock('./infomanager.js', () => ({
+vi.mock('./infomanager.js', () => { const fuente = {
   // El cache de /ventas se limpia junto con las vistas (10/09/2026).
   invalidarCacheVentas: vi.fn(),
   invalidarCacheItems: vi.fn(),
@@ -37,7 +39,7 @@ vi.mock('./infomanager.js', () => ({
   fetchStockPorDeposito: vi.fn(async () => new Map()),
   // Se pide con los códigos de lo que se factura: un cliente nuevo no está cacheado.
   fetchClientesIMCon: m.fetchClientesIMCached,
-  cabeceraComprobante: m.cabeceraComprobante,
+  cabeceraComprobante: async (id: string) => ({ tipo_comprobante: String(id).startsWith('f') ? 'FA' : 'PR', cod_cliente:1093,cod_empresa:1, ...(await m.cabeceraComprobante(id)) }),
   /**
    * Va contra el mismo mock de cabecera, así cada test decide qué comprobante sigue vigente
    * simplemente contestando `anulada` / `existe` desde `cabeceraComprobante`.
@@ -52,17 +54,20 @@ vi.mock('./infomanager.js', () => ({
   },
   desconfirmarPresupuesto: m.desconfirmarPresupuesto,
   fechaArgentina: () => '2026-09-08',
-}));
+}; return { ...fuente, invalidarIM: vi.fn(), leerComprobante: async (id: string) => ({ cabecera: await (fuente as any).cabeceraComprobante(id), items: await (fuente as any).getItemsComprobante(id) }) }; });
 // `letraDeFactura` va de VERDAD: es la regla fiscal.
 vi.mock('./facturarIM.js', async (original) => ({
   ...(await original<any>()),
   emitirFactura: m.emitirFactura,
   emitirRemito: m.emitirRemito,
+  emitirRemitoMasivo: m.emitirRemitoMasivo,
   proximoNumeroFactura: m.proximoNumeroFactura,
 }));
 vi.mock('./pedidos.js', () => ({ usuarioIM: vi.fn(async () => 'jorgelina') }));
 vi.mock('./vistaPresupuestos.js', () => ({ vistaDeRango: m.vistaDeRango, invalidarVista: vi.fn() }));
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
+
+vi.mock('./versionPresupuesto.js', async original => ({ ...(await original<any>()), exigirHuella: vi.fn() }));
 
 const { facturarSeleccion, previsualizarFacturacion, tableroFacturacion, liberarReclamo, prepararFacturacion, articulosSinStockDelError } = await import('./facturarPresupuestos.js');
 
@@ -75,6 +80,7 @@ let errorAlReclamar: any = null;
 
 function fakeSb() {
   m.sbMock.mockImplementation(() => ({
+    rpc: m.rpc,
     from: (t: string) => {
       const res = tablas[t] ?? { data: null, error: null };
       const q: any = {
@@ -94,7 +100,7 @@ function fakeSb() {
             ? { ...q, then: (r: any, j: any) => Promise.resolve({ data: null, error: errorAlReclamar }).then(r, j) }
             : q;
         },
-        update: (v: any) => { escrituras.push({ tabla: t, op: 'update', valor: v }); return q; },
+        update: (v: any) => { escrituras.push({ tabla: t, op: 'update', valor: v }); const w: any = { ...q, select: () => Promise.resolve({ data: errorAlEscribir ? null : [{im_comprobante_id:'10'}], error: errorAlEscribir }) }; for (const k of ['eq','is','in']) w[k]=()=>w; return w; },
         delete: () => { escrituras.push({ tabla: t, op: 'delete', valor: null }); return q; },
       };
       for (const k of ['select', 'eq', 'in', 'order', 'limit', 'is', 'not', 'or']) q[k] = () => q;
@@ -133,6 +139,7 @@ beforeEach(() => {
   tablas = {}; escrituras = []; errorAlEscribir = null; errorAlReclamar = null;
   vi.clearAllMocks();
   fakeSb();
+  m.rpc.mockResolvedValue({data:true,error:null});
   m.vistaDeRango.mockResolvedValue({ ...VISTA_BASE, pendientes: [presu()] });
   m.fetchClientesIMCached.mockResolvedValue([
     { cod_cliente: 1093, categoria_iva: 'CF' },
@@ -150,6 +157,7 @@ beforeEach(() => {
   m.emitirFactura.mockResolvedValue({ ok: true, id: 'f1', numero: 50360, tipo: 'FA B' });
   m.emitirRemito.mockResolvedValue({ ok: true, id: 'r1', numero: 77291, tipo: 'RE' });
   m.desconfirmarPresupuesto.mockResolvedValue({ ok: true });
+  tablas['presupuestos_revision'] = {data:{estado:'aprobado',huella:'fixture'},error:null};
   tablas['presupuestos_facturados'] = { data: [], error: null };
 });
 
@@ -272,7 +280,7 @@ describe('no emitir dos veces lo mismo', () => {
     // El caso real: la factura salió y el remito falló. Reintentar emitiendo las dos le factura
     // dos veces al cliente y consume otro número fiscal.
     tablas['presupuestos_facturados'] = {
-      data: [{ im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null }],
+      data: [{ estado_emision:'remito_pendiente', im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null }],
       error: null,
     };
     const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
@@ -283,7 +291,7 @@ describe('no emitir dos veces lo mismo', () => {
 
   it('🔴 lo ya facturado del todo no se vuelve a tocar', async () => {
     tablas['presupuestos_facturados'] = {
-      data: [{ im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, im_remito_id: 'r1', facturado_at: '2026-09-08T12:00:00Z' }],
+      data: [{ estado_emision:'remito_pendiente', im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, im_remito_id: 'r1', facturado_at: '2026-09-08T12:00:00Z' }],
       error: null,
     };
     const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
@@ -295,7 +303,7 @@ describe('no emitir dos veces lo mismo', () => {
   it('🔴 la factura se guarda apenas se emite, antes de intentar el remito', async () => {
     m.emitirRemito.mockResolvedValue({ ok: false, error: 'IM rechazó el remito' });
     const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
-    const guardadas = escrituras.filter(e => e.tabla === 'presupuestos_facturados' && e.op === 'upsert');
+    const guardadas = escrituras.filter(e => e.tabla === 'presupuestos_facturados' && e.op === 'update');
     expect(guardadas[0].valor).toMatchObject({ im_factura_id: 'f1', im_factura_numero: 50360 });
     expect(guardadas.some(g => g.valor.facturado_at)).toBe(false);   // sin remito no está facturado
     expect(r.body.fallados[0]).toMatch(/remito/i);
@@ -321,7 +329,7 @@ describe('no emitir dos veces lo mismo', () => {
     m.fetchVentasItems.mockImplementation(async (d: string) => (d === '2026-09-04' ? [RENGLON] : []));
     const r = await llamar(facturarSeleccion, { body: { ids: ['10'], desde: '2026-09-01', hasta: '2026-09-08' } });
     expect(r.body.fallados).toHaveLength(0);
-    expect(m.fetchVentasItems).toHaveBeenCalledWith('2026-09-04', '2026-09-04');
+    expect(m.fetchVentasItems).toHaveBeenCalledWith('2026-09-04', '2026-09-04', {sinCache:true});
   });
 });
 
@@ -338,7 +346,7 @@ describe('el tablero de la etapa 2', () => {
 
   it('🔴 separa lo que sólo espera el remito', async () => {
     tablas['presupuestos_facturados'] = {
-      data: [{ im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null }],
+      data: [{ estado_emision:'remito_pendiente', im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null }],
       error: null,
     };
     const r = await llamar(tableroFacturacion, { method: 'GET', query: {} });
@@ -384,26 +392,10 @@ describe('cuando la base no contesta', () => {
   });
 
   it('🔴 y tampoco sigue si falla el registro del remito', async () => {
-    tablas['presupuestos_facturados'] = { data: [], error: null };
+    tablas['presupuestos_revision'] = {data:{estado:'aprobado',huella:'fixture'},error:null};
+  tablas['presupuestos_facturados'] = { data: [], error: null };
     errorAlEscribir = null;
-    let upserts = 0;
-    m.sbMock.mockImplementation(() => ({
-      from: () => {
-        const q: any = {
-          then: (r: any, j: any) => Promise.resolve({ data: [], error: null }).then(r, j),
-          maybeSingle: () => Promise.resolve({ data: null, error: null }),
-          insert: () => q,                     // el reclamo entra bien
-          delete: () => q,
-          upsert: () => {
-            upserts += 1;   // el primero (factura) pasa; el segundo (remito) falla
-            const res = upserts >= 2 ? { data: null, error: { message: 'boom' } } : { data: null, error: null };
-            return { ...q, then: (r: any, j: any) => Promise.resolve(res).then(r, j) };
-          },
-        };
-        for (const k of ['select', 'eq', 'in', 'order', 'limit', 'is', 'not', 'or']) q[k] = () => q;
-        return q;
-      },
-    }));
+    m.emitirRemito.mockImplementationOnce(async () => { errorAlEscribir={message:'boom'}; return {ok:true,id:'r1',numero:77291,tipo:'RE'}; });
 
     const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
 
@@ -479,17 +471,17 @@ describe('reclamos que quedaron a medias', () => {
 
   it('🔴 el reintento de SÓLO REMITO también reclama: dos remitos descuentan stock dos veces', async () => {
     tablas['presupuestos_facturados'] = {
-      data: [{ im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null, reclamado_at: new Date().toISOString() }],
+      data: [{ estado_emision:'remito_emitiendo', im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null, reclamado_at: new Date().toISOString() }],
       error: null,
     };
     const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
     expect(m.emitirRemito).not.toHaveBeenCalled();
-    expect(r.body.fallados[0]).toMatch(/remito.*alguien más/i);
+    expect(r.body.fallados[0]).toMatch(/en curso|conciliar/i);
   });
 
   it('con el reclamo del remito ya vencido, se hace el remito', async () => {
     tablas['presupuestos_facturados'] = {
-      data: [{ im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null, reclamado_at: '2026-09-08T00:00:00Z' }],
+      data: [{ estado_emision:'remito_pendiente', im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null, reclamado_at: '2026-09-08T00:00:00Z' }],
       error: null,
     };
     const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
@@ -501,7 +493,8 @@ describe('reclamos que quedaron a medias', () => {
 
 describe('liberar un intento a medias', () => {
   it('🔴 sólo libera lo que NO tiene comprobantes registrados', async () => {
-    tablas['presupuestos_facturados'] = { data: [], error: null };   // el filtro no devolvió nada
+    tablas['presupuestos_revision'] = {data:{estado:'aprobado',huella:'fixture'},error:null};
+  tablas['presupuestos_facturados'] = { data: [], error: null };   // el filtro no devolvió nada
     const r = await llamar(liberarReclamo, { body: {} });
     expect(r.status).toBe(409);
     expect(r.body.error).toMatch(/ya tiene comprobantes/i);
@@ -531,7 +524,8 @@ describe('no facturar dos veces lo mismo', () => {
    * contra las facturas reales: mismo cliente, mismo importe.
    */
   it('🔴 un presupuesto que ya tiene factura en IM no se factura de nuevo', async () => {
-    tablas['presupuestos_facturados'] = { data: [], error: null };
+    tablas['presupuestos_revision'] = {data:{estado:'aprobado',huella:'fixture'},error:null};
+  tablas['presupuestos_facturados'] = { data: [], error: null };
     m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-08', anulada: false, existe: true, observaciones: null });
     m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 297, categoria_iva: 'CF' }]);
     m.fetchVentasItems.mockResolvedValue([{ id_comprobante: '58727292', cod_articulo: 1, cantidad: 1, precio: 155430.72 }]);
@@ -552,7 +546,8 @@ describe('no facturar dos veces lo mismo', () => {
   });
 
   it('sin factura que le calce, se factura normalmente', async () => {
-    tablas['presupuestos_facturados'] = { data: [], error: null };
+    tablas['presupuestos_revision'] = {data:{estado:'aprobado',huella:'fixture'},error:null};
+  tablas['presupuestos_facturados'] = { data: [], error: null };
     m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-08', anulada: false, existe: true, observaciones: null });
     m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 297, categoria_iva: 'CF' }]);
     m.fetchVentasItems.mockResolvedValue([{ id_comprobante: '58727292', cod_articulo: 1, cantidad: 1, precio: 155430.72 }]);
@@ -570,7 +565,8 @@ describe('no facturar dos veces lo mismo', () => {
   });
 
   it('🪤 una factura ANULADA no cuenta: ésa justamente hay que rehacerla', async () => {
-    tablas['presupuestos_facturados'] = { data: [], error: null };
+    tablas['presupuestos_revision'] = {data:{estado:'aprobado',huella:'fixture'},error:null};
+  tablas['presupuestos_facturados'] = { data: [], error: null };
     m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-08', anulada: false, existe: true, observaciones: null });
     m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 297, categoria_iva: 'CF' }]);
     m.fetchVentasItems.mockResolvedValue([{ id_comprobante: '58727292', cod_articulo: 1, cantidad: 1, precio: 155430.72 }]);
@@ -597,7 +593,8 @@ describe('el descuento no se puede aplicar dos veces', () => {
    * ítems") porque `/remitos` sí valida; `/ventas` no valida y emitió mal en silencio.
    */
   it('🔴 con descuento se manda el precio BRUTO, no el neto', async () => {
-    tablas['presupuestos_facturados'] = { data: [], error: null };
+    tablas['presupuestos_revision'] = {data:{estado:'aprobado',huella:'fixture'},error:null};
+  tablas['presupuestos_facturados'] = { data: [], error: null };
     m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-09', anulada: false, existe: true, observaciones: null });
     m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 233, categoria_iva: 'CF' }]);
     m.fetchVentas.mockResolvedValue([]);
@@ -617,7 +614,8 @@ describe('el descuento no se puede aplicar dos veces', () => {
   });
 
   it('sin descuento, el precio va tal cual', async () => {
-    tablas['presupuestos_facturados'] = { data: [], error: null };
+    tablas['presupuestos_revision'] = {data:{estado:'aprobado',huella:'fixture'},error:null};
+  tablas['presupuestos_facturados'] = { data: [], error: null };
     m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-09', anulada: false, existe: true, observaciones: null });
     m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 233, categoria_iva: 'CF' }]);
     m.fetchVentas.mockResolvedValue([]);
@@ -634,7 +632,8 @@ describe('el descuento no se puede aplicar dos veces', () => {
   });
 
   it('🪤 si IM no manda `precio_orig`, se usa el neto: es mejor que mandar cero', async () => {
-    tablas['presupuestos_facturados'] = { data: [], error: null };
+    tablas['presupuestos_revision'] = {data:{estado:'aprobado',huella:'fixture'},error:null};
+  tablas['presupuestos_facturados'] = { data: [], error: null };
     m.cabeceraComprobante.mockResolvedValue({ cod_vendedor: '3', fecha: '2026-09-09', anulada: false, existe: true, observaciones: null });
     m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 233, categoria_iva: 'CF' }]);
     m.fetchVentas.mockResolvedValue([]);
@@ -707,7 +706,8 @@ describe('el remito falla por stock (09/09/2026)', () => {
  */
 describe('el vendedor de la factura es el del presupuesto', () => {
   const armar = (extra: any = {}) => {
-    tablas['presupuestos_facturados'] = { data: [], error: null };
+    tablas['presupuestos_revision'] = {data:{estado:'aprobado',huella:'fixture'},error:null};
+  tablas['presupuestos_facturados'] = { data: [], error: null };
     m.fetchClientesIMCached.mockResolvedValue([{ cod_cliente: 233, categoria_iva: 'CF' }]);
     m.fetchVentasItems.mockResolvedValue([
       // Como los devuelve IM de verdad: sin cod_vendedor en el renglón.
@@ -751,7 +751,7 @@ describe('con la factura ya emitida, el remito se arma con SUS renglones', () =>
   /** La factura ya salió: falta el remito. Es el estado en el que estaban los dos pedidos. */
   const faltaElRemito = () => {
     tablas['presupuestos_facturados'] = {
-      data: [{ im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null }],
+      data: [{ estado_emision:'remito_pendiente', im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, facturado_at: null }],
       error: null,
     };
   };
@@ -790,12 +790,12 @@ describe('con la factura ya emitida, el remito se arma con SUS renglones', () =>
 describe('lo anulado en InfoManager', () => {
   const conRegistro = (extra: any) => {
     tablas['presupuestos_facturados'] = {
-      data: [{ im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, ...extra }],
+      data: [{ estado_emision:'remito_pendiente', im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, ...extra }],
       error: null,
     };
   };
 
-  it('🔴 con la factura anulada en IM, el pedido vuelve a estar para facturar', async () => {
+  it('🔴 con la factura anulada conserva los vínculos y requiere conciliación', async () => {
     conRegistro({ im_remito_id: 'r1', im_remito_numero: 77291, facturado_at: '2026-09-08T12:00:00Z' });
     // IM dice que la factura ya no está vigente.
     m.cabeceraComprobante.mockImplementation(async (id: any) => String(id) === 'f1'
@@ -808,7 +808,8 @@ describe('lo anulado en InfoManager', () => {
       'jorgelina',
     );
     // El registro que apuntaba a una factura que ya no existe se borra.
-    expect(escrituras.some(e => e.tabla === 'presupuestos_facturados' && e.op === 'delete')).toBe(true);
+    expect(escrituras.some(e => e.tabla === 'presupuestos_facturados' && e.op === 'delete')).toBe(false);
+    expect(escrituras.some(e => e.valor?.estado_emision === 'anulado')).toBe(true);
   });
 
   /**
@@ -840,5 +841,42 @@ describe('lo anulado en InfoManager', () => {
     expect(escrituras.some(e => e.op === 'delete')).toBe(false);
     expect(filas[0].facturado_at).toBeNull();
     expect(filas[0].im_remito_id).toBeNull();
+  });
+});
+
+
+describe('regresiones de integridad remito/factura', () => {
+  it('CAS perdido no emite remito aunque el snapshot lo mostraba pendiente', async () => {
+    tablas.presupuestos_facturados={data:[{im_comprobante_id:'10',im_factura_id:'f1',im_factura_numero:50360,estado_emision:'remito_pendiente'}],error:null};
+    m.rpc.mockImplementation(async name=>({data:name!=='tomar_remito',error:null}));
+    const r=await llamar(facturarSeleccion,{body:{ids:['10']}});
+    expect(m.emitirRemito).not.toHaveBeenCalled(); expect(r.body.fallados.join(' ')).toMatch(/remito.*curso/i);
+  });
+  it('timeout de FA conserva reclamo durable', async () => {
+    m.emitirFactura.mockResolvedValueOnce({ok:false,sinRespuesta:true,error:'timeout'});
+    const r=await llamar(facturarSeleccion,{body:{ids:['10']}});
+    expect(r.body.cortado).toBeTruthy();
+    expect(escrituras.some(e=>e.op==='delete'&&e.tabla==='presupuestos_facturados')).toBe(false);
+    expect(escrituras.some(e=>e.valor?.estado_emision==='incierto')).toBe(true);
+  });
+  it('timeout masivo propaga incertidumbre y corta tanda', async () => {
+    m.emitirRemito.mockResolvedValueOnce({ok:false,sinRespuesta:false,error:'Artículos sin stock suficiente: [{"cod_articulo":661,"cantidad":1,"stock_disponible":0}]'});
+    m.emitirRemitoMasivo.mockResolvedValueOnce({ok:false,sinRespuesta:true,error:'timeout masivo'});
+    const r=await llamar(facturarSeleccion,{body:{ids:['10']}});
+    expect(m.emitirRemitoMasivo).toHaveBeenCalledTimes(1); expect(r.body.cortado).toBeTruthy();
+    expect(escrituras.some(e=>e.valor?.estado_emision==='incierto')).toBe(true);
+  });
+  it('renglones FA800 producen remito total800 aunque el presupuesto decía1000', async () => {
+    m.fetchVentasItems.mockResolvedValue([{...RENGLON,cantidad:10,precio:100}]);
+    m.getItemsComprobante.mockImplementation(async id=>[{...RENGLON,cantidad:id==='f1'?8:10,precio:100}]);
+    const r=await llamar(facturarSeleccion,{body:{ids:['10']}});
+    expect(r.body.facturados).toBe(1); expect(m.emitirRemito.mock.calls[0][0].total).toBe(800);
+    expect(m.emitirRemito.mock.calls[0][0].items[0].cantidad).toBe(8);
+  });
+  it('fallar la búsqueda de factura previa impide emitir y usa lectura fresca', async () => {
+    m.fetchVentas.mockRejectedValueOnce(new Error('no disponible'));
+    const r=await llamar(facturarSeleccion,{body:{ids:['10']}});
+    expect(r.status).toBeGreaterThanOrEqual(400); expect(m.emitirFactura).not.toHaveBeenCalled();
+    expect(m.fetchVentas.mock.calls[0][2]).toEqual({sinCache:true});
   });
 });

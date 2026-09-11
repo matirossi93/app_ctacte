@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { Activity, useState } from 'react';
 import { Truck, Store, UserCheck } from 'lucide-react';
 import { HojasRutaView } from './HojasRutaView';
 import { RetirosView } from './RetirosView';
 import { LiquidacionView } from './LiquidacionView';
+import { useReparto } from './RepartoContext';
 import './EntregasView.css';
 
 /**
@@ -23,25 +24,28 @@ import './EntregasView.css';
 type Seccion = 'hojas' | 'retiros' | 'liquidacion';
 
 export function EntregasView({ desde, hasta }: { desde: string; hasta: string }) {
+    const { ocupado, puedeNavegar } = useReparto();
     const [seccion, setSeccion] = useState<Seccion>('hojas');
 
+    const [visitadas, setVisitadas] = useState<Set<Seccion>>(new Set(['hojas']));
+    function visitar(s: Seccion) { if (!puedeNavegar()) return; setVisitadas(v => new Set(v).add(s)); setSeccion(s); }
     return (
         <div className="en-root">
             <nav className="en-subtabs">
-                <button className={seccion === 'hojas' ? 'on' : ''} onClick={() => setSeccion('hojas')}>
+                <button aria-label="Hojas de ruta" className={seccion === 'hojas' ? 'on' : ''} disabled={ocupado} onClick={() => visitar('hojas')}>
                     <Truck size={14} /> <span>Hojas de ruta</span>
                 </button>
-                <button className={seccion === 'retiros' ? 'on' : ''} onClick={() => setSeccion('retiros')}>
+                <button aria-label="Retiros en sucursal" className={seccion === 'retiros' ? 'on' : ''} disabled={ocupado} onClick={() => visitar('retiros')}>
                     <Store size={14} /> <span>Retiros en sucursal</span>
                 </button>
-                <button className={seccion === 'liquidacion' ? 'on' : ''} onClick={() => setSeccion('liquidacion')}>
+                <button aria-label="Liquidación" className={seccion === 'liquidacion' ? 'on' : ''} disabled={ocupado} onClick={() => visitar('liquidacion')}>
                     <UserCheck size={14} /> <span>Liquidación</span>
                 </button>
             </nav>
 
-            {seccion === 'hojas' && <HojasRutaView desde={desde} hasta={hasta} />}
-            {seccion === 'retiros' && <RetirosView />}
-            {seccion === 'liquidacion' && <LiquidacionView />}
+            {visitadas.has('hojas') && <Activity mode={seccion === 'hojas' ? 'visible' : 'hidden'}><HojasRutaView desde={desde} hasta={hasta} /></Activity>}
+            {visitadas.has('retiros') && <Activity mode={seccion === 'retiros' ? 'visible' : 'hidden'}><RetirosView /></Activity>}
+            {visitadas.has('liquidacion') && <Activity mode={seccion === 'liquidacion' ? 'visible' : 'hidden'}><LiquidacionView /></Activity>}
         </div>
     );
 }

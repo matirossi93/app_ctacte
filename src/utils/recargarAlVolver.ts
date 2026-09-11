@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 /**
  * Recarga la pantalla cuando el usuario VUELVE a la pestaña.
@@ -37,5 +37,5 @@ export function useRecargarAlVolver(recargar: () => void, esperaMs = 30_000) {
   }, [esperaMs]);
 
   /** Para avisar que ya se recargó por otro motivo y no repetir el viaje a IM. */
-  return () => { ultima.current = Date.now(); };
+  return useCallback(() => { ultima.current = Date.now(); }, []);
 }

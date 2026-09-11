@@ -18,6 +18,7 @@ import type { JwtPayload } from './auth.js';
 import { puedeArmarHojasDeRuta } from './permisos.js';
 import { fechaArgentina } from './infomanager.js';
 import { invalidarVista } from './vistaPresupuestos.js';
+import { leerPaginas, mutarReparto, verificarEntregas, enriquecerEntregas } from './repartoDatos.js';
 import { invalidarRemitos } from './vistaRemitos.js';
 
 /** Sólo la oficina. Devuelve true si ya contestó el 403. */
@@ -39,10 +40,11 @@ function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): bo
 export async function marcarRetiro(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
   try {
-    const entrada: any[] = Array.isArray(req.body?.pedidos) ? req.body.pedidos : [];
+    let entrada: any[] = Array.isArray(req.body?.pedidos) ? req.body.pedidos : [];
     if (!entrada.length) { res.status(400).json({ error: 'No mandaste ningún pedido.' }); return; }
     // Tope explícito: truncar la consulta de abajo dejaría pasar un pedido que ya está en una hoja.
     if (entrada.length > 300) { res.status(400).json({ error: 'Máximo 300 pedidos por vez.' }); return; }
+    entrada = await enriquecerEntregas(await verificarEntregas(entrada, req.body?.rango));
     const ids = entrada.map(p => String(p.im_comprobante_id));
     // Los ids van interpolados en un `.or()`, que no escapa como `.in()`. Los de IM son enteros.
     if (ids.some(id => !/^[0-9]+$/.test(id))) {
@@ -52,7 +54,7 @@ export async function marcarRetiro(req: Request & { user?: JwtPayload }, res: Re
     // 🪤 Si ya está en una hoja, no puede además retirarlo el cliente. Y si la consulta falla,
     // no se marca nada: quedaría en la hoja Y en retiros, o sea cargado en el camión y retirado.
     const { data: enHoja, error: errHoja } = await sb().from('hojas_ruta_pedidos')
-      .select('im_comprobante_id, im_numero, hoja_id').in('im_comprobante_id', ids);
+      .select('im_comprobante_id, im_numero, hoja_id,hojas_ruta!inner(tenant_id)').eq('hojas_ruta.tenant_id', TENANT_ID).in('im_comprobante_id', ids);
     if (errHoja) { res.status(502).json({ error: `No pude verificar si ya están en una hoja: ${errHoja.message}` }); return; }
     if ((enHoja ?? []).length) {
       res.status(409).json({
@@ -80,7 +82,8 @@ export async function marcarRetiro(req: Request & { user?: JwtPayload }, res: Re
     const filas = entrada.map((p) => {
       const e = facturado.get(String(p.im_comprobante_id));
       return {
-        tenant_id: TENANT_ID,
+        tenant_id: TENANT_ID, cod_empresa: p.cod_empresa, factura_origen: p.factura_origen, tipo_comprobante: p.tipo_comprobante, datos_consultados_at: p.datos_consultados_at,
+        peso_completo: p.peso_completo === true, renglones_sin_peso: p.renglones_sin_peso ?? null,
         im_comprobante_id: String(p.im_comprobante_id),
         im_numero: p.im_numero != null ? Number(p.im_numero) : null,
         cod_cliente: Number(p.cod_cliente),
@@ -98,13 +101,12 @@ export async function marcarRetiro(req: Request & { user?: JwtPayload }, res: Re
       };
     });
 
-    const { error } = await sb().from('retiros_sucursal').upsert(filas, { onConflict: 'tenant_id,im_comprobante_id' });
-    if (error) { res.status(500).json({ error: error.message }); return; }
+    await mutarReparto(req.user?.sub, 'retiro_marcar', { pedidos: filas });
     invalidarVista(); invalidarRemitos();
-    res.json({ ok: true, agregados: filas.length, sin_facturar: filas.filter(f => !f.im_remito_numero).length });
+    res.json({ ok: true, agregados: filas.length, sin_facturar: filas.filter(f => !f.im_factura_id && !f.im_factura_numero).length });
   } catch (err: any) {
     console.error('[marcarRetiro]', err?.message);
-    res.status(500).json({ error: err?.message ?? 'error' });
+    res.status(err.status ?? 500).json({ error: err?.message ?? 'error' });
   }
 }
 
@@ -126,9 +128,8 @@ export async function quitarRetiro(req: Request & { user?: JwtPayload }, res: Re
     res.status(409).json({ error: `El cliente ya retiró este pedido (${(fila as any).im_numero ?? id}). No se puede borrar del registro del mes.` });
     return;
   }
-  const { error } = await sb().from('retiros_sucursal')
-    .delete().eq('im_comprobante_id', id).eq('tenant_id', TENANT_ID);
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  try { await mutarReparto(req.user?.sub, 'retiro_quitar', { im_comprobante_id: id, version_esperada: req.query.version_esperada }); }
+  catch (err: any) { res.status(err.status ?? 500).json({ error: err.message }); return; }
   invalidarVista(); invalidarRemitos();
   res.json({ ok: true });
 }
@@ -137,12 +138,9 @@ export async function quitarRetiro(req: Request & { user?: JwtPayload }, res: Re
 export async function marcarRetirado(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
   const retirado = req.body?.retirado !== false;
-  const { data, error } = await sb().from('retiros_sucursal')
-    .update({ retirado_at: retirado ? new Date().toISOString() : null })
-    .eq('im_comprobante_id', String(req.params.comprobanteId)).eq('tenant_id', TENANT_ID)
-    .select().maybeSingle();
-  if (error) { res.status(500).json({ error: error.message }); return; }
-  if (!data) { res.status(404).json({ error: 'Ese pedido no está en retiros.' }); return; }
+  let data;
+  try { data = await mutarReparto(req.user?.sub, 'retiro_editar', { im_comprobante_id: String(req.params.comprobanteId), version_esperada: req.body?.version_esperada, retirado }); }
+  catch (err: any) { res.status(err.status ?? 500).json({ error: err.message }); return; }
   res.json({ ok: true, retiro: data });
 }
 
@@ -153,9 +151,8 @@ export async function listarRetiros(req: Request & { user?: JwtPayload }, res: R
     const ok = (v: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) ? String(v) : null;
     const hasta = ok(req.query.hasta) ?? fechaArgentina();
     const desde = ok(req.query.desde) ?? hasta;
-    const { data, error } = await sb().from('retiros_sucursal')
-      .select('*').eq('tenant_id', TENANT_ID).gte('fecha', desde).lte('fecha', hasta).order('fecha', { ascending: false });
-    if (error) { res.status(500).json({ error: error.message }); return; }
+    const data = await leerPaginas(() => sb().from('retiros_sucursal')
+      .select('*').eq('tenant_id', TENANT_ID).gte('fecha', desde).lte('fecha', hasta).order('fecha', { ascending: false }).order('id'));
     const filas = await conLoEmitido(data ?? []);
     res.json({
       ok: true, desde, hasta, retiros: filas,
@@ -169,7 +166,7 @@ export async function listarRetiros(req: Request & { user?: JwtPayload }, res: R
       },
     });
   } catch (err: any) {
-    res.status(500).json({ error: err?.message ?? 'error' });
+    res.status(err.status ?? 500).json({ error: err?.message ?? 'error' });
   }
 }
 
@@ -184,21 +181,7 @@ const redondear = (n: number) => Math.round(n * 100) / 100;
  * pantalla mostraba "sin facturar" sobre un pedido que ya tenía su remito. Es el mismo arreglo
  * que ya se le hizo a las hojas de ruta (`hojasRuta.ts`, auditoría del 08/09/2026).
  */
-async function conLoEmitido(filas: any[]): Promise<any[]> {
-  if (!filas.length) return filas;
-  const ids = filas.map(f => String(f.im_comprobante_id));
-  const { data: emitidos } = await sb().from('presupuestos_facturados')
-    .select('im_comprobante_id, im_factura_numero, im_remito_numero, facturado_at')
-    .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids);
-  // Si la consulta falla se devuelve el snapshot: mostrar el dato viejo es mejor que no mostrar
-  // la lista. Lo que no puede pasar es lo contrario —decir "facturado" sobre algo que no lo está—
-  // y eso no ocurre, porque sólo se pisa cuando InfoManager tiene el comprobante.
-  const vivo = new Map((emitidos ?? []).map((e: any) => [String(e.im_comprobante_id), e]));
-  return filas.map(f => {
-    const e = vivo.get(String(f.im_comprobante_id));
-    return e ? { ...f, im_factura_numero: e.im_factura_numero, im_remito_numero: e.im_remito_numero } : f;
-  });
-}
+async function conLoEmitido(filas: any[]): Promise<any[]> { return enriquecerEntregas(filas); }
 
 /**
  * GET /api/retiros/resumen?mes=YYYY-MM — el acumulado del mes, que es para lo que se guarda.
@@ -215,16 +198,15 @@ export async function resumenRetiros(req: Request & { user?: JwtPayload }, res: 
     const [a, m] = mes.split('-').map(Number);
     const hasta = `${mes}-${String(new Date(Date.UTC(a, m, 0)).getUTCDate()).padStart(2, '0')}`;
 
-    const { data, error } = await sb().from('retiros_sucursal')
-      .select('*').eq('tenant_id', TENANT_ID).gte('fecha', desde).lte('fecha', hasta);
-    if (error) { res.status(500).json({ error: error.message }); return; }
-    const filas = data ?? [];
+    const data = await leerPaginas(() => sb().from('retiros_sucursal')
+      .select('*').eq('tenant_id', TENANT_ID).gte('fecha', desde).lte('fecha', hasta).order('id'));
+    const filas = await enriquecerEntregas(data ?? []);
 
-    const porCliente = new Map<number, any>();
+    const porCliente = new Map<string, any>();
     for (const r of filas as any[]) {
-      const k = Number(r.cod_cliente);
+      const k = `${r.cod_empresa ?? "?"}|${r.cod_cliente}`;
       if (!porCliente.has(k)) {
-        porCliente.set(k, { cod_cliente: k, cliente_nombre: r.cliente_nombre, pedidos: 0, importe: 0, kg: 0, bultos: 0 });
+        porCliente.set(k, { cod_cliente: Number(r.cod_cliente), cod_empresa: r.cod_empresa, cliente_nombre: r.cliente_nombre, pedidos: 0, importe: 0, kg: 0, bultos: 0 });
       }
       const c = porCliente.get(k);
       c.pedidos += 1;
@@ -251,6 +233,6 @@ export async function resumenRetiros(req: Request & { user?: JwtPayload }, res: 
     });
   } catch (err: any) {
     console.error('[resumenRetiros]', err?.message);
-    res.status(500).json({ error: err?.message ?? 'error' });
+    res.status(err.status ?? 500).json({ error: err?.message ?? 'error' });
   }
 }

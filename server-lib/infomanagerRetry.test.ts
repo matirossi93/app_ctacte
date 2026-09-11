@@ -173,3 +173,13 @@ describe('imClient', () => {
     expect(cfg2.headers.Authorization).toBe('Bearer tok-nuevo');
   });
 });
+
+it('429 respeta Retry-After segundos y fecha HTTP, sin repetir ni esperar una hora por request',async()=>{
+  vi.setSystemTime(new Date('2026-09-11T10:00:00Z'));
+  for (const retryAfter of ['3600','Fri, 11 Sep 2026 12:00:00 GMT']) {
+    const error:any=httpError(429);error.response.headers={'retry-after':retryAfter};
+    const primera=vi.fn().mockRejectedValue(error);await expect(imGetRetry(primera,'cuota')).rejects.toBe(error);expect(primera).toHaveBeenCalledTimes(1);
+    const siguiente=vi.fn();await expect(imGetRetry(siguiente,'durante pausa')).rejects.toMatchObject({retryable:false});expect(siguiente).not.toHaveBeenCalled();expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(3600_000);
+  }
+});

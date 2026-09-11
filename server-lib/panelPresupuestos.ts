@@ -1,3 +1,6 @@
+import { itemsPorFechas } from './itemsRango.js';
+import { reglasActivas, descuentosActivos } from './pedidos.js';
+import { leerComprobante, invalidarIM, fetchClientesIMCached } from './infomanager.js';
 /**
  * ETAPA 1 DEL CIRCUITO: la revisión de los presupuestos.
  *
@@ -25,6 +28,7 @@ import {
 import { vistaDeRango, invalidarVista } from './vistaPresupuestos.js';
 import { nombreListaLargo } from './listas.js';
 import { armarFraccionado, totalesFraccionado } from './fraccionado.js';
+import { huellaPresupuesto, exigirHuella, exigirTipoEmpresa, bloquearPresupuesto, desbloquearPresupuesto, invalidarAprobacion, rechazoEdicionConfirmado, ErrorVersion } from './versionPresupuesto.js';
 import { formatosDeBolsa } from './formatosBolsa.js';
 
 /** Sólo la oficina (admin, gerente y administrativo). Devuelve true si ya contestó el 403. */
@@ -88,6 +92,7 @@ export async function listarPresupuestos(req: Request & { user?: JwtPayload }, r
       sin_stock: vista.sin_stock,
       con_cantidad_rara: vista.con_cantidad_rara,
       ya_facturados: vista.ya_facturados,
+      dias_sin_items: vista.dias_sin_items, reglas_disponibles: vista.reglas_disponibles, controles_incompletos: vista.controles_incompletos,
     });
   } catch (err: any) {
     console.error('[listarPresupuestos]', err?.message);
@@ -126,7 +131,10 @@ export async function consolidadoDelRango(req: Request & { user?: JwtPayload }, 
  */
 export async function revisarPresupuesto(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
+  const id = String(req.params.comprobanteId);
+  let token: string | null = null;
   try {
+    token = await bloquearPresupuesto(id, 'revisar');
     const estado = String(req.body?.estado ?? '').trim();
     if (!['aprobado', 'observado'].includes(estado)) {
       res.status(400).json({ error: 'El estado tiene que ser "aprobado" u "observado".' }); return;
@@ -136,12 +144,23 @@ export async function revisarPresupuesto(req: Request & { user?: JwtPayload }, r
       // Un "observado" sin motivo no le sirve a nadie: al día siguiente nadie se acuerda por qué.
       res.status(400).json({ error: 'Escribí por qué queda observado.' }); return;
     }
+    const { cabecera: cab, items } = await leerComprobante(id);
+    if (cab.existe !== true || cab.anulada !== false) throw new ErrorVersion('No pude verificar el presupuesto vigente.');
+    exigirTipoEmpresa(cab, 'PR');
+
+    const huella = huellaPresupuesto(id, cab, items);
+    if (estado === 'aprobado') {
+      exigirHuella(req.body?.huella, huella);
+      if (!items.length) throw new ErrorVersion('No se puede aprobar sin renglones verificados.');
+      const [, , stock, catalogo] = await Promise.all([reglasActivas(), descuentosActivos(), fetchStockPorDeposito(Number(process.env.PEDIDO_DEPOSITO || 1)), fetchArticulosCatalogo()]);
+      if (items.some(i => Number(i.cod_articulo) > 0 && (!stock.has(Number(i.cod_articulo)) || !catalogo.has(Number(i.cod_articulo))))) throw new ErrorVersion('Faltan datos de stock o catálogo para completar los controles. No se aprobó el presupuesto.');
+    }
     const fila = {
       tenant_id: TENANT_ID,
       im_comprobante_id: String(req.params.comprobanteId),
-      im_numero: req.body?.im_numero != null ? Number(req.body.im_numero) : null,
-      cod_cliente: req.body?.cod_cliente != null ? Number(req.body.cod_cliente) : null,
-      estado, observacion,
+      im_numero: cab.numero,
+      cod_cliente: cab.cod_cliente,
+      estado, observacion, huella,
       revisado_por: req.user?.sub ?? null,
       revisado_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -152,8 +171,8 @@ export async function revisarPresupuesto(req: Request & { user?: JwtPayload }, r
     invalidarVista();
     res.json({ ok: true, revision: fila });
   } catch (err: any) {
-    res.status(500).json({ error: err?.message ?? 'error' });
-  }
+    res.status(err instanceof ErrorVersion ? err.status : 502).json({ error: err?.message ?? 'error' });
+  } finally { if (token) await desbloquearPresupuesto(id, token); }
 }
 
 /** DELETE /api/presupuestos/:comprobanteId/revision — vuelve a "sin revisar". */
@@ -178,9 +197,8 @@ export async function detallePresupuesto(req: Request & { user?: JwtPayload }, r
   if (frenaSiNoPuede(req, res)) return;
   try {
     const id = String(req.params.comprobanteId);
-    const [cab, items, cat, stock] = await Promise.all([
-      cabeceraComprobante(id),
-      getItemsComprobante(id),
+    const [{ cabecera: cab, items }, cat, stock] = await Promise.all([
+      leerComprobante(id),
       fetchArticulosCatalogo(),
       // 🪤 `null` = no se pudo consultar, que no es "no hay stock". La pantalla no marca nada.
       fetchStockPorDeposito(Number(process.env.PEDIDO_DEPOSITO || 1)).catch(() => null),
@@ -197,10 +215,13 @@ export async function detallePresupuesto(req: Request & { user?: JwtPayload }, r
      * poder rehacer el presupuesto sin descontar dos veces (09/09/2026).
      */
 
+    const clientes = await fetchClientesIMCached().catch(() => []);
+    const cliente = clientes.find(c => Number(c.cod_cliente) === cab.cod_cliente);
     res.json({
       ok: true,
       comprobante: {
-        im_comprobante_id: id, fecha: cab.fecha, anulada: cab.anulada,
+        im_comprobante_id: id, numero: cab.numero, cod_cliente: cab.cod_cliente, cliente_nombre: cliente?.razon_social || null, fecha: cab.fecha, anulada: cab.anulada,
+        huella: huellaPresupuesto(id, cab, items),
         // Lo que escribió el vendedor: la oficina lo lee justo antes de facturar.
         observaciones: cab.observaciones,
       },
@@ -255,8 +276,11 @@ export async function detallePresupuesto(req: Request & { user?: JwtPayload }, r
  */
 export async function corregirCantidades(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
+  const id = String(req.params.comprobanteId);
+  let token: string | null = null;
+  let resultadoConocido = true;
   try {
-    const id = String(req.params.comprobanteId);
+    token = await bloquearPresupuesto(id, 'editar');
     const entrada: any[] = Array.isArray(req.body?.items) ? req.body.items : [];
     const items = entrada
       .map(i => ({ id: Number(i.id), cantidad: Number(i.cantidad) }))
@@ -270,11 +294,11 @@ export async function corregirCantidades(req: Request & { user?: JwtPayload }, r
     // arma DESPUÉS de facturar, así que durante toda esa ventana la fila de la hoja no existe y
     // el guard no frenaba nada (auditoría del 08/09/2026).
     const { data: emitido, error: errEmitido } = await sb().from('presupuestos_facturados')
-      .select('im_factura_numero, im_remito_numero, facturado_at')
+      .select('im_factura_id, im_factura_numero, im_remito_numero, facturado_at, estado_emision')
       .eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id).maybeSingle();
     // Si no se puede consultar, no se edita: "no pude preguntar" no es "no está facturado".
     if (errEmitido) { res.status(502).json({ error: `No pude verificar si ya se facturó (${errEmitido.message}).` }); return; }
-    if (emitido?.facturado_at || emitido?.im_factura_numero) {
+    if (emitido?.facturado_at || emitido?.im_factura_id || emitido?.im_factura_numero || emitido?.estado_emision) {
       res.status(409).json({
         error: `Este presupuesto ya se facturó (factura ${emitido.im_factura_numero ?? '—'}). Para cambiarlo hay que hacer una nota de crédito en InfoManager.`,
       });
@@ -286,11 +310,12 @@ export async function corregirCantidades(req: Request & { user?: JwtPayload }, r
      * presupuesto vacío se facturaría por $0 y nadie se enteraría hasta ver la factura. Sólo se
      * consulta cuando de verdad hay un cero, para no gastar una llamada a IM en el caso normal.
      */
+    const { cabecera: cab, items: itemsVivos } = await leerComprobante(id);
     const bajas = items.filter(i => i.cantidad === 0);
     if (bajas.length) {
       let actuales: Array<{ id: number; cantidad: number }>;
       try {
-        actuales = (await getItemsComprobante(id)).map((it: any) => ({ id: Number(it.id), cantidad: Number(it.cantidad) }));
+        actuales = itemsVivos.map((it: any) => ({ id: Number(it.id), cantidad: Number(it.cantidad) }));
       } catch (e: any) {
         // No poder preguntar no es "está todo bien": sin esto se vaciaría el presupuesto a ciegas.
         res.status(502).json({ error: `No pude leer los renglones del presupuesto en InfoManager (${e?.message ?? 'sin respuesta'}). No cambié nada.` });
@@ -306,25 +331,30 @@ export async function corregirCantidades(req: Request & { user?: JwtPayload }, r
       }
     }
 
+    exigirTipoEmpresa(cab, 'PR');
+    if (cab.existe !== true || cab.anulada !== false) throw new ErrorVersion('No pude verificar el presupuesto vigente.');
+    const actuales = itemsVivos;
+    exigirHuella(req.body?.huella, huellaPresupuesto(id, cab, actuales));
+    if (items.some(i => !actuales.some(a => Number(a.id) === i.id))) throw new ErrorVersion('Hay renglones de otro presupuesto.');
+    await invalidarAprobacion(id);
+    resultadoConocido = false;
     const r = await actualizarPresupuestoCantidades(id, items);
+    if (r.ok || rechazoEdicionConfirmado(r)) resultadoConocido = true;
     if (!r.ok) { res.status(502).json({ error: `InfoManager rechazó el cambio: ${r.error}` }); return; }
-
-    // 🪤 Si estaba aprobado, la aprobación era sobre OTRAS cantidades: vuelve a "sin revisar"
-    // para que alguien lo mire de nuevo antes de facturarlo.
-    const { error: errRev } = await sb().from('presupuestos_revision')
-      .delete().eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id);
-    if (errRev) console.warn('[corregirCantidades] no pude limpiar la revisión:', errRev.message);
 
     invalidarVista();
     res.json({
       ok: true,
       actualizados: items.length,
       dados_de_baja: items.filter(i => i.cantidad === 0).length,
-      revision_reiniciada: !errRev,
+      revision_reiniciada: true,
     });
   } catch (err: any) {
     console.error('[corregirCantidades]', err?.message);
-    res.status(500).json({ error: err?.message ?? 'error' });
+    res.status(err instanceof ErrorVersion ? err.status : 502).json({ error: err?.message ?? 'error' });
+  } finally {
+    if (token && resultadoConocido) await desbloquearPresupuesto(id, token);
+    invalidarIM(); invalidarVista();
   }
 }
 
@@ -353,23 +383,16 @@ export async function fraccionadoDelRango(req: Request & { user?: JwtPayload }, 
     // Los renglones, por los días que de verdad tienen pedidos elegidos.
     const cat = await fetchArticulosCatalogo();
     const dias = [...new Set(elegidos.map((p: any) => String(p.fecha ?? hasta).slice(0, 10)))].sort();
-    const renglones: Array<{ cod_articulo: number; cantidad: number }> = [];
-    for (let i = 0; i < dias.length; i += 4) {
-      const tandas = await Promise.all(dias.slice(i, i + 4).map(f => fetchVentasItems(f, f).catch(() => [] as any[])));
-      for (const items of tandas) {
-        for (const it of items) {
-          if (!ids.has(String((it as any).id_comprobante))) continue;
-          renglones.push({ cod_articulo: Number((it as any).cod_articulo), cantidad: Number((it as any).cantidad) });
-        }
-      }
-    }
-
+    const detalle = await itemsPorFechas(dias, req.query.refrescar === '1');
+    const renglones = detalle.items.filter(it => ids.has(String(it.id_comprobante))).map(it => ({ cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad) }));
+    const sinItems = [...ids].filter(id => !detalle.items.some(it => String(it.id_comprobante) === id));
     // 🔑 Los formatos de bolsa: sin ellos no se puede saber si 60 kg son 2 bolsas cerradas o
     // 6 paquetes de 10 (Mati, 09/09/2026). Se usa lo que haya cacheado, sin esperar.
     const fraccionado = armarFraccionado(renglones, cat, formatosDeBolsa());
     res.json({
       ok: true, desde, hasta,
       solo_aprobados: soloAprobados,
+      completo: detalle.completo && sinItems.length === 0, dias_faltantes: detalle.dias_faltantes, comprobantes_sin_items: sinItems,
       comprobantes: ids.size,
       fraccionado,
       totales: totalesFraccionado(fraccionado),

@@ -1,0 +1,17 @@
+.git
+.github
+.env
+.env.*
+**/.env
+**/.env.*
+node_modules
+dist
+dist-server
+data
+coverage
+playwright-report
+test-results
+tests/artifacts-reparto
+*.log
+*.tsbuildinfo
+.bb

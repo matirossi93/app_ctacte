@@ -1,3 +1,6 @@
+import { useOperacionReparto } from './RepartoContext';
+import { useDialogoReparto, estiloDialogo } from '../utils/useDialogoReparto';
+import { useLecturaVigente } from '../utils/useLecturaVigente';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { X, Loader2, Link2, Trash2, AlertTriangle, RefreshCw, FileMinus } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
@@ -57,7 +60,7 @@ interface Totales {
     pendientes_de_emitir: number;
     /** 🔑 Con la hoja cerrada el server rechaza vincular y desvincular: hay que decirlo, no
         dejar que se descubra con un 409 después de esperar la consulta a InfoManager. */
-    hoja: { id: string; numero: number; fecha: string; estado: string };
+    hoja: { version: number; id: string; numero: number; fecha: string; estado: string };
 }
 
 const money = (n: number) => '$' + Math.round(n).toLocaleString('es-AR');
@@ -70,6 +73,10 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
     /** Se llama cuando algo cambió, para que la pantalla de atrás se refresque. */
     onCambio: () => void;
 }) {
+    const operacion = useOperacionReparto('Vincular notas de entrega');
+    const { iniciar: iniciarLectura } = useLecturaVigente(hojaId);
+    const { iniciar: iniciarBusqueda, invalidar: invalidarBusqueda } = useLecturaVigente(`candidatas:${hojaId}`);
+    const [requiereVerificar, setRequiereVerificar] = useState(false);
     const [totales, setTotales] = useState<Totales | null>(null);
     const [ajustes, setAjustes] = useState<Ajuste[]>([]);
     const [candidatas, setCandidatas] = useState<Candidata[] | null>(null);
@@ -81,20 +88,23 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
     /** A qué pedido va cada nota, cuando el cliente tiene más de uno en la hoja. */
     const [destino, setDestino] = useState<Record<string, string>>({});
 
-    const cargar = useCallback(async () => {
+    const cargar = useCallback(async (forzar = false) => {
+        const lectura = iniciarLectura(forzar); if (!lectura) return;
         setCargando(true); setError(null);
         try {
-            const r = await fetch(`/api/hojas-ruta/${hojaId}/ajustes`, { headers: authHeaders() });
+            const r = await fetch(`/api/hojas-ruta/${hojaId}/ajustes`, { headers: authHeaders(), signal: lectura.signal });
             const d = await r.json().catch(() => null);
+            if (!lectura.vigente()) return;
             if (!r.ok) throw new Error(d?.error ?? 'No se pudieron traer los ajustes');
-            setTotales(d);
+            setTotales(d); setRequiereVerificar(false); lectura.confirmar();
             setAjustes(d.ajustes ?? []);
         } catch (e: any) {
+            if (!lectura.vigente()) return;
             setError(e?.message ?? 'Error de conexión');
         } finally {
-            setCargando(false);
+            if (lectura.vigente()) setCargando(false);
         }
-    }, [hojaId]);
+    }, [hojaId, iniciarLectura]);
 
     useEffect(() => { void cargar(); }, [cargar]);
 
@@ -103,19 +113,22 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
      * Va contra IM, así que se pide cuando se aprieta el botón y no al abrir.
      */
     async function buscarCandidatas() {
+        const lectura = iniciarBusqueda(true); if (!lectura) return;
         setBuscando(true); setError(null); setAviso(null);
         try {
-            const r = await fetch(`/api/hojas-ruta/${hojaId}/ajustes/candidatas`, { headers: authHeaders() });
+            const r = await fetch(`/api/hojas-ruta/${hojaId}/ajustes/candidatas`, { headers: authHeaders(), signal: lectura.signal });
             const d = await r.json().catch(() => null);
+            if (!lectura.vigente()) return;
             if (!r.ok) throw new Error(d?.error ?? 'No se pudieron traer las notas de crédito');
             setCandidatas(d.candidatas ?? []);
             if (!(d.candidatas ?? []).length) {
                 setAviso('No hay notas de crédito sin vincular para los clientes de esta hoja. Emitila en InfoManager y volvé a buscar.');
             }
         } catch (e: any) {
+            if (!lectura.vigente()) return;
             setError(e?.message ?? 'Error de conexión');
         } finally {
-            setBuscando(false);
+            if (lectura.vigente()) setBuscando(false);
         }
     }
 
@@ -135,39 +148,45 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
         // Con un solo pedido del cliente no hay nada que elegir; con varios, lo elige la oficina.
         const comprobante = destino[c.im_ajuste_id] ?? (suyos.length === 1 ? suyos[0].im_comprobante_id : '');
         if (!comprobante) { setError('Elegí a qué pedido corresponde esa nota de crédito.'); return; }
+        if (requiereVerificar || !operacion.comenzar()) return;
+        invalidarBusqueda(); setBuscando(false);
         setTrabajando(true); setError(null); setAviso(null);
         try {
             const r = await fetch(`/api/hojas-ruta/${hojaId}/ajustes/vincular`, {
                 method: 'POST',
                 headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({ im_comprobante_id: comprobante, im_ajuste_id: c.im_ajuste_id }),
+                body: JSON.stringify({ im_comprobante_id: comprobante, im_ajuste_id: c.im_ajuste_id, version_esperada: totales?.hoja.version }),
             });
             const d = await r.json().catch(() => null);
             if (!r.ok) throw new Error(d?.error ?? 'No se pudo vincular');
             if (d?.advertencia) setAviso(d.advertencia);
             setCandidatas(cs => (cs ?? []).filter(x => x.im_ajuste_id !== c.im_ajuste_id));
-            await cargar();
+            await cargar(true);
             onCambio();
         } catch (e: any) {
+            setRequiereVerificar(true);
             setError(e?.message ?? 'Error de conexión');
         } finally {
-            setTrabajando(false);
+            setTrabajando(false); operacion.terminar();
         }
     }
 
     async function desvincular(a: Ajuste) {
         if (!confirm(`¿Desvincular la ${a.im_ajuste_tipo ?? 'nota'} ${a.im_ajuste_numero ?? ''} de ${money(a.importe)}?\n\nLa nota sigue existiendo en InfoManager: acá sólo se suelta el vínculo con el pedido.`)) return;
+        if (requiereVerificar || !operacion.comenzar()) return;
+        invalidarBusqueda(); setBuscando(false);
         setTrabajando(true); setError(null);
         try {
-            const r = await fetch(`/api/hojas-ruta/ajustes/${a.id}`, { method: 'DELETE', headers: authHeaders() });
+            const r = await fetch(`/api/hojas-ruta/ajustes/${a.id}?version_esperada=${totales?.hoja.version}`, { method: 'DELETE', headers: authHeaders() });
             const d = await r.json().catch(() => null);
             if (!r.ok) throw new Error(d?.error ?? 'No se pudo desvincular');
-            await cargar();
+            await cargar(true);
             onCambio();
         } catch (e: any) {
+            setRequiereVerificar(true);
             setError(e?.message ?? 'Error de conexión');
         } finally {
-            setTrabajando(false);
+            setTrabajando(false); operacion.terminar();
         }
     }
 
@@ -179,14 +198,17 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
         return p ? `${p.cliente_nombre ?? 'Cliente'} · PR ${p.im_numero ?? '—'}` : id;
     };
 
+    const cerrar = () => { if (!operacion.enCurso.current) onClose(); };
+    const dialogo = useDialogoReparto(cerrar);
     return (
-        <div className="aj-fondo" onClick={onClose}>
-            <div className="aj-modal" onClick={e => e.stopPropagation()}>
+        <dialog ref={dialogo} style={estiloDialogo} aria-label={`Diferencias de entrega hoja ${numero}`} className="aj-fondo" onClick={e => { if (e.target === e.currentTarget) cerrar(); }}>
+            <fieldset disabled={trabajando} className="aj-modal" style={{ border: 0, margin: 0, minWidth: 0 }} onClick={e => e.stopPropagation()}>
                 <header className="aj-head">
                     <h3><FileMinus size={17} /> Hoja {numero} — diferencias de entrega</h3>
-                    <button className="aj-cerrar" onClick={onClose}><X size={18} /></button>
+                    <button className="aj-cerrar" onClick={cerrar} aria-label="Cerrar diferencias de entrega"><X size={18} /></button>
                 </header>
 
+                {requiereVerificar && <div className="aj-error" role="alert">Verificá el estado actual antes de otra modificación. <button disabled={cargando} onClick={() => void cargar(true)}>Volver a leer los vínculos</button></div>}
                 {cargando && <div className="aj-cargando"><Loader2 size={20} className="girando" /> Cargando…</div>}
 
                 {/* El número final, desglosado: quien lo mira tiene que ver de dónde sale. */}
@@ -238,7 +260,7 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
                                     {!a.emitido_at && <b className="warn"> · sin emitir: no descuenta</b>}
                                 </div>
                             </div>
-                            <button className="aj-icono" title={cerrada ? 'La hoja está cerrada' : 'Desvincular del pedido'} onClick={() => void desvincular(a)} disabled={trabajando || cerrada}>
+                            <button className="aj-icono" title={cerrada ? 'La hoja está cerrada' : 'Desvincular del pedido'} onClick={() => void desvincular(a)} disabled={trabajando || requiereVerificar || cerrada}>
                                 <Trash2 size={14} />
                             </button>
                         </div>
@@ -289,14 +311,14 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
                                         <div className="aj-fila-meta warn">Ese cliente no tiene pedidos en esta hoja.</div>
                                     )}
                                 </div>
-                                <button className="aj-btn" onClick={() => void vincular(c)} disabled={trabajando || cerrada || !suyos.length}>
+                                <button className="aj-btn" onClick={() => void vincular(c)} disabled={trabajando || requiereVerificar || cerrada || !suyos.length}>
                                     <Link2 size={14} /> Vincular
                                 </button>
                             </div>
                         );
                     })}
                 </section>
-            </div>
-        </div>
+            </fieldset>
+        </dialog>
     );
 }

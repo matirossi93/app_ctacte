@@ -19,14 +19,14 @@ const m = vi.hoisted(() => ({
   anularComprobante: vi.fn(),
   cabeceraComprobante: vi.fn(),
 }));
-vi.mock('./infomanager.js', () => ({
+vi.mock('./infomanager.js', () => { const fuente = {
   // El cache de /ventas se limpia junto con las vistas (10/09/2026).
   invalidarCacheVentas: vi.fn(),
   invalidarCacheItems: vi.fn(),
   anularComprobante: m.anularComprobante,
   cabeceraComprobante: m.cabeceraComprobante,
   fechaArgentina: () => '2026-09-10',
-}));
+}; return { ...fuente, invalidarIM: vi.fn(), leerComprobante: async (id: string) => ({ cabecera: await (fuente as any).cabeceraComprobante(id), items: await (fuente as any).getItemsComprobante(id) }) }; });
 vi.mock('./vistaPresupuestos.js', () => ({ invalidarVista: vi.fn() }));
 vi.mock('./vistaRemitos.js', () => ({ invalidarRemitos: vi.fn() }));
 
@@ -34,7 +34,9 @@ let facturado: any = null;
 vi.mock('./supabase.js', () => ({
   TENANT_ID: 't',
   sb: () => ({
+    rpc: async () => ({ data:true,error:null }),
     from: () => ({
+      delete: () => ({ eq: () => ({ eq: async () => ({data:null,error:null}) }) }),
       select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: facturado, error: null }) }) }) }),
     }),
   }),
@@ -52,7 +54,7 @@ function llamar(body: any, rol = 'admin') {
   return anularPresupuesto(req, res).then(() => res);
 }
 
-const VIVO = { existe: true, anulada: false, numero: 58288, punto_de_venta: 1, fecha: '2026-09-10' };
+const VIVO = { cod_empresa:1, tipo_comprobante:'PR', existe: true, anulada: false, numero: 58288, punto_de_venta: 1, fecha: '2026-09-10' };
 
 describe('anularPresupuesto', () => {
   beforeEach(() => { vi.clearAllMocks(); facturado = null; });

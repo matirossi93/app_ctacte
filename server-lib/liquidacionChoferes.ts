@@ -25,6 +25,7 @@ import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
 import type { JwtPayload } from './auth.js';
 import { puedeArmarHojasDeRuta } from './permisos.js';
+import { leerPaginas, enriquecerEntregas } from './repartoDatos.js';
 import { fechaArgentina } from './infomanager.js';
 
 function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
@@ -65,17 +66,18 @@ export async function liquidacionMensual(req: Request & { user?: JwtPayload }, r
     const mes = /^\d{4}-\d{2}$/.test(String(req.query.mes ?? '')) ? String(req.query.mes) : fechaArgentina().slice(0, 7);
     const { desde, hasta } = limitesDelMes(mes);
 
-    const { data: hojas, error } = await sb().from('hojas_ruta')
-      .select('id, numero, fecha, estado, chofer_id, transporte, cerrada_at, choferes(nombre), hojas_ruta_pedidos(cod_cliente, total, bultos, kg), hojas_ruta_ajustes(tipo, importe, emitido_at)')
-      .eq('tenant_id', TENANT_ID).gte('fecha', desde).lte('fecha', hasta).order('fecha');
-    if (error) { res.status(500).json({ error: error.message }); return; }
+    const hojas = await leerPaginas(() => sb().from('hojas_ruta')
+      .select('id, numero, fecha, estado, chofer_id, transporte, cerrada_at, choferes(nombre), hojas_ruta_pedidos(*), hojas_ruta_ajustes(tipo, importe, emitido_at)')
+      .eq('tenant_id', TENANT_ID).gte('fecha', desde).lte('fecha', hasta).order('fecha').order('id'));
 
+    const enriquecidos = await enriquecerEntregas((hojas ?? []).flatMap((h: any) => h.hojas_ruta_pedidos ?? []));
+    const porId = new Map(enriquecidos.map(p => [String(p.im_comprobante_id), p]));
     const porChofer = new Map<string, any>();
     let abiertas = 0;
     let importeAbierto = 0;
 
     for (const h of (hojas ?? []) as any[]) {
-      const pedidos = h.hojas_ruta_pedidos ?? [];
+      const pedidos = (h.hojas_ruta_pedidos ?? []).map((p: any) => porId.get(String(p.im_comprobante_id)) ?? p);
       const despachado = pedidos.reduce((s: number, p: any) => s + Number(p.total ?? 0), 0);
       // Lo que volvió: sólo los ajustes ya emitidos en InfoManager.
       const emitidos = (h.hojas_ruta_ajustes ?? []).filter((a: any) => a.emitido_at);

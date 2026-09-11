@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { LecturaVigente } from '../utils/lecturaVigente';
+import { useReparto, useOperacionReparto } from './RepartoContext';
+import { useLecturaVigente } from '../utils/useLecturaVigente';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     AlertTriangle, Check, CircleAlert, Loader2, RefreshCw, ChevronRight, X, Package,
     MessageSquare, Printer, Search, Ban,
@@ -55,6 +58,7 @@ interface Presupuesto {
     gravedad: { pierde_margen: number; cobra_de_mas: number };
     hoja_id: string | null;
     revision: Revision | null;
+    huella?: string | null;
     /** Renglones que piden más de lo que hay en el depósito. */
     faltantes: Array<{ cod_articulo: number; descripcion: string; pedido: number; disponible: number | null }>;
     /** Cantidades que no cierran con el formato del producto (kilos donde van bultos). */
@@ -94,6 +98,8 @@ const kilos = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 
 const dia = (f: string | null) => (f ? `${f.slice(8, 10)}/${f.slice(5, 7)}` : '—');
 
 export function PresupuestosView({ desde, hasta }: { desde: string; hasta: string }) {
+    const reparto = useReparto();
+    const operacion = useOperacionReparto('Modificar presupuesto');
     const [filas, setFilas] = useState<Presupuesto[]>([]);
     const [resumen, setResumen] = useState<any>(null);
     const [cargando, setCargando] = useState(true);
@@ -114,7 +120,7 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
     async function anular(p: any) {
         const quien = `${p.cliente_nombre ?? 'el cliente'} · PR ${p.im_numero ?? ''}`;
         const motivo = window.prompt(`Anular el pedido de ${quien}.\n\nSe anula en InfoManager y desaparece de la lista. ¿Por qué?`, '');
-        if (motivo === null) return;
+        if (motivo === null || !operacion.comenzar()) return;
         setTrabajando(p.im_comprobante_id);
         try {
             const r = await fetch(`/api/presupuestos/${p.im_comprobante_id}/anular`, {
@@ -128,36 +134,51 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
         } catch (e: any) {
             setAviso(e?.message ?? 'No se pudo anular');
         } finally {
-            setTrabajando(null);
+            setTrabajando(null); operacion.terminar();
         }
     }
     const [trabajando, setTrabajando] = useState<string | null>(null);
     /** Qué presupuesto tiene el detalle abierto, y sus renglones. */
     const [abierto, setAbierto] = useState<string | null>(null);
-    const [items, setItems] = useState<ItemDetalle[] | null>(null);
-    /** Las observaciones del comprobante abierto, para poder editarlas. */
-    const [obsAbierto, setObsAbierto] = useState<string | null>(null);
+    const [detalle, setDetalle] = useState<{ id: string; huella: string; numero: number | null; cliente: string; fecha: string | null; observaciones: string; items: ItemDetalle[] } | null>(null);
+    const abiertoRef = useRef<string | null>(null);
+    const controlDetalle = useRef(new LecturaVigente());
+    const detalleRef = useRef(detalle); detalleRef.current = detalle;
+    const reanudarDetalle = useRef<(id: string) => Promise<void>>(async () => {});
+    useEffect(() => {
+        if (abierto && detalleRef.current?.id !== abierto) void reanudarDetalle.current(abierto);
+        return () => { controlDetalle.current.invalidar(); };
+    }, [abierto]);
+    const items = detalle?.id === abierto ? detalle.items : null;
+    function cerrarDetalle() { if (!reparto.puedeNavegar()) return; controlDetalle.current.invalidar(); abiertoRef.current = null; setAbierto(null); setDetalle(null); }
     /** Cantidades tocadas a mano: id de renglón → cantidad nueva. */
     /** A quién se le está escribiendo el motivo de la observación. */
     const [observando, setObservando] = useState<string | null>(null);
     const [motivo, setMotivo] = useState('');
 
+    const { iniciar: iniciarLectura } = useLecturaVigente(`${desde}|${hasta}`);
     const cargar = useCallback(async (refrescar = false) => {
+        const lectura = iniciarLectura(refrescar); if (!lectura) return;
+        setFilas([]); setResumen(null);
+        avisarRecarga();
         setCargando(true); setError(null);
         try {
             const r = await fetch(
                 `/api/presupuestos?desde=${desde}&hasta=${hasta}${refrescar ? '&refrescar=1' : ''}`,
-                { headers: authHeaders() });
+                { headers: authHeaders(), signal: lectura.signal });
             const d = await r.json().catch(() => null);
+            if (!lectura.vigente()) return;
             if (!r.ok) throw new Error(d?.error ?? 'No se pudieron traer los presupuestos');
             setFilas(d.presupuestos ?? []);
             setResumen(d);
+            lectura.confirmar();
         } catch (e: any) {
+            if (!lectura.vigente()) return;
             setError(e?.message ?? 'Error de conexión');
         } finally {
-            setCargando(false);
+            if (lectura.vigente()) setCargando(false);
         }
-    }, [desde, hasta]);
+    }, [desde, hasta, iniciarLectura]);
 
     useEffect(() => { void cargar(); }, [cargar]);
 
@@ -172,7 +193,7 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
 
      */
 
-    useRecargarAlVolver(() => { void cargar(true); });
+    const avisarRecarga = useRecargarAlVolver(() => { if (reparto.puedeNavegar()) void cargar(true); });
 
     const visibles = useMemo(() => filas.filter(p => {
         if (!coincide(busqueda, [p.cliente_nombre, p.im_numero, p.cod_cliente])) return false;
@@ -188,11 +209,12 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
     }
 
     async function revisar(p: Presupuesto, estado: 'aprobado' | 'observado', observacion?: string) {
+        if (!operacion.comenzar()) return;
         setTrabajando(p.im_comprobante_id); setAviso(null);
         try {
             const r = await fetch(`/api/presupuestos/${p.im_comprobante_id}/revision`, {
                 method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({ estado, observacion, im_numero: p.im_numero, cod_cliente: p.cod_cliente }),
+                body: JSON.stringify({ estado, observacion, huella: p.huella, im_numero: p.im_numero, cod_cliente: p.cod_cliente }),
             });
             const d = await r.json().catch(() => null);
             if (!r.ok) { setAviso(d?.error ?? 'No se pudo guardar la revisión'); return; }
@@ -202,10 +224,11 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
             // Sin esto, con el server caído el botón se re-habilitaba y no pasaba nada: parecía
             // que se había guardado.
             setAviso(e?.message ?? 'No se pudo guardar la revisión: sin conexión con el servidor');
-        } finally { setTrabajando(null); }
+        } finally { setTrabajando(null); operacion.terminar(); }
     }
 
     async function desmarcar(p: Presupuesto) {
+        if (!operacion.comenzar()) return;
         setTrabajando(p.im_comprobante_id);
         try {
             const r = await fetch(`/api/presupuestos/${p.im_comprobante_id}/revision`, {
@@ -215,30 +238,33 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
             pintarRevision(p.im_comprobante_id, null);
         } catch (e: any) {
             setAviso(e?.message ?? 'No se pudo deshacer la revisión: sin conexión con el servidor');
-        } finally { setTrabajando(null); }
+        } finally { setTrabajando(null); operacion.terminar(); }
     }
 
     /** Trae los renglones de un presupuesto. Separado de abrir/cerrar para poder RECARGARLO. */
     async function cargarDetalle(id: string) {
-        setItems(null);
+        const lectura = controlDetalle.current.iniciar(id, () => abiertoRef.current === id, true)!;
+        setDetalle(null);
         try {
-            const r = await fetch(`/api/presupuestos/${id}`, { headers: authHeaders() });
+            const r = await fetch(`/api/presupuestos/${id}`, { headers: authHeaders(), signal: lectura.signal });
             const d = await r.json().catch(() => null);
+            if (!lectura.vigente()) return;
             if (!r.ok) throw new Error(d?.error ?? 'No se pudo abrir el detalle');
-            setItems(d.items ?? []);
-            setObsAbierto(d.comprobante?.observaciones ?? '');
+            if (!d?.comprobante?.huella || (d.comprobante.im_comprobante_id != null && String(d.comprobante.im_comprobante_id) !== id)) throw new Error('El detalle no identifica el presupuesto. Actualizá antes de editar.');
+            const previo = reparto.borradores.get(`base:${id}`);
+            if (previo && previo.huella !== d.comprobante.huella) setAviso("El presupuesto cambió desde el borrador. Se conserva su versión original; descartá los cambios para revisar la versión actual.");
+            setDetalle(previo ?? { id, huella: d.comprobante.huella, numero: d.comprobante.numero ?? d.comprobante.im_numero ?? null, cliente: d.comprobante.cliente_nombre || `Cliente ${d.comprobante.cod_cliente ?? "sin identificar"}`, fecha: d.comprobante.fecha, observaciones: d.comprobante.observaciones ?? '', items: d.items ?? [] });
         } catch (e: any) {
-            // 🪤 Sin esto, un fetch que fallaba dejaba `items` en null y el spinner giraba para
-            // siempre, sin un solo mensaje.
-            setAviso(e?.message ?? 'Error de conexión al traer el detalle');
-            setAbierto(null);
+            if (!lectura.vigente()) return;
+            setAviso(e?.message ?? 'Error al traer el detalle'); cerrarDetalle();
         }
     }
-
+    reanudarDetalle.current = cargarDetalle;
     function abrirDetalle(p: Presupuesto) {
-        if (abierto === p.im_comprobante_id) { setAbierto(null); setItems(null); return; }
-        setAbierto(p.im_comprobante_id); setAviso(null);
-        void cargarDetalle(p.im_comprobante_id);
+        if (!reparto.puedeNavegar()) return;
+        if (abiertoRef.current === p.im_comprobante_id) { cerrarDetalle(); return; }
+        abiertoRef.current = p.im_comprobante_id; setAbierto(p.im_comprobante_id); setAviso(null);
+        setDetalle(null);
     }
 
     /**
@@ -249,8 +275,44 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
      * ofrecer algo que después falla.
      */
 
+    function renderEditor(base: NonNullable<typeof detalle>) {
+        return (<><p className="pr-editor-identidad">{base.cliente} · PR {base.numero ?? base.id} · {base.fecha}</p><EditorPresupuesto
+                                            key={`${base.id}:${base.huella}`}
+                                            huellaOriginal={base.huella}
+                                            comprobanteId={base.id}
+                                            numero={base.numero}
+                                            observacionesOriginales={base.observaciones}
+                                            fechaOriginal={base.fecha}
+                                            itemsOriginales={base.items.map(it => ({
+                                                id: it.id,
+                                                cod_articulo: it.cod_articulo,
+                                                descripcion: it.descripcion,
+                                                cantidad: Number(it.cantidad),
+                                                cod_lista_precios: it.cod_lista_precios,
+                                                descuento_porc: it.descuento_porc ?? 0,
+                                                precio: it.precio,
+                                                equivalencia_um: it.equivalencia_um,
+                                                unidad_de_medida: it.unidad_de_medida,
+                                                stock: it.stock,
+                                            }))}
+                                            onCancelar={cerrarDetalle}
+                                            onBorrador={(sucio) => { if (sucio) reparto.borradores.set(`base:${base.id}`, base); else reparto.borradores.delete(`base:${base.id}`); }}
+                                            onGuardado={(r) => {
+                                                setAviso(r.aviso ?? (r.modo === 'recreado'
+                                                    ? `Listo: se rehizo el presupuesto y ahora es el ${r.im_numero ?? ''}. Como cambió, quedó sin revisar.`
+                                                    : 'Listo: cantidades corregidas en InfoManager.'));
+                                                reparto.borradores.delete(`base:${base.id}`);
+                                                controlDetalle.current.invalidar(); abiertoRef.current = null; setAbierto(null); setDetalle(null);
+                                                void cargar(true);
+                                            }}
+                                        /></>);
+    }
+    const borradores = [...reparto.borradores.entries()].filter(([k]) => k.startsWith('base:')).map(([, v]) => v as NonNullable<typeof detalle>);
+
     return (
-        <div className="pr-root">
+        <fieldset disabled={reparto.ocupado} className="pr-root" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+            {!!borradores.length && <div className="pr-aviso" role="status">Borradores sin guardar: {borradores.map(b => <button key={b.id} disabled={reparto.ocupado} onClick={() => { if (!reparto.puedeNavegar()) return; controlDetalle.current.invalidar(); abiertoRef.current = b.id; setAbierto(b.id); setDetalle(b); }}>{`Retomar PR ${b.numero ?? b.id}`}</button>)}</div>}
+            {detalle && !visibles.some(p => p.im_comprobante_id === detalle.id) && <div className="pr-detalle"><p>Borrador del PR {detalle.numero ?? detalle.id}, fuera del filtro actual.</p>{renderEditor(detalle)}</div>}
             <div className="pr-top">
                 <button className="pr-btn ghost" onClick={() => void cargar(true)} disabled={cargando}>
                     <RefreshCw size={15} className={cargando ? 'spin' : ''} /> Actualizar
@@ -316,7 +378,7 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
             {error && <div className="pr-aviso error"><AlertTriangle size={15} /><span>{error}</span></div>}
 
             {cargando && <div className="pr-cargando"><Loader2 className="spin" size={20} /> Trayendo los presupuestos de InfoManager…</div>}
-            {!cargando && !visibles.length && (
+            {!cargando && !error && !visibles.length && (
                 <div className="pr-vacio"><Package size={26} /><span>
                     {busqueda ? `Ningún presupuesto coincide con "${busqueda}".` : 'No hay presupuestos en este filtro.'}
                 </span></div>
@@ -477,32 +539,7 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                         {/* 🔑 Editar de verdad: cantidades, listas, descuentos, y agregar o
                                             sacar productos. Si el cambio no se puede hacer sobre el mismo
                                             comprobante, el editor avisa que se va a rehacer (Mati, 09/09/2026). */}
-                                        <EditorPresupuesto
-                                            comprobanteId={p.im_comprobante_id}
-                                            numero={p.im_numero}
-                                            observacionesOriginales={obsAbierto}
-                                            fechaOriginal={p.fecha}
-                                            itemsOriginales={items.map(it => ({
-                                                id: it.id,
-                                                cod_articulo: it.cod_articulo,
-                                                descripcion: it.descripcion,
-                                                cantidad: Number(it.cantidad),
-                                                cod_lista_precios: it.cod_lista_precios,
-                                                descuento_porc: it.descuento_porc ?? 0,
-                                                precio: it.precio,
-                                                equivalencia_um: it.equivalencia_um,
-                                                unidad_de_medida: it.unidad_de_medida,
-                                                stock: it.stock,
-                                            }))}
-                                            onCancelar={() => { setAbierto(null); setItems(null); setObsAbierto(null); }}
-                                            onGuardado={(r) => {
-                                                setAviso(r.aviso ?? (r.modo === 'recreado'
-                                                    ? `Listo: se rehizo el presupuesto y ahora es el ${r.im_numero ?? ''}. Como cambió, quedó sin revisar.`
-                                                    : 'Listo: cantidades corregidas en InfoManager.'));
-                                                setAbierto(null); setItems(null); setObsAbierto(null);
-                                                void cargar(true);
-                                            }}
-                                        />
+                                        {renderEditor(detalle!)}
                                     </>
                                 )}
                             </div>
@@ -510,6 +547,6 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                     </div>
                 );
             })}
-        </div>
+        </fieldset>
     );
 }

@@ -7,18 +7,20 @@
     "dev": "vite",
     "dev:server": "npm run build:server && PORT=3001 node dist-server/server.js",
     "build": "tsc -b && vite build",
-    "build:server": "tsc -p tsconfig.server.json",
+    "build:server": "tsc -p tsconfig.server.json && node scripts/build-info.mjs . --write",
     "start": "node dist-server/server.js",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:reparto:db": "python3 tests/reparto/run-db-tests.py .",
+    "test:reparto:browser": "node tests/reparto/run-browser.mjs ."
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
     "@supabase/supabase-js": "^2.57.0",
     "@types/bcrypt": "^6.0.0",
-    "axios": "^1.13.6",
+    "axios": "1.20.0",
     "bcrypt": "^6.0.0",
     "compression": "^1.8.1",
     "cors": "^2.8.6",
@@ -29,13 +31,13 @@
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
     "lucide-react": "^0.575.0",
-    "multer": "^2.1.1",
-    "node-cron": "^3.0.3",
+    "multer": "2.3.0",
+    "node-cron": "4.6.0",
     "papaparse": "^5.5.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "web-push": "^3.6.7",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
@@ -46,7 +48,6 @@
     "@types/jsonwebtoken": "^9.0.7",
     "@types/multer": "^1.4.12",
     "@types/node": "^24.10.1",
-    "@types/node-cron": "^3.0.11",
     "@types/papaparse": "^5.5.2",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",

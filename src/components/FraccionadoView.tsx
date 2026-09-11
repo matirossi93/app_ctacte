@@ -1,3 +1,4 @@
+import { useLecturaVigente } from '../utils/useLecturaVigente';
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, AlertTriangle, Printer, RefreshCw, Package } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
@@ -37,23 +38,33 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
     const [cargando, setCargando] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    const cargar = useCallback(async () => {
+    const clave = `${desde}|${hasta}|${soloAprobados}`;
+    const [snapshot, setSnapshot] = useState<string | null>(null);
+    const { iniciar } = useLecturaVigente(clave);
+    const cargar = useCallback(async (forzar = false) => {
+        const lectura = iniciar(forzar); if (!lectura) return;
+        setSnapshot(null);
         setCargando(true); setError(null);
         try {
             const r = await fetch(
-                `/api/presupuestos/fraccionado?desde=${desde}&hasta=${hasta}${soloAprobados ? '' : '&todos=1'}`,
-                { headers: authHeaders() });
+                `/api/presupuestos/fraccionado?desde=${desde}&hasta=${hasta}${soloAprobados ? '' : '&todos=1'}${forzar ? '&refrescar=1' : ''}`,
+                { headers: authHeaders(), signal: lectura.signal });
             const d = await r.json().catch(() => null);
+            if (!lectura.vigente()) return;
             if (!r.ok) throw new Error(d?.error ?? 'No se pudo armar el listado');
+            if (d.completo === false || d.dias_faltantes?.length || d.comprobantes_sin_items?.length || d.dias_sin_items?.length || d.controles_incompletos?.length || d.parcial) throw new Error('El listado está incompleto. Actualizá antes de imprimir.');
+            if ((d.desde && d.desde !== desde) || (d.hasta && d.hasta !== hasta)) throw new Error('El servidor respondió otro rango. Ajustá las fechas antes de imprimir.');
+            setSnapshot(clave); lectura.confirmar();
             setLineas(d.fraccionado ?? []);
             setTotales(d.totales ?? null);
             setComprobantes(d.comprobantes ?? 0);
         } catch (e: any) {
+            if (!lectura.vigente()) return;
             setError(e?.message ?? 'Error de conexión');
         } finally {
-            setCargando(false);
+            if (lectura.vigente()) setCargando(false);
         }
-    }, [desde, hasta, soloAprobados]);
+    }, [desde, hasta, soloAprobados, clave, iniciar]);
 
     useEffect(() => { void cargar(); }, [cargar]);
 
@@ -66,7 +77,7 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
     return (
         <div className="fr-root">
             <div className="fr-top fr-no-print">
-                <button className="fr-btn ghost" onClick={() => void cargar()} disabled={cargando}>
+                <button className="fr-btn ghost" onClick={() => void cargar(true)} disabled={cargando}>
                     <RefreshCw size={15} className={cargando ? 'spin' : ''} /> Actualizar
                 </button>
                 <label className="fr-check">
@@ -74,7 +85,7 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
                     Sólo lo aprobado
                 </label>
                 <span className="fr-meta">{comprobantes} pedidos</span>
-                <button className="fr-btn" onClick={() => window.print()} disabled={!lineas.length}>
+                <button className="fr-btn" onClick={() => window.print()} disabled={!lineas.length || cargando || !!error || snapshot !== clave}>
                     <Printer size={15} /> Imprimir
                 </button>
             </div>
@@ -90,7 +101,7 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
                 </div>
             )}
 
-            {!!lineas.length && (
+            {!!lineas.length && !cargando && !error && snapshot === clave && (
                 <div className="fr-hoja">
                     <div className="fr-head">
                         <div className="fr-head-marca">

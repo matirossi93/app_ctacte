@@ -1,3 +1,5 @@
+import { useOperacionReparto } from './RepartoContext';
+import { useLecturaVigente } from '../utils/useLecturaVigente';
 import { useCallback, useEffect, useState } from 'react';
 import { Store, Loader2, AlertTriangle, Check, X, Users, Package } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
@@ -17,6 +19,7 @@ import './RetirosView.css';
  */
 
 interface Retiro {
+    version: number;
     im_comprobante_id: string;
     im_numero: number | null;
     cod_cliente: number;
@@ -46,6 +49,7 @@ const kilos = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 
 const mesActual = () => new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 7);
 
 export function RetirosView() {
+    const operacion = useOperacionReparto('Modificar entrega');
     const [mes, setMes] = useState(mesActual());
     const [clientes, setClientes] = useState<PorCliente[]>([]);
     const [retiros, setRetiros] = useState<Retiro[]>([]);
@@ -62,48 +66,55 @@ export function RetirosView() {
      * mes" — dos afirmaciones contrarias, las dos presentadas como dato. Y al cambiar de mes
      * quedaban listadas las filas del mes anterior, clickeables. Auditoría del 08/09/2026.
      */
-    const cargar = useCallback(async () => {
+    const { iniciar } = useLecturaVigente(mes);
+    const cargar = useCallback(async (forzar = false) => {
+        const lectura = iniciar(forzar); if (!lectura) return;
         if (!/^\d{4}-\d{2}$/.test(mes)) { setCargando(false); return; }
         setCargando(true); setError(null);
         setClientes([]); setTotales(null); setRetiros([]);
         try {
-            const r = await fetch(`/api/retiros/resumen?mes=${mes}`, { headers: authHeaders() });
+            const r = await fetch(`/api/retiros/resumen?mes=${mes}`, { headers: authHeaders(), signal: lectura.signal });
             const d = await r.json().catch(() => null);
+            if (!lectura.vigente()) return;
             if (!r.ok) throw new Error(d?.error ?? 'No se pudo traer el resumen');
 
             // El detalle del mismo rango, para poder marcar cada uno.
-            const l = await fetch(`/api/retiros?desde=${d.desde}&hasta=${d.hasta}`, { headers: authHeaders() });
+            const l = await fetch(`/api/retiros?desde=${d.desde}&hasta=${d.hasta}`, { headers: authHeaders(), signal: lectura.signal });
             const dl = await l.json().catch(() => null);
+            if (!lectura.vigente()) return;
             if (!l.ok) throw new Error(dl?.error ?? 'No se pudo traer el detalle de los retiros');
 
             setClientes(d.clientes ?? []);
             setTotales(d.totales ?? null);
             setRetiros(dl?.retiros ?? []);
+            lectura.confirmar();
         } catch (e: any) {
+            if (!lectura.vigente()) return;
             setError(e?.message ?? 'Error de conexión');
         } finally {
-            setCargando(false);
+            if (lectura.vigente()) setCargando(false);
         }
-    }, [mes]);
+    }, [mes, iniciar]);
 
     useEffect(() => { void cargar(); }, [cargar]);
 
     /** El cliente pasó a buscarlo (o se deshace la marca si se apretó por error). */
     async function marcarRetirado(r: Retiro, retirado: boolean) {
+        if (!operacion.comenzar()) return;
         setTrabajando(true); setError(null);
         try {
             const resp = await fetch(`/api/retiros/${r.im_comprobante_id}`, {
                 method: 'PUT',
                 headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({ retirado }),
+                body: JSON.stringify({ retirado, version_esperada: r.version }),
             });
             const d = await resp.json().catch(() => null);
             if (!resp.ok) throw new Error(d?.error ?? 'No se pudo marcar');
-            await cargar();
+            await cargar(true);
         } catch (e: any) {
             setError(e?.message ?? 'Error de conexión');
         } finally {
-            setTrabajando(false);
+            setTrabajando(false); operacion.terminar();
         }
     }
 
@@ -114,16 +125,17 @@ export function RetirosView() {
      */
     async function quitar(r: Retiro) {
         if (!confirm(`¿Sacar el pedido ${r.im_numero ?? ''} de ${r.cliente_nombre ?? 'el cliente'} de la lista de retiros?\n\nVuelve a estar disponible para armar una hoja de ruta.`)) return;
+        if (!operacion.comenzar()) return;
         setTrabajando(true); setError(null);
         try {
-            const resp = await fetch(`/api/retiros/${r.im_comprobante_id}`, { method: 'DELETE', headers: authHeaders() });
+            const resp = await fetch(`/api/retiros/${r.im_comprobante_id}?version_esperada=${r.version}`, { method: 'DELETE', headers: authHeaders() });
             const d = await resp.json().catch(() => null);
             if (!resp.ok) throw new Error(d?.error ?? 'No se pudo sacar');
-            await cargar();
+            await cargar(true);
         } catch (e: any) {
             setError(e?.message ?? 'Error de conexión');
         } finally {
-            setTrabajando(false);
+            setTrabajando(false); operacion.terminar();
         }
     }
 

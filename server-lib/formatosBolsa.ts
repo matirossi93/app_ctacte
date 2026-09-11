@@ -33,6 +33,7 @@ const MIN_REPETICIONES = 3;
 
 let _formatos: Map<number, number> = new Map();
 let _at = 0;
+let _ultimoIntento = 0;
 let _calculando: Promise<void> | null = null;
 
 /** La cantidad de 20 kg o más que más se repite. `null` si no hay una clara. */
@@ -48,7 +49,9 @@ export function formatoDominante(cantidades: number[]): number | null {
 async function calcular(): Promise<Map<number, number>> {
   const hasta = fechaArgentina();
   const desde = fechaArgentina(Date.now() - (DIAS_HISTORIA - 1) * 864e5);
-  const [ventas, cat] = await Promise.all([fetchVentas(desde, hasta), fetchArticulosCatalogo()]);
+  // Un solo GET de este trabajo en vuelo: deja capacidad del pool para la oficina.
+  const ventas = await fetchVentas(desde, hasta);
+  const cat = await fetchArticulosCatalogo();
   const pr = ventas.filter((v: any) =>
     String(v.tipo_comprobante ?? '').trim() === 'PR' &&
     String(v.anulada ?? '').trim().toUpperCase() !== 'S');
@@ -56,20 +59,19 @@ async function calcular(): Promise<Map<number, number>> {
   const dias = [...new Set(pr.map((p: any) => String(p.fecha ?? '').slice(0, 10)).filter(Boolean))].sort();
 
   const porArticulo = new Map<number, number[]>();
-  // De a cuatro días, igual que el resto del panel: no se golpea a IM con 25 requests juntas.
-  for (let i = 0; i < dias.length; i += 4) {
-    const tandas = await Promise.all(dias.slice(i, i + 4).map(f => fetchVentasItems(f, f).catch(() => [] as any[])));
-    for (const items of tandas) {
-      for (const it of items) {
-        if (!ids.has(String((it as any).id_comprobante))) continue;
-        const cod = Number((it as any).cod_articulo);
-        const art = cat.get(cod);
-        if (!art || !esKilo(art.unidad_de_medida)) continue;      // sólo granel
-        const q = Number((it as any).cantidad);
-        if (!(q > 0)) continue;
-        if (!porArticulo.has(cod)) porArticulo.set(cod, []);
-        porArticulo.get(cod)!.push(q);
-      }
+  // El refresco ya corre una sola vez por proceso (_calculando). Serializar sus días impide
+  // que ocupe los cuatro slots GET y haga vencer la cola de una consulta interactiva.
+  for (const dia of dias) {
+    const items = await fetchVentasItems(dia, dia);
+    for (const it of items) {
+      if (!ids.has(String((it as any).id_comprobante))) continue;
+      const cod = Number((it as any).cod_articulo);
+      const art = cat.get(cod);
+      if (!art || !esKilo(art.unidad_de_medida)) continue;
+      const q = Number((it as any).cantidad);
+      if (!(q > 0)) continue;
+      if (!porArticulo.has(cod)) porArticulo.set(cod, []);
+      porArticulo.get(cod)!.push(q);
     }
   }
 
@@ -88,7 +90,8 @@ async function calcular(): Promise<Map<number, number>> {
  * está vencido. Un formato viejo sigue sirviendo: las bolsas no cambian de tamaño.
  */
 export function formatosDeBolsa(): Map<number, number> {
-  if (!_calculando && Date.now() - _at > TTL_MS) {
+  if (!_calculando && Date.now() - _at > TTL_MS && Date.now() - _ultimoIntento > 60_000) {
+    _ultimoIntento = Date.now();
     _calculando = calcular()
       .then((m) => { _formatos = m; _at = Date.now(); })
       .catch((e: any) => { console.warn('[formatosBolsa] no pude calcular los formatos:', e?.message); })
@@ -101,5 +104,6 @@ export function formatosDeBolsa(): Map<number, number> {
 export function _resetFormatos(valores?: Map<number, number>) {
   _formatos = valores ?? new Map();
   _at = valores ? Date.now() : 0;
+  _ultimoIntento = 0;
   _calculando = null;
 }

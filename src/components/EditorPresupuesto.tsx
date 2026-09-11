@@ -1,4 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useReparto, useOperacionReparto } from './RepartoContext';
+import { useLecturaVigente } from '../utils/useLecturaVigente';
+import { useEffect, useMemo, useState } from 'react';
 import { Save, Trash2, Plus, Search, AlertTriangle, Loader2, X } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import './EditorPresupuesto.css';
@@ -58,10 +60,11 @@ const LISTAS: Array<[number, string]> = [[12, 'Lista 1'], [13, 'Lista 2'], [14, 
 const money = (n: number) => '$' + Math.round(n).toLocaleString('es-AR');
 /** El renglón como lo compara el server para decidir si alcanza con un PUT. */
 const firma = (rs: ItemEditable[]) =>
-    rs.map(r => `${r.cod_articulo}:${Number(r.cod_lista_precios)}:${Number(r.descuento_porc) || 0}`).join('|');
+    rs.map(r => `${r.cod_articulo}:${Number(r.cod_lista_precios)}:${Number(r.descuento_porc) || 0}:${Number(r.precio) || 0}`).join('|');
 
-export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, observacionesOriginales, fechaOriginal, onGuardado, onCancelar }: {
+export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, itemsOriginales, observacionesOriginales, fechaOriginal, onGuardado, onCancelar, onBorrador }: {
     comprobanteId: string;
+    huellaOriginal: string | null;
     numero: number | null;
     itemsOriginales: ItemEditable[];
     /** Lo que escribió el vendedor en InfoManager. Es lo que la oficina lee antes de facturar. */
@@ -71,10 +74,15 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, obse
     /** Se llama con el comprobante resultante: puede ser otro si hubo que recrearlo. */
     onGuardado: (r: { modo: string; im_numero: number | null; aviso?: string | null }) => void;
     onCancelar: () => void;
+    onBorrador: (sucio: boolean) => void;
 }) {
-    const [items, setItems] = useState<ItemEditable[]>(() => itemsOriginales.map(i => ({ ...i })));
-    const [observaciones, setObservaciones] = useState(observacionesOriginales ?? '');
-    const [fecha, setFecha] = useState(fechaOriginal ?? '');
+    const reparto = useReparto();
+    const operacion = useOperacionReparto('Guardar presupuesto');
+    const claveBorrador = `editor:${comprobanteId}`;
+    const previo = reparto.borradores.get(claveBorrador);
+    const [items, setItems] = useState<ItemEditable[]>(() => previo?.items ?? itemsOriginales.map(i => ({ ...i })));
+    const [observaciones, setObservaciones] = useState<string>(previo?.observaciones ?? observacionesOriginales ?? '');
+    const [fecha, setFecha] = useState<string>(previo?.fecha ?? fechaOriginal ?? '');
     const [busqueda, setBusqueda] = useState('');
     const [resultados, setResultados] = useState<ArticuloBuscado[] | null>(null);
     const [buscando, setBuscando] = useState(false);
@@ -92,26 +100,36 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, obse
         || items.some((it, i) => Number(it.cantidad) !== Number(itemsOriginales[i]?.cantidad))
         || items.some((it, i) => Number(it.precio) !== Number(itemsOriginales[i]?.precio));
 
+    useEffect(() => {
+        if (hayCambios) reparto.borradores.set(claveBorrador, { items, observaciones, fecha });
+        else reparto.borradores.delete(claveBorrador);
+        onBorrador(hayCambios);
+    }, [items, observaciones, fecha, hayCambios, claveBorrador, reparto.borradores, onBorrador]);
+    const { iniciar: iniciarBusqueda, invalidar: invalidarBusqueda } = useLecturaVigente(busqueda.trim());
     const total = useMemo(() => items.reduce((s, i) =>
         s + (Number(i.precio ?? 0) * Number(i.cantidad) * (1 - (Number(i.descuento_porc) || 0) / 100)), 0), [items]);
 
     function cambiar(idx: number, campo: keyof ItemEditable, valor: any) {
+        if (operacion.enCurso.current) return;
         setItems(xs => xs.map((x, i) => i === idx ? { ...x, [campo]: valor } : x));
     }
 
     async function buscar() {
+        if (operacion.enCurso.current) return;
+        const lectura = iniciarBusqueda(true); if (!lectura) return;
         const q = busqueda.trim();
         if (q.length < 2) { setResultados([]); return; }
         setBuscando(true); setError(null);
         try {
-            const r = await fetch(`/api/articulos/buscar?q=${encodeURIComponent(q)}`, { headers: authHeaders() });
+            const r = await fetch(`/api/articulos/buscar?q=${encodeURIComponent(q)}`, { headers: authHeaders(), signal: lectura.signal });
             const d = await r.json().catch(() => null);
+            if (!lectura.vigente()) return;
             if (!r.ok) throw new Error(d?.error ?? 'No se pudo buscar');
             setResultados(d.articulos ?? []);
         } catch (e: any) {
-            setError(e?.message ?? 'Error de conexión');
+            if (lectura.vigente()) setError(e?.message ?? 'Error de conexión');
         } finally {
-            setBuscando(false);
+            if (lectura.vigente()) setBuscando(false);
         }
     }
 
@@ -131,6 +149,7 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, obse
     }
 
     async function guardar() {
+        if (operacion.enCurso.current) return;
         if (!items.length) { setError('Tiene que quedar al menos un producto.'); return; }
         if (items.some(i => !(Number(i.cantidad) > 0))) { setError('Hay un renglón con cantidad cero o vacía. Sacalo con el tacho o poné una cantidad.'); return; }
         // 🪤 Sin precio InfoManager graba el renglón en $0 — no lo busca en la lista.
@@ -141,12 +160,14 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, obse
             `Se va a crear un presupuesto NUEVO con estos datos y se va a anular el ${numero ?? ''}.\n\n` +
             `El número cambia. ¿Seguimos?`)) return;
 
-        setGuardando(true); setError(null);
+        if (!operacion.comenzar()) return;
+        invalidarBusqueda(); setBuscando(false); setGuardando(true); setError(null);
         try {
             const r = await fetch(`/api/presupuestos/${comprobanteId}/editar`, {
                 method: 'PUT',
                 headers: { ...authHeaders(), 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    huella: huellaOriginal,
                     observaciones,
                     fecha,
                     items: items.map(i => ({
@@ -162,16 +183,18 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, obse
             });
             const d = await r.json().catch(() => null);
             if (!r.ok) throw new Error(d?.error ?? 'InfoManager no aceptó el cambio');
+            reparto.borradores.delete(claveBorrador);
+            onBorrador(false);
             onGuardado({ modo: d.modo, im_numero: d.im_numero ?? null, aviso: d.aviso ?? null });
         } catch (e: any) {
             setError(`${e?.message ?? 'Error de conexión'}. Fijate en InfoManager antes de reintentar.`);
         } finally {
-            setGuardando(false);
+            setGuardando(false); operacion.terminar();
         }
     }
 
     return (
-        <div className="ed-root">
+        <fieldset className="ed-root" disabled={guardando} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             {error && <div className="ed-aviso error"><AlertTriangle size={14} /> <span>{error}</span></div>}
 
             {/* 🔑 El aviso más importante de la pantalla: si el número va a cambiar, se dice antes. */}
@@ -186,7 +209,7 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, obse
                 </div>
             )}
 
-            <table className="ed-tabla">
+            <div style={{ overflowX: 'auto', maxWidth: '100%' }}><table className="ed-tabla">
                 <thead>
                     <tr>
                         <th>Producto</th>
@@ -212,17 +235,17 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, obse
                                 )}
                             </td>
                             <td className="n">
-                                <input className="ed-cant" type="text" inputMode="decimal" value={String(it.cantidad)}
+                                <input aria-label={`Cantidad de ${it.descripcion}`} className="ed-cant" type="text" inputMode="decimal" value={String(it.cantidad)}
                                        onChange={e => cambiar(idx, 'cantidad', e.target.value.replace(',', '.'))} />
                             </td>
                             <td>
-                                <select value={Number(it.cod_lista_precios) || 12}
+                                <select aria-label={`Lista de ${it.descripcion}`} value={Number(it.cod_lista_precios) || 12}
                                         onChange={e => cambiar(idx, 'cod_lista_precios', Number(e.target.value))}>
                                     {LISTAS.map(([cod, nom]) => <option key={cod} value={cod}>{nom}</option>)}
                                 </select>
                             </td>
                             <td className="n">
-                                <input className="ed-desc" type="text" inputMode="decimal"
+                                <input aria-label={`Descuento de ${it.descripcion}`} className="ed-desc" type="text" inputMode="decimal"
                                        value={String(it.descuento_porc ?? 0)}
                                        onChange={e => cambiar(idx, 'descuento_porc', e.target.value.replace(',', '.'))} />
                             </td>
@@ -230,7 +253,7 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, obse
                                 {/* El costo de distribución no tiene precio de lista: se escribe.
                                     El resto muestra el importe ya calculado. */}
                                 {it.cod_articulo === COD_COSTO_DISTRIBUCION ? (
-                                    <input className="ed-precio" type="text" inputMode="decimal"
+                                    <input aria-label={`Precio de ${it.descripcion}`} className="ed-precio" type="text" inputMode="decimal"
                                            placeholder="Precio"
                                            value={it.precio != null ? String(it.precio) : ''}
                                            onChange={e => cambiar(idx, 'precio', e.target.value.replace(',', '.'))} />
@@ -248,20 +271,20 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, obse
                         </tr>
                     ))}
                 </tbody>
-            </table>
+            </table></div>
 
             {/* ─── Agregar un producto ────────────────────────────────────────── */}
             <div className="ed-agregar">
                 <div className="ed-buscar">
                     <Search size={14} />
                     <input type="text" value={busqueda} placeholder="Agregar un producto: escribí parte del nombre o el código"
-                           onChange={e => setBusqueda(e.target.value)}
+                           onChange={e => { invalidarBusqueda(); setResultados(null); setBuscando(false); setBusqueda(e.target.value); }}
                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void buscar(); } }} />
                     <button className="ed-btn ghost chico" onClick={() => void buscar()} disabled={buscando || busqueda.trim().length < 2}>
                         {buscando ? <Loader2 size={13} className="ed-girando" /> : <Search size={13} />} Buscar
                     </button>
                     {resultados && (
-                        <button className="ed-icono" title="Cerrar los resultados" onClick={() => { setResultados(null); setBusqueda(''); }}>
+                        <button className="ed-icono" title="Cerrar los resultados" onClick={() => { invalidarBusqueda(); setBuscando(false); setResultados(null); setBusqueda(''); }}>
                             <X size={14} />
                         </button>
                     )}
@@ -312,12 +335,16 @@ export function EditorPresupuesto({ comprobanteId, numero, itemsOriginales, obse
 
             <div className="ed-pie">
                 <span className="ed-total">Total estimado <b>{money(total)}</b></span>
-                <button className="ed-btn ghost chico" onClick={onCancelar} disabled={guardando}>Cancelar</button>
+                {hayCambios && <button className="ed-btn ghost chico" onClick={() => {
+                    if (operacion.enCurso.current || !confirm('¿Descartar los cambios sin guardar de este presupuesto?')) return;
+                    reparto.borradores.delete(claveBorrador); onBorrador(false); onCancelar();
+                }}>Descartar cambios</button>}
+                <button className="ed-btn ghost chico" onClick={() => { if (!operacion.enCurso.current) onCancelar(); }} disabled={guardando}>Cerrar</button>
                 <button className="ed-btn chico" onClick={() => void guardar()} disabled={guardando || !hayCambios}>
                     {guardando ? <Loader2 size={14} className="ed-girando" /> : <Save size={14} />}
                     {seRecrea ? ' Guardar (rehace el presupuesto)' : ' Guardar cantidades'}
                 </button>
             </div>
-        </div>
+        </fieldset>
     );
 }

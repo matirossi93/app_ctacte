@@ -648,3 +648,23 @@ describe('los campos AFIP de la nota de crédito', () => {
     expect(b.id_destino).toBe(b.punto_de_venta === 999 ? 3 : 1);
   });
 });
+
+
+describe('respuesta ambigua después de POST: no habilita otra emisión', () => {
+  it.each([{}, '', '<html>Bad gateway</html>', {isCreated:true},
+    {mensaje:'El comprobante se procesó, pero no existe conexión al servicio de respuesta'}])('no confunde respuesta desconocida con rechazo: %j', async data => {
+    const { interpretar } = await import('./facturarIM.js');
+    expect(interpretar(data, 'NC B')).toMatchObject({ok:false,sinRespuesta:true});
+  });
+  it.each([500,502,504])('HTTP %s de infraestructura es incierto', async status => {
+    const { comoError } = await import('./facturarIM.js');
+    expect(comoError({response:{status,data:{mensaje:'Internal server error'}}})).toMatchObject({ok:false,sinRespuesta:true});
+  });
+  it('acepta rechazo estructurado sin ID y mantiene la validación exacta HTTP500 de IM', async () => {
+    const { interpretar, comoError } = await import('./facturarIM.js');
+    expect(interpretar({isCreated:false,detalles:'El CUIT del cliente es inválido'},'NC')).toMatchObject({ok:false,sinRespuesta:false});
+    expect(interpretar({isCreated:false,id:123,detalles:'El CUIT del cliente es inválido'},'NC')).toMatchObject({ok:false,sinRespuesta:true});
+    expect(comoError({response:{status:500,data:{isCreated:false,id:123,detalles:'Ya existe una factura con los siguientes datos'}}})).toMatchObject({ok:false,sinRespuesta:true});
+    expect(comoError({response:{status:500,data:{detalles:'Validaciones: • El número de comprobante [77377] ya existe para el punto de venta [7] y empresa [1].'}}})).toMatchObject({ok:false,sinRespuesta:false});
+  });
+});

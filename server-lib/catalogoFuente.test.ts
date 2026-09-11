@@ -84,3 +84,8 @@ describe('fetchArticulosCatalogo — de dónde sale el catálogo', () => {
     expect(a.equivalencia_um).toBe(1);
   });
 });
+
+it('conserva IVA explícito y distingue ausencia de tasa cero sin otra descarga', async()=>{
+  const get=mockIM([[{...art(1,'A'),iva_por:'10.5'},art(2,'B'),{...art(3,'C'),iva_por:0}]]);
+  const cat=await fetchArticulosCatalogo(); expect(cat.get(1)?.iva_por).toBe(10.5);expect(cat.get(2)?.iva_por).toBeNull();expect(cat.get(3)?.iva_por).toBe(0);expect(get).toHaveBeenCalledTimes(1);
+});

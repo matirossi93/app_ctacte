@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { Activity, useState } from 'react';
 import { ClipboardCheck, Boxes } from 'lucide-react';
 import { PresupuestosView } from './PresupuestosView';
 import { ConsolidadoView } from './ConsolidadoView';
+import { useReparto } from './RepartoContext';
 import './PresupuestosShell.css';
 
 /**
@@ -22,6 +23,7 @@ import './PresupuestosShell.css';
 type Seccion = 'pedidos' | 'articulos';
 
 export function PresupuestosShell({ desde, hasta }: { desde: string; hasta: string }) {
+    const { ocupado, puedeNavegar } = useReparto();
     const [seccion, setSeccion] = useState<Seccion>('pedidos');
     /**
      * 🪤 La revisión NO se desmonta al cambiar de sección: se esconde.
@@ -38,21 +40,21 @@ export function PresupuestosShell({ desde, hasta }: { desde: string; hasta: stri
     return (
         <div className="ps-root">
             <nav className="ps-subtabs">
-                <button className={seccion === 'pedidos' ? 'on' : ''} onClick={() => setSeccion('pedidos')}>
+                <button aria-label="Por pedido" className={seccion === 'pedidos' ? 'on' : ''} disabled={ocupado} onClick={() => { if (puedeNavegar()) setSeccion('pedidos'); }}>
                     <ClipboardCheck size={14} /> <span>Por pedido</span>
                 </button>
-                <button className={seccion === 'articulos' ? 'on' : ''} onClick={() => { setSeccion('articulos'); setVisitoArticulos(true); }}>
+                <button aria-label="Por artículo" className={seccion === 'articulos' ? 'on' : ''} disabled={ocupado} onClick={() => { if (!puedeNavegar()) return; setSeccion('articulos'); setVisitoArticulos(true); }}>
                     <Boxes size={14} /> <span>Por artículo</span>
                 </button>
             </nav>
 
-            <div hidden={seccion !== 'pedidos'}>
+            <Activity mode={seccion === 'pedidos' ? 'visible' : 'hidden'}>
                 <PresupuestosView desde={desde} hasta={hasta} />
-            </div>
+            </Activity>
             {visitoArticulos && (
-                <div hidden={seccion !== 'articulos'}>
+                <Activity mode={seccion === 'articulos' ? 'visible' : 'hidden'}>
                     <ConsolidadoView desde={desde} hasta={hasta} />
-                </div>
+                </Activity>
             )}
         </div>
     );

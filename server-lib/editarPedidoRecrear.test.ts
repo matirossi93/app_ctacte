@@ -38,7 +38,7 @@ const im = vi.hoisted(() => ({
 
 vi.mock('./infomanager.js', () => ({
   // El cache de /ventas se limpia junto con las vistas (10/09/2026).
-  invalidarCacheVentas: vi.fn(),
+  invalidarCacheVentas: vi.fn(), invalidarIM: vi.fn(),
   invalidarCacheItems: vi.fn(),
   crearPresupuesto: im.crearPresupuesto,
   anularComprobante: im.anularComprobante,
@@ -87,14 +87,22 @@ let updates: Array<[string, any]> = [];
  * Fake encadenable Y awaitable de supabase-js. `then` es lo que hace que `await q.eq(...)`
  * funcione, que es como editarPedido consume el select de renglones, el delete y el insert.
  */
+let claims = new Map<string,string>();
 function fakeSb(resultados: Record<string, any>) {
   im.sbMock.mockImplementation(() => ({
+    rpc: vi.fn(async (name:string,p:any) => {
+      if(name==='reclamar_presupuesto') { if(claims.has(p.p_id)) return {data:false,error:null}; claims.set(p.p_id,p.p_token);return {data:true,error:null}; }
+      if(name==='soltar_presupuesto' && claims.get(p.p_id)===p.p_token) {claims.delete(p.p_id);return {data:true,error:null};}
+      return {data:false,error:null};
+    }),
     from: (t: string) => {
       const res = resultados[t] ?? { data: null, error: null };
+      let escribiendo = false;
+      const resultado = () => escribiendo && Object.hasOwn(resultados, `${t}_final`) ? resultados[`${t}_final`] : res;
       const q: any = {
-        then: (r: any, j: any) => Promise.resolve(res).then(r, j),
-        maybeSingle: () => Promise.resolve(res),
-        update: (v: any) => { updates.push([t, v]); return q; },
+        then: (r: any, j: any) => Promise.resolve(resultado()).then(r, j),
+        maybeSingle: () => Promise.resolve(resultado()),
+        update: (v: any) => { escribiendo = true; updates.push([t, v]); return q; },
       };
       for (const m of ['select', 'eq', 'order', 'delete', 'insert']) q[m] = () => q;
       return q;
@@ -123,7 +131,7 @@ const SURTIDO_NUEVO = [
 const SOLO_CANTIDADES = [{ cod_articulo: 100, cantidad: 9, cod_lista: 12 }];
 
 beforeEach(() => {
-  updates = [];
+  updates = []; claims = new Map();
   for (const f of Object.values(im)) (f as any).mockReset?.();
   fakeSb({
     pedidos_vendedor: { data: PEDIDO, error: null },
@@ -133,7 +141,7 @@ beforeEach(() => {
   im.getPrecioLista.mockResolvedValue({ precio_vta: 1000, iva: 21, descripcion: 'X' });
   im.fetchVendedores.mockResolvedValue([]);
   im.fetchArticulosCatalogo.mockResolvedValue(new Map());
-  im.cabeceraComprobante.mockResolvedValue({ fecha: '2026-08-27', anulada: false, existe: true });
+  im.cabeceraComprobante.mockResolvedValue({ tipo_comprobante:'PR',cod_empresa:1,cod_cliente:500, fecha: '2026-08-27', anulada: false, existe: true });
   im.fechaComprobante.mockResolvedValue('2026-08-27');
   im.anularComprobante.mockResolvedValue({ ok: true, raw: {} });
   im.desconfirmarPresupuesto.mockResolvedValue({ ok: true });
@@ -193,7 +201,7 @@ describe('editarPedido — recrear el presupuesto en IM', () => {
   it('🔴 YA ANULADO: un presupuesto muerto se recrea aunque sólo cambien las cantidades', async () => {
     // Así se recupera el pedido roto del 28/08: el vendedor abre y toca Confirmar. Sin esto
     // se va por el camino barato y le manda el PUT a un comprobante anulado (409 sin salida).
-    im.cabeceraComprobante.mockResolvedValue({ fecha: '2026-08-27', anulada: true, existe: true });
+    im.cabeceraComprobante.mockResolvedValue({ tipo_comprobante:'PR',cod_empresa:1,cod_cliente:500, fecha: '2026-08-27', anulada: true, existe: true });
 
     const { body } = await editar(SOLO_CANTIDADES);
 
@@ -225,7 +233,7 @@ describe('editarPedido — recrear el presupuesto en IM', () => {
     // Pasa de verdad y seguido: en la oficina limpian los presupuestos anulados a mano, así
     // que el pedido queda apuntando a un id muerto. Sin esto se iba por el camino barato,
     // getItemsComprobante tiraba 404 y el vendedor se comía un 500 sin salida.
-    im.cabeceraComprobante.mockResolvedValue({ fecha: null, anulada: null, existe: false });
+    im.cabeceraComprobante.mockResolvedValue({ tipo_comprobante:'PR',cod_empresa:1,cod_cliente:500, fecha: null, anulada: null, existe: false });
 
     const { status, body } = await editar(SOLO_CANTIDADES);   // ni siquiera cambia nada
 
@@ -237,16 +245,16 @@ describe('editarPedido — recrear el presupuesto en IM', () => {
     expect(body.ok).toBe(true);
   });
 
-  it('si IM no contesta la cabecera NO se asume que fue borrado: sigue el camino de siempre', async () => {
+  it('si IM no contesta la cabecera NO se asume que fue borrado: bloquea la escritura desconocida', async () => {
     // `existe: null` es "no sé". Tratarlo como borrado recrearía el presupuesto por un hipo
     // de red, dejando DOS vivos del mismo pedido.
-    im.cabeceraComprobante.mockResolvedValue({ fecha: null, anulada: null, existe: null });
+    im.cabeceraComprobante.mockResolvedValue({ tipo_comprobante:'PR',cod_empresa:1,cod_cliente:500, fecha: null, anulada: null, existe: null });
 
-    const { body } = await editar(SOLO_CANTIDADES);
+    const { status } = await editar(SOLO_CANTIDADES);
 
-    expect(im.actualizarPresupuestoCantidades).toHaveBeenCalledTimes(1);
+    expect(status).toBe(409);
+    expect(im.actualizarPresupuestoCantidades).not.toHaveBeenCalled();
     expect(im.crearPresupuesto).not.toHaveBeenCalled();
-    expect(body.solo_cantidades).toBe(true);
   });
 
   it('🔴 el presupuesto reemplazado se saca de la lista de confirmados', async () => {
@@ -298,21 +306,21 @@ describe('editarPedido — recrear el presupuesto en IM', () => {
     // de la oficina. La fecha vigente ya la tenemos en la mano: la trae `cabeceraComprobante`,
     // que este camino llama igual, así que no cuesta un GET extra. La fuente de verdad es IM,
     // no nuestro created_at.
-    im.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-10', anulada: false, existe: true });
+    im.cabeceraComprobante.mockResolvedValue({ tipo_comprobante:'PR',cod_empresa:1,cod_cliente:500, fecha: '2026-09-10', anulada: false, existe: true });
 
     await editar(SURTIDO_NUEVO);
 
     expect(im.crearPresupuesto.mock.calls[0][0].fecha).toBe('2026-09-10');
   });
 
-  it('si IM no dice con qué fecha quedó el comprobante, el reemplazo sale con la de hoy', async () => {
+  it('si IM no dice con qué fecha quedó el comprobante, no inventa una fecha ni crea el reemplazo', async () => {
     // `fecha: null` es "no sé": IM no contestó la cabecera. Inventar una fecha es peor que
     // dejar la de hoy, que es el comportamiento de siempre.
-    im.cabeceraComprobante.mockResolvedValue({ fecha: null, anulada: null, existe: null });
+    im.cabeceraComprobante.mockResolvedValue({ tipo_comprobante:'PR',cod_empresa:1,cod_cliente:500, fecha: null, anulada: null, existe: null });
 
     await editar(SURTIDO_NUEVO);
 
-    expect(im.crearPresupuesto.mock.calls[0][0].fecha).toBeUndefined();
+    expect(im.crearPresupuesto).not.toHaveBeenCalled();
   });
 });
 
@@ -325,19 +333,20 @@ describe('editarPedido — recrear el presupuesto en IM', () => {
  */
 function fakeSbConFallas(fallas: { del?: string; ins?: string; updFinal?: string }) {
   im.sbMock.mockImplementation(() => ({
+    rpc: vi.fn(async () => ({data:true,error:null})),
     from: (t: string) => {
       let res: any = t === 'pedidos_vendedor'
         ? { data: PEDIDO, error: null }
-        : { data: ACTUALES, error: null };
+        : { data: t === 'pedidos_vendedor_items' ? ACTUALES : null, error: null };
       const q: any = {
         then: (r: any, j: any) => Promise.resolve(res).then(r, j),
         maybeSingle: () => Promise.resolve(res),
         update: (v: any) => {
           updates.push([t, v]);
-          if (t === 'pedidos_vendedor' && fallas.updFinal) res = { data: null, error: { message: fallas.updFinal } };
+          if (t === 'pedidos_vendedor' && fallas.updFinal && 'total_estimado' in v) res = { data: null, error: { message: fallas.updFinal } };
           return q;
         },
-        delete: () => { if (fallas.del) res = { data: null, error: { message: fallas.del } }; return q; },
+        delete: () => { if (t === 'pedidos_vendedor_items' && fallas.del) res = { data: null, error: { message: fallas.del } }; return q; },
         insert: () => { if (fallas.ins) res = { data: null, error: { message: fallas.ins } }; return q; },
       };
       for (const m of ['select', 'eq', 'order']) q[m] = () => q;
@@ -379,10 +388,11 @@ describe('editarPedido — que no se pierda de vista un presupuesto vivo', () =>
     // el front decía "Pedido modificado en InfoManager" sin haber llamado a IM ni una vez. El
     // pedido corregido no existía para la oficina y había que anularlo y cargarlo de cero.
     im.sbMock.mockImplementation(() => ({
-      from: (t: string) => {
+      rpc: vi.fn(async () => ({data:true,error:null})),
+    from: (t: string) => {
         const res = t === 'pedidos_vendedor'
           ? { data: { ...PEDIDO, estado: 'error', im_presupuesto_id: null, im_numero: null }, error: null }
-          : { data: ACTUALES, error: null };
+          : { data: t === 'pedidos_vendedor_items' ? ACTUALES : null, error: null };
         const q: any = {
           then: (r: any, j: any) => Promise.resolve(res).then(r, j),
           maybeSingle: () => Promise.resolve(res),
@@ -440,4 +450,52 @@ describe('anularPedido — el anulado tampoco queda a la vista', () => {
     expect(im.anularComprobante).toHaveBeenCalledTimes(1);
     expect(im.desconfirmarPresupuesto).toHaveBeenCalledWith(PEDIDO.im_presupuesto_id);
   });
+});
+
+
+describe('vendedor comparte exclusión durable con el panel',()=>{
+  it('claim del panel bloquea edición y anulación sin llamar IM',async()=>{
+    claims.set(String(PEDIDO.im_presupuesto_id),'panel');
+    expect((await editar(SOLO_CANTIDADES)).status).toBe(409);
+    const {anularPedido}=await import('./pedidos.js');let code=200;
+    const res:any={status:(c:number)=>{code=c;return res;},json:()=>{}};
+    await anularPedido({params:{id:PEDIDO_ID},user:USER} as any,res);
+    expect(code).toBe(409);expect(im.actualizarPresupuestoCantidades).not.toHaveBeenCalled();expect(im.anularComprobante).not.toHaveBeenCalled();
+    expect(claims.size).toBe(1);
+  });
+  it('dos editores concurrentes tienen un único PUT; termina liberando ambos locks',async()=>{
+    let terminar:any;im.actualizarPresupuestoCantidades.mockImplementation(()=>new Promise(r=>{terminar=r;}));
+    const primero=editar(SOLO_CANTIDADES);
+    await vi.waitFor(()=>expect(terminar).toBeTypeOf('function'));
+    expect((await editar(SOLO_CANTIDADES)).status).toBe(409);
+    terminar({ok:true});expect((await primero).status).toBe(200);
+    expect(im.actualizarPresupuestoCantidades).toHaveBeenCalledTimes(1);expect(claims.size).toBe(0);
+  });
+  it('timeout conserva locks y bloquea segundo intento',async()=>{
+    im.actualizarPresupuestoCantidades.mockResolvedValue({ok:false,sinRespuesta:true,error:'timeout'});
+    await editar(SOLO_CANTIDADES);expect(claims.size).toBe(2);
+    expect((await editar(SOLO_CANTIDADES)).status).toBe(409);expect(im.actualizarPresupuestoCantidades).toHaveBeenCalledTimes(1);
+  });
+  it('FA incierta local bloquea aunque IM declare no facturado',async()=>{
+    fakeSb({pedidos_vendedor:{data:PEDIDO,error:null},presupuestos_facturados:{data:{estado_emision:'incierto'},error:null}});
+    expect((await editar(SOLO_CANTIDADES)).status).toBe(409);expect(im.crearPresupuesto).not.toHaveBeenCalled();
+  });
+  it('anular exige resultado conocido de consulta facturado',async()=>{
+    im.presupuestoFacturado.mockResolvedValue({facturado:false,desconocido:true});
+    const {anularPedido}=await import('./pedidos.js');let code=200;const res:any={status:(c:number)=>{code=c;return res;},json:()=>{}};
+    await anularPedido({params:{id:PEDIDO_ID},user:USER} as any,res);
+    expect(code).toBe(503);expect(im.anularComprobante).not.toHaveBeenCalled();expect(claims.size).toBe(0);
+  });
+  it('fallo al invalidar aprobación impide escritura',async()=>{
+    fakeSb({pedidos_vendedor:{data:PEDIDO,error:null},pedidos_vendedor_items:{data:ACTUALES,error:null},presupuestos_revision:{data:null,error:{message:'DB caída'}}});
+    expect((await editar(SOLO_CANTIDADES)).status).toBe(503);expect(im.actualizarPresupuestoCantidades).not.toHaveBeenCalled();expect(claims.size).toBe(0);
+  });
+});
+
+it('anulación local exige fila confirmada y no libera el claim cuando la actualización no devuelve fila', async () => {
+  fakeSb({ pedidos_vendedor: {data: {...PEDIDO, estado: 'error', im_presupuesto_id: null}, error: null}, pedidos_vendedor_final: {data: null, error: null} });
+  const { anularPedido } = await import('./pedidos.js'); let code = 200; let body: any;
+  const res: any = { status: (c: number) => {code = c; return res;}, json: (b: any) => {body = b;} };
+  await anularPedido({params: {id: PEDIDO_ID}, user: USER} as any, res);
+  expect(code).toBe(503); expect(body.ok).not.toBe(true); expect(claims.has(`pedido:${PEDIDO_ID}`)).toBe(true); expect(im.anularComprobante).not.toHaveBeenCalled();
 });

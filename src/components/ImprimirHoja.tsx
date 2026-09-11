@@ -17,7 +17,7 @@ import './ImprimirHoja.css';
  *     cada cantidad separada: cada una es un paquete a preparar.
  */
 
-interface Comprobante { im_numero: number | null; im_remito_numero?: number | null; bultos: number; kg: number; total: number; facturado: boolean }
+interface Comprobante { factura_origen?: string; im_numero: number | null; im_remito_numero?: number | null; bultos: number; kg: number; total: number; facturado: boolean }
 /**
  * 🔴 Las notas de crédito y débito de ESTA entrega. Mati (10/09/2026): *"la NC de Baca tiene que
  * impactar en el importe total que se le va a entregar en ese pedido"*. El total del cliente ya
@@ -25,7 +25,7 @@ interface Comprobante { im_numero: number | null; im_remito_numero?: number | nu
  */
 interface NotaFila { tipo: string; numero: number | null; total: number }
 interface ClienteFila {
-    cod_cliente: number; cliente_nombre: string | null; saldo_anterior: number | null;
+    cod_cliente: number; cod_empresa?: number | null; saldo_actualizado?: boolean; saldo_consultado_at?: string | null; cliente_nombre: string | null; saldo_anterior: number | null;
     comprobantes: Comprobante[]; notas?: NotaFila[]; total: number; bultos: number; kg: number;
 }
 interface Fraccion { descripcion: string; cantidades: number[]; paquetes: number; kg: number }
@@ -35,7 +35,7 @@ interface Datos {
     totales: { clientes: number; comprobantes: number; bultos: number; kg: number; total: number };
     fraccionado: Fraccion[];
     fraccionado_totales: { productos: number; paquetes: number; kg: number };
-    sin_saldo: number;
+    sin_saldo: number; sin_actualizar_saldo?: number; fraccionado_completo?: boolean;
 }
 
 const money = (n: number | null | undefined) =>
@@ -56,13 +56,16 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
     }, []);
 
     useEffect(() => {
-        fetch(`/api/hojas-ruta/${hojaId}/impresion`, { headers: authHeaders() })
+        const abort = new AbortController();
+        setDatos(null); setError(null);
+        fetch(`/api/hojas-ruta/${hojaId}/impresion`, { headers: authHeaders(), signal: abort.signal })
             .then(async r => {
                 const d = await r.json().catch(() => null);
                 if (!r.ok) throw new Error(d?.error ?? 'No se pudo armar el impreso');
-                setDatos(d);
+                if (!abort.signal.aborted) setDatos(d);
             })
-            .catch(e => setError(e?.message ?? 'Error de conexión'));
+            .catch(e => { if (!abort.signal.aborted) setError(e?.message ?? 'Error de conexión'); });
+        return () => abort.abort();
     }, [hojaId]);
 
     return createPortal(
@@ -72,7 +75,7 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
                     <button className={que === 'ruta' ? 'on' : ''} onClick={() => setQue('ruta')}>Hoja de ruta</button>
                     <button className={que === 'fraccionado' ? 'on' : ''} onClick={() => setQue('fraccionado')}>Fraccionado</button>
                 </div>
-                <button className="imp-btn" onClick={() => window.print()} disabled={!datos}>
+                <button className="imp-btn" onClick={() => window.print()} disabled={!datos || !!error || (que === 'fraccionado' && datos.fraccionado_completo !== true)}>
                     <Printer size={15} /> Imprimir
                 </button>
                 <button className="imp-cerrar" onClick={onClose}><X size={18} /></button>
@@ -129,7 +132,7 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
                             // Las notas ocupan su propia fila: el rowSpan del total tiene que contarlas.
                             const filas = c.comprobantes.length + notas.length;
                             return (
-                            <tbody className="imp-grupo" key={c.cod_cliente}>
+                            <tbody className="imp-grupo" key={`${c.cod_empresa ?? "?"}|${c.cod_cliente}`}>
                                 {c.comprobantes.map((x, i) => (
                                     <tr key={c.cod_cliente + '-' + (x.im_numero ?? i)}>
                                         <td>{i === 0 ? <b>{c.cliente_nombre}</b> : ''}</td>
@@ -185,6 +188,8 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
                         </tfoot>
                     </table>
 
+                    {datos.clientes.some(c => c.comprobantes.some(p => p.factura_origen === "elegida")) && <p className="imp-nota">Hay facturas deducidas entre varias candidatas. Revisá la asociación antes de cobrar.</p>}
+                    {!!datos.sin_actualizar_saldo && <p className="imp-nota">Saldo sin actualizar en {datos.sin_actualizar_saldo} cliente(s). Los importes disponibles usan la última consulta guardada.</p>}
                     {datos.sin_saldo > 0 && (
                         <p className="imp-nota imp-no-print">
                             De {datos.sin_saldo} cliente(s) no se pudo traer el saldo: esa celda va en blanco.
@@ -216,7 +221,8 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
                         {datos.hoja.transporte && <span><b>Transporte</b> {datos.hoja.transporte}</span>}
                     </div>
 
-                    {!datos.fraccionado.length && <p className="imp-nota">Esta hoja no lleva nada para fraccionar.</p>}
+                    {datos.fraccionado_completo !== true && <p className="imp-error">Faltan renglones para completar el fraccionado. Actualizá antes de imprimir.</p>}
+                    {datos.fraccionado_completo === true && !datos.fraccionado.length && <p className="imp-nota">Esta hoja no lleva nada para fraccionar.</p>}
 
                     <table className="imp-tabla frac">
                         <thead>

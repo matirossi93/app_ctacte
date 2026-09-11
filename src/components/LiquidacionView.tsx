@@ -1,3 +1,4 @@
+import { useLecturaVigente } from '../utils/useLecturaVigente';
 import { useEffect, useState } from 'react';
 import { Loader2, AlertTriangle, UserCheck, Printer } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
@@ -59,30 +60,32 @@ export function LiquidacionView() {
      *  3. Un `<input type="month">` a medio tipear reporta '' y el server caía al mes actual,
      *     contestando 200 con datos reales del mes equivocado. Sin mes no se pide nada.
      */
+    const { iniciar } = useLecturaVigente(mes);
     useEffect(() => {
+        const lectura = iniciar(); if (!lectura) return;
         if (!/^\d{4}-\d{2}$/.test(mes)) { setCargando(false); return; }
-        let vivo = true;
+
         setCargando(true); setError(null);
         setChoferes([]); setTotales(null); setSinCerrar(null);
         (async () => {
             try {
-                const r = await fetch(`/api/liquidacion?mes=${mes}`, { headers: authHeaders() });
+                const r = await fetch(`/api/liquidacion?mes=${mes}`, { headers: authHeaders(), signal: lectura.signal });
                 const d = await r.json().catch(() => null);
-                if (!vivo) return;
+                if (!lectura.vigente()) return;
                 if (!r.ok) throw new Error(d?.error ?? 'No se pudo traer la liquidación');
                 // Lo que contestó el server, no lo que dice el selector: si no coinciden, no se pinta.
                 if (d?.mes && d.mes !== mes) return;
                 setChoferes(d.choferes ?? []);
                 setTotales(d.totales ?? null);
-                setSinCerrar(d.sin_cerrar ?? null);
+                setSinCerrar(d.sin_cerrar ?? null); lectura.confirmar();
             } catch (e: any) {
-                if (vivo) setError(e?.message ?? 'Error de conexión');
+                if (lectura.vigente()) setError(e?.message ?? 'Error de conexión');
             } finally {
-                if (vivo) setCargando(false);
+                if (lectura.vigente()) setCargando(false);
             }
         })();
-        return () => { vivo = false; };
-    }, [mes]);
+        return () => {};
+    }, [mes, iniciar]);
 
     /**
      * Mientras esta vista está abierta, imprimir saca SOLO la liquidación.

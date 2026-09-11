@@ -1,3 +1,4 @@
+import { LecturasCompartidas } from './lecturasCompartidas.js';
 /**
  * LO QUE SALE EN EL CAMIÓN: los remitos del día.
  *
@@ -44,7 +45,7 @@ const VISTA_TTL_MS = 90_000;
 const _cache = new Map<string, { at: number; datos: any }>();
 
 /** Se tira cuando algo la deja vieja: se asignó un remito a una hoja, se sacó, se marcó retiro. */
-export function invalidarRemitos() { _cache.clear(); }
+export function invalidarRemitos() { vistasCompartidas.invalidar(); }
 
 const esTipo = (v: any, t: string) => String(v?.tipo_comprobante ?? '').trim() === t;
 const vigente = (v: any) => String(v?.anulada ?? '').trim().toUpperCase() !== 'S';
@@ -85,22 +86,23 @@ const DESDE_MINIMO = (() => {
 /** La misma forma que devuelve la vista, pero sin nada: el rango cae entero antes del arranque. */
 function vaciaDesde(_desde: string, _hasta: string) {
   return {
-    pendientes: [], asignados: [], en_retiro: 0,
+    pendientes: [], asignados: [], en_retiro: 0, conflictos_asignacion: [],
     totales: { remitos: 0, importe: 0, kg: 0 },
     sin_zona: 0, sin_factura: 0, factura_deducida: 0, dias_sin_items: [] as string[],
   };
 }
 
-export async function vistaRemitos(desde: string, hasta: string, forzar = false) {
+const vistasCompartidas = new LecturasCompartidas<any>();
+export function vistaRemitos(desde: string, hasta: string, forzar = false): Promise<any> { return vistasCompartidas.obtener(`${desde}|${hasta}`, () => armarVistaRemitos(desde,hasta,forzar), {actualizar:forzar}); }
+async function armarVistaRemitos(desde: string, hasta: string, forzar = false) {
   // El corte de arranque manda sobre lo que pida la pantalla: nada anterior entra nunca.
   if (DESDE_MINIMO && desde < DESDE_MINIMO) desde = DESDE_MINIMO;
   if (DESDE_MINIMO && hasta < DESDE_MINIMO) return vaciaDesde(desde, hasta);
   const clave = `${desde}|${hasta}`;
-  const hit = _cache.get(clave);
-  if (!forzar && hit && Date.now() - hit.at < VISTA_TTL_MS) return hit.datos;
+
 
   const [ventas, cat, clientes] = await Promise.all([
-    fetchVentas(desde, hasta),
+    fetchVentas(desde, hasta, { actualizar: forzar }),
     fetchArticulosCatalogo(),
     fetchClientesIMCached().catch(() => []),
   ]);
@@ -120,7 +122,7 @@ export async function vistaRemitos(desde: string, hasta: string, forzar = false)
   for (let i = 0; i < fechas.length; i += 4) {
     const tanda = fechas.slice(i, i + 4);
     const resultados = await Promise.all(tanda.map(f =>
-      fetchVentasItems(f, f).catch((e: any) => {
+      fetchVentasItems(f, f, { actualizar: forzar }).catch((e: any) => {
         // 🪤 Sin los renglones de un día, esos remitos salen con 0 kg. Se anota para poder
         // avisarlo: un peso que miente por abajo hace que la hoja parezca entrar en el camión.
         console.warn(`[vistaRemitos] sin items del ${f}:`, e?.message);
@@ -167,33 +169,35 @@ export async function vistaRemitos(desde: string, hasta: string, forzar = false)
   const nuestros = await enTandas<any>(t => sb().from('presupuestos_facturados')
     .select('im_comprobante_id, im_remito_id, im_factura_id, im_factura_numero, im_factura_tipo')
     .eq('tenant_id', TENANT_ID).in('im_remito_id', t));
+  // Conservar todos los orígenes: elegir el último PR ocultaba entregas ya asignadas.
+  const presupuestosPorRemito = new Map<string, Set<string>>();
+  for (const f of nuestros) {
+    if (!f.im_remito_id || !f.im_comprobante_id) continue;
+    const remito = String(f.im_remito_id);
+    if (!presupuestosPorRemito.has(remito)) presupuestosPorRemito.set(remito, new Set());
+    presupuestosPorRemito.get(remito)!.add(String(f.im_comprobante_id));
+  }
+  const ambiguos = new Set([...presupuestosPorRemito].filter(([, ids]) => ids.size > 1).map(([id]) => id));
+  // No asignar al azar la factura de un vínculo ambiguo ni ofrecérsela a otro remito.
+  const facturasReservadas = new Set(nuestros.filter(f => ambiguos.has(String(f.im_remito_id)))
+    .map(f => String(f.im_factura_id)).filter(id => id !== 'null' && id !== 'undefined'));
   const vinculados = new Map(nuestros
-    .filter((f: any) => f.im_remito_id)
+    .filter((f: any) => f.im_remito_id && !ambiguos.has(String(f.im_remito_id)))
     .map((f: any) => [String(f.im_remito_id), {
       im_factura_id: f.im_factura_id ?? null,
       im_factura_numero: f.im_factura_numero ?? null,
       im_factura_tipo: f.im_factura_tipo ?? null,
     }]));
-  const facturaDe = aparearFacturas(remitos as any, facturas as any, vinculados);
-
-  /**
-   * 🔴 El presupuesto del que salió cada remito. Sin esto, una hoja armada ANTES del cambio a
-   * remitos guarda el presupuesto, y su remito aparecía igual como pendiente: la misma mercadería
-   * terminaba en dos hojas —dos camiones— y el chofer cobraba dos veces por una sola entrega.
-   * El índice único es sobre `im_comprobante_id`, así que la base no lo frena: son dos filas
-   * distintas para la misma entrega. Auditoría del 08/09/2026.
-   */
-  const presuDelRemito = new Map<string, string>();
-  for (const f of nuestros) {
-    if (f.im_remito_id && f.im_comprobante_id) presuDelRemito.set(String(f.im_remito_id), String(f.im_comprobante_id));
-  }
-  const idsAmirar = [...new Set([...ids, ...presuDelRemito.values()])];
+  const facturaDe = aparearFacturas(remitos.filter(r => !ambiguos.has(String(r.id))) as any,
+    facturas.filter(f => !facturasReservadas.has(String(f.id))) as any, vinculados);
+  const idsAmirar = [...new Set([...ids, ...[...presupuestosPorRemito.values()].flatMap(ids => [...ids])])];
 
   // Dónde está cada uno: en una hoja, o el cliente lo pasa a buscar.
   const buscarEn = async (tabla: string, extra?: (q: any) => any) => {
     const filas: any[] = [];
     for (let i = 0; i < idsAmirar.length; i += 200) {
-      let q = sb().from(tabla).select(tabla === 'hojas_ruta_pedidos' ? 'im_comprobante_id, hoja_id' : 'im_comprobante_id');
+      let q = sb().from(tabla).select(tabla === 'hojas_ruta_pedidos' ? 'im_comprobante_id, hoja_id,hojas_ruta!inner(tenant_id)' : 'im_comprobante_id');
+      if (tabla === 'hojas_ruta_pedidos') q = q.eq('hojas_ruta.tenant_id', TENANT_ID);
       if (extra) q = extra(q);
       const { data, error } = await q.in('im_comprobante_id', idsAmirar.slice(i, i + 200));
       if (error) throw new Error(error.message);
@@ -210,10 +214,11 @@ export async function vistaRemitos(desde: string, hasta: string, forzar = false)
   const enHoja = new Map<string, string>();
   const enRetiro = new Set<string>();
   for (const id of ids) {
-    const presu = presuDelRemito.get(id);
-    const hoja = enHojaPorId.get(id) ?? (presu ? enHojaPorId.get(presu) : undefined);
-    if (hoja) enHoja.set(id, hoja);
-    if (enRetiroPorId.has(id) || (presu && enRetiroPorId.has(presu))) enRetiro.add(id);
+    const alias = [id, ...presupuestosPorRemito.get(id) ?? []];
+    const hojas = new Set(alias.map(id => enHojaPorId.get(id)).filter((id): id is string => !!id));
+    if (hojas.size === 1) enHoja.set(id, [...hojas][0]);
+    if (alias.some(id => enRetiroPorId.has(id))) enRetiro.add(id);
+    if (hojas.size > 1 || (hojas.size > 0 && enRetiro.has(id))) ambiguos.add(id);
   }
 
   const filas = remitos.map((r: any) => {
@@ -236,6 +241,7 @@ export async function vistaRemitos(desde: string, hasta: string, forzar = false)
       bultos: peso.bultos,
       kg: peso.kg,
       renglones_sin_peso: peso.renglones_sin_peso,
+      peso_completo: (renglones.get(String(r.id))?.length ?? 0) > 0 && peso.renglones_sin_peso === 0,
       // Lo que escribió el vendedor: viaja del pedido al remito y le sirve al repartidor.
       observaciones: typeof r.observaciones === 'string' && r.observaciones.trim() ? r.observaciones.trim() : null,
       // La factura que le corresponde, con cómo se supo (ver aparearFactura.ts).
@@ -243,13 +249,16 @@ export async function vistaRemitos(desde: string, hasta: string, forzar = false)
       im_factura_numero: fa?.im_factura_numero ?? null,
       im_factura_tipo: fa?.im_factura_tipo ?? null,
       factura_origen: fa?.origen ?? 'ninguna',
+      asignacion_ambigua: ambiguos.has(String(r.id)),
+      comprobantes_origen: [...presupuestosPorRemito.get(String(r.id)) ?? []],
       hoja_id: enHoja.get(String(r.id)) ?? null,
       en_retiro: enRetiro.has(String(r.id)),
     };
   });
 
   const datos = {
-    pendientes: filas.filter(f => !f.hoja_id && !f.en_retiro),
+    pendientes: filas.filter(f => !f.hoja_id && !f.en_retiro && !f.asignacion_ambigua),
+    conflictos_asignacion: filas.filter(f => f.asignacion_ambigua),
     asignados: filas.filter(f => f.hoja_id),
     en_retiro: filas.filter(f => f.en_retiro).length,
     totales: {
@@ -263,6 +272,6 @@ export async function vistaRemitos(desde: string, hasta: string, forzar = false)
     factura_deducida: filas.filter(f => f.factura_origen === 'elegida').length,
     dias_sin_items: diasSinItems,
   };
-  _cache.set(clave, { at: Date.now(), datos });
+
   return datos;
 }

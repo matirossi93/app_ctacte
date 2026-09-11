@@ -27,7 +27,15 @@ export const getUser = (): AuthUser | null => {
 };
 export const setUser = (u: AuthUser): void => { localStorage.setItem('auth_user', JSON.stringify(u)); };
 
+// Reparto instala una frontera mientras conserva borradores y operaciones en memoria.
+// El resto de las pantallas mantiene su comportamiento cuando no hay guardia instalada.
+let guardiaContexto: (() => void) | null = null;
+export function instalarGuardiaAuth(guardia: () => void) {
+    guardiaContexto = guardia;
+    return () => { if (guardiaContexto === guardia) guardiaContexto = null; };
+}
 export const authHeaders = (): Record<string, string> => {
+    guardiaContexto?.();
     const token = getToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
 };

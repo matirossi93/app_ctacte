@@ -1,3 +1,4 @@
+import { respuestaReparto } from './test-helpers/repartoRpc.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
@@ -14,6 +15,9 @@ vi.mock('./infomanager.js', () => ({
   invalidarCacheVentas: vi.fn(),
   invalidarCacheItems: vi.fn(), fechaArgentina: () => '2026-09-08' }));
 vi.mock('./vistaPresupuestos.js', () => ({ invalidarVista: vi.fn(), vistaDeRango: vi.fn() }));
+vi.mock('./repartoDatos.js', async original => ({ ...(await original<any>()),
+  verificarEntregas: async (filas: any[]) => filas.map(p => ({ ...p, cod_empresa: 1, tipo: 'RE', tipo_comprobante: 'RE', datos_consultados_at: '2026-09-11', fecha: p.fecha ?? '2026-09-08' })),
+}));
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
 
 const { marcarRetiro, quitarRetiro, listarRetiros, resumenRetiros } = await import('./retirosSucursal.js');
@@ -23,6 +27,7 @@ let escrituras: Array<{ tabla: string; op: string; valor: any }> = [];
 
 function fakeSb() {
   m.sbMock.mockImplementation(() => ({
+    rpc: respuestaReparto(() => tablas, (tabla, op, valor, filtros) => { escrituras.push({ tabla, op, valor, filtros } as any); }),
     from: (t: string) => {
       const res = tablas[t] ?? { data: null, error: null };
       const q: any = {
@@ -32,7 +37,7 @@ function fakeSb() {
         update: (v: any) => { escrituras.push({ tabla: t, op: 'update', valor: v }); return q; },
         delete: () => { escrituras.push({ tabla: t, op: 'delete', valor: null }); return q; },
       };
-      for (const k of ['select', 'eq', 'in', 'gte', 'lte', 'order', 'limit', 'or']) q[k] = () => q;
+      for (const k of ['range', 'or', 'select', 'eq', 'in', 'gte', 'lte', 'order', 'limit', 'or']) q[k] = () => q;
       return q;
     },
   }));
@@ -40,7 +45,7 @@ function fakeSb() {
 
 function llamar(fn: any, { rol = 'administrativo', params = {}, body = {}, query = {} } = {}) {
   let status = 200; let out: any;
-  const req: any = { user: { rol, sub: 'u1' }, params, body, query };
+  const req: any = { user: { rol, sub: 'u1' }, params, body: { version_esperada:1, ...body }, query: { version_esperada:1, ...query } };
   const res: any = { status: (s: number) => { status = s; return res; }, json: (b: any) => { out = b; } };
   return fn(req, res).then(() => ({ status, body: out }));
 }
@@ -114,9 +119,9 @@ describe('sacar de retiros', () => {
 
 describe('el acumulado del mes', () => {
   const RETIROS = [
-    { cod_cliente: 1, cliente_nombre: 'UNO', total: 100000, kg: 500, bultos: 10, fecha: '2026-09-02', retirado_at: 'x' },
-    { cod_cliente: 1, cliente_nombre: 'UNO', total: 50000, kg: 200, bultos: 4, fecha: '2026-09-05', retirado_at: null },
-    { cod_cliente: 2, cliente_nombre: 'DOS', total: 300000, kg: 1200, bultos: 30, fecha: '2026-09-07', retirado_at: 'x' },
+    { im_comprobante_id: '70001', cod_cliente: 1, cliente_nombre: 'UNO', total: 100000, kg: 500, bultos: 10, fecha: '2026-09-02', retirado_at: 'x' },
+    { im_comprobante_id: '70002', cod_cliente: 1, cliente_nombre: 'UNO', total: 50000, kg: 200, bultos: 4, fecha: '2026-09-05', retirado_at: null },
+    { im_comprobante_id: '70003', cod_cliente: 2, cliente_nombre: 'DOS', total: 300000, kg: 1200, bultos: 30, fecha: '2026-09-07', retirado_at: 'x' },
   ];
 
   it('🔴 agrupa por cliente y ordena por importe: se ve quién retira siempre', async () => {
@@ -150,8 +155,8 @@ describe('listar los del rango', () => {
   it('suma importes, kilos y bultos, y cuenta los pendientes', async () => {
     tablas['retiros_sucursal'] = {
       data: [
-        { cod_cliente: 1, total: 1000, kg: 10, bultos: 1, retirado_at: null },
-        { cod_cliente: 2, total: 2000.5, kg: 20.25, bultos: 2, retirado_at: 'x' },
+        { im_comprobante_id: '70006', cod_cliente: 1, total: 1000, kg: 10, bultos: 1, retirado_at: null },
+        { im_comprobante_id: '70007', cod_cliente: 2, total: 2000.5, kg: 20.25, bultos: 2, retirado_at: 'x' },
       ],
       error: null,
     };

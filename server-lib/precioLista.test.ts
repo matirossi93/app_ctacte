@@ -51,3 +51,9 @@ describe('parsePrecioLista — IM contesta 200 con el error adentro', () => {
     expect(parsePrecioLista([{ cod_articulo: 7, descripcion: 'A', precio_vta: 12.5 }], 7)?.precio_vta).toBe(12.5);
   });
 });
+
+it('IVA verificada distingue cero explícito de ausencia sin romper el número histórico',()=>{
+ expect(parsePrecioLista({precio_vta:10,iva:0},1)).toMatchObject({iva:0,iva_verificada:0});
+ expect(parsePrecioLista({precio_vta:10},1)).toMatchObject({iva:0,iva_verificada:null});
+ expect(parsePrecioLista({precio_vta:10,iva:10.5},1)?.iva_verificada).toBe(10.5);
+});
