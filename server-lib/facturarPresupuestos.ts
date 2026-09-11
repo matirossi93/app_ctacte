@@ -74,7 +74,7 @@ export function articulosSinStockDelError(
 }
 
 /** Sólo la oficina. Devuelve true si ya contestó el 403. */
-function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
+export function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
   if (!puedeArmarHojasDeRuta(String(req.user?.rol ?? ''))) {
     res.status(403).json({ error: 'La facturación la hace administración.' });
     return true;
@@ -1214,8 +1214,13 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
          */
         control_fa_re: (() => {
           if (!e?.im_factura_id || !e?.im_remito_id) return null;
-          const r = compararPar(e, (vista as any)[EVIDENCIA]);
-          return { estado: r.estado, texto: textoControl(r), diferencias: r.diferencias ?? [] };
+          const ev = (vista as any)[EVIDENCIA];
+          const r = compararPar(e, ev);
+          return {
+            estado: r.estado, texto: textoControl(r), diferencias: r.diferencias ?? [],
+            // 🪤 El momento en que se leyó, que con una vista servida del cache NO es ahora.
+            checked_at: ev?.leidoEn ? new Date(ev.leidoEn).toISOString() : null,
+          };
         })(),
       };
     });

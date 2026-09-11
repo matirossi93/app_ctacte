@@ -56,6 +56,7 @@ import { pendientesDelDia, arrastreDelDia, impresionHoja, sugerenciaDelDia, list
 import { tableroFacturacion, previsualizarFacturacion, facturarSeleccion, liberarReclamo } from './server-lib/facturarPresupuestos.js';
 // Corregir una factura ya emitida, con notas de crédito y de débito.
 import { verFacturaParaCorregir, corregirFactura, historialCorrecciones, notaFinanciera, moverFechaFactura, cancelarCorreccion } from './server-lib/correccionFactura.js';
+import { compararFacturaConRemito } from './server-lib/compararComprobantes.js';
 import { marcarRetiro, quitarRetiro, marcarRetirado, listarRetiros, resumenRetiros } from './server-lib/retirosSucursal.js';
 import { listarChoferes, liquidacionMensual } from './server-lib/liquidacionChoferes.js';
 import { listarAjustes, crearAjuste, borrarAjuste, candidatasAVincular, vincularAjuste } from './server-lib/ajustesEntrega.js';
@@ -692,6 +693,8 @@ app.post('/api/facturacion', requireJwt, (req: any, res) => facturarSeleccion(re
 app.delete('/api/facturacion/reclamo/:comprobanteId', requireJwt, (req: any, res) => liberarReclamo(req, res));
 // 🔴 Corregir una factura EMITE comprobantes reales. Sin `emitir: true` sólo previsualiza.
 app.get('/api/facturacion/corregir/:idFactura', requireJwt, (req: any, res) => verFacturaParaCorregir(req, res));
+// Comparar UN par factura/remito a pedido: sólo lectura, para los que el tablero no alcanzó a ver.
+app.get('/api/facturacion/comparar/:imComprobanteId', requireJwt, (req: any, res) => compararFacturaConRemito(req, res));
 app.get('/api/facturacion/corregir/:idFactura/historial', requireJwt, (req: any, res) => historialCorrecciones(req, res));
 app.post('/api/facturacion/corregir', requireJwt, (req: any, res) => corregirFactura(req, res));
 // Una NC/ND que no saca mercadería: diferencia de cambio, intereses, bonificación.

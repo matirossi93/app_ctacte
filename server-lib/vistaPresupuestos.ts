@@ -163,10 +163,11 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false, ven
             equivalencia_um: cat.get(Number((it as any).cod_articulo))?.equivalencia_um,
             // Con qué lista y qué descuento quedó el renglón EN INFOMANAGER, ahora mismo.
             cod_lista_precios: Number((it as any).cod_lista_precios) || 0,
-            // Crudos, para comparar factura contra remito sin convertir nada.
+            // Crudos, para comparar factura contra remito sin convertir nada. 🪤 El código va
+            // también sin convertir: `Number(it.cod_articulo)` oculta una entrada ilegible.
             cod_uni_venta: (it as any).cod_uni_venta,
             cant_uni_venta: (it as any).cant_uni_venta,
-            cantidad_cruda: (it as any).cantidad,
+            cod_articulo_crudo: (it as any).cod_articulo,
             descuento_porc: Number((it as any).descuento_porc) || 0,
           });
         }
@@ -473,10 +474,9 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false, ven
      * guardar los renglones enteros de todos los comprobantes en cada rango cacheado multiplica
      * la memoria del proceso.
      */
-    const evidencia = proyectarEvidencia(
-      new Map([...renglones].map(([id, rs]) => [id, rs.map(r => ({ ...r, cantidad: (r as any).cantidad_cruda }))])),
-      ventas, (delRango ?? []) as any[], t0,
-    );
+    // 🪤 Se pasa el Map tal cual: copiarlo entero antes de filtrar duplicaría en memoria los
+    // renglones de TODOS los comprobantes del día, que es justo lo que no se quiere guardar.
+    const evidencia = proyectarEvidencia(renglones as any, ventas, (delRango ?? []) as any[], t0);
 
     const datos = {
       dias_sin_items: diasSinItems, reglas_disponibles: reglasDisponibles,

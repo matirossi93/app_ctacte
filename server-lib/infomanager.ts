@@ -1443,7 +1443,22 @@ export function parsearItemsComprobante(data: any): ItemComprobante[] {
 export async function leerComprobante(id: string | number) {
   const cli = await imClient();
   const { data } = await imGetRetry(() => cli.get(`/ventas/${id}`), `ventas/${id} completo`);
-  return { cabecera: parsearCabeceraComprobante(data), items: parsearItemsComprobante(data) };
+  return { cabecera: parsearCabeceraComprobante(data), items: parsearItemsComprobante(data), crudos: renglonesCrudos(data) };
+}
+
+/**
+ * Los renglones SIN normalizar.
+ *
+ * 🪤 `parsearItemsComprobante` hace `Number(cantidad)` —y `Number(null)` es 0— y descarta los
+ * marcadores de unidad. Para comparar dos comprobantes eso es fatal: dos "no vino" convertidos a
+ * 0 se leerían como iguales. Va aparte para no cambiarle el contrato a las demás rutas.
+ */
+export function renglonesCrudos(data: any): Array<{ cod_articulo: unknown; cantidad: unknown; cod_uni_venta?: unknown; cant_uni_venta?: unknown }> {
+  const items: any[] = data?.items ?? data?.results?.items ?? data?.venta?.items ?? [];
+  return items.map((it) => ({
+    cod_articulo: it.cod_articulo, cantidad: it.cantidad,
+    cod_uni_venta: it.cod_uni_venta, cant_uni_venta: it.cant_uni_venta,
+  }));
 }
 
 export async function getItemsComprobante(idComprobante: string | number): Promise<ItemComprobante[]> {

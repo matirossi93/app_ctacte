@@ -87,3 +87,44 @@ describe('comparar un par', () => {
     expect(compararPar(par, null).estado).toBe('no_verificado');
   });
 });
+
+/** Bloqueantes que encontró Astra: lo que FALTA también impide acreditar, no sólo lo que choca. */
+describe('identidad incompleta no es identidad', () => {
+  const ev = (extra: any = {}) => evidencia({ '20': [item(1, 1)], '30': [item(1, 1)] }, [{ ...fa, ...extra }, re]);
+
+  it('🔑 si el registro no guarda cliente, empresa o número, no se acredita', () => {
+    for (const falta of [{ cod_cliente: null }, { cod_empresa: null }, { im_factura_numero: null }, { im_remito_numero: null }]) {
+      expect(compararPar({ ...par, ...falta }, ev()).estado, JSON.stringify(falta)).toBe('no_verificado');
+    }
+  });
+
+  it('🔑 ni con un cliente o número en cero', () => {
+    expect(compararPar({ ...par, cod_cliente: 0 }, ev()).estado).toBe('no_verificado');
+    expect(compararPar({ ...par, im_factura_numero: 0 }, ev()).estado).toBe('no_verificado');
+  });
+
+  it('🔑 la letra de la factura tiene que estar y ser A o B', () => {
+    for (const letra of [null, '', 'FA', 'X', 'FA X']) {
+      expect(compararPar({ ...par, im_factura_tipo: letra }, ev()).estado, String(letra)).toBe('no_verificado');
+    }
+  });
+
+  it('🪤 nada de acreditar por coerción', () => {
+    expect(compararPar({ ...par, cod_cliente: ['1054'] as any }, ev()).estado).toBe('no_verificado');
+    expect(compararPar(par, ev({ numero: ['50420'] })).estado).toBe('no_verificado');
+  });
+});
+
+/** 🔴 Antes sólo se descartaba `anulada: 'S'`: un null o una 'X' llegaban a "coinciden". */
+describe('vigencia: sólo con los dos confirmados', () => {
+  it('🔑 una anulación desconocida no habilita a comparar', () => {
+    for (const a of [null, undefined, 'X', true, '']) {
+      const ev = evidencia({ '20': [item(1, 1)], '30': [item(1, 1)] }, [{ ...fa, anulada: a }, re]);
+      expect(compararPar(par, ev).estado, JSON.stringify(a)).toBe('no_verificado');
+    }
+  });
+
+  it('con los dos en N sí se compara', () => {
+    expect(compararPar(par, evidencia({ '20': [item(1, 1)], '30': [item(1, 1)] })).estado).toBe('coinciden');
+  });
+});

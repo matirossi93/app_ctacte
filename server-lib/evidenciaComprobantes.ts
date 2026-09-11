@@ -1,4 +1,5 @@
 import { compararFacturaRemito, type RenglonEvidencia, type ResultadoControl } from './controlFacturaRemito.js';
+import { vigenciaSegunAnulada } from './vigenciaComprobante.js';
 
 /**
  * La evidencia para comparar una factura con su remito, sacada de lo que la vista YA leyó.
@@ -49,8 +50,14 @@ export interface ParVinculado {
   cod_empresa?: unknown;
 }
 
-const txt = (v: unknown) => String(v ?? '').trim();
-const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+const txt = (v: unknown) => (typeof v === 'string' ? v.trim() : typeof v === 'number' && Number.isFinite(v) ? String(v) : '');
+/** 🪤 Sólo number o string: `Number(["5"])` es 5 y `Number(true)` es 1. */
+const num = (v: unknown) => {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+};
+/** Positivo y legible: un 0 o un ilegible no acreditan identidad. */
+const idPositivo = (v: unknown) => { const n = num(v); return n !== null && n > 0 ? n : null; };
 
 /**
  * ¿La cabecera leída es el comprobante que dice nuestro registro?
@@ -61,14 +68,21 @@ const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n
 function esElMismo(c: CabeceraMinima | undefined, tipo: 'FA' | 'RE', par: ParVinculado, numeroGuardado: unknown): boolean {
   if (!c) return false;
   if (txt(c.tipo_comprobante).toUpperCase() !== tipo) return false;
-  const cliente = num(par.cod_cliente), empresa = num(par.cod_empresa);
-  if (cliente !== null && num(c.cod_cliente) !== cliente) return false;
-  if (empresa !== null && num(c.cod_empresa) !== empresa) return false;
-  const esperado = num(numeroGuardado);
-  if (esperado !== null && num(c.numero) !== esperado) return false;
-  // La letra sólo se exige cuando la tenemos guardada: los remitos no llevan.
-  const letra = txt(par.im_factura_tipo).replace(/^FA\s*/i, '').toUpperCase();
-  if (tipo === 'FA' && letra && txt(c.tipo_factura).toUpperCase() !== letra) return false;
+
+  // 🔴 Identidad INCOMPLETA es identidad no acreditada. Antes, si el registro no tenía cliente
+  // o número, esa comprobación simplemente no se hacía y el par pasaba igual.
+  const cliente = idPositivo(par.cod_cliente), empresa = idPositivo(par.cod_empresa), esperado = idPositivo(numeroGuardado);
+  if (cliente === null || empresa === null || esperado === null) return false;
+  if (idPositivo(c.cod_cliente) !== cliente) return false;
+  if (idPositivo(c.cod_empresa) !== empresa) return false;
+  if (idPositivo(c.numero) !== esperado) return false;
+
+  if (tipo === 'FA') {
+    // La letra de una factura es A o B y tiene que estar de los dos lados.
+    const guardada = txt(par.im_factura_tipo).replace(/^FA\s*/i, '').toUpperCase();
+    const enIM = txt(c.tipo_factura).toUpperCase();
+    if (!/^[AB]$/.test(guardada) || guardada !== enIM) return false;
+  }
   return true;
 }
 
@@ -87,9 +101,11 @@ export function compararPar(par: ParVinculado, ev: Evidencia | null | undefined)
   // 🪤 No estar en la evidencia NO es un problema del comprobante: es que su día quedó fuera de
   // lo que esta pantalla leyó. Se dice así, y se ofrece comparar a pedido.
   if (!cFa || !cRe) return { estado: 'no_verificado', motivo: 'Los comprobantes son de días que esta pantalla no trajo. Se puede comparar a pedido.' };
-  if (txt(cFa.anulada).toUpperCase() === 'S' || txt(cRe.anulada).toUpperCase() === 'S') {
-    return { estado: 'no_verificado', motivo: 'Alguno de los dos está anulado en InfoManager.' };
-  }
+  // 🔴 Sólo se compara con los dos CONFIRMADOS vigentes. Antes se descartaba únicamente la 'S':
+  // un `null`, una 'X' o un booleano pasaban y el par podía terminar en "coinciden".
+  const vFa = vigenciaSegunAnulada(cFa.anulada), vRe = vigenciaSegunAnulada(cRe.anulada);
+  if (vFa === false || vRe === false) return { estado: 'no_verificado', motivo: 'Alguno de los dos está anulado en InfoManager.' };
+  if (vFa !== true || vRe !== true) return { estado: 'no_verificado', motivo: 'No se pudo confirmar que los dos comprobantes sigan vigentes.' };
   if (!esElMismo(cFa, 'FA', par, par.im_factura_numero)) return { estado: 'no_verificado', motivo: 'La factura registrada no coincide con la que hay en InfoManager.' };
   if (!esElMismo(cRe, 'RE', par, par.im_remito_numero)) return { estado: 'no_verificado', motivo: 'El remito registrado no coincide con el que hay en InfoManager.' };
 
@@ -129,7 +145,8 @@ export function proyectarEvidencia(
     const rs = itemsPorComprobante.get(id);
     if (!rs) continue;
     renglones.set(id, rs.map((it: any) => ({
-      cod_articulo: it.cod_articulo,
+      // 🪤 El crudo si está: el convertido oculta una entrada ilegible detrás de un número.
+      cod_articulo: it.cod_articulo_crudo !== undefined ? it.cod_articulo_crudo : it.cod_articulo,
       // 🪤 CRUDA: normalizarla acá volvería a perder la diferencia entre "0" y "no vino".
       cantidad: it.cantidad,
       cod_uni_venta: it.cod_uni_venta,
