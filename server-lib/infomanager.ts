@@ -7,7 +7,7 @@ import { interpretarActualizacionIM } from './respuestaActualizacionIM.js';
 import type { ComprobantePendiente } from './saldoCliente.js';
 import { cuerpoParaMoverFecha } from './moverFechaComprobante.js';
 import { comprobanteNoExiste, esComprobanteBorrado } from './comprobanteBorrado.js';
-import { vigenciaDeCabecera, vigenciaSegunAnulada } from './vigenciaComprobante.js';
+import { parsearAnulada, vigenciaDeCabecera, vigenciaSegunAnulada } from './vigenciaComprobante.js';
 
 const BASE = process.env.INFOMANAGER_BASE_URL || 'https://impedidos.infomanager.com.ar/api/v1';
 const CLIENT_ID = process.env.INFOMANAGER_CLIENT_ID || 'ck_elmanantialsrl_base';
@@ -1232,7 +1232,10 @@ export function parsearCabeceraComprobante(data: any): CabeceraComprobante {
       tipo_comprobante: c.tipo_comprobante == null ? null : String(c.tipo_comprobante).trim().toUpperCase(),
       tipo_factura: c.tipo_factura == null ? null : String(c.tipo_factura).trim().toUpperCase(),
       fecha: typeof f === 'string' && f.length >= 10 ? f.slice(0, 10) : null,
-      anulada: a == null ? null : String(a).trim().toUpperCase() === 'S',
+      // 🪤 Sólo 'S'/'N' (o booleano) deciden. Cualquier otra cosa es `null` = no se sabe: dar
+      // por vigente un valor ilegible hace que una anulación pase desapercibida, y darlo por
+      // anulado limpia un remito que está vivo.
+      anulada: parsearAnulada(a),
       existe: true,
       // Lo que escribió el vendedor: la oficina lo usa para facturar.
       observaciones: typeof o === 'string' && o.trim() ? o.trim() : null,
@@ -1387,8 +1390,8 @@ export async function comprobantesVigentes(
     await Promise.all(faltan.slice(i, i + 10).map(async (id) => {
       try {
         const c = await leerCabecera(id);
-        // 🔴 Tres estados: vigente / anulado / no se sabe. Un "no sé" leído como "anulado" hace
-        // que `sincronizarAnulados` borre el vínculo PR↔FA, que es el único que existe.
+        // 🔴 Tres estados: vigente / anulado / no se sabe. Un "no sé" leído como "anulado" marca
+        // la factura anulada o limpia el remito de un pedido ya despachado.
         salida.set(id, vigenciaDeCabecera(c));
       } catch {
         salida.set(id, null);

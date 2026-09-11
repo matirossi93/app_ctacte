@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { vigenciaDeCabecera, vigenciaSegunAnulada } from './vigenciaComprobante.js';
+import { parsearAnulada, vigenciaDeCabecera, vigenciaSegunAnulada } from './vigenciaComprobante.js';
 
 describe('vigenciaSegunAnulada', () => {
   it('los valores explícitos de IM', () => {
@@ -42,5 +42,31 @@ describe('vigenciaDeCabecera', () => {
     expect(vigenciaDeCabecera({ existe: true, anulada: false })).toBe(true);
     expect(vigenciaDeCabecera({ existe: true, anulada: true })).toBe(false);
     expect(vigenciaDeCabecera({ existe: true, anulada: 'S' })).toBe(false);
+  });
+});
+
+/**
+ * 🪤 La incertidumbre se pierde en el PARSEO si no se cuida ahí: `String(a) === 'S'` convierte
+ * 'X' o '' en `false` = vigente, y después ningún helper puede recuperarla.
+ */
+describe('parsearAnulada', () => {
+  it('los valores del contrato', () => {
+    expect(parsearAnulada('S')).toBe(true);
+    expect(parsearAnulada(' s ')).toBe(true);
+    expect(parsearAnulada('N')).toBe(false);
+    expect(parsearAnulada(true)).toBe(true);
+    expect(parsearAnulada(false)).toBe(false);
+  });
+
+  it('🔑 cualquier otro valor es null, no false', () => {
+    for (const v of [null, undefined, '', '  ', 'X', 'SI', 'NO', 0, 1, {}]) {
+      expect(parsearAnulada(v as any), JSON.stringify(v)).toBeNull();
+    }
+  });
+
+  it('y encadenado con la vigencia, un valor ilegible no da vigente ni anulado', () => {
+    expect(vigenciaDeCabecera({ existe: true, anulada: parsearAnulada('X') })).toBeNull();
+    expect(vigenciaDeCabecera({ existe: true, anulada: parsearAnulada('N') })).toBe(true);
+    expect(vigenciaDeCabecera({ existe: true, anulada: parsearAnulada('S') })).toBe(false);
   });
 });
