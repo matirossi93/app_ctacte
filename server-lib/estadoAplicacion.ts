@@ -20,18 +20,19 @@ export function crearComprobadorEsquema(consultar: () => Promise<Resultado>, aho
   return async (): Promise<Resultado> => {
     if (guardado && guardado.hasta > ahora()) return guardado.valor;
     if (enCurso) return enCurso;
-    enCurso = Promise.resolve().then(consultar).then(d => ({ listo: d.listo === true && d.version === 41, version: 41 }))
-      .catch(() => ({ listo: false, version: 41 }))
+    enCurso = Promise.resolve().then(consultar).then(d => ({ listo: d.listo === true && d.version === 42, version: 42 }))
+      .catch(() => ({ listo: false, version: 42 }))
       .then(valor => { guardado = { valor, hasta: ahora() + (valor.listo ? 30_000 : 3_000) }; return valor; })
       .finally(() => { enCurso = null; });
     return enCurso;
   };
 }
 export const comprobarEsquema = crearComprobadorEsquema(async () => {
-  if (!hasSupabase()) return { listo: false, version: 41 };
+  if (!hasSupabase()) return { listo: false, version: 42 };
   const { data, error } = await sb().rpc('reparto_estado_esquema').abortSignal(AbortSignal.timeout(5000));
-  if (error) return { listo: false, version: 41 };
-  return { listo: data?.listo === true, version: Number(data?.version) };
+  if (error) return { listo: false, version: 42 };
+  // La capacidad nueva conserva version41 en el RPC para que aplicar SQL no bloquee la app anterior.
+  return { listo: data?.listo === true && data?.version === 41 && data?.version_cierre === 42, version: 42 };
 });
 export function saludProceso(_req: Request, res: Response) {
   res.setHeader('Cache-Control','no-store');
@@ -41,7 +42,7 @@ export async function estadoPreparacion(_req: Request, res: Response) {
   const esquema = await comprobarEsquema();
   const listo = esquema.listo && (process.env.NODE_ENV !== 'production' || VERSION_COMPILADA !== 'development');
   res.setHeader('Cache-Control','no-store');
-  res.status(listo ? 200 : 503).json({ listo, version: VERSION_COMPILADA, esquema_requerido: 41, esquema_listo: esquema.listo });
+  res.status(listo ? 200 : 503).json({ listo, version: VERSION_COMPILADA, esquema_requerido: 42, esquema_listo: esquema.listo });
 }
 /** Evita escrituras financieras con migración ausente o permisos incorrectos. */
 export async function exigirEsquemaReparto(req: Request, res: Response, next: NextFunction) {

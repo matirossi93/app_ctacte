@@ -138,3 +138,10 @@ describe('el código del cliente', () => {
     expect(txt.length).toBeGreaterThan(1000);
   });
 });
+
+describe('código de artículo en todos los comprobantes impresos',()=>{
+ it.each([{tipo:'Presupuesto'},{tipo:'Factura'},{tipo:'Remito'},{tipo:'Remito',valorizado:false},{tipo:'Nota de crédito'},{tipo:'Nota de débito'}] as const)('imprime código en %j',async opciones=>{
+  const txt=await generarPresupuestoPdf({...base,...opciones,items:[{...items(1)[0],cod_articulo:73125}]}).blob.text();
+  expect(txt).toContain('73125');expect(txt).toContain('Producto');
+ });
+});

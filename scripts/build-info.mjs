@@ -23,6 +23,6 @@ for (const file of files.sort()) {
   hash.update(file + '\0' + content.length + '\0');
   hash.update(content);
 }
-const info = { version: hash.digest('hex'), schema: 41 };
+const info = { version: hash.digest('hex'), schema: 42 };
 if (process.argv.includes('--write')) await writeFile(path.join(root, 'dist-server', 'build-info.json'), JSON.stringify(info) + '\n');
 process.stdout.write(info.version + '\n');

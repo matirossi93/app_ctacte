@@ -17,7 +17,7 @@ import './FraccionadoView.css';
  */
 
 interface Linea {
-    descripcion: string; cantidades: number[]; paquetes: number; kg: number;
+    cod_articulo: number; descripcion: string; cantidades: number[]; paquetes: number; kg: number;
     /**
      * 🔑 Bolsas cerradas que NO hay que fraccionar: la cantidad pedida era un múltiplo exacto
      * del formato (Mati, 09/09/2026: *"si dice 60 kilos, son 2 bolsas de 30"*). Se informan
@@ -124,13 +124,14 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
                     </div>
 
                     {/* Cada cantidad en su cajita: se tilda al preparar el paquete. */}
-                    <table className="fr-tabla">
+                    <div className="fr-tabla-scroll"><table className="fr-tabla">
                         <thead>
-                            <tr><th>Producto</th><th>Paquetes</th><th className="n">Cant.</th><th className="n">Kilos</th></tr>
+                            <tr><th>Código</th><th>Producto</th><th>Paquetes</th><th className="n">Cant.</th><th className="n">Kilos</th></tr>
                         </thead>
                         <tbody>
                             {lineas.map(l => (
-                                <tr key={l.descripcion}>
+                                <tr key={l.cod_articulo}>
+                                    <td>{l.cod_articulo || '—'}</td>
                                     <td className="fr-prod">{l.descripcion}</td>
                                     <td>
                                         <div className="fr-cajitas">
@@ -150,7 +151,7 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
                                 </tr>
                             ))}
                         </tbody>
-                    </table>
+                    </table></div>
                 </div>
             )}
         </div>

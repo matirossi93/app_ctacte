@@ -1,3 +1,4 @@
+import { actualizarImportesFacturas } from './importesFacturas.js';
 import { leerComprobante, invalidarIM } from './infomanager.js';
 /**
  * ETAPA 2 DEL CIRCUITO: facturar los presupuestos aprobados.
@@ -1118,7 +1119,8 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
           .in('im_comprobante_id', emitidos.map((e: any) => String(e.im_comprobante_id)))
       : { data: emitidos, error: null };
     if (errAlDia) { res.status(502).json({ error: `No pude releer las facturas actualizadas: ${errAlDia.message}` }); return; }
-    const porId = new Map((alDia ?? []).map((e: any) => [String(e.im_comprobante_id), e]));
+    const actuales = await actualizarImportesFacturas(alDia ?? [], { ventas: await fetchVentas(desde, hasta), actualizar: req.query.refrescar === '1' });
+    const porId = new Map(actuales.map((e: any) => [String(e.im_comprobante_id), e]));
 
     /**
      * 🔑 LAS NOTAS DE CRÉDITO Y DÉBITO DE CADA FACTURA. Mati (10/09/2026): *"si se le hizo la NC
@@ -1146,7 +1148,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
 
     const porPresupuesto = new Map(todos.map((p: any) => [String(p.im_comprobante_id), p]));
     const bases = new Map(aprobados.map((p: any) => [String(p.im_comprobante_id), p]));
-    for (const e of alDia ?? []) {
+    for (const e of actuales) {
       if (!e.im_factura_id) continue;
       // El importe pertenece a la factura, aunque luego hayan editado su presupuesto.
       const p: any = porPresupuesto.get(String(e.im_comprobante_id));

@@ -1,3 +1,4 @@
+import { actualizarImportesFacturas } from './importesFacturas.js';
 import { LecturasCompartidas } from './lecturasCompartidas.js';
 /**
  * LO QUE SALE EN EL CAMIÓN: los remitos del día.
@@ -221,7 +222,7 @@ async function armarVistaRemitos(desde: string, hasta: string, forzar = false) {
     if (hojas.size > 1 || (hojas.size > 0 && enRetiro.has(id))) ambiguos.add(id);
   }
 
-  const filas = remitos.map((r: any) => {
+  const bases = remitos.map((r: any) => {
     const c = porCliente.get(Number(r.cod_cliente));
     const z = zonaDeCliente(c);
     const peso = pesoDeRenglones(renglones.get(String(r.id)) ?? []);
@@ -233,6 +234,7 @@ async function armarVistaRemitos(desde: string, hasta: string, forzar = false) {
       fecha: r.fecha ? String(r.fecha).slice(0, 10) : null,
       de_otro_dia: String(r.fecha ?? '').slice(0, 10) !== hasta,
       cod_cliente: Number(r.cod_cliente),
+      cod_empresa: Number(r.cod_empresa),
       cliente_nombre: c?.razon_social ?? c?.nombre ?? `Cliente ${r.cod_cliente}`,
       cod_zona: z.cod_zona,
       zona: z.nombre,
@@ -256,6 +258,7 @@ async function armarVistaRemitos(desde: string, hasta: string, forzar = false) {
     };
   });
 
+  const filas = await actualizarImportesFacturas(bases, { ventas, actualizar: forzar });
   const datos = {
     pendientes: filas.filter(f => !f.hoja_id && !f.en_retiro && !f.asignacion_ambigua),
     conflictos_asignacion: filas.filter(f => f.asignacion_ambigua),

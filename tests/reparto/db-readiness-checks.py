@@ -18,7 +18,7 @@ ROLLBACK;
                         '-Atq', '-v', 'ON_ERROR_STOP=1', '-c', query],
                        text=True, capture_output=True, check=True)
     answer = json.loads(p.stdout.strip())
-    assert answer['version'] == 41 and answer['listo'] is expected, (name, answer)
+    assert answer['version'] == 41 and answer['version_cierre'] == 42 and answer['listo'] is expected, (name, answer)
     checks.append(name)
 
 probe('esquema completo listo para service_role')
@@ -58,3 +58,6 @@ for role in ['anon', 'authenticated']:
     checks.append('diagnóstico de esquema no accesible por '+role)
 print(json.dumps({'scope': 'readiness SQL real con permisos por rol', 'passed': len(checks),
                   'checks': checks}, ensure_ascii=False, indent=2))
+
+probe('requiere respaldo de importes al cierre', 'ALTER TABLE hojas_ruta DROP COLUMN cierres_importes;', False)
+probe('cierre de importes no permite ejecución pública', 'GRANT EXECUTE ON FUNCTION cerrar_hoja_con_importes(uuid,uuid,jsonb) TO anon;', False)

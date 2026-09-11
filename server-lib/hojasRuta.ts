@@ -27,7 +27,7 @@ import { armarFraccionado, totalesFraccionado } from './fraccionado.js';
 import { formatosDeBolsa } from './formatosBolsa.js';
 import { sugerirRepartos } from './sugerirRepartos.js';
 import { saldoAnteriorDeLaHoja, ajusteDeNotas } from './saldoCliente.js';
-import { emitidosDe, mutarReparto, verificarEntregas, enriquecerEntregas, notasDeHoja, notasUnicas } from './repartoDatos.js';
+import { ErrorReparto, emitidosDe, mutarReparto, verificarEntregas, enriquecerEntregas, enriquecerHojas, aplicarImportesCierre, notasDeHoja, notasUnicas } from './repartoDatos.js';
 import { proximoNumeroHoja } from './numeroHojaRuta.js';
 
 /** Sólo la oficina. Devuelve true si ya contestó el 403. */
@@ -266,7 +266,7 @@ export async function listarHojas(req: Request & { user?: JwtPayload }, res: Res
     // 🔑 Lo emitido se cruza contra `presupuestos_facturados`, que es la fuente viva: los campos
     // copiados en `hojas_ruta_pedidos` son de cuando se armó la hoja, y si el pedido se facturó
     // DESPUÉS quedaban vacíos (auditoría del 08/09/2026).
-    const todosEnriquecidos = await enriquecerEntregas((hojas ?? []).flatMap((h: any) => h.hojas_ruta_pedidos ?? []));
+    const todosEnriquecidos = await enriquecerHojas(hojas ?? [], req.query.refrescar === '1');
     const emitidoPor = new Map(todosEnriquecidos.map((p: any) => [String(p.im_comprobante_id), p]));
     const conCarga = (hojas ?? []).map((h: any) => {
       const ps = (h.hojas_ruta_pedidos ?? []).map((p: any) => {
@@ -308,9 +308,9 @@ export async function listarHojas(req: Request & { user?: JwtPayload }, res: Res
  *     hace falta aclarar por cliente, sólo el producto y la cantidad"* y *"no se puede
  *     globalizar cantidades"*.
  *
- * 🔑 Los importes, saldos, bultos y kilos salen del SNAPSHOT guardado al armar la hoja, no se
- * recalculan. Los renglones del fraccionado sí se piden a IM: son el detalle de qué preparar y
- * tienen que reflejar el pedido como está ahora.
+ * Las hojas abiertas usan el importe vigente de su factura; las cerradas conservan su base
+ * histórica. Bultos y kilos conservan el respaldo de la entrega. Los renglones del fraccionado
+ * se consultan a IM para reflejar qué preparar ahora.
  */
 export async function impresionHoja(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
@@ -329,7 +329,7 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
      * antes del cambio a remitos se imprimía con el número de PRESUPUESTO y el repartidor llevaba
      * un papel que no coincide con el remito. Auditoría del 08/09/2026.
      */
-    const pedidos = await notasDeHoja(String(req.params.id), await enriquecerEntregas(pedidosCrudos));
+    const pedidos = await notasDeHoja(String(req.params.id), aplicarImportesCierre(hoja, await enriquecerEntregas(pedidosCrudos, true, hoja.estado !== 'cerrada')));
     const { data: respaldos, error: errorRespaldos } = await sb().from('hojas_ruta_saldos').select('*').eq('hoja_id', String(req.params.id));
     if (errorRespaldos) throw new Error(`No pude leer los respaldos de saldo: ${errorRespaldos.message}`);
     const nuevosSaldos: any[] = [];
@@ -818,7 +818,17 @@ export async function editarHoja(req: Request & { user?: JwtPayload }, res: Resp
     }
 
     delete cambios.cerrada_at; delete cambios.cerrada_por;
-    const data = await mutarReparto(req.user?.sub, 'hoja_editar', { hoja_id: String(req.params.id), version_esperada: req.body?.version_esperada, cambios });
+    const datos: any = { hoja_id: String(req.params.id), version_esperada: req.body?.version_esperada, cambios };
+    if (cambios.estado === 'cerrada') {
+      const { data: hoja, error } = await sb().from('hojas_ruta').select('*, hojas_ruta_pedidos(*)')
+        .eq('id', String(req.params.id)).eq('tenant_id', TENANT_ID).maybeSingle();
+      if (error) throw new ErrorReparto(`No pude consultar las entregas al cerrar: ${error.message}`, 502);
+      if (!hoja || hoja.estado !== 'abierta' || hoja.version !== req.body?.version_esperada) throw new ErrorReparto('La hoja cambió. Actualizá antes de cerrar.');
+      const pedidos = await enriquecerEntregas(hoja.hojas_ruta_pedidos ?? [], true);
+      datos.importes = pedidos.map(p => ({ im_comprobante_id: p.im_comprobante_id, im_factura_id: p.im_factura_id ?? null,
+        cod_cliente: p.cod_cliente, cod_empresa: p.cod_empresa, total: Number(p.total), importe_fuente: p.importe_fuente }));
+    }
+    const data = await mutarReparto(req.user?.sub, cambios.estado === 'cerrada' ? 'hoja_cerrar' : 'hoja_editar', datos);
     res.json({ ok: true, hoja: data });
   } catch (err: any) {
     res.status(err.status ?? 500).json({ error: err?.message ?? 'error' });

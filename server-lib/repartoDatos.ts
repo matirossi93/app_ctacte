@@ -1,3 +1,4 @@
+import { actualizarImportesFacturas } from './importesFacturas.js';
 import { sb, TENANT_ID } from './supabase.js';
 import { pesoDeRenglones } from './pesoComprobante.js';
 import { itemsPorFechas } from './itemsRango.js';
@@ -8,9 +9,10 @@ export class ErrorReparto extends Error {
   constructor(message: string, public status = 409) { super(message); }
 }
 export async function mutarReparto(actor: string | undefined, accion: string, datos: Record<string, unknown>) {
-  const { data, error } = await sb().rpc('mutar_reparto', {
-    p_tenant: TENANT_ID, p_actor: actor, p_accion: accion, p_datos: datos,
+  const { data, error } = await sb().rpc(accion === 'hoja_cerrar' ? 'cerrar_hoja_con_importes' : 'mutar_reparto', {
+    p_tenant: TENANT_ID, p_actor: actor, ...(accion === 'hoja_cerrar' ? {} : {p_accion: accion}), p_datos: datos,
   });
+  if (error && accion === 'hoja_cerrar' && ['PGRST202','42883','42703'].includes(error.code)) throw new ErrorReparto('Falta aplicar la migración 042 para guardar los importes al cerrar. La hoja sigue abierta.', 503);
   if (error) throw new ErrorReparto(error.code === '23505' && accion === 'hoja_crear' ? `Ya existe la hoja ${datos.numero ?? ''}. Elegí otro número.` : error.message, ['PGRST202', '42883', '42703'].includes(error.code) ? 503 : 409);
   if (data == null) throw new ErrorReparto('La base no confirmó el cambio. Verificá la migración 040.', 503);
   return data;
@@ -79,19 +81,20 @@ export function netoNotas(notas: NotaEntrega[]) {
   return Math.round(notasUnicas(notas).reduce((s, n) => s + (/^nc/i.test(n.tipo) ? -1 : 1) * Math.abs(n.total), 0) * 100) / 100;
 }
 /** Misma fuente base para impresión, retiro y liquidación; el snapshot original no se pisa. */
-export async function enriquecerEntregas(filas: any[]) {
+export async function enriquecerEntregas(filas: any[], actualizar = false, consultarImportes = true) {
   const emitidos = await emitidosDe(filas.map(f => String(f.im_comprobante_id)));
   const porId = new Map<string, any>();
   for (const e of emitidos) {
     porId.set(String(e.im_comprobante_id), e);
     if (e.im_remito_id) porId.set(String(e.im_remito_id), e);
   }
-  return filas.map(f => {
+  const enriquecidas = filas.map(f => {
     const candidato = porId.get(String(f.im_comprobante_id));
     const relacionados = emitidos.filter(e => String(e.im_comprobante_id) === String(f.im_comprobante_id) || String(e.im_remito_id) === String(f.im_comprobante_id) || (candidato?.im_remito_id && String(e.im_remito_id) === String(candidato.im_remito_id)));
     const e = relacionados.length === 1 && Number(candidato?.cod_cliente) === Number(f.cod_cliente) && (f.cod_empresa == null || Number(f.cod_empresa) === Number(candidato?.cod_empresa)) ? candidato : undefined;
     const completo = e?.facturado_at && e.total != null && e.estado_emision !== 'incierto';
     return { ...f, total_snapshot: f.total,
+      fecha_factura: e?.fecha ?? f.fecha,
       cod_empresa: f.cod_empresa ?? (e?.facturado_at ? e.cod_empresa : null) ?? null,
       empresa_fuente: f.empresa_fuente ?? (f.cod_empresa != null ? 'entrega_verificada' : e?.facturado_at && e?.cod_empresa != null ? 'vinculo_panel' : 'desconocida'),
       total: completo ? Number(e.total) : f.total,
@@ -105,6 +108,7 @@ export async function enriquecerEntregas(filas: any[]) {
       tipo_comprobante: f.tipo_comprobante ?? (String(f.im_comprobante_id) === String(e?.im_remito_id ?? f.im_remito_id) ? 'RE' : null),
     };
   });
+  return consultarImportes ? actualizarImportesFacturas(enriquecidas, { actualizar }) : enriquecidas;
 }
 
 export async function notasDeHoja(hojaId: string, filas: any[]) {
@@ -139,4 +143,27 @@ export async function leerPaginas(consulta: () => any): Promise<any[]> {
     if ((data ?? []).length < 500) return filas;
   }
   throw new ErrorReparto('La consulta supera el límite de seguridad. Acotá el rango; no se muestran totales parciales.', 422);
+}
+
+/** Aplica el último cierre confirmado; los cierres antiguos conservan el circuito previo. */
+export function aplicarImportesCierre(hoja: any, pedidos: any[]) {
+  if (hoja.estado !== 'cerrada') return pedidos;
+  const cierre = hoja.cierres_importes?.at(-1);
+  if (!cierre) return pedidos;
+  const importes = new Map<string, any>((cierre.pedidos ?? []).map((p: any) => [String(p.im_comprobante_id), p]));
+  if (importes.size !== pedidos.length) throw new ErrorReparto('El respaldo del cierre no coincide con las entregas. Revisá la hoja.');
+  return pedidos.map(p => {
+    const c = importes.get(String(p.im_comprobante_id));
+    if (!c || Number(c.cod_cliente) !== Number(p.cod_cliente) || c.total == null || !Number.isFinite(Number(c.total))) throw new ErrorReparto('Falta el importe confirmado al cierre de la entrega.');
+    return { ...p, total: Number(c.total), importe_fuente: 'cierre_hoja' };
+  });
+}
+/** Las hojas cerradas conservan su base histórica; las abiertas siguen el importe de IM. */
+export async function enriquecerHojas(hojas: any[], actualizar = false) {
+  const [abiertas, cerradas] = await Promise.all([
+    enriquecerEntregas(hojas.filter(h => h.estado !== 'cerrada').flatMap(h => h.hojas_ruta_pedidos ?? []), actualizar),
+    enriquecerEntregas(hojas.filter(h => h.estado === 'cerrada').flatMap(h => h.hojas_ruta_pedidos ?? []), false, false),
+  ]);
+  const porId = new Map(cerradas.map(p => [String(p.im_comprobante_id), p]));
+  return [...abiertas, ...hojas.filter(h => h.estado === 'cerrada').flatMap(h => aplicarImportesCierre(h, (h.hojas_ruta_pedidos ?? []).map((p: any) => porId.get(String(p.im_comprobante_id)) ?? p)))];
 }

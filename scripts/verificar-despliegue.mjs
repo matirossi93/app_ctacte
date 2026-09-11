@@ -3,7 +3,7 @@ import { isIP } from 'node:net';
 import { pathToFileURL } from 'node:url';
 
 export function estadoEsperado(state, expected) {
-  return state?.listo === true && state.esquema_listo === true && state.esquema_requerido === 41 && state.version === expected;
+  return state?.listo === true && state.esquema_listo === true && state.esquema_requerido === 42 && state.version === expected;
 }
 
 /** Conserva Host/SNI y la validación del certificado al consultar el origen. */
@@ -52,7 +52,7 @@ async function main() {
         const r = await leerPreparacion(url, target);
         if (r.status === 200 && estadoEsperado(r.state, expected)) {
           if (target) console.log(`::warning::Verificación pública desde este runner no disponible (${last}). Se verificó el origen por HTTPS con certificado y hostname válidos.`);
-          console.log(`Despliegue verificado${target ? ' en origen' : ' en URL pública'}: versión esperada y esquema 41 listo.`);
+          console.log(`Despliegue verificado${target ? ' en origen' : ' en URL pública'}: versión esperada y esquema 42 listo.`);
           return;
         }
         last = `${target ? 'origen' : 'público'}: ${r.diagnostico}; identidad ${r.state?.version === expected ? 'esperada' : 'distinta o ausente'}`;

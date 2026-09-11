@@ -28,7 +28,7 @@ interface ClienteFila {
     cod_cliente: number; cod_empresa?: number | null; saldo_actualizado?: boolean; saldo_consultado_at?: string | null; cliente_nombre: string | null; saldo_anterior: number | null;
     comprobantes: Comprobante[]; notas?: NotaFila[]; total: number; bultos: number; kg: number;
 }
-interface Fraccion { descripcion: string; cantidades: number[]; paquetes: number; kg: number }
+interface Fraccion { cod_articulo: number; descripcion: string; cantidades: number[]; paquetes: number; kg: number }
 interface Datos {
     hoja: { numero: number; fecha: string; turno: string | null; transporte: string | null; camion: string | null };
     clientes: ClienteFila[];
@@ -226,11 +226,12 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
 
                     <table className="imp-tabla frac">
                         <thead>
-                            <tr><th>Producto</th><th>Cantidades a preparar</th><th className="n">Paq.</th><th className="n">Total kg</th></tr>
+                            <tr><th>Código</th><th>Producto</th><th>Cantidades a preparar</th><th className="n">Paq.</th><th className="n">Total kg</th></tr>
                         </thead>
                         <tbody>
                             {datos.fraccionado.map(f => (
-                                <tr key={f.descripcion}>
+                                <tr key={f.cod_articulo}>
+                                    <td>{f.cod_articulo || '—'}</td>
                                     <td className="prod">{f.descripcion}</td>
                                     {/* Cada cantidad es UN paquete: van separadas y en cajas,
                                         para que el que prepara pueda tildarlas una por una. */}
@@ -244,7 +245,7 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
                         </tbody>
                         <tfoot>
                             <tr>
-                                <td colSpan={2}>{datos.fraccionado_totales.productos} productos</td>
+                                <td colSpan={3}>{datos.fraccionado_totales.productos} productos</td>
                                 <td className="n">{datos.fraccionado_totales.paquetes}</td>
                                 <td className="n">{num(datos.fraccionado_totales.kg)}</td>
                             </tr>

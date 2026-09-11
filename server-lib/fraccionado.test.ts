@@ -98,3 +98,9 @@ describe('totalesFraccionado', () => {
     expect(lineas.reduce((s, l) => s + l.bolsas_enteras, 0)).toBe(4);
   });
 });
+
+it('conserva código y separa artículos con el mismo nombre en el impreso',()=>{
+ const cat=new Map([[10,{descripcion:'MEZCLA',unidad_de_medida:'KG'}],[20,{descripcion:'MEZCLA',unidad_de_medida:'KG'}]]);
+ const r=armarFraccionado([{cod_articulo:10,cantidad:5},{cod_articulo:20,cantidad:3}],cat);
+ expect(r).toHaveLength(2);expect(r[0]).toMatchObject({cod_articulo:10,kg:5});expect(r[1]).toMatchObject({cod_articulo:20,kg:3});
+});

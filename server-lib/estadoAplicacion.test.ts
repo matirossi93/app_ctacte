@@ -14,12 +14,12 @@ describe('preparación de reparto', () => {
     const pending = Array.from({ length: 8 }, () => ready());
     await Promise.resolve();
     expect(query).toHaveBeenCalledTimes(1);
-    finish({ listo: true, version: 41 });
+    finish({ listo: true, version: 42 });
     expect((await Promise.all(pending)).every(x => x.listo)).toBe(true);
     expect((await ready()).listo).toBe(true);
     expect(query).toHaveBeenCalledTimes(1);
     now += 30_001;
-    query.mockResolvedValueOnce({ listo: true, version: 41 });
+    query.mockResolvedValueOnce({ listo: true, version: 42 });
     expect((await ready()).listo).toBe(true);
     expect(query).toHaveBeenCalledTimes(2);
   });
@@ -27,7 +27,7 @@ describe('preparación de reparto', () => {
     let now = 1000;
     const query = vi.fn().mockRejectedValueOnce(new Error('sin conexión'))
       .mockResolvedValueOnce({ listo: true, version: 40 })
-      .mockResolvedValue({ listo: true, version: 41 });
+      .mockResolvedValue({ listo: true, version: 42 });
     const ready = crearComprobadorEsquema(query, () => now);
     expect((await ready()).listo).toBe(false);
     expect((await ready()).listo).toBe(false);

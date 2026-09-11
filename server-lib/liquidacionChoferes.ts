@@ -25,7 +25,7 @@ import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
 import type { JwtPayload } from './auth.js';
 import { puedeArmarHojasDeRuta } from './permisos.js';
-import { leerPaginas, enriquecerEntregas } from './repartoDatos.js';
+import { leerPaginas, enriquecerHojas } from './repartoDatos.js';
 import { fechaArgentina } from './infomanager.js';
 
 function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
@@ -67,10 +67,10 @@ export async function liquidacionMensual(req: Request & { user?: JwtPayload }, r
     const { desde, hasta } = limitesDelMes(mes);
 
     const hojas = await leerPaginas(() => sb().from('hojas_ruta')
-      .select('id, numero, fecha, estado, chofer_id, transporte, cerrada_at, choferes(nombre), hojas_ruta_pedidos(*), hojas_ruta_ajustes(tipo, importe, emitido_at)')
+      .select('id, numero, fecha, estado, cierres_importes, chofer_id, transporte, cerrada_at, choferes(nombre), hojas_ruta_pedidos(*), hojas_ruta_ajustes(tipo, importe, emitido_at)')
       .eq('tenant_id', TENANT_ID).gte('fecha', desde).lte('fecha', hasta).order('fecha').order('id'));
 
-    const enriquecidos = await enriquecerEntregas((hojas ?? []).flatMap((h: any) => h.hojas_ruta_pedidos ?? []));
+    const enriquecidos = await enriquecerHojas(hojas ?? [], req.query.refrescar === '1');
     const porId = new Map(enriquecidos.map(p => [String(p.im_comprobante_id), p]));
     const porChofer = new Map<string, any>();
     let abiertas = 0;
