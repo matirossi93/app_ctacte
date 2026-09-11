@@ -81,7 +81,7 @@ export function netoNotas(notas: NotaEntrega[]) {
   return Math.round(notasUnicas(notas).reduce((s, n) => s + (/^nc/i.test(n.tipo) ? -1 : 1) * Math.abs(n.total), 0) * 100) / 100;
 }
 /** Misma fuente base para impresión, retiro y liquidación; el snapshot original no se pisa. */
-export async function enriquecerEntregas(filas: any[], actualizar = false, consultarImportes = true) {
+export async function enriquecerEntregas(filas: any[], actualizar = false, consultarImportes = true, tolerarErrores = false) {
   const emitidos = await emitidosDe(filas.map(f => String(f.im_comprobante_id)));
   const porId = new Map<string, any>();
   for (const e of emitidos) {
@@ -108,7 +108,7 @@ export async function enriquecerEntregas(filas: any[], actualizar = false, consu
       tipo_comprobante: f.tipo_comprobante ?? (String(f.im_comprobante_id) === String(e?.im_remito_id ?? f.im_remito_id) ? 'RE' : null),
     };
   });
-  return consultarImportes ? actualizarImportesFacturas(enriquecidas, { actualizar }) : enriquecidas;
+  return consultarImportes ? actualizarImportesFacturas(enriquecidas, { actualizar, tolerarErrores }) : enriquecidas;
 }
 
 export async function notasDeHoja(hojaId: string, filas: any[]) {
@@ -159,9 +159,9 @@ export function aplicarImportesCierre(hoja: any, pedidos: any[]) {
   });
 }
 /** Las hojas cerradas conservan su base histórica; las abiertas siguen el importe de IM. */
-export async function enriquecerHojas(hojas: any[], actualizar = false) {
+export async function enriquecerHojas(hojas: any[], actualizar = false, tolerarErrores = false) {
   const [abiertas, cerradas] = await Promise.all([
-    enriquecerEntregas(hojas.filter(h => h.estado !== 'cerrada').flatMap(h => h.hojas_ruta_pedidos ?? []), actualizar),
+    enriquecerEntregas(hojas.filter(h => h.estado !== 'cerrada').flatMap(h => h.hojas_ruta_pedidos ?? []), actualizar, true, tolerarErrores),
     enriquecerEntregas(hojas.filter(h => h.estado === 'cerrada').flatMap(h => h.hojas_ruta_pedidos ?? []), false, false),
   ]);
   const porId = new Map(cerradas.map(p => [String(p.im_comprobante_id), p]));

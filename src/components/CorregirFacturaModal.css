@@ -27,6 +27,10 @@
 }
 
 .cf-tabla { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.cf-tabla-scroll { max-width: 100%; overflow-x: auto; }
+.cf-lista { margin-top: 0.3rem; }
+.cf-lista select { font: inherit; color: var(--color-text); background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 0.2rem; }
+.cf-precio-pendiente { max-width: 150px; font-size: 0.75rem; color: #8a5a00; white-space: normal; }
 .cf-tabla th, .cf-tabla td { border-bottom: 1px solid var(--color-border); padding: 0.35rem 0.5rem; text-align: left; }
 .cf-tabla th { font-size: 0.75rem; text-transform: uppercase; color: var(--color-text-muted); font-weight: 700; }
 .cf-tabla .n { text-align: right; }

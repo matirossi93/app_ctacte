@@ -22,6 +22,17 @@ Debe intervenir un operador autorizado con acceso a IM y a SQL administrativo. N
 
 ## NC/ND: registrar el resultado comprobado
 
+La ejecución de cada operación toma además un reclamo durable en `presupuestos_control`,
+con clave `correccion:<UUID operación>` y actividad `corregir factura`. Relee el journal
+después de reclamar para que una petición antigua no reenvíe una colisión777 ya rechazada.
+Una finalización normal libera sólo su token. Si el proceso muere, el reclamo queda tomado:
+detener/verificar al ejecutor, respaldar y conciliar el journal antes de liberar mediante
+`soltar_presupuesto` con la clave y el token exactos observados. No liberar por antigüedad.
+
+Ante el rechazo de numeración777 se conserva el intento y no se ofrece retomar. La nota
+pendiente puede emitirse desde la pantalla de IM y luego conciliarse mediante este procedimiento.
+Vincularla a una hoja no reemplaza la conciliación del estado de productos de la factura.
+
 Primero inspeccionar `facturas_estado_correccion`, `facturas_operaciones` y los vínculos `facturas_correcciones` del mismo tenant/factura. Si el paso ya tiene checkpoint, no registrarlo otra vez. Si la operación está `completo`, no modificarla. No insertar el vínculo manualmente: la RPC lo inserta junto al avance de versión y estado.
 
 Con las condiciones anteriores satisfechas, ejecutar una transacción administrativa. Este es un **modelo que requiere sustituir valores y revisar la evidencia**; no ejecutarlo literalmente:

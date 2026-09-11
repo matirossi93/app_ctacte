@@ -60,6 +60,7 @@ interface Pendiente {
 }
 
 interface HojaPedido {
+    importe_error?: string | null;
     tipo_comprobante?: string; peso_completo?: boolean;
     im_comprobante_id: string;
     im_numero: number | null;
@@ -792,7 +793,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                     <option value="">Sin camión</option>
                                     {camiones.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
                                 </select>
-                                <button className="hr-icono" title="Imprimir la hoja y el listado de fraccionado" onClick={() => setImprimiendo(h.id)} disabled={!h.pedidos.length}>
+                                <button className="hr-icono" title={h.pedidos.some(p => p.importe_error) ? 'Verificá los importes pendientes antes de imprimir' : 'Imprimir la hoja y el listado de fraccionado'} onClick={() => setImprimiendo(h.id)} disabled={!h.pedidos.length || h.pedidos.some(p => p.importe_error)}>
                                     <Printer size={14} />
                                 </button>
                                 <button className="hr-icono" title="Borrar la hoja" onClick={() => void borrarHoja(h.id, h.numero)} disabled={trabajando || cerrada}>
@@ -870,6 +871,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                                 ? <> · saldo <b>{money(Number(p.saldo_anterior))}</b></>
                                                 : <span className="hr-sinpeso" title="No se pudo traer el saldo: va en blanco en la hoja impresa"> · sin saldo</span>}
                                         </div>
+                                        {p.importe_error && <div className="hr-sinpeso" role="status">Importe por verificar: {p.importe_error}</div>}
                                     </div>
                                     <button
                                         className="hr-icono"
@@ -897,7 +899,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                     <button className="hr-btn ghost chico" onClick={() => setAjustando(h)} disabled={trabajando}>
                                         <FileMinus size={14} /> Diferencias
                                     </button>
-                                    <button className="hr-btn chico" onClick={() => void cerrarHoja(h)} disabled={trabajando}>
+                                    <button className="hr-btn chico" onClick={() => void cerrarHoja(h)} disabled={trabajando || (!cerrada && h.pedidos.some(p => p.importe_error))}>
                                         {cerrada ? <><Unlock size={14} /> Reabrir</> : <><Lock size={14} /> Cerrar hoja</>}
                                     </button>
                                 </div>

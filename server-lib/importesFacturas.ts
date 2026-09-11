@@ -1,7 +1,7 @@
 import { cabeceraComprobante, fetchVentas, type VentaRaw } from './infomanager.js';
 import { importesPuntuales as puntuales } from './cacheImportesFacturas.js';
 export { invalidarImportesFacturas } from './cacheImportesFacturas.js';
-type Opciones = { ventas?: VentaRaw[]; desde?: string; hasta?: string; actualizar?: boolean };
+type Opciones = { ventas?: VentaRaw[]; desde?: string; hasta?: string; actualizar?: boolean; tolerarErrores?: boolean };
 const dia = (v: unknown) => /^\d{4}-\d{2}-\d{2}/.test(String(v ?? '')) ? String(v).slice(0, 10) : null;
 
 /** El total de la FA vigente manda sobre PR, remito y snapshots. Nunca escribe en IM ni
@@ -13,6 +13,7 @@ export async function actualizarImportesFacturas<T extends Record<string, any>>(
   if (!candidatas.length) return filas;
   const candidatasSet = new Set(candidatas);
   const porId = new Map<string, any>();
+  const errores = new Map<string, string>();
   if (opciones.ventas) {
     for (const v of opciones.ventas) porId.set(String(v.id), v);
   } else {
@@ -25,13 +26,22 @@ export async function actualizarImportesFacturas<T extends Record<string, any>>(
       else rangos.push([fecha, fecha]);
     }
     for (const [desde, hasta] of rangos) {
-      const ventas = await fetchVentas(desde, hasta, { actualizar: opciones.actualizar });
-      for (const v of ventas) porId.set(String(v.id), v);
+      try {
+        const ventas = await fetchVentas(desde, hasta, { actualizar: opciones.actualizar });
+        for (const v of ventas) porId.set(String(v.id), v);
+      } catch (e) {
+        if (!opciones.tolerarErrores) throw e;
+        for (const f of candidatas) {
+          const fecha = dia(f.fecha_factura ?? f.fecha ?? f.facturado_at);
+          if (!fecha || (fecha >= desde && fecha <= hasta)) errores.set(String(f.im_factura_id), 'No se pudo consultar el importe en InfoManager. Actualizá para verificarlo.');
+        }
+      }
     }
   }
-  const faltantes = [...new Set(candidatas.map(f => String(f.im_factura_id)).filter(id => !porId.has(id)))];
+  const faltantes = [...new Set(candidatas.map(f => String(f.im_factura_id)).filter(id => !porId.has(id) && !errores.has(id)))];
   for (let i = 0; i < faltantes.length; i += 4) {
     await Promise.all(faltantes.slice(i, i + 4).map(async id => {
+      try {
       if (!/^\d+$/.test(id)) throw new Error('La factura vinculada no tiene un identificador válido. Revisá su asociación.');
       const c = await puntuales.obtener(id, async () => {
         const cab = await cabeceraComprobante(id);
@@ -39,15 +49,27 @@ export async function actualizarImportesFacturas<T extends Record<string, any>>(
         return { ...cab, id, anulada: 'N' };
       }, { actualizar: opciones.actualizar });
       porId.set(id, c);
+      } catch (e) {
+        if (!opciones.tolerarErrores) throw e;
+        errores.set(id, e instanceof Error ? e.message : 'No se pudo consultar la factura en InfoManager.');
+      }
     }));
   }
   return filas.map(f => {
     if (!candidatasSet.has(f)) return f;
     const v = porId.get(String(f.im_factura_id));
+    // Entregas legacy no guardaban empresa. La FA identificada debe confirmar que
+    // pertenece al mismo cliente y a Casa Central antes de completar ese dato.
+    const empresa = f.cod_empresa ?? Number(process.env.PEDIDO_EMPRESA_DEFAULT || 1);
     const valido = v && String(v.tipo_comprobante).trim() === 'FA' && String(v.anulada).trim().toUpperCase() === 'N'
-      && Number(v.cod_cliente) === Number(f.cod_cliente) && f.cod_empresa != null && Number(v.cod_empresa) === Number(f.cod_empresa)
+      && Number(f.cod_cliente) > 0 && Number(v.cod_cliente) === Number(f.cod_cliente) && Number(v.cod_empresa) === Number(empresa)
       && v.total != null && String(v.total).trim() !== '' && Number.isFinite(Number(v.total)) && Number(v.total) >= 0;
-    if (!valido) throw new Error(`No pude verificar la factura ${f.im_factura_numero ?? f.im_factura_id} y su importe en InfoManager. Revisá su vigencia y asociación antes de continuar.`);
-    return { ...f, total_snapshot: f.total_snapshot ?? f.total, total: Number(v.total), importe_fuente: 'factura_im' };
+    if (!valido) {
+      const mensaje = errores.get(String(f.im_factura_id)) ?? `No pude verificar la factura ${f.im_factura_numero ?? f.im_factura_id} y su importe en InfoManager. Revisá su vigencia y asociación antes de continuar.`;
+      if (!opciones.tolerarErrores) throw new Error(mensaje);
+      return { ...f, total_snapshot: f.total_snapshot ?? f.total, total: null, importe_fuente: 'no_verificado', importe_error: mensaje };
+    }
+    return { ...f, cod_empresa: Number(v.cod_empresa), empresa_fuente: f.cod_empresa == null ? 'factura_im' : f.empresa_fuente,
+      total_snapshot: f.total_snapshot ?? f.total, total: Number(v.total), importe_fuente: 'factura_im', importe_error: null };
   });
 }

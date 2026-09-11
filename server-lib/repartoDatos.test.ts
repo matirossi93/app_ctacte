@@ -57,3 +57,14 @@ it('la misma hoja conserva el total vigente al pasar de abierta a cerrada',async
  const cerrada=await enriquecerHojas([h]);expect(cerrada[0].total).toBe(80);expect(cerrada[0].total_snapshot).toBe(100);expect(m.ventas).not.toHaveBeenCalled();
  h.estado='abierta';m.ventas.mockResolvedValue([venta(20,'FA',{total:70})]);expect((await enriquecerHojas([h]))[0].total).toBe(70);
 });
+it('listar conserva la hoja legacy y las demás aunque una factura no sea verificable',async()=>{
+ m.ventas.mockResolvedValue([venta(20,'FA',{total:80}),venta(21,'FA',{cod_cliente:99})]);
+ const pedidos=[{im_comprobante_id:'10',im_factura_id:'20',cod_cliente:7,cod_empresa:null,total:100,fecha:'2026-09-11'},
+  {im_comprobante_id:'11',im_factura_id:'21',cod_cliente:7,cod_empresa:1,total:200,fecha:'2026-09-11'}];
+ const hojas=pedidos.map(p=>({estado:'abierta',hojas_ruta_pedidos:[p]}));
+ const filas=await enriquecerHojas(hojas,false,true);
+ expect(filas).toHaveLength(2);expect(filas[0]).toMatchObject({total:80,cod_empresa:1});
+ expect(filas[1]).toMatchObject({total:null,importe_fuente:'no_verificado'});
+ await expect(enriquecerEntregas(pedidos)).rejects.toThrow('verificar');
+ await expect(enriquecerHojas(hojas)).rejects.toThrow('verificar');
+});

@@ -3,6 +3,7 @@ import { useDialogoReparto, estiloDialogo } from '../utils/useDialogoReparto';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { X, AlertTriangle, Trash2, Plus, Loader2, CheckCircle2 } from 'lucide-react';
 import { authHeaders, getUser } from '../utils/auth';
+import { aplicarPrecioDeLista } from '../utils/precioDeLista';
 import './CorregirFacturaModal.css';
 
 /**
@@ -22,7 +23,8 @@ interface Renglon {
   cod_articulo: number;
   cantidad: number;
   /** BRUTO, el precio de lista. Lo que la factura cobró es esto menos el descuento. */
-  precio: number;
+  precio: number | null;
+  cotizacion?: string;
   descuento_porc?: number | null;
   descripcion?: string;
   iva_por?: number | null;
@@ -36,6 +38,7 @@ interface Factura {
 }
 
 interface Vista { nc: Renglon[]; nd: Renglon[]; total_nc: number; total_nd: number; diferencia: number }
+const LISTAS: Array<[number, string]> = [[12, 'Lista 1'], [13, 'Lista 2'], [14, 'Lista 3'], [15, 'Lista 4']];
 
 const money = (n: number) => '$' + Number(n ?? 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 /**
@@ -44,8 +47,8 @@ const money = (n: number) => '$' + Number(n ?? 0).toLocaleString('es-AR', { mini
  * el TOTAL de la factura tampoco coincidía con la factura: en la FA B 50422 decía $699.708,64
  * donde InfoManager dice $587.301,91.
  */
-const importeDe = (r: { cantidad: number; precio: number; descuento_porc?: number | null }) =>
-  r.cantidad * r.precio * (1 - (Number(r.descuento_porc ?? 0) || 0) / 100);
+const importeDe = (r: { cantidad: number; precio: number | null; descuento_porc?: number | null }) =>
+  r.cantidad * Number(r.precio ?? 0) * (1 - (Number(r.descuento_porc ?? 0) || 0) / 100);
 const nun = (v: string) => { const n = Number(String(v).replace(',', '.')); return Number.isFinite(n) && n >= 0 ? n : 0; };
 
 export function CorregirFacturaModal(
@@ -85,6 +88,12 @@ export function CorregirFacturaModal(
   const borradorCargado = useRef(false);
   const facturaActual = useRef<any>(null);
   const [borradorDesactualizado, setBorradorDesactualizado] = useState(false);
+  const [erroresPrecio, setErroresPrecio] = useState<Record<string, string>>({});
+  const [intentoPrecio, setIntentoPrecio] = useState(0);
+  const faltanPrecios = filas.some(f => f.precio == null);
+  const claveCotizacion = JSON.stringify(filas.filter(f => f.precio == null).map(f => ({
+    cod: f.cod_articulo, lista: f.cod_lista_precios, cotizacion: f.cotizacion,
+  })));
   const claveBorrador = `reparto:${propietarioBorrador}:borrador-correccion:${idFactura}`;
   const clavePendiente = `reparto:${propietarioBorrador}:correccion:${idFactura}`;
 
@@ -139,6 +148,34 @@ export function CorregirFacturaModal(
     try { sessionStorage.setItem(claveBorrador, JSON.stringify({ version, originales, filas, motivo, modo, finTipo, finImporte, finMotivo })); } catch { /* La sesión puede impedir almacenamiento. */ }
   }, [claveBorrador, version, originales, filas, motivo, modo, finTipo, finImporte, finMotivo, cargando, resultado, pendiente]);
 
+  // Precio de la lista elegida, sin adoptar respuestas de otra selección ni del artículo retirado.
+  useEffect(() => {
+    if (cargando || pendiente || borradorDesactualizado) return;
+    const pendientes = JSON.parse(claveCotizacion) as Array<{ cod: number; lista: number; cotizacion?: string }>;
+    if (!pendientes.length) return;
+    const ctrl = new AbortController();
+    setErroresPrecio({});
+    void (async () => {
+      for (const p of pendientes) {
+        if (ctrl.signal.aborted) return;
+        try {
+          const r = await fetch(`/api/pedidos/precio?cod_articulo=${p.cod}&cod_lista=${p.lista}`, { headers: authHeaders(), signal: ctrl.signal });
+          const d = await r.json();
+          if (ctrl.signal.aborted) return;
+          const cambio = r.ok ? aplicarPrecioDeLista({ precio: 0 }, d, p.lista) : null;
+          if (!cambio) throw new Error('No se pudo consultar el precio.');
+          if (cambio.sinPrecio) throw new Error('Sin precio en esta lista. Elegí otra.');
+          setVista(null);
+          setFilas(fs => fs.map(f => f.cod_articulo === p.cod && f.cod_lista_precios === p.lista &&
+            f.cotizacion === p.cotizacion && f.precio == null ? { ...f, precio: cambio.precio } : f));
+        } catch (e: any) {
+          if (!ctrl.signal.aborted) setErroresPrecio(es => ({ ...es, [p.cod]: e?.message ?? 'No se pudo consultar el precio.' }));
+        }
+      }
+    })();
+    return () => ctrl.abort();
+  }, [claveCotizacion, intentoPrecio, cargando, pendiente, borradorDesactualizado]);
+
   const totalOriginal = useMemo(
     () => originales.reduce((s, r) => s + importeDe(r), 0), [originales]);
   const totalNuevo = useMemo(
@@ -155,7 +192,7 @@ export function CorregirFacturaModal(
    */
   useEffect(() => {
     setVista(null);
-    if (!hayCambios || pendiente || bloqueoProductos || borradorDesactualizado) return;
+    if (!hayCambios || faltanPrecios || pendiente || bloqueoProductos || borradorDesactualizado) return;
     let vivo = true; const controller = new AbortController();
     const t = setTimeout(async () => {
       try {
@@ -168,7 +205,7 @@ export function CorregirFacturaModal(
       } catch { if (vivo) setVista(null); }
     }, 350);   // sin esto sale una consulta por tecla mientras se escribe un precio
     return () => { vivo = false; controller.abort(); clearTimeout(t); };
-  }, [filas, hayCambios, idFactura, version, pendiente, bloqueoProductos, borradorDesactualizado]);
+  }, [filas, hayCambios, faltanPrecios, idFactura, version, pendiente, bloqueoProductos, borradorDesactualizado]);
 
   // Buscar un producto para agregar. Reusa el buscador del catálogo que ya usa el vendedor.
   useEffect(() => {
@@ -188,8 +225,17 @@ export function CorregirFacturaModal(
     return () => { vivo = false; controller.abort(); clearTimeout(t); };
   }, [buscando]);
 
-  const tocar = (i: number, campo: 'cantidad' | 'precio', valor: string) =>
+  const tocar = (i: number, campo: 'cantidad' | 'precio', valor: string) => {
+    setVista(null);
     setFilas(fs => fs.map((f, j) => j === i ? { ...f, [campo]: nun(valor) } : f));
+  };
+
+  const cambiarLista = (cod: number, lista: number) => {
+    setVista(null);
+    setFilas(fs => fs.map(f => f.cod_articulo === cod ? { ...f, cod_lista_precios: lista,
+      ...(cod !== 13819 ? { precio: null, cotizacion: crypto.randomUUID() } : {}),
+    } : f));
+  };
 
   const sacar = (i: number) => setFilas(fs => fs.filter((_, j) => j !== i));
 
@@ -197,16 +243,18 @@ export function CorregirFacturaModal(
     const cod = Number(a.cod_articulo);
     if (filas.some(f => f.cod_articulo === cod)) { setBuscando(''); setCandidatos([]); return; }
     setFilas(fs => [...fs, {
-      cod_articulo: cod, cantidad: 1, precio: Number(a.precio_venta ?? 0) || 0,
+      cod_articulo: cod, cantidad: 1, precio: cod === 13819 ? 0 : null,
+      cotizacion: crypto.randomUUID(),
       descuento_porc: 0,
       descripcion: String(a.descripcion ?? `Artículo ${cod}`),
-      iva_por: 0, cod_lista_precios: null,
+      // El servidor verifica IVA para productos nuevos; no inventar una alícuota0.
+      cod_lista_precios: LISTAS.some(([l]) => l === fs.at(-1)?.cod_lista_precios) ? fs.at(-1)!.cod_lista_precios : 12,
     }]);
     setBuscando(''); setCandidatos([]);
   };
 
   async function enviar(clase: 'productos' | 'financiera', entrada: any, motivoEnviar: string, versionOriginal: number | null = version) {
-    if (envioEnCurso.current || borradorDesactualizado) return;
+    if (envioEnCurso.current || borradorDesactualizado || (clase === 'productos' && faltanPrecios)) return;
     if (!operacionGlobal.comenzar()) return;
     envioEnCurso.current = true;
     setEmitiendo(true); setError(null);
@@ -223,7 +271,7 @@ export function CorregirFacturaModal(
       if (!r.ok) throw new Error(d?.error ?? 'No se pudo verificar el resultado. Retomá la misma operación.');
       if (!d.ok) {
         setPendiente(d.operacion ?? { id, clase, entrada, motivo: motivoEnviar, estado: 'incierto', puede_retomar: false });
-        setError((d.fallados ?? []).join(' ')); onListo(); return;
+        setError(d.operacion?.error ? null : (d.fallados ?? []).join(' ')); onListo(); return;
       }
       try { sessionStorage.removeItem(clavePendiente); sessionStorage.removeItem(claveBorrador); borradorCargado.current = false; } catch { /* Sin persistencia local. */ }
       setPendiente(null);
@@ -244,7 +292,7 @@ export function CorregirFacturaModal(
   }
 
   async function emitir() {
-    if (!vista || pendiente || bloqueoProductos) return;
+    if (!vista || faltanPrecios || pendiente || bloqueoProductos) return;
     const detalle = [vista.nc.length ? `NC ${money(vista.total_nc)}` : '', vista.nd.length ? `ND ${money(vista.total_nd)}` : ''].filter(Boolean).join(' y ');
     if (!confirm(`Se va a emitir ${detalle} en InfoManager.\n¿Seguimos?`)) return;
     await enviar('productos', { renglones: filas }, motivo);
@@ -270,10 +318,11 @@ export function CorregirFacturaModal(
         </div>}
         {pendiente && !resultado && (
           <div className="cf-error">
-            <span>{pendiente.estado === 'listo' && pendiente.error && !pendiente.emitidos?.length
+            <span>{pendiente.instruccion ?? (pendiente.estado === 'listo' && pendiente.error && !pendiente.emitidos?.length
                 ? 'InfoManager rechazó el intento. Corregí el motivo indicado antes de retomarlo.'
-                : `Hay una operación ${pendiente.estado === 'listo' ? 'pendiente de terminar' : 'por verificar'}. Las notas confirmadas no se vuelven a emitir.`}
-              {pendiente.error && <p>{pendiente.error}</p>}
+                : `Hay una operación ${pendiente.estado === 'listo' ? 'pendiente de terminar' : 'por verificar'}. Las notas confirmadas no se vuelven a emitir.`)}
+              {!!pendiente.emitidos?.length && <p>Notas ya registradas: {pendiente.emitidos.map((n: any) => `${n.tipo} ${n.numero ?? ''} por ${money(n.total)}`).join('; ')}.</p>}
+              {pendiente.error && <details><summary>Ver detalle del rechazo</summary><p>{pendiente.error}</p></details>}
               {pendiente.puede_retomar && <button disabled={emitiendo} onClick={() => void enviar(pendiente.clase, pendiente.entrada, pendiente.motivo, pendiente.version ?? version)}>Retomar / verificar operación</button>}
               {pendiente.puede_cancelar && <button disabled={emitiendo} onClick={async () => {
                 if (!operacionGlobal.comenzar()) return; envioEnCurso.current = true; setEmitiendo(true);
@@ -286,7 +335,7 @@ export function CorregirFacturaModal(
                 finally { envioEnCurso.current = false; setEmitiendo(false); operacionGlobal.terminar(); }
                 if (cancelado) cerrar();
               }}>Cancelar el intento rechazado</button>}
-              {!pendiente.puede_retomar && ' Verificá los comprobantes en InfoManager antes de continuar.'}
+              {!pendiente.puede_retomar && !pendiente.instruccion && ' Verificá los comprobantes en InfoManager antes de continuar.'}
             </span>
           </div>
         )}
@@ -378,7 +427,7 @@ export function CorregirFacturaModal(
               </div>
             )}
 
-            <table className="cf-tabla">
+            <div className="cf-tabla-scroll"><table className="cf-tabla">
               <thead>
                 <tr>
                   <th>Producto</th><th className="n">Cantidad</th><th className="n">Precio</th>
@@ -390,22 +439,31 @@ export function CorregirFacturaModal(
                 {filas.map((f, i) => {
                   const orig = originales.find(o => o.cod_articulo === f.cod_articulo);
                   const cambio = !orig || Math.abs(orig.cantidad - f.cantidad) > 0.0001
-                    || Math.abs(orig.precio - f.precio) > 0.00005;
+                    || f.precio == null || Math.abs(Number(orig.precio) - f.precio) > 0.00005;
                   return (
                     <tr key={f.cod_articulo} className={cambio ? 'cambiado' : ''}>
-                      <td>{f.descripcion ?? `Artículo ${f.cod_articulo}`}</td>
+                      <td>{f.descripcion ?? `Artículo ${f.cod_articulo}`}
+                        <div className="cf-lista"><select aria-label={`Lista de ${f.descripcion}`} value={f.cod_lista_precios ?? ''}
+                          onChange={e => cambiarLista(f.cod_articulo, Number(e.target.value))}>
+                          {!LISTAS.some(([cod]) => cod === f.cod_lista_precios) && <option value={f.cod_lista_precios ?? ''} disabled>{f.cod_lista_precios ? `Lista IM ${f.cod_lista_precios}` : 'Precio original'}</option>}
+                          {LISTAS.map(([cod, nombre]) => <option key={cod} value={cod}>{nombre}</option>)}
+                        </select></div>
+                      </td>
                       <td className="n">
                         <input aria-label={`Cantidad de ${f.descripcion}`} inputMode="decimal" value={String(f.cantidad)}
                                onChange={e => tocar(i, 'cantidad', e.target.value)} />
                       </td>
                       <td className="n">
-                        <input aria-label={`Precio de ${f.descripcion}`} inputMode="decimal" value={String(f.precio)}
+                        <input aria-label={`Precio de ${f.descripcion}`} inputMode="decimal" value={f.precio == null ? '' : String(f.precio)} disabled={f.precio == null}
                                onChange={e => tocar(i, 'precio', e.target.value)} />
+                        {f.precio == null && <div className="cf-precio-pendiente">{erroresPrecio[f.cod_articulo] ?? 'Consultando precio…'}
+                          {erroresPrecio[f.cod_articulo] && <button type="button" onClick={() => setIntentoPrecio(n => n + 1)}>Reintentar precio</button>}
+                        </div>}
                       </td>
                       {/* 🪤 De sólo lectura: el descuento es el que trae la factura. Para corregirlo
                           se toca el precio, que es lo que la oficina ya sabe hacer. */}
                       <td className="n cf-desc">{f.descuento_porc ? `${f.descuento_porc}%` : '—'}</td>
-                      <td className="n">{money(importeDe(f))}</td>
+                      <td className="n">{f.precio == null ? '—' : money(importeDe(f))}</td>
                       <td className="n cf-antes">
                         {orig ? money(importeDe(orig)) : <span className="cf-nuevo">nuevo</span>}
                       </td>
@@ -435,12 +493,12 @@ export function CorregirFacturaModal(
               <tfoot>
                 <tr>
                   <td colSpan={4}>TOTAL</td>
-                  <td className="n">{money(totalNuevo)}</td>
+                    <td className="n">{faltanPrecios ? 'Pendiente' : money(totalNuevo)}</td>
                   <td className="n cf-antes">{money(totalOriginal)}</td>
                   <td />
                 </tr>
               </tfoot>
-            </table>
+            </table></div>
 
             <div className="cf-agregar">
               <input aria-label="Buscar producto para corregir" value={buscando} onChange={e => setBuscando(e.target.value)}
@@ -450,7 +508,7 @@ export function CorregirFacturaModal(
                   {candidatos.map(a => (
                     <li key={a.cod_articulo}>
                       <button onClick={() => agregar(a)}>
-                        {a.descripcion} <span>{money(Number(a.precio_venta ?? 0))}</span>
+                        {a.descripcion} <span>Cód. {a.cod_articulo}</span>
                       </button>
                     </li>
                   ))}
@@ -466,7 +524,7 @@ export function CorregirFacturaModal(
                     <b>Nota de crédito {factura.letra} · {money(vista.total_nc)}</b>
                     <ul>{vista.nc.map((r, i) => (
                       <li key={i}>
-                        {r.descripcion ?? `Artículo ${r.cod_articulo}`} — {r.cantidad} × {money(r.precio)}
+                        {r.descripcion ?? `Artículo ${r.cod_articulo}`} — {r.cantidad} × {money(Number(r.precio))}
                         {r.descuento_porc ? ` − ${r.descuento_porc}%` : ''} = {money(importeDe(r))}
                       </li>
                     ))}</ul>
@@ -477,7 +535,7 @@ export function CorregirFacturaModal(
                     <b>Nota de débito {factura.letra} · {money(vista.total_nd)}</b>
                     <ul>{vista.nd.map((r, i) => (
                       <li key={i}>
-                        {r.descripcion ?? `Artículo ${r.cod_articulo}`} — {r.cantidad} × {money(r.precio)}
+                        {r.descripcion ?? `Artículo ${r.cod_articulo}`} — {r.cantidad} × {money(Number(r.precio))}
                         {r.descuento_porc ? ` − ${r.descuento_porc}%` : ''} = {money(importeDe(r))}
                       </li>
                     ))}</ul>
@@ -497,7 +555,7 @@ export function CorregirFacturaModal(
                      placeholder="Motivo (va en las observaciones): lista mal cargada, no lo quiso…" />
               <button className="cf-btn" onClick={cerrar} disabled={emitiendo}>Cancelar</button>
               <button className="cf-btn primario" onClick={() => void emitir()}
-                      disabled={!vista || emitiendo || !!bloqueoProductos || (!vista.nc.length && !vista.nd.length)}>
+                      disabled={!vista || faltanPrecios || emitiendo || !!bloqueoProductos || (!vista.nc.length && !vista.nd.length)}>
                 {emitiendo ? <><Loader2 size={15} className="spin" /> Emitiendo…</> : 'Emitir la corrección'}
               </button>
             </div>

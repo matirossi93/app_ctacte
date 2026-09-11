@@ -14,21 +14,11 @@ import { invalidarIM } from './infomanager.js';
  * hace la oficina a mano, pero calculado: la diferencia entre lo que dice la factura y lo que
  * debería decir sale como NC (lo que baja) y ND (lo que sube).
  *
- * 🪤 Las NC y ND van por el PUNTO DE VENTA 999, no por el 777 de las facturas. No es un capricho:
- * IM valida la unicidad del número SIN mirar el tipo de comprobante, y como la serie de facturas
- * B va por 50.422 mientras la de NC B va por 30.073, cada NC choca contra una factura vieja del
- * mismo número. Probado de nuevo el 09/09/2026:
- *
- *   NC B pv777 numero 0      -> ✗ "Ya existe una factura con ... numero = 30073"
- *   NC B pv777 numero 30073  -> ✗ el mismo error
- *   ND B pv777 numero 0      -> ✗ "... numero = 742"
- *   **NC B pv999 destino 3** -> ✅ sale, e IM le asigna el número
- *   **ND B pv999 destino 3** -> ✅ sale, e IM le asigna el número
- *
- * ⚠️ Usar otro punto de venta es una DECISIÓN DE NEGOCIO, no técnica: es otra serie ante AFIP.
- * Se planteó como tal y Mati la tomó el 09/09/2026 (*"usemos ese punto de venta, no hay
- * problema"*). Queda en variables de entorno para poder volver al 777 sin deploy el día que
- * Sistec arregle la validación.
+ * Las NC/ND usan el punto777, destinoManual1, según la definición de Matías
+ * del11/09/2026. El999 corresponde al controlador fiscal y no debe usarse.
+ * La API de IM puede rechazar la serie de notas por colisión con facturas antiguas;
+ * el journal conserva el rechazo y exige resolverlo en IM, sin avanzar números.
+ * Emitir desde la pantalla de IM requiere después conciliar el comprobante exacto.
  */
 import type { Request, Response } from 'express';
 import type { JwtPayload } from './auth.js';
@@ -432,6 +422,7 @@ async function tramitarCorreccion(req: Request & { user?: JwtPayload }, res: Res
     if (clase === 'productos') {
       if (!Array.isArray(req.body?.renglones)) throw new ErrorOperacion('Faltan los renglones completos de la corrección.', 400);
       finales = req.body.renglones.map((r: any) => {
+        if (r?.precio == null || String(r.precio).trim() === '') throw new ErrorOperacion('Falta consultar el precio de un artículo. Elegí su lista antes de emitir.', 400);
         const n = { cod_articulo: Number(r?.cod_articulo), cantidad: Number(r?.cantidad), precio: Number(r?.precio),
           descuento_porc: Number(r?.descuento_porc ?? 0), iva_por: r?.iva_por == null ? undefined : Number(r.iva_por),
           cod_lista_precios: r?.cod_lista_precios == null ? null : Number(r.cod_lista_precios),

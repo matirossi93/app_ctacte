@@ -152,8 +152,9 @@ export async function revisarPresupuesto(req: Request & { user?: JwtPayload }, r
     if (estado === 'aprobado') {
       exigirHuella(req.body?.huella, huella);
       if (!items.length) throw new ErrorVersion('No se puede aprobar sin renglones verificados.');
-      const [, , stock, catalogo] = await Promise.all([reglasActivas(), descuentosActivos(), fetchStockPorDeposito(Number(process.env.PEDIDO_DEPOSITO || 1)), fetchArticulosCatalogo()]);
-      if (items.some(i => Number(i.cod_articulo) > 0 && (!stock.has(Number(i.cod_articulo)) || !catalogo.has(Number(i.cod_articulo))))) throw new ErrorVersion('Faltan datos de stock o catálogo para completar los controles. No se aprobó el presupuesto.');
+      const [, , stock, catalogo] = await Promise.all([reglasActivas(), descuentosActivos(), fetchStockPorDeposito(Number(process.env.PEDIDO_DEPOSITO || 1), false, items.map(i => Number(i.cod_articulo))), fetchArticulosCatalogo()]);
+      const sinControl = items.filter(i => Number(i.cod_articulo) > 0 && (!stock.has(Number(i.cod_articulo)) || !catalogo.has(Number(i.cod_articulo))));
+      if (sinControl.length) throw new ErrorVersion(`No pude verificar stock o catálogo de: ${[...new Set(sinControl.map(i => `${catalogo.get(Number(i.cod_articulo))?.descripcion ?? 'Artículo'} (${i.cod_articulo})`))].join(', ')}. Actualizá antes de aprobar.`);
     }
     const fila = {
       tenant_id: TENANT_ID,

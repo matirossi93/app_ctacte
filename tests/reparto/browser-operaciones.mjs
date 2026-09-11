@@ -12,6 +12,69 @@ async function invoice(page) {
   await page.locator('.fc-facturados summary').click();
 }
 try {
+  await test('ND permite cuatro listas; respuestas tardías y listas sin precio no conservan otro importe',async()=>{
+    const {page,ctx}=await setup(900); let release=()=>{};
+    try {
+      await invoice(page);
+      const gate=new Promise(r=>release=r);let leyendo14=false,sent,precio15=false;
+      await page.route('**/api/articulos/buscar?**',r=>reply(r,{articulos:[{cod_articulo:22,descripcion:'PRODUCTO NUEVO',precio_venta:99999}]}));
+      await page.route('**/api/pedidos/precio?**',async r=>{
+        const lista=Number(new URL(r.request().url()).searchParams.get('cod_lista'));
+        if(lista===14){leyendo14=true;await gate;}
+        return reply(r,{ok:true,cod_lista:lista,precio:lista===15&&!precio15?null:{precio_vta:lista===12?1000:lista===13?700:lista===14?800:650}}).catch(()=>{});
+      });
+      await page.route('**/api/facturacion/corregir',r=>{
+        const b=r.request().postDataJSON();const nuevo=b.renglones.find(x=>x.cod_articulo===22);
+        if(b.emitir){sent=b;return reply(r,{ok:true,emitidos:[{tipo:'ND B',numero:1,total:nuevo.precio}],fallados:[]});}
+        return reply(r,{ok:true,nc:[],nd:nuevo?[nuevo]:[],total_nc:0,total_nd:nuevo?.precio??0,diferencia:nuevo?.precio??0});
+      });
+      await page.getByRole('button',{name:'Corregir',exact:true}).click();
+      await page.locator('.cf-agregar input').fill('NUEVO');
+      await page.locator('.cf-candidatos button').click();
+      const lista=page.getByRole('combobox',{name:'Lista de PRODUCTO NUEVO'});
+      const precio=page.getByRole('textbox',{name:'Precio de PRODUCTO NUEVO',exact:true});
+      await page.waitForFunction(()=>document.querySelector('[aria-label="Precio de PRODUCTO NUEVO"]')?.value==='1000');
+      assert(await lista.locator('option').count()===4,'No ofrece las cuatro listas');
+      await lista.selectOption('14');await until(()=>leyendo14);
+      assert(await precio.inputValue()===''&&await page.locator('.cf-pie .primario').isDisabled(),'Muestra precio anterior o permite emitir durante cotización');
+      await lista.selectOption('13');
+      await page.waitForFunction(()=>document.querySelector('[aria-label="Precio de PRODUCTO NUEVO"]')?.value==='700');
+      release();await page.waitForTimeout(100);
+      assert(await precio.inputValue()==='700'&&await lista.inputValue()==='13','Respuesta vieja pisó la lista actual');
+      await lista.selectOption('15');await page.locator('.cf-precio-pendiente').filter({hasText:'Sin precio en esta lista. Elegí otra.'}).waitFor();
+      assert(await precio.inputValue()===''&&await page.locator('.cf-pie .primario').isDisabled(),'Lista sin precio conservó un importe de otra lista');
+      precio15=true;await page.getByRole('button',{name:'Reintentar precio'}).click();
+      await page.waitForFunction(()=>document.querySelector('[aria-label="Precio de PRODUCTO NUEVO"]')?.value==='650');
+      await page.locator('.cf-resumen').waitFor();
+      page.on('dialog',d=>d.accept());await page.locator('.cf-pie .primario').click();await until(()=>!!sent);
+      const nuevo=sent.renglones.find(x=>x.cod_articulo===22);
+      assert(nuevo.cod_lista_precios===15&&nuevo.precio===650&&nuevo.iva_por==null,'El envío perdió lista/precio o inventó IVA0');
+    } finally {release();await ctx.close();}
+  });
+  await test('NC rechazada por numeración muestra una explicación y no permite retomar',async()=>{
+    const {page,ctx}=await setup();
+    try {
+      await invoice(page);
+      let envios=0;
+      const operacion={id:'00000000-0000-4000-8000-000000000001',clase:'productos',estado:'listo',
+        entrada:{renglones:[{cod_articulo:11,cantidad:8,precio:100,iva_por:21}]},motivo:'Devolución',
+        emitidos:[],puede_retomar:false,puede_cancelar:true,requiere_revision_numeracion:true,
+        error:"HTTP 400: Ya existe una factura con: tag = 'S', cod_empresa = 1, id_destino = 1, punto_de_venta = 777, tipo_factura = 'B' y numero = 30079.",
+        instruccion:'InfoManager rechazó la nota por un conflicto de numeración en el punto 777. Verificá la nota en InfoManager y conciliá su comprobante con esta operación.'};
+      await page.route('**/api/facturacion/corregir/501',r=>reply(r,{factura:{id:'501',numero:501,letra:'B',cliente_nombre:'CLIENTE ALFA',fecha:'2026-09-10'},version:3,operacion,renglones:[{cod_articulo:11,descripcion:'PRODUCTO A',cantidad:10,precio:100,iva_por:21}]}));
+      await page.route('**/api/facturacion/corregir',r=>{if(r.request().postDataJSON()?.emitir)envios++;return reply(r,{ok:false});});
+      await page.getByRole('button',{name:'Corregir',exact:true}).click();
+      await page.locator('.cf-error').filter({hasText:operacion.instruccion}).waitFor();
+      assert(await page.locator('.cf-error').count()===1,'Duplica carteles para el mismo rechazo');
+      assert(await page.getByRole('button',{name:/Retomar/}).count()===0,'Ofrece repetir una colisión conocida');
+      assert(await page.getByRole('button',{name:'Cancelar el intento rechazado'}).isEnabled(),'Impide cancelar un rechazo sin emisión');
+      const detalle=page.locator('.cf-error details');
+      assert(!await detalle.evaluate(e=>e.open),'Expone el error técnico como cartel principal');
+      await detalle.locator('summary').click();
+      assert((await detalle.innerText()).includes('30079'),'Perdió evidencia técnica del proveedor');
+      assert(envios===0,'La apertura intentó volver a emitir');
+    } finally {await ctx.close();}
+  });
   await test('Guardar editor bloquea campos y navegación; una sola petición conserva el contexto',async()=>{
     const {page,ctx}=await setup();let release=()=>{};
     try {
