@@ -26,6 +26,7 @@ import { buscarFacturasYaEmitidas } from './facturaYaEmitida.js';
 import { evaluarPedido } from './listas.js';
 import { reglasActivas, descuentosActivos, catalogoParaListas } from './pedidos.js';
 import { esPedidoInternoDeSucursal } from './pedidosInternos.js';
+import { EVIDENCIA, proyectarEvidencia } from './evidenciaComprobantes.js';
 
 /** Depósito contra el que se controla el stock. 1 = Depósito General (Casa Central). */
 const DEPOSITO_CONTROL = Number(process.env.PEDIDO_DEPOSITO || 1);
@@ -162,6 +163,10 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false, ven
             equivalencia_um: cat.get(Number((it as any).cod_articulo))?.equivalencia_um,
             // Con qué lista y qué descuento quedó el renglón EN INFOMANAGER, ahora mismo.
             cod_lista_precios: Number((it as any).cod_lista_precios) || 0,
+            // Crudos, para comparar factura contra remito sin convertir nada.
+            cod_uni_venta: (it as any).cod_uni_venta,
+            cant_uni_venta: (it as any).cant_uni_venta,
+            cantidad_cruda: (it as any).cantidad,
             descuento_porc: Number((it as any).descuento_porc) || 0,
           });
         }
@@ -203,7 +208,7 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false, ven
         .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids),
       // Lo emitido de estos presupuestos: remito (para la hoja), salida de depósito y factura.
       sb().from('presupuestos_facturados')
-        .select('im_comprobante_id, im_remito_id, im_remito_numero, facturado_at')
+        .select('im_comprobante_id, im_remito_id, im_remito_numero, facturado_at, im_factura_id, im_factura_numero, im_factura_tipo, cod_cliente, cod_empresa')
         .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids),
       /**
        * 🪤 Ésta va SIN filtro de ids a propósito: es el índice de qué factura emitimos nosotros,
@@ -460,6 +465,19 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false, ven
       };
     });
 
+    /**
+     * 🔑 La evidencia para comparar cada factura con su remito, sacada de lo que ya se leyó.
+     *
+     * 🪤 Va en un Symbol: no se serializa a JSON, así que no viaja al navegador ni aparece en
+     * ninguna respuesta. Y se proyecta a lo mínimo —código, cantidad cruda y marcadores— porque
+     * guardar los renglones enteros de todos los comprobantes en cada rango cacheado multiplica
+     * la memoria del proceso.
+     */
+    const evidencia = proyectarEvidencia(
+      new Map([...renglones].map(([id, rs]) => [id, rs.map(r => ({ ...r, cantidad: (r as any).cantidad_cruda }))])),
+      ventas, (delRango ?? []) as any[], t0,
+    );
+
     const datos = {
       dias_sin_items: diasSinItems, reglas_disponibles: reglasDisponibles,
       controles_incompletos: filas.filter(f => !f.controles_completos).length,
@@ -515,6 +533,7 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false, ven
       ),
     };
 
+    Object.defineProperty(datos, EVIDENCIA, { value: evidencia, enumerable: false });
     const total = Date.now() - t0;
     console.log(`[vistaDeRango] ${desde}..${hasta}: ${total} ms (IM ${tIM} ms · resto ${total - tIM} ms) · ${presupuestos.length} pedidos${forzar ? ' · forzado' : ''}`);
     return datos;

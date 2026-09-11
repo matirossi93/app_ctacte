@@ -60,42 +60,43 @@ function cantidadExplicita(v: unknown): number | null {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
-/** El marcador de unidad alternativa que declara el renglón, o `null` si no declara ninguno. */
-function unidadAlternativa(r: RenglonEvidencia): string | null {
-  const cod = cantidadExplicita(r.cod_uni_venta);
-  const cant = cantidadExplicita(r.cant_uni_venta);
-  // 🪤 `cod_uni_venta: 0` y `cant_uni_venta: 0` son lo NORMAL —emisión sin unidad alternativa—,
-  // no una incompatibilidad.
-  const hayCod = cod !== null && cod !== 0;
-  const hayCant = cant !== null && cant !== 0;
-  // 🔴 Una cantidad alternativa sin su código es un marcador explícito cuya equivalencia no está
-  // acreditada. No se puede comparar aunque los dos lados traigan lo mismo: sería afirmar una
-  // unidad física que nadie declaró.
-  if (!hayCod && hayCant) return '∗ambigua';
-  if (!hayCod) return null;
-  return `${cod}|${cant ?? '?'}`;
+/**
+ * ¿Este renglón declara una unidad alternativa que no se puede acreditar?
+ *
+ * 🔴 Un marcador explícito bloquea la comparación **aunque los dos lados traigan el mismo**: sin
+ * la equivalencia acreditada, afirmar que 1 de una unidad es igual a 1 de la otra sería inventar
+ * una conversión. Y un valor ilegible ('X', negativo) tampoco puede darse por ausente.
+ *
+ * 🪤 Lo único que NO bloquea es la ausencia —null, undefined, vacío— y el cero, que es la
+ * emisión normal sin unidad alternativa.
+ */
+function bloqueaPorUnidad(r: RenglonEvidencia): boolean {
+  for (const v of [r.cod_uni_venta, r.cant_uni_venta]) {
+    if (v === null || v === undefined) continue;
+    if (typeof v === 'string' && v.trim() === '') continue;
+    const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
+    if (Number.isFinite(n) && n === 0) continue;
+    return true;
+  }
+  return false;
 }
 
-interface Agregado { porArticulo: Map<number, number>; unidades: Map<number, string | null> }
+interface Agregado { porArticulo: Map<number, number> }
 
 /** `null` = la evidencia no alcanza para comparar. */
-function agregar(rs: RenglonEvidencia[]): Agregado | null {
+function agregar(rs: RenglonEvidencia[]): Agregado | 'unidad' | null {
   const porArticulo = new Map<number, number>();
-  const unidades = new Map<number, string | null>();
   for (const r of rs) {
     const cod = cantidadExplicita(r.cod_articulo);
     // Sin código no se puede aparear con nada del otro lado.
     if (cod === null || !Number.isInteger(cod) || cod <= 0) return null;
     if (NO_FISICOS.has(cod)) continue;
+    if (bloqueaPorUnidad(r)) return 'unidad';
     const cant = cantidadExplicita(r.cantidad);
     if (cant === null) return null;                       // 🔴 nunca tratar un "no sé" como 0
     porArticulo.set(cod, (porArticulo.get(cod) ?? 0) + cant);
-    // Filas repetidas del mismo artículo: si declaran unidades distintas, no se puede afirmar.
-    const u = unidadAlternativa(r);
-    if (unidades.has(cod) && unidades.get(cod) !== u) unidades.set(cod, '∗ambigua');
-    else if (!unidades.has(cod)) unidades.set(cod, u);
   }
-  return { porArticulo, unidades };
+  return { porArticulo };
 }
 
 /**
@@ -110,6 +111,9 @@ export function compararFacturaRemito(
   if (!factura.length || !remito.length) return { estado: 'no_verificado', motivo: 'Uno de los dos comprobantes vino sin renglones.' };
 
   const fa = agregar(factura), re = agregar(remito);
+  if (fa === 'unidad' || re === 'unidad') {
+    return { estado: 'no_verificado', motivo: 'Hay renglones con una unidad de venta alternativa: no se puede comparar sin su equivalencia.' };
+  }
   if (!fa || !re) return { estado: 'no_verificado', motivo: 'Hay renglones sin cantidad o sin artículo legibles.' };
 
   const codigos = [...new Set([...fa.porArticulo.keys(), ...re.porArticulo.keys()])].sort((a, b) => a - b);
@@ -117,12 +121,6 @@ export function compararFacturaRemito(
 
   const diferencias: DiferenciaArticulo[] = [];
   for (const cod of codigos) {
-    const uf = fa.unidades.get(cod) ?? null, ur = re.unidades.get(cod) ?? null;
-    // 🪤 Unidades distintas no son una diferencia de cantidad: son datos que no se pueden
-    // comparar entre sí. Afirmar cualquiera de las dos cosas sería inventar.
-    if (uf === '∗ambigua' || ur === '∗ambigua' || uf !== ur) {
-      return { estado: 'no_verificado', motivo: `El artículo ${cod} está registrado con unidades distintas en cada comprobante.` };
-    }
     const cf = fa.porArticulo.get(cod) ?? 0, cr = re.porArticulo.get(cod) ?? 0;
     // 🪤 Sumas que desbordan: `Infinity - Infinity` es NaN, y `NaN > tolerancia` es false — o sea
     // que dos totales inutilizables se habrían reportado como coincidencia.

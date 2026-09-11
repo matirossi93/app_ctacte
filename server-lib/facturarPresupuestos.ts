@@ -1,5 +1,7 @@
 import { actualizarImportesFacturas } from './importesFacturas.js';
 import { cabecerasCompartidas } from './cabecerasCompartidas.js';
+import { EVIDENCIA, compararPar } from './evidenciaComprobantes.js';
+import { textoControl } from './controlFacturaRemito.js';
 import { leerComprobante, invalidarIM } from './infomanager.js';
 /**
  * ETAPA 2 DEL CIRCUITO: facturar los presupuestos aprobados.
@@ -1203,6 +1205,18 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
         aviso_anulado: avisosAnulados.get(String(p.im_comprobante_id)) ?? null,
         // Las NC/ND que corrigen esta factura: se ven en la fila y se pueden imprimir.
         notas: e?.im_factura_id ? (notasPorFactura.get(String(e.im_factura_id)) ?? []) : [],
+        /**
+         * 🔑 ¿La factura y el remito dicen las mismas cantidades? Sale de lo que esta misma
+         * pantalla ya leyó: no cuesta ninguna consulta.
+         *
+         * 🪤 INFORMATIVO. No afirma que se haya entregado eso ni dice nada del stock, y no
+         * cambia la aprobación, la emisión ni el cierre de una hoja.
+         */
+        control_fa_re: (() => {
+          if (!e?.im_factura_id || !e?.im_remito_id) return null;
+          const r = compararPar(e, (vista as any)[EVIDENCIA]);
+          return { estado: r.estado, texto: textoControl(r), diferencias: r.diferencias ?? [] };
+        })(),
       };
     });
 
@@ -1216,6 +1230,9 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
         importe_pendiente: Math.round(pendientes.reduce((s, f) => s + Number(f.total ?? 0), 0) * 100) / 100,
         facturados: filas.length - pendientes.length,
         falta_remito: filas.filter(f => f.falta_remito).length,
+        // 🪤 Sólo las diferencias CONFIRMADAS. Los no_verificado no son un problema a mostrar:
+        // son pares que esta pantalla no alcanzó a comparar, y se ven en su propio detalle.
+        con_diferencias: filas.filter(f => f.control_fa_re?.estado === 'diferencias').length,
       },
       // Lo que todavía no se aprobó, para que se vea por qué no está en la lista.
       sin_aprobar: todos.filter((p: any) => p.revision?.estado !== 'aprobado' && !porId.get(String(p.im_comprobante_id))?.im_factura_id).length,

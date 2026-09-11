@@ -86,7 +86,28 @@ describe('cuándo NO se puede afirmar nada', () => {
     const re = [r(163, 10, { cod_uni_venta: 7, cant_uni_venta: 30 })];
     const res = compararFacturaRemito(fa, re);
     expect(res.estado).toBe('no_verificado');
-    expect(res.motivo).toContain('unidades distintas');
+    expect(res.motivo).toContain('unidad de venta alternativa');
+  });
+
+  /**
+   * 🔴 Bloqueante que encontró Astra: el mismo marcador de los dos lados daba "coinciden". Sin
+   * la equivalencia acreditada, afirmar que 1 de una unidad es 1 de la otra sería inventar una
+   * conversión — aunque los dos digan lo mismo.
+   */
+  it('🔑 el MISMO marcador en los dos lados tampoco se puede acreditar', () => {
+    const iguales = [r(163, 10, { cod_uni_venta: 2, cant_uni_venta: 1 })];
+    expect(compararFacturaRemito(iguales, iguales).estado).toBe('no_verificado');
+  });
+
+  it('🔑 un marcador ilegible no es un marcador ausente', () => {
+    const fa = [r(163, 10, { cod_uni_venta: 'X' })];
+    expect(compararFacturaRemito(fa, [r(163, 10)]).estado).toBe('no_verificado');
+    expect(compararFacturaRemito(fa, fa).estado).toBe('no_verificado');
+  });
+
+  it('🔑 ni un marcador negativo', () => {
+    const fa = [r(163, 10, { cant_uni_venta: -1 })];
+    expect(compararFacturaRemito(fa, fa).estado).toBe('no_verificado');
   });
 
   it('🪤 uno declara unidad alternativa y el otro no', () => {
