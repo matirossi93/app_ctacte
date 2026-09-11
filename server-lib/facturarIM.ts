@@ -1,3 +1,4 @@
+import { idIM } from './identidadIM.js';
 /**
  * Emitir factura y remito en InfoManager, que es lo que hoy hace Jorgelina a mano desde IM.
  *
@@ -201,26 +202,31 @@ export async function proximoNumeroFactura(
   return (await maxDe(Math.min(DIAS_BUSQUEDA_CORTA, dias))) ?? (dias > DIAS_BUSQUEDA_CORTA ? await maxDe(dias) : null);
 }
 
-function interpretar(data: any, tipo: string): ResultadoEmision {
-  const v = data?.venta ?? data?.remito ?? data;
-  // La regla de oro de IM: 200 con el error adentro. Éxito real = isCreated o un id.
-  if (data?.isCreated === true || v?.id) {
-    return { ok: true, id: String(v?.id ?? data?.id ?? ''), numero: v?.numero ?? data?.numero ?? null, tipo, raw: data };
-  }
-  const msg = data?.detalles ?? data?.mensaje ?? 'IM no confirmó la emisión (sin isCreated)';
-  return { ok: false, error: typeof msg === 'string' ? msg : JSON.stringify(msg), raw: data };
+/** Sólo una validación inequívoca permite reintentar un POST. */
+export function rechazoDefinitivo(mensaje: string): boolean {
+  return /art[ií]culos sin stock suficiente:\s*\[|el art[ií]culo c[óo]digo \[\d+\] (?:no existe|no pertenece a la lista de precios \[\d+\])|ya existe una (?:factura|nota) con los siguientes datos|el n[uú]mero de comprobante \[\d+\] ya existe para el punto de venta \[\d+\] y empresa \[\d+\]/i.test(mensaje);
 }
-
-function comoError(err: any): ResultadoEmision {
+function rechazoEstructurado(data: any): boolean {
+  return data?.isCreated === false && (data?.id ?? data?.venta?.id ?? data?.remito?.id) == null;
+}
+export function interpretar(data: any, tipo: string): ResultadoEmision {
+  const v = data?.venta ?? data?.remito ?? data;
+  const id = v?.id ?? data?.id;
+  if (data?.isCreated !== false && idIM(id) !== null) {
+    return { ok: true, id: idIM(id)!, numero: v?.numero ?? data?.numero ?? null, tipo, raw: data };
+  }
+  const msg = data?.detalles ?? data?.mensaje ?? 'IM no identificó el comprobante: resultado desconocido';
+  const error = typeof msg === 'string' ? msg : JSON.stringify(msg);
+  return { ok: false, error, sinRespuesta: data?.isCreated === true || (id != null) || !(rechazoEstructurado(data) || rechazoDefinitivo(error)), raw: data };
+}
+export function comoError(err: any): ResultadoEmision {
   const raw = err?.response?.data;
   const detalle = raw?.detalles ?? raw?.mensaje ?? err?.message ?? 'unknown';
-  return {
-    ok: false,
-    error: `HTTP ${err?.response?.status ?? '?'}: ${typeof detalle === 'string' ? detalle : JSON.stringify(detalle)}`,
-    // Sin `response` IM nunca contestó: NO se sabe si el comprobante se emitió.
-    sinRespuesta: !err?.response,
-    raw,
-  };
+  const mensaje = typeof detalle === 'string' ? detalle : JSON.stringify(detalle);
+  const status = Number(err?.response?.status ?? 0);
+  const contradictorio = raw?.isCreated === true || (raw?.id ?? raw?.venta?.id ?? raw?.remito?.id) != null;
+  const definitivo = !contradictorio && (status === 401 || status === 403 || (raw && typeof raw === 'object' && (rechazoEstructurado(raw) || rechazoDefinitivo(mensaje))));
+  return { ok: false, error: `HTTP ${status || '?'}: ${mensaje}`, sinRespuesta: !definitivo, raw };
 }
 
 /** Cabecera común de factura y remito. */
@@ -392,11 +398,11 @@ export async function emitirFactura(d: DatosComprobante): Promise<ResultadoEmisi
       const { data } = await cli.post('/ventas', payload);
       const r = interpretar(data, `FA ${letra}`);
       // 🪤 El "ya existe" viene como 200 con el error adentro: hay que leerlo del texto.
-      if (!r.ok && intento < INTENTOS - 1 && reintentar(r.error)) continue;
+      if (!r.ok && !r.sinRespuesta && intento < INTENTOS - 1 && reintentar(r.error)) continue;
       return r.ok ? { ...r, numero: r.numero ?? num } : r;
     } catch (err: any) {
       const e = comoError(err);
-      if (!e.ok && intento < INTENTOS - 1 && reintentar(e.error)) continue;
+      if (!e.ok && !e.sinRespuesta && intento < INTENTOS - 1 && reintentar(e.error)) continue;
       return e;
     }
   }
@@ -440,12 +446,12 @@ export async function emitirRemito(d: DatosComprobante): Promise<ResultadoEmisio
     try {
       const { data } = await cli.post('/remitos', payload);
       const r = interpretar(data, 'RE');
-      const art = r.ok ? null : articuloFueraDeLista(r.error);
+      const art = r.ok || r.sinRespuesta ? null : articuloFueraDeLista(r.error);
       if (art != null && intento < 2) { payload.items = sinListaDelArticulo(payload.items, art); continue; }
       return r;
     } catch (err: any) {
       const e = comoError(err);
-      const art = e.ok ? null : articuloFueraDeLista(e.error);
+      const art = e.ok || e.sinRespuesta ? null : articuloFueraDeLista(e.error);
       if (art != null && intento < 2) { payload.items = sinListaDelArticulo(payload.items, art); continue; }
       return e;
     }
@@ -614,7 +620,15 @@ export async function emitirRemitoMasivo(d: DatosComprobante): Promise<Resultado
   const cli = await imClient();
   for (let intento = 0; ; intento++) {
     try {
-      await cli.post('/remitos/masivo', cuerpoCon(numero));
+      const { data } = await cli.post('/remitos/masivo', cuerpoCon(numero));
+      if (data && (data.isCreated === false || data.detalles || data.mensaje)) {
+        const r = interpretar(data, 'RE');
+        if (!r.ok) {
+          if (!r.sinRespuesta && esChoqueDeNumero(r.error) && intento < 4) { numero += 1; continue; }
+          return r;
+        }
+      }
+      if (typeof data === 'string' && data.trim()) return { ok: false, sinRespuesta: true, error: 'Respuesta no reconocida al emitir el remito masivo.' };
       break;
     } catch (err: any) {
       const e = comoError(err);
@@ -634,12 +648,13 @@ export async function emitirRemitoMasivo(d: DatosComprobante): Promise<Resultado
       Number(v.numero) === numero &&
       Number(v.cod_cliente) === Number(d.cod_cliente));
     if (!re) {
-      return { ok: false, error: `InfoManager aceptó el remito ${numero} pero después no lo encontré. Verificalo en InfoManager antes de reintentar: puede haberse emitido igual.` };
+      return { ok: false, sinRespuesta: true, error: `InfoManager aceptó el remito ${numero} pero después no lo encontré. Verificalo en InfoManager antes de reintentar: puede haberse emitido igual.` };
     }
-    return { ok: true, id: String((re as any).id), numero, tipo: 'RE', raw: re };
+    if (!idIM((re as any).id)) return { ok: false, sinRespuesta: true, error: 'El remito masivo no tiene un ID válido.', raw: re };
+    return { ok: true, id: idIM((re as any).id)!, numero, tipo: 'RE', raw: re };
   } catch (e: any) {
     // Salió, pero no se pudo confirmar cuál. NO se reintenta a ciegas: sería un segundo remito.
-    return { ok: false, error: `Se mandó el remito ${numero} pero no pude confirmarlo (${e?.message ?? 'sin respuesta de IM'}). Verificalo en InfoManager antes de reintentar.` };
+    return { ok: false, sinRespuesta: true, error: `Se mandó el remito ${numero} pero no pude confirmarlo (${e?.message ?? 'sin respuesta de IM'}). Verificalo en InfoManager antes de reintentar.` };
   }
 }
 
@@ -788,11 +803,11 @@ async function emitirNota(
     try {
       const { data } = await cli.post('/ventas', payload);
       const r = interpretar(data, `${tipo} ${letra}`);
-      if (!r.ok && intento < 2 && reintentar(r.error)) continue;
+      if (!r.ok && !r.sinRespuesta && intento < 2 && reintentar(r.error)) continue;
       return r.ok ? { ...r, numero: r.numero ?? numero } : r;
     } catch (err: any) {
       const e = comoError(err);
-      if (!e.ok && intento < 2 && reintentar(e.error)) continue;
+      if (!e.ok && !e.sinRespuesta && intento < 2 && reintentar(e.error)) continue;
       return e;
     }
   }

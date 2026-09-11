@@ -1,3 +1,4 @@
+import { respuestaReparto } from './test-helpers/repartoRpc.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
@@ -30,6 +31,9 @@ vi.mock('./infomanager.js', () => ({
   fechaArgentina: () => '2026-09-08',
 }));
 vi.mock('./pedidos.js', () => ({ usuarioIM: vi.fn(async () => 'jorgelina') }));
+vi.mock('./repartoDatos.js', async original => ({ ...(await original<any>()),
+  verificarEntregas: async (filas: any[]) => filas.map(p => ({ ...p, cod_empresa: 1, tipo: 'RE', tipo_comprobante: 'RE', datos_consultados_at: '2026-09-11', fecha: p.fecha ?? '2026-09-08' })),
+}));
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
 
 const { borrarAjuste } = await import('./ajustesEntrega.js');
@@ -46,6 +50,7 @@ let lecturas: string[] = [];
 
 function fakeSb() {
   m.sbMock.mockImplementation(() => ({
+    rpc: respuestaReparto(() => tablas, (tabla, op, valor, filtros) => { escrituras.push({ tabla, op, valor, filtros }); }),
     from: (t: string) => {
       lecturas.push(t);
       const res = tablas[t] ?? { data: null, error: null };
@@ -58,7 +63,7 @@ function fakeSb() {
         update: (v: any) => { escrituras.push({ tabla: t, op: 'update', valor: v, filtros }); return q; },
         delete: () => { escrituras.push({ tabla: t, op: 'delete', valor: null, filtros }); return q; },
       };
-      for (const k of ['select', 'eq', 'in', 'gte', 'lte', 'order', 'limit', 'not', 'or']) {
+      for (const k of ['range', 'or', 'select', 'eq', 'in', 'gte', 'lte', 'order', 'limit', 'not', 'or']) {
         q[k] = (...a: any[]) => { filtros.push(`${k}:${a.join(',')}`); return q; };
       }
       q.is = (col: string, v: any) => { filtros.push(`is:${col},${v}`); return q; };
@@ -69,7 +74,7 @@ function fakeSb() {
 
 function llamar(fn: any, { rol = 'administrativo', params = {}, body = {}, query = {} } = {}) {
   let status = 200; let out: any;
-  const req: any = { user: { rol, sub: 'u1' }, params, body, query };
+  const req: any = { user: { rol, sub: 'u1' }, params, body: { version_esperada:1, ...body }, query: { version_esperada:1, ...query } };
   const res: any = { status: (s: number) => { status = s; return res; }, json: (b: any) => { out = b; } };
   return fn(req, res).then(() => ({ status, body: out }));
 }
@@ -211,7 +216,7 @@ describe('retiros en sucursal', () => {
       error: null,
     };
     tablas['presupuestos_facturados'] = {
-      data: [{ im_comprobante_id: '58700637', im_factura_numero: 50380, im_remito_numero: 77310, facturado_at: '2026-09-08T12:00:00Z' }],
+      data: [{ im_comprobante_id: '58700637', cod_cliente:1093, im_factura_numero: 50380, im_remito_numero: 77310, facturado_at: '2026-09-08T12:00:00Z' }],
       error: null,
     };
     const r = await llamar(listarRetiros, { query: { desde: '2026-09-01', hasta: '2026-09-30' } });

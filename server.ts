@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { saludProceso, estadoPreparacion, exigirEsquemaReparto } from './server-lib/estadoAplicacion.js';
 import express from 'express';
 import cors from 'cors';
 import compression from 'compression';
@@ -54,7 +55,7 @@ import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, 
 import { pendientesDelDia, arrastreDelDia, impresionHoja, sugerenciaDelDia, listarHojas, listarCamiones, crearHoja, editarHoja, borrarHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
 import { tableroFacturacion, previsualizarFacturacion, facturarSeleccion, liberarReclamo } from './server-lib/facturarPresupuestos.js';
 // Corregir una factura ya emitida, con notas de crédito y de débito.
-import { verFacturaParaCorregir, corregirFactura, historialCorrecciones, notaFinanciera, moverFechaFactura } from './server-lib/correccionFactura.js';
+import { verFacturaParaCorregir, corregirFactura, historialCorrecciones, notaFinanciera, moverFechaFactura, cancelarCorreccion } from './server-lib/correccionFactura.js';
 import { marcarRetiro, quitarRetiro, marcarRetirado, listarRetiros, resumenRetiros } from './server-lib/retirosSucursal.js';
 import { listarChoferes, liquidacionMensual } from './server-lib/liquidacionChoferes.js';
 import { listarAjustes, crearAjuste, borrarAjuste, candidatasAVincular, vincularAjuste } from './server-lib/ajustesEntrega.js';
@@ -128,6 +129,8 @@ const apiLimiter = rateLimit({
     message: { error: 'Demasiadas requests. Esperá un momento e intentá de nuevo.' },
 });
 app.use('/api/', apiLimiter);
+app.get('/healthz', saludProceso);
+app.get('/readyz', estadoPreparacion);
 
 // ─── SQLite Setup ─────────────────────────────────────────────────────────────
 const dbDir = path.join(__dirname, '..', 'data');
@@ -603,6 +606,9 @@ for (const prefix of [
     app.use(prefix, maybeJwt, denyRepartidor);
 }
 
+// El esquema039–041 debe estar disponible antes de cualquier escritura de reparto.
+app.use(['/api/presupuestos', '/api/facturacion', '/api/hojas-ruta', '/api/retiros', '/api/pedidos'], requireJwt, exigirEsquemaReparto);
+
 app.get('/api/me', requireJwt, (req: express.Request & { user?: JwtPayload }, res: express.Response) => {
     res.json({ ok: true, user: req.user });
 });
@@ -689,6 +695,7 @@ app.get('/api/facturacion/corregir/:idFactura', requireJwt, (req: any, res) => v
 app.get('/api/facturacion/corregir/:idFactura/historial', requireJwt, (req: any, res) => historialCorrecciones(req, res));
 app.post('/api/facturacion/corregir', requireJwt, (req: any, res) => corregirFactura(req, res));
 // Una NC/ND que no saca mercadería: diferencia de cambio, intereses, bonificación.
+app.delete('/api/facturacion/operaciones/:id', requireJwt, (req: any, res) => cancelarCorreccion(req, res));
 app.post('/api/facturacion/nota-financiera', requireJwt, (req: any, res) => notaFinanciera(req, res));
 // La fecha es uno de los tres campos que IM deja tocar de una factura emitida.
 app.put('/api/facturacion/:idFactura/fecha', requireJwt, (req: any, res) => moverFechaFactura(req, res));

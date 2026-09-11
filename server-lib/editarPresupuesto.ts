@@ -1,3 +1,5 @@
+import { conIVAConfiable, ErrorFiscal } from './fiscalRenglones.js';
+import { leerComprobante, invalidarIM } from './infomanager.js';
 /**
  * EDITAR UN PRESUPUESTO SIN SALIR DEL PANEL.
  *
@@ -35,6 +37,7 @@ import {
   fetchClientesIMCon, actualizarCabecera,
 } from './infomanager.js';
 import { invalidarVista } from './vistaPresupuestos.js';
+import { huellaPresupuesto, exigirHuella, exigirTipoEmpresa, bloquearPresupuesto, desbloquearPresupuesto, invalidarAprobacion, rechazoEdicionConfirmado, ErrorVersion } from './versionPresupuesto.js';
 import { invalidarRemitos } from './vistaRemitos.js';
 
 function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
@@ -67,9 +70,9 @@ export interface RenglonEditado {
  * y la lista están adentro a propósito: IM los ignora en el PUT, así que si cambiaran sin que la
  * firma se entere, el panel diría "guardado" y a InfoManager no habría llegado nada.
  */
-export function firmaDelSurtido(rs: Array<{ cod_articulo: any; cod_lista_precios: any; descuento_porc?: any }>): string {
+export function firmaDelSurtido(rs: Array<{ cod_articulo: any; cod_lista_precios: any; descuento_porc?: any; precio?: any; precio_orig?: any }>): string {
   return rs.map(r =>
-    `${Number(r.cod_articulo)}:${Number(r.cod_lista_precios)}:${Number(r.descuento_porc) || 0}`).join('|');
+    `${Number(r.cod_articulo)}:${Number(r.cod_lista_precios)}:${Number(r.descuento_porc) || 0}:${Math.round((Number(r.precio_orig) || Number(r.precio) || 0) * 10000)}`).join('|');
 }
 
 /**
@@ -118,7 +121,10 @@ const codCompatibilidad = () => randomUUID().slice(0, 8);
 export async function editarPresupuesto(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
   const id = String(req.params.comprobanteId);
+  let token: string | null = null;
+  let resultadoConocido = true;
   try {
+    token = await bloquearPresupuesto(id, 'editar');
     const entrada: any[] = Array.isArray(req.body?.items) ? req.body.items : [];
     const items: RenglonEditado[] = entrada
       .map(i => ({
@@ -158,21 +164,23 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
      * `presupuestos_facturados`, que es donde vive ese vínculo — IM no lo expone.
      */
     const { data: emitido, error: errEmitido } = await sb().from('presupuestos_facturados')
-      .select('im_factura_numero, facturado_at').eq('tenant_id', TENANT_ID)
+      .select('im_factura_id, im_factura_numero, facturado_at, estado_emision').eq('tenant_id', TENANT_ID)
       .eq('im_comprobante_id', id).maybeSingle();
     if (errEmitido) { res.status(502).json({ error: `No pude verificar si ya se facturó (${errEmitido.message}).` }); return; }
-    if (emitido?.facturado_at || emitido?.im_factura_numero) {
+    if (emitido?.facturado_at || emitido?.im_factura_id || emitido?.im_factura_numero || emitido?.estado_emision) {
       res.status(409).json({ error: `Este presupuesto ya se facturó (factura ${emitido.im_factura_numero ?? '—'}). Para cambiarlo hay que hacer una nota de crédito en InfoManager.` });
       return;
     }
 
-    const cab = await cabeceraComprobante(id);
+    const { cabecera: cab, items: imItems } = await leerComprobante(id);
     if (cab.existe === false) { res.status(404).json({ error: 'El presupuesto ya no está en InfoManager.' }); return; }
     // "No pude preguntar" no habilita a escribir: se cae del lado seguro.
     if (cab.existe !== true) { res.status(502).json({ error: 'No pude leer el presupuesto en InfoManager. Probá de nuevo en un rato.' }); return; }
     if (cab.anulada === true) { res.status(409).json({ error: 'El presupuesto está ANULADO en InfoManager.' }); return; }
 
-    const imItems = await getItemsComprobante(id);
+    exigirTipoEmpresa(cab, 'PR');
+
+    exigirHuella(req.body?.huella, huellaPresupuesto(id, cab, imItems));
     /**
      * 🪤 Si el presupuesto trae renglones SIN artículo (notas que escribe la oficina desde el
      * sistema de IM, con `cod_articulo: ""`), recrearlo los perdería: la API no los puede volver
@@ -215,7 +223,10 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
         res.status(409).json({ error: 'Los renglones no coinciden con los de InfoManager. Actualizá la pantalla y probá de nuevo.' });
         return;
       }
+      await invalidarAprobacion(id);
+      resultadoConocido = false;
       const r = await actualizarPresupuestoCantidades(id, payload);
+      if (r.ok || rechazoEdicionConfirmado(r)) resultadoConocido = true;
       if (!r.ok) { res.status(502).json({ error: `InfoManager rechazó el cambio: ${r.error}` }); return; }
       /**
        * La fecha y las observaciones van por otro PUT: el de presupuestos no las tiene en el
@@ -225,15 +236,16 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
        */
       let avisoCab: string | null = null;
       if ((cambiaObs || cambiaFecha) && cab.numero != null && cab.punto_de_venta != null) {
+        resultadoConocido = false;
         const o = await actualizarCabecera({
           id, numero: cab.numero, punto_de_venta: cab.punto_de_venta,
           fecha: fechaNueva ?? cab.fecha ?? fechaArgentina(),
           observaciones: obsNueva ?? cab.observaciones ?? '',
         });
+        if (o.ok || rechazoEdicionConfirmado(o)) resultadoConocido = true;
         if (!o.ok) avisoCab = `Se guardaron las cantidades, pero NO ${cambiaFecha ? 'la fecha' : 'las observaciones'}: ${o.error}`;
       }
-      await limpiarRevision(id);
-      invalidarVista(); invalidarRemitos();
+      invalidarIM(); invalidarVista(); invalidarRemitos();
       res.json({
         ok: true, modo: 'cantidades', im_comprobante_id: id, im_numero: cab.numero,
         fecha: fechaNueva ?? cab.fecha ?? null, aviso: avisoCab,
@@ -254,6 +266,9 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
      * pedido y en InfoManager no queda nada para facturar. De los dos pasos, el que no se puede
      * deshacer es la anulación.
      */
+    const itemsFiscales = await conIVAConfiable(items, imItems);
+    await invalidarAprobacion(id);
+    resultadoConocido = false;
     const creado = await crearPresupuesto({
       cod_empresa: cab.cod_empresa,
       cod_cliente: cab.cod_cliente,
@@ -266,7 +281,8 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
       fecha: fechaNueva ?? cab.fecha ?? fechaArgentina(),
       fecha_entrega: fechaNueva ?? cab.fecha_entrega ?? cab.fecha ?? fechaArgentina(),
       cod_compatibilidad: codCompatibilidad(),
-      items: items.map(i => ({
+      items: itemsFiscales.map(i => ({
+        iva_por: i.iva_por,
         cod_articulo: i.cod_articulo,
         cantidad: i.cantidad,
         cod_lista_precios: i.cod_lista_precios,
@@ -275,6 +291,7 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
       })),
     });
     if (!creado.ok) {
+      resultadoConocido = rechazoEdicionConfirmado(creado);
       res.status(502).json({
         error: `InfoManager no aceptó el presupuesto nuevo: ${creado.error}. No se anuló el original, así que el pedido sigue como estaba.`,
       });
@@ -317,14 +334,9 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
       avisoAnular = avisoAnular ? `${avisoAnular} · ${aviso}` : aviso;
     }
 
-    /**
-     * La revisión viaja al comprobante nuevo: si el presupuesto estaba aprobado y sólo se le
-     * corrigió una lista, no tiene sentido volver a revisarlo desde cero. Pero se deja el rastro
-     * de que cambió.
-     */
-    await moverRevision(id, String(creado.id), creado.numero ?? null, cab.cod_cliente);
-
-    invalidarVista(); invalidarRemitos();
+    // El nuevo presupuesto requiere revisar y aprobar su propia huella.
+    resultadoConocido = !avisoAnular;
+    invalidarIM(); invalidarVista(); invalidarRemitos();
     res.json({
       ok: true, modo: 'recreado',
       im_comprobante_id: String(creado.id), im_numero: creado.numero,
@@ -333,23 +345,11 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
     });
   } catch (err: any) {
     console.error('[editarPresupuesto]', err?.message);
-    res.status(500).json({ error: err?.message ?? 'error' });
+    res.status(err instanceof ErrorVersion || err instanceof ErrorFiscal ? err.status : 500).json({ error: err?.message ?? 'error' });
+  } finally {
+    if (token && resultadoConocido) await desbloquearPresupuesto(id, token);
+    invalidarIM(); invalidarVista(); invalidarRemitos();
   }
-}
-
-/** Cambió el pedido: la aprobación era sobre otra cosa. */
-async function limpiarRevision(comprobanteId: string) {
-  const { error } = await sb().from('presupuestos_revision')
-    .delete().eq('tenant_id', TENANT_ID).eq('im_comprobante_id', comprobanteId);
-  if (error) console.warn('[editarPresupuesto] no pude limpiar la revisión:', error.message);
-}
-
-/**
- * Al recrear, la revisión del viejo se borra y el nuevo nace SIN revisar: cambió el surtido o un
- * precio, así que alguien lo tiene que volver a mirar antes de facturarlo.
- */
-async function moverRevision(viejo: string, _nuevo: string, _numero: number | null, _codCliente: number) {
-  await limpiarRevision(viejo);
 }
 
 /**
@@ -394,9 +394,8 @@ export async function comprobanteParaImprimir(req: Request & { user?: JwtPayload
   if (frenaSiNoPuede(req, res)) return;
   try {
     const id = String(req.params.id);
-    const [cab, items, cat] = await Promise.all([
-      cabeceraComprobante(id),
-      getItemsComprobante(id),
+    const [{ cabecera: cab, items }, cat] = await Promise.all([
+      leerComprobante(id),
       fetchArticulosCatalogo(),
     ]);
     if (cab.existe === false) { res.status(404).json({ error: 'Ese comprobante ya no está en InfoManager.' }); return; }

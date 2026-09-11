@@ -1,3 +1,5 @@
+import { ControlPedido, comprobarIdentidadPedido } from './controlPedido.js';
+import { rechazoEdicionConfirmado, ErrorVersion } from './versionPresupuesto.js';
 import { randomUUID } from 'node:crypto';
 import { puedeTocarPedido } from './permisos.js';
 import type { Request, Response } from 'express';
@@ -9,7 +11,7 @@ import {
   fetchClientesIMCached, fetchArticulosCatalogo, fetchArticulosDeDeposito,
   getItemsComprobante, presupuestoFacturado, actualizarPresupuestoCantidades, desconfirmarPresupuesto,
   fechaComprobante, cabeceraComprobante, fechaArgentina, fetchVendedores, fetchPreciosDeLista,
-  buscarPresupuestoPorCompatibilidad,
+  buscarPresupuestoPorCompatibilidad, leerComprobante,
 } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
 import {
@@ -637,6 +639,7 @@ export async function crearPedido(req: Request & { user?: JwtPayload }, res: Res
  * necesita poder corregir lo que ve, que es justamente lo que le queremos ahorrar a mano).
  */
 export async function editarPedido(req: Request & { user?: JwtPayload }, res: Response) {
+  const controlEscritura = new ControlPedido('editarPedido');
   try {
     const user = req.user!;
     // 🔑 Se trae el pedido SIN filtrar y después se pregunta si lo puede tocar: así el que no
@@ -651,6 +654,8 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
       return;
     }
 
+    await controlEscritura.tomar(pedido);
+
     if (pedido.estado === 'anulado') { res.status(409).json({ error: 'El pedido está anulado: no se puede editar.' }); return; }
     if (pedido.estado === 'facturado') { res.status(409).json({ error: 'El pedido ya está facturado: no se puede editar.' }); return; }
     if (pedido.estado === 'sin_respuesta') {
@@ -664,7 +669,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         res.status(502).json({ error: 'No se pudo verificar en InfoManager si el pedido ya está facturado. Probá de nuevo en un rato.' }); return;
       }
       if (f.facturado) {
-        await sb().from('pedidos_vendedor').update({ estado: 'facturado' }).eq('id', pedido.id);
+        await sb().from('pedidos_vendedor').update({ estado: 'facturado' }).eq('tenant_id', TENANT_ID).eq('id', pedido.id);
         res.status(409).json({ error: 'El pedido ya fue facturado en InfoManager: no se puede editar.' }); return;
       }
     }
@@ -721,6 +726,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
       ? { fecha: null, anulada: null as boolean | null, existe: null as boolean | null }
       : await cabeceraComprobante(pedido.im_presupuesto_id);
     // null es "no sé": se sigue como siempre. Sólo `true` cambia el comportamiento.
+    if (!PEDIDOS_DRY_RUN && pedido.im_presupuesto_id) comprobarIdentidadPedido(cab, pedido);
     const yaAnulado = cab.anulada === true;
     // 🪤 El comprobante puede haber sido BORRADO en IM: los anulados se limpian a mano
     // seguido. Sin esto, editar un pedido así se iba por el camino barato, `getItemsComprobante`
@@ -749,8 +755,9 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         res.status(409).json({ error: 'Los renglones del presupuesto en InfoManager no coinciden con los de la app. Anulá el pedido y cargalo de nuevo.' });
         return;
       }
+      await controlEscritura.antesDeEscribir(pedido.im_presupuesto_id);
       const r = await actualizarPresupuestoCantidades(pedido.im_presupuesto_id, payload);
-      if (!r.ok) { res.status(400).json({ ok: false, error: `InfoManager no pudo actualizar el presupuesto: ${r.error}`, raw: r.raw }); return; }
+      if (!r.ok) { controlEscritura.conocido = rechazoEdicionConfirmado(r); res.status(400).json({ ok: false, error: `InfoManager no pudo actualizar el presupuesto: ${r.error}`, raw: r.raw }); return; }
     } else {
       // Cambió el surtido, una lista o un descuento: IM no lo permite sobre el mismo
       // presupuesto (VentasPresupuestosActualizar sólo acepta {id, cantidad}).
@@ -772,8 +779,9 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
       // reconciliación es peor que no editar, pero mucho menos grave que no crear el pedido.
       const codCompat = randomUUID().slice(0, 8);
       const { error: errCompat } = await sb().from('pedidos_vendedor')
-        .update({ im_cod_compatibilidad: codCompat }).eq('id', pedido.id);
-      if (errCompat) console.warn('[editarPedido] no pude guardar el cod_compatibilidad, la reconciliación por timeout no va a poder buscarlo:', errCompat.message);
+        .update({ im_cod_compatibilidad: codCompat }).eq('tenant_id', TENANT_ID).eq('id', pedido.id);
+      if (errCompat) throw new ErrorVersion('No pude guardar la intención antes de crear el presupuesto. No se emitió nada.', 503);
+      await controlEscritura.antesDeEscribir(pedido.im_presupuesto_id);
       const imRes = await crearPresupuesto({
         // Del PEDIDO, no del usuario que edita: si lo abre alguien de otra unidad, el
         // presupuesto de reemplazo tiene que seguir siendo de la unidad original.
@@ -817,6 +825,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         })),
       });
       if (!imRes.ok) {
+        controlEscritura.conocido = rechazoEdicionConfirmado(imRes);
         if (imRes.sinRespuesta) {
           // Timeout: NO se sabe si el nuevo entró. NO se anula el viejo (si el nuevo no entró
           // el cliente se queda sin nada) y NO se reintenta solo (si entró, el reintento crea
@@ -826,7 +835,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
             ? `InfoManager no contestó al crear el presupuesto de reemplazo. El ${numViejo} SIGUE VIGENTE y no se tocó.`
             : 'InfoManager no contestó al crear el presupuesto de este pedido.';
           await sb().from('pedidos_vendedor')
-            .update({ estado: 'sin_respuesta', im_error: `${cabeza} ${imRes.error}` }).eq('id', pedido.id);
+            .update({ estado: 'sin_respuesta', im_error: `${cabeza} ${imRes.error}` }).eq('tenant_id', TENANT_ID).eq('id', pedido.id);
           res.status(202).json({ ok: false, sin_respuesta: true,
             error: `${cabeza} Fijate en InfoManager si quedó un presupuesto nuevo de este cliente: ${numViejo ? `si está, anulá el ${numViejo}; si no está, avisá para volver a habilitar el pedido` : 'si está, ya quedó cargado; si no está, avisá para volver a habilitar el pedido'}. NO lo cargues de nuevo hasta verificarlo. (${imRes.error})` });
           return;
@@ -839,6 +848,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
             : `InfoManager rechazó el pedido (${imRes.error}). Sigue sin presupuesto. Corregí lo que dice el error y volvé a guardar.` });
         return;
       }
+      await controlEscritura.agregarPR(String(imRes.id));
       // El nuevo YA existe: de acá en adelante el pedido ES el nuevo, pase lo que pase con la
       // anulación del viejo.
       // Nada que anular si nunca hubo presupuesto, si ya está anulado, o si lo borraron.
@@ -889,7 +899,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         ...imUpdate,
         estado: 'error',
         im_error: [avisoAnular, `Los renglones no se pudieron reemplazar en la app: ${delErr.message}. En InfoManager el presupuesto SÍ quedó creado.`].filter(Boolean).join(' | '),
-      }).eq('id', pedido.id);
+      }).eq('tenant_id', TENANT_ID).eq('id', pedido.id);
       res.status(500).json({ error: `No se pudieron reemplazar los renglones: ${delErr.message}` });
       return;
     }
@@ -918,7 +928,7 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
         // quedaron los DOS presupuestos vivos. Se borraba justo el aviso que evita facturarle
         // dos veces al cliente. Van los dos textos concatenados.
         im_error: [avisoAnular, `Los renglones no se pudieron guardar en la app: ${insErr2.message}. En InfoManager el presupuesto SÍ quedó actualizado.`].filter(Boolean).join(' | '),
-      }).eq('id', pedido.id);
+      }).eq('tenant_id', TENANT_ID).eq('id', pedido.id);
       res.status(500).json({ error: `El presupuesto se actualizó en InfoManager pero los renglones no se pudieron guardar acá: ${insErr2.message}. Revisalo.` });
       return;
     }
@@ -927,18 +937,21 @@ export async function editarPedido(req: Request & { user?: JwtPayload }, res: Re
     // en IM: nadie se enteraba de su número. `crearPedido` ya lo maneja así (mismo patrón).
     const { data: final, error: errFinal } = await sb().from('pedidos_vendedor')
       .update({ total_estimado: total, observaciones, ...imUpdate })
-      .eq('id', pedido.id).select().maybeSingle();
+      .eq('tenant_id', TENANT_ID).eq('id', pedido.id).select().maybeSingle();
     if (errFinal) console.error('[editarPedido] IM quedó OK pero no se pudo guardar acá. Presupuesto:', imUpdate.im_numero ?? pedido.im_numero, errFinal.message);
-    const avisoGuardado = errFinal
-      ? `El pedido quedó bien en InfoManager (presupuesto ${imUpdate.im_numero ?? pedido.im_numero}) pero no se pudo actualizar acá: ${errFinal.message}. Anotá ese número.`
+    const avisoGuardado = errFinal || !final
+      ? `El pedido quedó bien en InfoManager (presupuesto ${imUpdate.im_numero ?? pedido.im_numero}) pero no se pudo actualizar acá: ${errFinal?.message ?? 'no confirmó la fila'}. Anotá ese número.`
       : null;
 
+    controlEscritura.conocido = !errFinal && !!final && !avisoAnular;
+    _factCache.delete(String(pedido.im_presupuesto_id));
+    if (errFinal || !final) { res.status(502).json({ ok:false, error:avisoGuardado, aviso:avisoGuardado, im_numero:imUpdate.im_numero ?? pedido.im_numero }); return; }
     res.json({ ok: true, pedido: final, numero_cambio: numeroCambio, solo_cantidades: !recrear,
       ...(avisoAnular || avisoGuardado ? { aviso: [avisoAnular, avisoGuardado].filter(Boolean).join(' | ') } : {}) });
   } catch (err: any) {
     console.error('editarPedido error:', err);
-    res.status(500).json({ error: err?.message ?? 'error interno' });
-  }
+    res.status(err instanceof ErrorVersion ? err.status : 500).json({ error: err?.message ?? 'error interno' });
+  } finally { if (controlEscritura.intentoIM) _factCache.clear(); await controlEscritura.cerrar(); }
 }
 
 /**
@@ -1011,9 +1024,8 @@ export async function marcarFacturados(pedidos: any[]): Promise<void> {
  *   · lo encuentra  -> adopta el presupuesto nuevo, anula el viejo y reescribe los renglones
  *     con los que IM tiene de verdad (el camino del timeout corta antes de guardarlos, así
  *     que en la app quedaron los de ANTES de editar).
- *   · NO lo encuentra pero el presupuesto VIEJO sigue vivo -> la edición no se aplicó y el
- *     pedido original está intacto: se lo devuelve a `enviado` para que se pueda volver a
- *     tocar, sin inventar nada en IM.
+ *   · NO lo encuentra -> conserva sin_respuesta: la ausencia temporal no prueba que
+ *     InfoManager haya terminado sin crear el reemplazo.
  *   · no pudo buscar, o no hay con qué (pedidos anteriores a la migración 031) -> NO SE TOCA.
  * Un falso "no entró" recrearía el presupuesto y duplicaría: ante la duda, no se hace nada.
  */
@@ -1022,33 +1034,38 @@ export async function reconciliarSinRespuesta(pedidos: any[]): Promise<void> {
   if (!candidatos.length) return;
 
   for (const p of candidatos) {
+    const controlEscritura = new ControlPedido('reconciliarPedido');
+    let nuevoID: string | null = null;
     try {
+      await controlEscritura.tomar(p);
       // 🪤 La empresa va SIEMPRE la del pedido: con otra, IM contesta lo mismo que si el
       // presupuesto no existiera, y un falso "no entró" da por perdido uno que está vivo.
       const r = await buscarPresupuestoPorCompatibilidad(
         p.im_cod_compatibilidad, Number(p.cod_empresa) || PEDIDO_EMPRESA_DEFAULT);
       if (!r.busquedaOk) continue;                    // no pude preguntar: no se asume nada
 
-      if (!r.encontrado) {
-        // No entró. Si el viejo sigue vivo, el pedido quedó como estaba y se puede destrabar.
-        if (!p.im_presupuesto_id) continue;           // nunca hubo presupuesto: queda a revisar
-        const cab = await cabeceraComprobante(p.im_presupuesto_id);
-        if (cab.anulada !== false) continue;          // anulado, borrado o "no sé": no se toca
-        const aviso = `Revisado ${fechaArgentina()}: InfoManager no había creado el presupuesto de reemplazo, así que el ${p.im_numero ?? p.im_presupuesto_id} sigue siendo el bueno. El pedido se puede editar de nuevo.`;
-        const { error } = await sb().from('pedidos_vendedor')
-          .update({ estado: 'enviado', im_error: aviso }).eq('id', p.id);
-        if (error) { console.warn('[reconciliar] no pude destrabar el pedido', p.id, error.message); continue; }
-        p.estado = 'enviado'; p.im_error = aviso;
-        continue;
-      }
+      if (!r.encontrado) continue; // Ausencia temporal no prueba que IM terminó sin crear.
 
       // Entró. El pedido pasa a ser el nuevo, y el viejo —si es otro— se anula.
-      const nuevo = r.encontrado;
+      const nuevo = r.encontrado; nuevoID = String(nuevo.id);
       if (String(nuevo.id) === String(p.im_presupuesto_id)) continue;   // ya apuntaba ahí
+      await controlEscritura.agregarPR(String(nuevo.id));
+      const detalleNuevo = await leerComprobante(nuevo.id);
+      if (detalleNuevo.cabecera.existe !== true || detalleNuevo.cabecera.anulada !== false) continue;
+      comprobarIdentidadPedido(detalleNuevo.cabecera, p);
+      controlEscritura.conocido = false; // La adopción local también puede quedar incompleta.
+      const itemsIM = detalleNuevo.items;
+      if (!itemsIM?.length || itemsIM.some(it => !(Number(it.cod_articulo)>0) || !Number.isFinite(Number(it.cantidad)) || !(Number(it.cantidad)>0))) {
+        throw new Error('El presupuesto nuevo no tiene renglones válidos para reconciliar.');
+      }
       let avisoAnular = '';
       if (p.im_presupuesto_id) {
         const cab = await cabeceraComprobante(p.im_presupuesto_id);
+        comprobarIdentidadPedido(cab, p);
+        const fact = await presupuestoFacturado(p.im_presupuesto_id);
+        if (fact.facturado || fact.desconocido) continue;
         if (cab.anulada === false) {
+          await controlEscritura.antesDeEscribir(p.im_presupuesto_id);
           const anul = await anularComprobante({
             id: p.im_presupuesto_id, numero: p.im_numero, punto_de_venta: p.im_punto_de_venta ?? PEDIDO_PUNTO_DE_VENTA,
             fecha: cab.fecha ?? fechaArgentina(p.created_at),
@@ -1061,29 +1078,30 @@ export async function reconciliarSinRespuesta(pedidos: any[]): Promise<void> {
         }
       }
 
-      // Los renglones de la app son los de ANTES de editar: se traen los que IM tiene.
-      const itemsIM = await getItemsComprobante(nuevo.id).catch(() => null);
-      if (itemsIM?.length) {
-        const { error: delErr } = await sb().from('pedidos_vendedor_items').delete().eq('pedido_id', p.id);
-        if (!delErr) {
-          await sb().from('pedidos_vendedor_items').insert(itemsIM.map((it: any, i: number) => ({
-            pedido_id: p.id, cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad),
-            cod_lista_precios: it.cod_lista_precios != null ? Number(it.cod_lista_precios) : null,
-            precio_unit: 0, subtotal: 0, orden: i,
-          })));
-        }
-      }
+      const { error: delErr } = await sb().from('pedidos_vendedor_items').delete().eq('pedido_id', p.id);
+      if (delErr) throw new Error(`No pude reemplazar los renglones: ${delErr.message}`);
+      const { error: insErr } = await sb().from('pedidos_vendedor_items').insert(itemsIM.map((it: any, i: number) => ({
+        pedido_id: p.id, cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad),
+        cod_lista_precios: it.cod_lista_precios != null ? Number(it.cod_lista_precios) : null,
+        precio_unit: Number(it.precio_orig) || Number(it.precio) || 0,
+        iva_por: it.iva_por, descuento_porc: Number(it.descuento_porc) || 0,
+        subtotal: Number(it.cantidad) * (Number(it.precio_orig) || Number(it.precio) || 0) * (1-(Number(it.descuento_porc)||0)/100), orden: i,
+      })));
+      if (insErr) throw new Error(`No pude guardar los renglones reconciliados: ${insErr.message}`);
 
       const aviso = `Reconciliado ${fechaArgentina()}: InfoManager sí había creado el presupuesto ${nuevo.numero ?? nuevo.id} pero no contestó a tiempo.${avisoAnular}`;
-      const { error } = await sb().from('pedidos_vendedor').update({
+      const { data: confirmada, error } = await sb().from('pedidos_vendedor').update({
         estado: 'enviado', im_presupuesto_id: String(nuevo.id), im_numero: nuevo.numero, im_error: aviso,
-      }).eq('id', p.id);
-      if (error) { console.warn('[reconciliar] no pude guardar el pedido reconciliado', p.id, error.message); continue; }
+      }).eq('tenant_id', TENANT_ID).eq('id', p.id).eq('estado','sin_respuesta')
+        .eq('im_cod_compatibilidad',p.im_cod_compatibilidad).select('id').maybeSingle();
+      if (error || !confirmada) throw new Error(`No pude confirmar la referencia reconciliada: ${error?.message ?? 'la fila cambió'}`);
+      controlEscritura.conocido = !avisoAnular;
       Object.assign(p, { estado: 'enviado', im_presupuesto_id: String(nuevo.id), im_numero: nuevo.numero, im_error: aviso });
       console.log(`[reconciliar] pedido ${p.id} adoptó el PR ${nuevo.numero ?? nuevo.id}`);
     } catch (e: any) {
+      if (!controlEscritura.conocido) await sb().from('pedidos_vendedor').update({ im_error: `Conciliación pendiente${nuevoID ? ' del PR ID '+nuevoID : ''}: ${e.message}` }).eq('tenant_id',TENANT_ID).eq('id',p.id).eq('estado','sin_respuesta');
       console.warn('[reconciliar] falló el pedido', p.id, e?.message);
-    }
+    } finally { if (controlEscritura.intentoIM) _factCache.clear(); await controlEscritura.cerrar(); }
   }
 }
 
@@ -1134,6 +1152,7 @@ export async function getPedidoById(req: Request & { user?: JwtPayload }, res: R
 
 /** POST /api/pedidos/:id/anular — anula el presupuesto en IM y marca el pedido. */
 export async function anularPedido(req: Request & { user?: JwtPayload }, res: Response) {
+  const controlEscritura = new ControlPedido('anularPedido');
   try {
     const user = req.user!;
     // 🔑 Se trae el pedido SIN filtrar y después se pregunta si lo puede tocar: así el que no
@@ -1147,6 +1166,8 @@ export async function anularPedido(req: Request & { user?: JwtPayload }, res: Re
       res.status(403).json({ error: 'Este pedido lo cargó otra persona. Pedile a administración que lo modifique.' });
       return;
     }
+    await controlEscritura.tomar(pedido);
+
     if (pedido.estado === 'anulado') { res.status(409).json({ error: 'El pedido ya está anulado' }); return; }
     if (pedido.estado === 'facturado') { res.status(409).json({ error: 'El pedido ya está facturado: no se puede anular desde acá.' }); return; }
     if (pedido.estado === 'sin_respuesta') {
@@ -1155,37 +1176,48 @@ export async function anularPedido(req: Request & { user?: JwtPayload }, res: Re
       res.status(409).json({ error: 'InfoManager no contestó cuando se creó este pedido: no se sabe si entró. Verificalo en IM antes de anularlo.' });
       return;
     }
-    if (!pedido.im_presupuesto_id || !pedido.im_numero) {
+    if (!pedido.im_presupuesto_id) {
       // Nunca llegó a IM: se anula solo local.
-      await sb().from('pedidos_vendedor').update({ estado: 'anulado' }).eq('id', pedido.id);
+      controlEscritura.conocido = false;
+      const { data: anulacionLocal, error: errorLocal } = await sb().from('pedidos_vendedor').update({ estado: 'anulado' })
+        .eq('tenant_id', TENANT_ID).eq('id', pedido.id).eq('estado', pedido.estado).select('id').maybeSingle();
+      if (errorLocal || !anulacionLocal) throw new ErrorVersion('No se pudo confirmar la anulación local del pedido. Revisá su estado antes de continuar.', 503);
+      controlEscritura.conocido = true;
       res.json({ ok: true, solo_local: true }); return;
     }
     // ¿Ya lo facturaron? Anular un presupuesto facturado deja la factura sin respaldo.
     const fact = await presupuestoFacturado(pedido.im_presupuesto_id);
+    if (fact.desconocido) throw new ErrorVersion('No pude verificar si el pedido ya está facturado. No se anuló nada.', 503);
     if (fact.facturado) {
-      await sb().from('pedidos_vendedor').update({ estado: 'facturado' }).eq('id', pedido.id);
+      await sb().from('pedidos_vendedor').update({ estado: 'facturado' }).eq('tenant_id', TENANT_ID).eq('id', pedido.id);
       res.status(409).json({ error: 'El pedido ya fue facturado en InfoManager: no se puede anular.' }); return;
     }
+    const cab = await cabeceraComprobante(pedido.im_presupuesto_id);
+    comprobarIdentidadPedido(cab, pedido);
+    await controlEscritura.antesDeEscribir(pedido.im_presupuesto_id);
     const imRes = await anularComprobante({
       id: pedido.im_presupuesto_id,
       numero: pedido.im_numero,
       punto_de_venta: pedido.im_punto_de_venta ?? PEDIDO_PUNTO_DE_VENTA,
-      fecha: (await fechaComprobante(pedido.im_presupuesto_id)) ?? fechaArgentina(pedido.created_at),
+      fecha: cab.fecha ?? fechaArgentina(pedido.created_at),
       observaciones: `Anulado desde app · pedido ${pedido.id.slice(0, 8)}`,
     });
     if (!imRes.ok) {
       // 🪤 Si alguien borró el presupuesto a mano desde InfoManager, el id ya no existe y
       // el pedido quedaría trabado para siempre en "enviado". Pasó el 27/08: Mati borró el
       // 57818 desde IM. En ese caso se marca anulado igual y se deja constancia.
-      const noExiste = /no se encontraron datos|no existe/i.test(String(imRes.error ?? ''));
+      const noExiste = (await cabeceraComprobante(pedido.im_presupuesto_id)).existe === false;
       if (noExiste) {
-        const { data } = await sb().from('pedidos_vendedor').update({
+        const { data, error: errLocal } = await sb().from('pedidos_vendedor').update({
           estado: 'anulado',
           im_error: 'El presupuesto ya no existe en InfoManager (lo borraron desde ahí).',
-        }).eq('id', pedido.id).select().maybeSingle();
+        }).eq('tenant_id', TENANT_ID).eq('id', pedido.id).select().maybeSingle();
+        controlEscritura.conocido = !errLocal && !!data;
+        if (!controlEscritura.conocido) throw new ErrorVersion('La anulación requiere conciliar su registro local.',503);
         res.json({ ok: true, pedido: data, ya_no_estaba: true });
         return;
       }
+      controlEscritura.conocido = rechazoEdicionConfirmado(imRes);
       res.status(400).json({ ok: false, error: `IM no pudo anular: ${imRes.error}`, raw: imRes.raw }); return;
     }
     // Mismo criterio que al editar: el anulado ya no sirve y le ensucia a la oficina la
@@ -1194,11 +1226,14 @@ export async function anularPedido(req: Request & { user?: JwtPayload }, res: Re
     const desc = await desconfirmarPresupuesto(pedido.im_presupuesto_id);
     if (!desc.ok) console.warn(`[anularPedido] no pude desconfirmar el PR ${pedido.im_numero}:`, desc.error);
 
-    const { data } = await sb().from('pedidos_vendedor').update({ estado: 'anulado' }).eq('id', pedido.id).select().maybeSingle();
+    const { data, error: errLocal } = await sb().from('pedidos_vendedor').update({ estado: 'anulado' }).eq('tenant_id', TENANT_ID).eq('id', pedido.id).select().maybeSingle();
+    controlEscritura.conocido = !errLocal && !!data;
+    if (!controlEscritura.conocido) throw new ErrorVersion('IM anuló el presupuesto pero falta confirmar el registro local. No repitas la anulación.',503);
+    _factCache.delete(String(pedido.im_presupuesto_id));
     res.json({ ok: true, pedido: data });
   } catch (err: any) {
-    res.status(500).json({ error: err?.message ?? 'error' });
-  }
+    res.status(err instanceof ErrorVersion ? err.status : 500).json({ error: err?.message ?? 'error' });
+  } finally { if (controlEscritura.intentoIM) _factCache.clear(); await controlEscritura.cerrar(); }
 }
 
 /** GET /api/pedidos-credito/:cod — saldo + cupo del cliente (semáforo). */

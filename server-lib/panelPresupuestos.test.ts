@@ -17,22 +17,27 @@ const m = vi.hoisted(() => ({
   cabeceraComprobante: vi.fn(),
 }));
 
-vi.mock('./infomanager.js', () => ({
+vi.mock('./pedidos.js', () => ({ reglasActivas: vi.fn(async () => []), descuentosActivos: vi.fn(async () => []) }));
+vi.mock('./infomanager.js', () => { const fuente = {
+  fetchClientesIMCached: vi.fn(async () => [{ cod_cliente: 1, razon_social: 'CLIENTE VERIFICADO' }]),
+  fetchStockPorDeposito: vi.fn(async () => new Map([[1, 500],[2,500]])),
   // El cache de /ventas se limpia junto con las vistas (10/09/2026).
   invalidarCacheVentas: vi.fn(),
   invalidarCacheItems: vi.fn(),
   fechaArgentina: (t?: number) => (t ? new Date(t).toISOString().slice(0, 10) : '2026-09-08'),
-  fetchArticulosCatalogo: vi.fn(async () => new Map([[1, { descripcion: 'MEZCLA FINA', unidad_de_medida: 'KG', equivalencia_um: 1 }]])),
+  fetchArticulosCatalogo: vi.fn(async () => new Map([[1, { descripcion: 'MEZCLA FINA', unidad_de_medida: 'KG', equivalencia_um: 1 }],[2,{descripcion:'MIJO',unidad_de_medida:'KG',equivalencia_um:1}]])),
   fetchVentasItems: m.fetchVentasItems,
   getItemsComprobante: m.getItemsComprobante,
   cabeceraComprobante: m.cabeceraComprobante,
   actualizarPresupuestoCantidades: m.actualizarPresupuestoCantidades,
-}));
+}; return { ...fuente, invalidarIM: vi.fn(), leerComprobante: async (id: string) => ({ cabecera: await (fuente as any).cabeceraComprobante(id), items: await (fuente as any).getItemsComprobante(id) }) }; });
 vi.mock('./vistaPresupuestos.js', () => ({ vistaDeRango: m.vistaDeRango, invalidarVista: vi.fn() }));
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
 
+vi.mock('./versionPresupuesto.js', async original => ({ ...(await original<any>()), exigirHuella: vi.fn() }));
+
 const {
-  listarPresupuestos, revisarPresupuesto, corregirCantidades, fraccionadoDelRango,
+  listarPresupuestos, revisarPresupuesto, corregirCantidades, fraccionadoDelRango, detallePresupuesto,
 } = await import('./panelPresupuestos.js');
 
 let tablas: Record<string, any> = {};
@@ -40,6 +45,7 @@ let escrituras: Array<{ tabla: string; op: string; valor: any }> = [];
 
 function fakeSb() {
   m.sbMock.mockImplementation(() => ({
+    rpc: vi.fn(async () => ({ data: true, error: null })),
     from: (t: string) => {
       const res = tablas[t] ?? { data: null, error: null };
       const q: any = {
@@ -70,6 +76,8 @@ beforeEach(() => {
   tablas = {}; escrituras = [];
   vi.clearAllMocks();
   fakeSb();
+  m.cabeceraComprobante.mockResolvedValue({tipo_comprobante:'PR',cod_empresa:1,cod_cliente:1,existe:true,anulada:false});
+  m.getItemsComprobante.mockResolvedValue([{id:9,cantidad:10,cod_articulo:1,precio:100},{id:10,cantidad:5,cod_articulo:2,precio:50}]);
   m.vistaDeRango.mockResolvedValue(VISTA_VACIA);
   m.actualizarPresupuestoCantidades.mockResolvedValue({ ok: true });
 });
@@ -275,13 +283,13 @@ describe('sacar un producto del presupuesto', () => {
     expect(m.actualizarPresupuestoCantidades).not.toHaveBeenCalled();
   });
 
-  it('cambiar cantidades sin ningún cero no consulta los renglones: es el camino de siempre', async () => {
+  it('cambiar cantidades también verifica versión y pertenencia de los renglones', async () => {
     const r = await llamar(corregirCantidades, {
       params: { comprobanteId: '58700637' },
       body: { items: [{ id: 101, cantidad: 8 }] },
     });
     expect(r.status).toBe(200);
-    expect(m.getItemsComprobante).not.toHaveBeenCalled();
+    expect(m.getItemsComprobante).toHaveBeenCalled();
   });
 
   it('una cantidad negativa sigue sin pasar', async () => {
@@ -291,4 +299,11 @@ describe('sacar un producto del presupuesto', () => {
     });
     expect(r.status).toBe(400);
   });
+});
+
+it('detalle entrega identidad y cabecera completa de la misma lectura, sin reconstruir desde listado', async () => {
+  m.cabeceraComprobante.mockResolvedValue({ tipo_comprobante: 'PR', cod_empresa: 1, cod_cliente: 1, existe: true, anulada: false, numero: 50234, fecha: '2026-09-11', observaciones: 'BASE ACTUAL' });
+  const r = await llamar(detallePresupuesto, { params: { comprobanteId: '123' } });
+  expect(r.status).toBe(200); expect(r.body.comprobante).toMatchObject({ im_comprobante_id: '123', numero: 50234, cod_cliente: 1, cliente_nombre: 'CLIENTE VERIFICADO', fecha: '2026-09-11', observaciones: 'BASE ACTUAL' });
+  expect(r.body.comprobante.huella).toMatch(/^[a-f0-9]{64}$/); expect(m.vistaDeRango).not.toHaveBeenCalled();
 });

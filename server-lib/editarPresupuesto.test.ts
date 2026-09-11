@@ -18,7 +18,7 @@ const m = vi.hoisted(() => ({
   actualizarCabecera: vi.fn(),
 }));
 
-vi.mock('./infomanager.js', () => ({
+vi.mock('./infomanager.js', () => { const fuente = {
   // El cache de /ventas se limpia junto con las vistas (10/09/2026).
   invalidarCacheVentas: vi.fn(),
   invalidarCacheItems: vi.fn(),
@@ -28,12 +28,15 @@ vi.mock('./infomanager.js', () => ({
   crearPresupuesto: m.crearPresupuesto,
   anularComprobante: m.anularComprobante,
   actualizarCabecera: m.actualizarCabecera,
-  fetchArticulosCatalogo: vi.fn(async () => new Map([[1, { descripcion: 'ALPISTE X 30 KG' }]])),
+  fetchArticulosCatalogo: vi.fn(async () => new Map([[1, { descripcion: 'ALPISTE X 30 KG', iva_por:0 }],[3,{iva_por:0}],[13819,{iva_por:0}]])),
+  getPrecioLista: vi.fn(async(cod:number) => ({cod_articulo:cod,iva:0,iva_verificada:0})),
   fechaArgentina: () => '2026-09-09',
-}));
+}; return { ...fuente, invalidarIM: vi.fn(), leerComprobante: async (id: string) => ({ cabecera: await (fuente as any).cabeceraComprobante(id), items: await (fuente as any).getItemsComprobante(id) }) }; });
 vi.mock('./vistaPresupuestos.js', () => ({ invalidarVista: vi.fn(), vistaDeRango: vi.fn() }));
 vi.mock('./vistaRemitos.js', () => ({ invalidarRemitos: vi.fn(), vistaRemitos: vi.fn() }));
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
+
+vi.mock('./versionPresupuesto.js', async original => ({ ...(await original<any>()), exigirHuella: vi.fn() }));
 
 const { editarPresupuesto, firmaDelSurtido, emparejarParaPut } = await import('./editarPresupuesto.js');
 
@@ -44,6 +47,7 @@ let errorEnEscritura: { message: string } | null = null;
 
 function fakeSb() {
   m.sbMock.mockImplementation(() => ({
+    rpc: vi.fn(async () => ({ data: true, error: null })),
     from: (t: string) => {
       const res = tablas[t] ?? { data: null, error: null };
       const escribio = () => (errorEnEscritura ? { data: null, error: errorEnEscritura } : res);
@@ -71,7 +75,7 @@ function llamar(body: any, params = { comprobanteId: '58727292' }) {
 }
 
 const CAB_OK = {
-  fecha: '2026-09-09', anulada: false, existe: true, observaciones: 'entregar el jueves',
+  tipo_comprobante: 'PR', fecha: '2026-09-09', anulada: false, existe: true, observaciones: 'entregar el jueves',
   numero: 58158, cod_cliente: 297, cod_vendedor: '2', cod_empresa: 1,
   cod_lista_precios: 13, punto_de_venta: 1, usuario: 'jorgelina',
   tipo_presupuesto: 'C', fecha_entrega: '2026-09-09',
@@ -99,7 +103,7 @@ describe('cambiar sólo cantidades', () => {
   it('🔑 usa el camino barato y CONSERVA el número de presupuesto', async () => {
     const r = await llamar({ items: [
       { cod_articulo: 1, cantidad: 20, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
-      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
+      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 200 },
     ] });
     expect(r.status).toBe(200);
     expect(r.body.modo).toBe('cantidades');
@@ -138,7 +142,7 @@ describe('cambiar el surtido obliga a recrear', () => {
   it('🔴 cambiar la LISTA de un renglón recrea: el PUT la ignora en silencio', async () => {
     const r = await llamar({ items: [
       { cod_articulo: 1, cantidad: 10, cod_lista_precios: 14, descuento_porc: 0, precio: 100 },
-      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
+      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 200 },
     ] });
     expect(r.body.modo).toBe('recreado');
     expect(m.crearPresupuesto.mock.calls[0][0].items[0].cod_lista_precios).toBe(14);
@@ -147,7 +151,7 @@ describe('cambiar el surtido obliga a recrear', () => {
   it('🔴 cambiar el DESCUENTO también recrea', async () => {
     const r = await llamar({ items: [
       { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 10, precio: 100 },
-      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
+      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 200 },
     ] });
     expect(r.body.modo).toBe('recreado');
   });
@@ -284,7 +288,7 @@ describe('el costo de distribución', () => {
   it('🔑 va como un artículo más, con su precio escrito a mano', async () => {
     const r = await llamar({ items: [
       { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
-      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
+      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 200 },
       { cod_articulo: 13819, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0, precio: 15000 },
     ] });
     expect(r.status).toBe(200);
@@ -299,7 +303,7 @@ describe('el costo de distribución', () => {
   it('🔴 un renglón SIN artículo no se manda: IM rechaza el presupuesto entero', async () => {
     const r = await llamar({ items: [
       { cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
-      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
+      { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 200 },
       { cod_articulo: 0, cantidad: 1, cod_lista_precios: 13, descuento_porc: 0, precio: 15000, detalle: 'FLETE' },
     ] });
     // Se descarta y el resto sigue igual, así que alcanza con el camino barato.
@@ -512,11 +516,12 @@ describe('el pedido del vendedor al rehacer el presupuesto', () => {
     expect(upd!.valor).toMatchObject({ im_presupuesto_id: '58800999', im_numero: 58200 });
   });
 
-  it('🔴 si no se puede reapuntar, se avisa: el próximo cambio del vendedor duplicaría el pedido', async () => {
+  it('🔴 si la base no acepta escrituras, no invalida aprobación ni modifica IM', async () => {
     errorEnEscritura = { message: 'supabase caído' };
     const r = await llamar({ items: [{ cod_articulo: 1, cantidad: 10, cod_lista_precios: 13, descuento_porc: 0, precio: 100 }] });
-    expect(r.status).toBe(200);
-    expect(r.body.aviso).toMatch(/duplicado/i);
+    expect(r.status).toBe(503);
+    expect(r.body.error).toMatch(/aprobación/i);
+    expect(m.crearPresupuesto).not.toHaveBeenCalled();
   });
 
   it('cambiar sólo cantidades no lo toca: el presupuesto es el mismo', async () => {
@@ -526,4 +531,25 @@ describe('el pedido del vendedor al rehacer el presupuesto', () => {
     ] });
     expect(escrituras.find(e => e.tabla === 'pedidos_vendedor')).toBeUndefined();
   });
+});
+
+
+it('cambiar únicamente precio de distribución recrea y envía el precio nuevo', async () => {
+  m.getItemsComprobante.mockResolvedValue([{id:1,cod_articulo:13819,iva_por:10.5,cantidad:1,cod_lista_precios:13,descuento_porc:0,precio:15000,precio_orig:15000}]);
+  const r=await llamar({items:[{cod_articulo:13819,cantidad:1,cod_lista_precios:13,descuento_porc:0,precio:25000}]});
+  expect(r.body.modo).toBe('recreado'); expect(m.crearPresupuesto.mock.calls[0][0].items[0]).toMatchObject({precio:25000,iva_por:10.5});
+  expect(m.actualizarPresupuestoCantidades).not.toHaveBeenCalled();
+  expect(escrituras.findIndex(e=>e.tabla==='presupuestos_revision'&&e.op==='delete')).toBeGreaterThanOrEqual(0);
+});
+
+
+it.each([false, true])('libera rechazo explícito y conserva lock con resultado incierto=%s', async incierto => {
+  m.actualizarPresupuestoCantidades.mockResolvedValue({ ok: false, error: 'rechazado', raw: { isUpdated: false }, sinRespuesta: incierto });
+  const r = await llamar({ items: [
+    { cod_articulo: 1, cantidad: 20, cod_lista_precios: 13, descuento_porc: 0, precio: 100 },
+    { cod_articulo: 2, cantidad: 5, cod_lista_precios: 13, descuento_porc: 0, precio: 200 },
+  ] });
+  expect(r.status).toBe(502);
+  const llamadas = m.sbMock.mock.results.flatMap((r: any) => r.value.rpc.mock.calls);
+  expect(llamadas.some((c: any[]) => c[0] === 'soltar_presupuesto')).toBe(!incierto);
 });

@@ -1,3 +1,5 @@
+import { LecturasCompartidas } from './lecturasCompartidas.js';
+import { huellaPresupuesto } from './versionPresupuesto.js';
 /**
  * Los presupuestos que la oficina tiene que revisar, y el estado de esa revisión.
  *
@@ -51,17 +53,14 @@ const _vistaCache = new Map<string, { at: number; datos: any }>();
  * aparece también en el rango 1→8, y esa entrada quedaba vieja mostrando el pedido como libre
  * cuando ya estaba en una hoja. Se limpia todo: son 90 segundos de cache, no un índice.
  */
-/**
- * 🔑 Limpia TAMBIÉN el cache de `/ventas`. Los dos guardan lo mismo visto desde distinto lado:
- * si al emitir o anular sólo se tirara la vista, la reconstrucción saldría del listado viejo y
- * la pantalla mostraría exactamente lo que se acaba de cambiar, sin cambiar.
- */
-export function invalidarVista() { _vistaCache.clear(); invalidarCacheVentas(); invalidarCacheItems(); }
+/** Los cambios locales sólo invalidan la vista. Cada escritor de IM invalida además invalidarIM. */
+export function invalidarVista() { vistasCompartidas.invalidar(); }
 
-export async function vistaDeRango(desde: string, hasta: string, forzar = false) {
+const vistasCompartidas = new LecturasCompartidas<any>();
+export function vistaDeRango(desde: string, hasta: string, forzar = false): Promise<any> { return vistasCompartidas.obtener(`${desde}|${hasta}`, () => armarVistaRango(desde,hasta,forzar), {actualizar:forzar}); }
+async function armarVistaRango(desde: string, hasta: string, forzar = false) {
   const clave = `${desde}|${hasta}`;
-  const hit = _vistaCache.get(clave);
-  if (!forzar && hit && Date.now() - hit.at < VISTA_TTL_MS) return hit.datos;
+
   {
     /**
      * ⏱️ Cuánto tardó, y en qué. Sin esto, cada vez que la pantalla se pone lenta hay que
@@ -77,7 +76,7 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
     // desde antes. Un pedido que no aparece en la pantalla no entra en ninguna hoja y nadie
     // se entera hasta que llama el cliente.
     const [ventas, cat, stock] = await Promise.all([
-      fetchVentas(desde, hasta),
+      fetchVentas(desde, hasta, { actualizar: forzar }),
       fetchArticulosCatalogo(),
       // Sin stock la pantalla igual sirve: se avisa que no se pudo consultar, no se inventa.
       // 🪤 `forzar` va también acá: el cache de stock dura 10 minutos y sin esto el botón
@@ -119,14 +118,16 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
     const fechasConPedidos = [...new Set(presupuestos
       .map((p: any) => String(p.fecha ?? '').slice(0, 10))
       .filter(Boolean))].sort().slice(-MAX_DIAS_ITEMS);
+    const diasSinItems: string[] = [...new Set(presupuestos.map((p: any) => String(p.fecha ?? '').slice(0, 10)))].filter(f => !fechasConPedidos.includes(f));
+    let reglasDisponibles = true;
     const renglones = new Map<string, Array<{ cod_articulo: number; cantidad: any; equivalencia_um: number | null | undefined; cod_lista_precios: number; descuento_porc: number }>>();
     for (let i = 0; i < fechasConPedidos.length; i += 4) {
       const tanda = fechasConPedidos.slice(i, i + 4);
       const resultados = await Promise.all(tanda.map(f =>
-        fetchVentasItems(f, f).catch((e: any) => {
+        fetchVentasItems(f, f, { actualizar: forzar }).catch((e: any) => {
           // Sin los renglones de un día, esos pedidos salen con 0 kg. Es mejor que no abrir.
           console.warn(`[hojasRuta] sin items del ${f}:`, e?.message);
-          return [] as any[];
+          diasSinItems.push(f); return [] as any[];
         })));
       for (const items of resultados) {
         for (const it of items) {
@@ -173,7 +174,7 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
         .eq('tenant_id', TENANT_ID).in('im_presupuesto_id', ids),
       // En qué quedó la revisión de la oficina. `null` = todavía no la miró nadie.
       sb().from('presupuestos_revision')
-        .select('im_comprobante_id, estado, observacion, revisado_at')
+        .select('im_comprobante_id, estado, observacion, revisado_at, huella')
         .eq('tenant_id', TENANT_ID).in('im_comprobante_id', ids),
       // Lo emitido de estos presupuestos: remito (para la hoja), salida de depósito y factura.
       sb().from('presupuestos_facturados')
@@ -187,7 +188,7 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
       sb().from('presupuestos_facturados')
         .select('im_comprobante_id, im_factura_id, im_factura_numero, im_factura_tipo')
         .eq('tenant_id', TENANT_ID).not('im_factura_id', 'is', null),
-    ]);
+    ].map(async q => { const r = await q; if (r.error) throw new Error(r.error.message); return r; }));
     const mio = new Map((nuestros ?? []).map((p: any) => [String(p.im_presupuesto_id), p]));
 
     /**
@@ -246,6 +247,7 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
     } catch (e: any) {
       // Sin reglas la pantalla sirve igual: muestra los pedidos sin los carteles de lista. Lo que
       // no puede es no abrir por esto.
+      reglasDisponibles = false;
       console.warn('[vistaPresupuestos] no pude evaluar las listas:', e?.message);
     }
 
@@ -265,10 +267,10 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
     // Las dos que dependen del remito, juntas.
     const [{ data: asignados }, { data: retiros }] = await Promise.all([
       sb().from('hojas_ruta_pedidos')
-        .select('im_comprobante_id, hoja_id').in('im_comprobante_id', aBuscar),
+        .select('im_comprobante_id, hoja_id,hojas_ruta!inner(tenant_id)').eq('hojas_ruta.tenant_id', TENANT_ID).in('im_comprobante_id', aBuscar),
       sb().from('retiros_sucursal')
         .select('im_comprobante_id').eq('tenant_id', TENANT_ID).in('im_comprobante_id', aBuscar),
-    ]);
+    ].map(async q => { const r = await q; if (r.error) throw new Error(r.error.message); return r; }));
     const hojaPorId = new Map((asignados ?? []).map((a: any) => [String(a.im_comprobante_id), String(a.hoja_id)]));
     const enHoja = new Map<string, string>();
     for (const id of ids) {
@@ -359,8 +361,11 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
         : [];
       // Y la cantidad que no cierra con el formato del producto (kilos donde van bultos).
       const avisosCantidad = revisarCantidades(rs, cat, formatos);
+      const stockCompleto = stock !== null && rs.every(r => !Number(r.cod_articulo) || stock.has(Number(r.cod_articulo)));
+      const catalogoCompleto = rs.every(r => !Number(r.cod_articulo) || cat.has(Number(r.cod_articulo)));
       return {
         im_comprobante_id: String(p.id),
+        huella: rs.length ? huellaPresupuesto(String(p.id), p, rs) : null,
         im_numero: p.numero ?? null,
         fecha: p.fecha ?? null,
         // Un pedido de un día anterior que sigue vigente es arrastre: se quedó sin salir.
@@ -385,6 +390,9 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
         kg: peso.kg,
         // Si son muchos, el total de kilos miente POR ABAJO y la hoja puede sobrecargar.
         renglones_sin_peso: peso.renglones_sin_peso,
+        peso_completo: rs.length > 0 && peso.renglones_sin_peso === 0,
+        controles_completos: rs.length > 0 && reglasDisponibles && stockCompleto && catalogoCompleto,
+        controles: { items: rs.length ? 'completo' : 'no_disponible', listas: reglasDisponibles && catalogoCompleto && rs.length ? 'completo' : 'no_disponible', stock: stockCompleto && rs.length ? 'completo' : 'no_disponible' },
         de_la_app: !!propio,
         pedido_id: propio?.id ?? null,
         cod_vendedor: propio?.cod_vendedor ?? p.cod_vendedor ?? null,
@@ -415,7 +423,7 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
             return { im_comprobante_id: otro, im_numero: o?.numero ?? null, total: Number(o?.total ?? 0) };
           }),
         // La etapa 1: aprobado / observado / null (sin revisar).
-        revision: revisionPor.get(String(p.id)) ?? null,
+        revision: rs.length && reglasDisponibles && stockCompleto && catalogoCompleto ? revisionPor.get(String(p.id)) ?? null : null,
         // Los dos controles que pidió Mati además de las listas.
         faltantes,
         avisos_cantidad: avisosCantidad.map(a => a.texto),
@@ -424,6 +432,8 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
     });
 
     const datos = {
+      dias_sin_items: diasSinItems, reglas_disponibles: reglasDisponibles,
+      controles_incompletos: filas.filter(f => !f.controles_completos).length,
       // 🔑 "Pendiente" es lo que todavía no tiene destino: ni hoja ni retiro en sucursal.
       pendientes: filas.filter(f => !f.hoja_id && !f.en_retiro),
       asignados: filas.filter(f => f.hoja_id),
@@ -475,7 +485,7 @@ export async function vistaDeRango(desde: string, hasta: string, forzar = false)
         stock,
       ),
     };
-    _vistaCache.set(clave, { at: Date.now(), datos });
+
     const total = Date.now() - t0;
     console.log(`[vistaDeRango] ${desde}..${hasta}: ${total} ms (IM ${tIM} ms · resto ${total - tIM} ms) · ${presupuestos.length} pedidos${forzar ? ' · forzado' : ''}`);
     return datos;

@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { seleccionVisible, alternarVisibles } from '../utils/lecturaVigente';
+import { useLecturaVigente } from '../utils/useLecturaVigente';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     AlertTriangle, Loader2, RefreshCw, Receipt, CheckCircle2, X, FileWarning, Printer, Pencil, Search, CalendarDays,
     DollarSign,
@@ -80,34 +82,43 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
     const [error, setError] = useState<string | null>(null);
     const [sel, setSel] = useState<Set<string>>(new Set());
     /** Los ids que se están facturando: mientras esté abierto, el modal manda. */
-    const [facturando, setFacturando] = useState<string[] | null>(null);
+    const [facturando, setFacturando] = useState<{ ids: string[]; desde: string; hasta: string } | null>(null);
 
+    const rangoSeleccion = useRef(`${desde}|${hasta}`);
+    const { iniciar: iniciarLectura } = useLecturaVigente(`${desde}|${hasta}`);
     const cargar = useCallback(async (refrescar = false) => {
+        const lectura = iniciarLectura(refrescar); if (!lectura) return;
+        if (rangoSeleccion.current !== `${desde}|${hasta}`) { setSel(new Set()); rangoSeleccion.current = `${desde}|${hasta}`; }
+        setPendientes([]); setFacturados([]); setTotales(null);
+        avisarRecarga();
         setCargando(true); setError(null);
         try {
             const r = await fetch(
                 `/api/facturacion?desde=${desde}&hasta=${hasta}${refrescar ? '&refrescar=1' : ''}`,
-                { headers: authHeaders() });
+                { headers: authHeaders(), signal: lectura.signal });
             const d = await r.json().catch(() => null);
+            if (!lectura.vigente()) return;
             if (!r.ok) throw new Error(d?.error ?? 'No se pudo traer lo que hay para facturar');
             setPendientes(d.pendientes ?? []);
             setFacturados(d.facturados ?? []);
             setTotales(d.totales ?? null);
             setSinAprobar(d.sin_aprobar ?? 0);
-            setSel(new Set());
+            setSel(s => new Set([...s].filter(id => (d.pendientes ?? []).some((p: Fila) => p.im_comprobante_id === id))));
+            lectura.confirmar();
         } catch (e: any) {
+            if (!lectura.vigente()) return;
             setError(e?.message ?? 'Error de conexión');
         } finally {
-            setCargando(false);
+            if (lectura.vigente()) setCargando(false);
         }
-    }, [desde, hasta]);
+    }, [desde, hasta, iniciarLectura]);
 
     useEffect(() => { void cargar(); }, [cargar]);
 
 
     // 🔴 La más sensible de las tres: emitir sobre datos viejos factura lo que ya no es.
 
-    useRecargarAlVolver(() => { void cargar(true); });
+    const avisarRecarga = useRecargarAlVolver(() => { void cargar(true); });
 
     /**
      * 🔑 ¿EL REMITO SALE CON IMPORTES O SIN ELLOS?
@@ -134,7 +145,8 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
     const visibles = useMemo(() => pendientes.filter(buscar), [pendientes, busqueda]);
     const facturadosVisibles = useMemo(() => facturados.filter(buscar), [facturados, busqueda]);
 
-    const todosElegidos = !!visibles.length && elegidos.length === visibles.length;
+    const seleccion = seleccionVisible(visibles.map(p => p.im_comprobante_id), sel);
+    const todosElegidos = seleccion.todos;
 
     function toggle(id: string) {
         setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -148,7 +160,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                 </button>
                 <div className="fc-buscador">
                     <Search size={14} />
-                    <input value={busqueda} onChange={e => setBusqueda(e.target.value)}
+                    <input aria-label="Buscar comprobantes" value={busqueda} onChange={e => setBusqueda(e.target.value)}
                            placeholder="Buscar cliente, PR, factura o remito…" />
                     {!!busqueda && <button onClick={() => setBusqueda('')} title="Limpiar"><X size={13} /></button>}
                 </div>
@@ -171,6 +183,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                 </div>
             </div>
 
+            {seleccion.ocultos > 0 && <div role="status">{seleccion.ocultos} seleccionados quedan fuera de la búsqueda.</div>}
             {/* 🔴 Cambios hechos en InfoManager, no acá: si no se dicen, la pantalla miente. */}
             {(() => {
                 const anulados = [...pendientes, ...facturados].filter(p => p.aviso_anulado);
@@ -196,7 +209,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
             {error && <div className="fc-aviso error"><AlertTriangle size={15} /><span>{error}</span></div>}
 
             {cargando && <div className="fc-cargando"><Loader2 className="spin" size={20} /> Trayendo lo aprobado…</div>}
-            {!cargando && !pendientes.length && (
+            {!cargando && !error && !pendientes.length && (
                 <div className="fc-vacio">
                     <CheckCircle2 size={26} />
                     <span>No queda nada aprobado sin facturar en estos días.</span>
@@ -204,15 +217,15 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
             )}
 
             {!!pendientes.length && (
-                <table className="fc-tabla">
+                <div className="fc-tabla-scroll" role="region" aria-label="Comprobantes" tabIndex={0}><table className="fc-tabla">
                     <thead>
                         <tr>
                             <th className="c">
                                 <input
                                     type="checkbox" title="Elegir todos"
                                     checked={todosElegidos}
-                                    ref={el => { if (el) el.indeterminate = !!elegidos.length && !todosElegidos; }}
-                                    onChange={() => setSel(todosElegidos ? new Set() : new Set(visibles.map(p => p.im_comprobante_id)))}
+                                    ref={el => { if (el) el.indeterminate = seleccion.parcial; }}
+                                    onChange={() => setSel(s => alternarVisibles(visibles.map(p => p.im_comprobante_id), s))}
                                 />
                             </th>
                             <th>Cliente</th><th>Pedido</th><th>Fecha</th>
@@ -223,7 +236,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                         {visibles.map(p => (
                             <tr key={p.im_comprobante_id} className={sel.has(p.im_comprobante_id) ? 'sel' : ''}>
                                 <td className="c">
-                                    <input type="checkbox" checked={sel.has(p.im_comprobante_id)} onChange={() => toggle(p.im_comprobante_id)} />
+                                    <input aria-label={`Elegir ${p.cliente_nombre} PR ${p.im_numero ?? p.im_comprobante_id}`} type="checkbox" checked={sel.has(p.im_comprobante_id)} onChange={() => toggle(p.im_comprobante_id)} />
                                 </td>
                                 <td>{p.cliente_nombre}</td>
                                 <td className="fc-pr">PR {p.im_numero ?? '—'}</td>
@@ -248,14 +261,14 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                             </tr>
                         ))}
                     </tbody>
-                </table>
+                </table></div>
             )}
 
             {/* Lo emitido queda a la vista: en InfoManager el vínculo con el presupuesto no existe. */}
             {!!facturadosVisibles.length && (
                 <details className="fc-facturados">
                     <summary>{facturadosVisibles.length} ya facturados en estos días</summary>
-                    <table className="fc-tabla">
+                    <div className="fc-tabla-scroll" role="region" aria-label="Comprobantes" tabIndex={0}><table className="fc-tabla">
                         <thead><tr><th>Cliente</th><th>Pedido</th><th>Factura</th><th>Remito</th><th className="n">Importe</th><th /></tr></thead>
                         <tbody>
                             {facturadosVisibles.map(p => (
@@ -324,7 +337,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                 </tr>
                             ))}
                         </tbody>
-                    </table>
+                    </table></div>
                 </details>
             )}
 
@@ -333,7 +346,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                 <div className="fc-barra">
                     <span><b>{elegidos.length}</b> elegidos · {money(importeElegido)}</span>
                     <button className="fc-btn ghost" onClick={() => setSel(new Set())}><X size={14} /> Deseleccionar</button>
-                    <button className="fc-btn" onClick={() => setFacturando(elegidos.map(p => p.im_comprobante_id))}>
+                    <button className="fc-btn" onClick={() => setFacturando({ ids: elegidos.map(p => p.im_comprobante_id), desde, hasta })}>
                         <Receipt size={15} /> Facturar {elegidos.length}
                     </button>
                 </div>
@@ -341,9 +354,9 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
 
             {facturando && (
                 <FacturarModal
-                    ids={facturando}
-                    desde={desde}
-                    hasta={hasta}
+                    ids={facturando.ids}
+                    desde={facturando.desde}
+                    hasta={facturando.hasta}
                     onClose={huboCambios => {
                         setFacturando(null);
                         if (huboCambios) void cargar(true);

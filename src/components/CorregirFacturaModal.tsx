@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useOperacionReparto } from './RepartoContext';
+import { useDialogoReparto, estiloDialogo } from '../utils/useDialogoReparto';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { X, AlertTriangle, Trash2, Plus, Loader2, CheckCircle2 } from 'lucide-react';
-import { authHeaders } from '../utils/auth';
+import { authHeaders, getUser } from '../utils/auth';
 import './CorregirFacturaModal.css';
 
 /**
@@ -49,6 +51,7 @@ const nun = (v: string) => { const n = Number(String(v).replace(',', '.')); retu
 export function CorregirFacturaModal(
   { idFactura, onCerrar, onListo }: { idFactura: string; onCerrar: () => void; onListo: () => void },
 ) {
+    const operacionGlobal = useOperacionReparto('CorregirFacturaModal');
   const [factura, setFactura] = useState<Factura | null>(null);
   const [originales, setOriginales] = useState<Renglon[]>([]);
   const [filas, setFilas] = useState<Renglon[]>([]);
@@ -72,71 +75,117 @@ export function CorregirFacturaModal(
   const [finTipo, setFinTipo] = useState<'NC' | 'ND'>('NC');
   const [finImporte, setFinImporte] = useState('');
   const [finMotivo, setFinMotivo] = useState('');
+  const [version, setVersion] = useState<number | null>(null);
+  const [bloqueoProductos, setBloqueoProductos] = useState<string | null>(null);
+  const [pendiente, setPendiente] = useState<any>(null);
+  const operacionId = useRef<string | null>(null);
+  const envioEnCurso = useRef(false);
+  const cerrar = () => { if (!envioEnCurso.current) onCerrar(); };
+  const [propietarioBorrador] = useState(() => getUser()?.email ?? "sesion");
+  const borradorCargado = useRef(false);
+  const facturaActual = useRef<any>(null);
+  const [borradorDesactualizado, setBorradorDesactualizado] = useState(false);
+  const claveBorrador = `reparto:${propietarioBorrador}:borrador-correccion:${idFactura}`;
+  const clavePendiente = `reparto:${propietarioBorrador}:correccion:${idFactura}`;
 
   useEffect(() => {
-    let vivo = true;
+    const impedirSalida = (e: BeforeUnloadEvent) => { if (envioEnCurso.current) { e.preventDefault(); e.returnValue = ''; } };
+    window.addEventListener('beforeunload', impedirSalida);
+    return () => window.removeEventListener('beforeunload', impedirSalida);
+  }, []);
+
+  useEffect(() => {
+    let vivo = true; const controller = new AbortController();
     (async () => {
       setCargando(true); setError(null);
       try {
-        const r = await fetch(`/api/facturacion/corregir/${idFactura}`, { headers: authHeaders() });
+        const r = await fetch(`/api/facturacion/corregir/${idFactura}`, { headers: authHeaders(), signal: controller.signal });
         const d = await r.json().catch(() => null);
         if (!r.ok) throw new Error(d?.error ?? 'No se pudo leer la factura');
         if (!vivo) return;
+        facturaActual.current = d;
         setFactura(d.factura);
+        setVersion(d.version);
+        setBloqueoProductos(d.bloqueo_productos ?? null);
+        let local: any = null;
+        try { local = JSON.parse(sessionStorage.getItem(clavePendiente) ?? 'null'); } catch { /* Sin borrador local. */ }
+        const op = d.operacion;
+        setPendiente(op ?? (local ? { id: local.body.operacion_id, clase: local.clase, estado: 'verificar', entrada: local.entrada, motivo: local.body.motivo, version: local.body.version, puede_retomar: true } : null));
+        operacionId.current = op?.id ?? local?.body.operacion_id ?? null;
         setSinArticulo(d.sin_articulo ?? []);
         setOriginales(d.renglones);
         setFilas(d.renglones.map((x: Renglon) => ({ ...x })));
+        try {
+          const borrador = JSON.parse(sessionStorage.getItem(claveBorrador) ?? 'null');
+          if (borrador && Array.isArray(borrador.filas) && Array.isArray(borrador.originales) && !op && !local) {
+            setFilas(borrador.filas); setOriginales(borrador.originales); setVersion(borrador.version);
+            setMotivo(borrador.motivo ?? ''); setModo(borrador.modo ?? 'productos');
+            setFinTipo(borrador.finTipo ?? 'NC'); setFinImporte(borrador.finImporte ?? ''); setFinMotivo(borrador.finMotivo ?? '');
+            setBorradorDesactualizado(borrador.version !== d.version);
+          }
+        } catch { /* No adoptar un borrador ilegible. */ }
+        borradorCargado.current = true;
       } catch (e: any) {
         if (vivo) setError(e?.message ?? 'Error de conexión');
       } finally {
         if (vivo) setCargando(false);
       }
     })();
-    return () => { vivo = false; };
-  }, [idFactura]);
+    return () => { vivo = false; controller.abort(); };
+  }, [idFactura, clavePendiente, claveBorrador]);
+
+  useEffect(() => {
+    if (!borradorCargado.current || cargando || resultado || pendiente) return;
+    try { sessionStorage.setItem(claveBorrador, JSON.stringify({ version, originales, filas, motivo, modo, finTipo, finImporte, finMotivo })); } catch { /* La sesión puede impedir almacenamiento. */ }
+  }, [claveBorrador, version, originales, filas, motivo, modo, finTipo, finImporte, finMotivo, cargando, resultado, pendiente]);
 
   const totalOriginal = useMemo(
     () => originales.reduce((s, r) => s + importeDe(r), 0), [originales]);
   const totalNuevo = useMemo(
     () => filas.reduce((s, r) => s + importeDe(r), 0), [filas]);
-  const hayCambios = useMemo(() => Math.abs(totalNuevo - totalOriginal) > 0.005
-    || filas.length !== originales.length, [totalNuevo, totalOriginal, filas.length, originales.length]);
+  const hayCambios = useMemo(() => {
+    const firma = (rs: Renglon[]) => JSON.stringify(rs.map(r => [r.cod_articulo, r.cantidad, r.precio, r.descuento_porc ?? 0])
+      .sort((a, b) => Number(a[0]) - Number(b[0])));
+    return firma(filas) !== firma(originales);
+  }, [filas, originales]);
 
   /**
    * La previsualización sale del MISMO cálculo que después emite, en el servidor. Si la hiciera
    * la pantalla por su cuenta, podría prometer una cosa y salir otra.
    */
   useEffect(() => {
-    if (!hayCambios) { setVista(null); return; }
-    let vivo = true;
+    setVista(null);
+    if (!hayCambios || pendiente || bloqueoProductos || borradorDesactualizado) return;
+    let vivo = true; const controller = new AbortController();
     const t = setTimeout(async () => {
       try {
         const r = await fetch('/api/facturacion/corregir', {
-          method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ im_factura_id: idFactura, renglones: filas }),
+          method: 'POST', signal: controller.signal, headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ im_factura_id: idFactura, renglones: filas, version }),
         });
         const d = await r.json().catch(() => null);
         if (vivo) setVista(r.ok ? d : null);
       } catch { if (vivo) setVista(null); }
     }, 350);   // sin esto sale una consulta por tecla mientras se escribe un precio
-    return () => { vivo = false; clearTimeout(t); };
-  }, [filas, hayCambios, idFactura]);
+    return () => { vivo = false; controller.abort(); clearTimeout(t); };
+  }, [filas, hayCambios, idFactura, version, pendiente, bloqueoProductos, borradorDesactualizado]);
 
   // Buscar un producto para agregar. Reusa el buscador del catálogo que ya usa el vendedor.
   useEffect(() => {
     const q = buscando.trim();
     if (q.length < 2) { setCandidatos([]); return; }
-    let vivo = true;
+    let vivo = true; const controller = new AbortController();
+    setCandidatos([]);
     const t = setTimeout(async () => {
       try {
         // El mismo buscador que usa el editor de presupuestos: catálogo completo, por
         // descripción o por código.
-        const r = await fetch(`/api/articulos/buscar?q=${encodeURIComponent(q)}`, { headers: authHeaders() });
+        const r = await fetch(`/api/articulos/buscar?q=${encodeURIComponent(q)}`, { headers: authHeaders(), signal: controller.signal });
         const d = await r.json().catch(() => null);
-        if (vivo) setCandidatos((d?.articulos ?? []).slice(0, 8));
+        if (vivo) setCandidatos(r.ok ? (d?.articulos ?? []).slice(0, 8) : []);
       } catch { if (vivo) setCandidatos([]); }
     }, 300);
-    return () => { vivo = false; clearTimeout(t); };
+    return () => { vivo = false; controller.abort(); clearTimeout(t); };
   }, [buscando]);
 
   const tocar = (i: number, campo: 'cantidad' | 'precio', valor: string) =>
@@ -156,66 +205,89 @@ export function CorregirFacturaModal(
     setBuscando(''); setCandidatos([]);
   };
 
-  async function emitirFinanciera() {
-    const importe = nun(finImporte);
-    if (!(importe > 0) || !finMotivo.trim()) return;
-    const que = finTipo === 'NC' ? 'NOTA DE CRÉDITO' : 'NOTA DE DÉBITO';
-    if (!confirm(`Se va a emitir una ${que} por ${money(importe)} en InfoManager.\n\nMotivo: ${finMotivo.trim()}\n\nEs IRREVERSIBLE: toca la cuenta corriente del cliente.\n\n¿Seguimos?`)) return;
+  async function enviar(clase: 'productos' | 'financiera', entrada: any, motivoEnviar: string, versionOriginal: number | null = version) {
+    if (envioEnCurso.current || borradorDesactualizado) return;
+    if (!operacionGlobal.comenzar()) return;
+    envioEnCurso.current = true;
     setEmitiendo(true); setError(null);
+    const id = operacionId.current ?? crypto.randomUUID();
+    operacionId.current = id;
+    const body = { im_factura_id: idFactura, ...entrada, motivo: motivoEnviar, emitir: true, operacion_id: id, version: versionOriginal };
+    const url = clase === 'productos' ? '/api/facturacion/corregir' : '/api/facturacion/nota-financiera';
+    // El borrador conserva exactamente la petición ante pérdida de respuesta o recarga.
+    try { sessionStorage.setItem(clavePendiente, JSON.stringify({ clase, entrada, body })); } catch { /* El servidor conserva el journal. */ }
+    setPendiente({ id, clase, entrada, motivo: motivoEnviar, version: versionOriginal, estado: 'verificar', puede_retomar: true });
     try {
-      const r = await fetch('/api/facturacion/nota-financiera', {
-        method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ im_factura_id: idFactura, tipo: finTipo, importe, motivo: finMotivo.trim(), emitir: true }),
-      });
+      const r = await fetch(url, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json().catch(() => null);
-      if (!r.ok) throw new Error(d?.error ?? 'No se pudo emitir');
+      if (!r.ok) throw new Error(d?.error ?? 'No se pudo verificar el resultado. Retomá la misma operación.');
+      if (!d.ok) {
+        setPendiente(d.operacion ?? { id, clase, entrada, motivo: motivoEnviar, estado: 'incierto', puede_retomar: false });
+        setError((d.fallados ?? []).join(' ')); onListo(); return;
+      }
+      try { sessionStorage.removeItem(clavePendiente); sessionStorage.removeItem(claveBorrador); borradorCargado.current = false; } catch { /* Sin persistencia local. */ }
+      setPendiente(null);
       setResultado({ emitidos: d.emitidos ?? [], fallados: d.fallados ?? [] });
       onListo();
     } catch (e: any) {
-      setError(e?.message ?? 'Error de conexión');
+      setError(e?.message ?? 'Se perdió la respuesta. Conservamos la misma operación para verificarla.');
     } finally {
-      setEmitiendo(false);
+      envioEnCurso.current = false; setEmitiendo(false); operacionGlobal.terminar();
     }
+  }
+
+  async function emitirFinanciera() {
+    const importe = nun(finImporte);
+    if (!(importe > 0) || !finMotivo.trim() || pendiente) return;
+    if (!confirm(`Se va a emitir una ${finTipo} por ${money(importe)} en InfoManager.\nMotivo: ${finMotivo.trim()}\n¿Seguimos?`)) return;
+    await enviar('financiera', { tipo: finTipo, importe }, finMotivo.trim());
   }
 
   async function emitir() {
-    if (!vista) return;
-    const detalle = [
-      vista.nc.length ? `una NOTA DE CRÉDITO por ${money(vista.total_nc)}` : null,
-      vista.nd.length ? `una NOTA DE DÉBITO por ${money(vista.total_nd)}` : null,
-    ].filter(Boolean).join(' y ');
-    if (!confirm(`Se va a emitir ${detalle} en InfoManager.\n\nEs IRREVERSIBLE: toca la cuenta corriente del cliente.\n\n¿Seguimos?`)) return;
-    setEmitiendo(true); setError(null);
-    try {
-      const r = await fetch('/api/facturacion/corregir', {
-        method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ im_factura_id: idFactura, renglones: filas, motivo, emitir: true }),
-      });
-      const d = await r.json().catch(() => null);
-      if (!r.ok) throw new Error(d?.error ?? 'No se pudo emitir');
-      setResultado({ emitidos: d.emitidos ?? [], fallados: d.fallados ?? [] });
-      onListo();
-    } catch (e: any) {
-      setError(e?.message ?? 'Error de conexión');
-    } finally {
-      setEmitiendo(false);
-    }
+    if (!vista || pendiente || bloqueoProductos) return;
+    const detalle = [vista.nc.length ? `NC ${money(vista.total_nc)}` : '', vista.nd.length ? `ND ${money(vista.total_nd)}` : ''].filter(Boolean).join(' y ');
+    if (!confirm(`Se va a emitir ${detalle} en InfoManager.\n¿Seguimos?`)) return;
+    await enviar('productos', { renglones: filas }, motivo);
   }
 
+  const dialogo = useDialogoReparto(cerrar);
   return (
-    <div className="cf-fondo" onClick={e => { if (e.target === e.currentTarget) onCerrar(); }}>
+    <dialog ref={dialogo} style={estiloDialogo} aria-label="Corregir factura" className="cf-fondo" onClick={e => { if (e.target === e.currentTarget) cerrar(); }}>
       <div className="cf-modal">
         <header className="cf-header">
           <h3>
             Corregir factura {factura?.letra ?? ''} {factura?.numero ?? ''}
             {factura?.cliente_nombre && <small> · {factura.cliente_nombre}</small>}
           </h3>
-          <button onClick={onCerrar}><X size={18} /></button>
+          <button onClick={cerrar} disabled={emitiendo} aria-label="Cerrar corrección"><X size={18} /></button>
         </header>
 
         {cargando && <p className="cf-cargando"><Loader2 size={16} className="spin" /> Leyendo la factura en InfoManager…</p>}
         {error && <div className="cf-error"><AlertTriangle size={15} /> <span>{error}</span></div>}
 
+        {borradorDesactualizado && <div className="cf-error" role="alert">La factura cambió desde este borrador. Se conserva para comparar; hay que revisar los datos actuales antes de emitir.
+          <button onClick={() => { const d = facturaActual.current; setFilas(d.renglones); setOriginales(d.renglones); setVersion(d.version); setMotivo(''); setFinImporte(''); setFinMotivo(''); setBorradorDesactualizado(false); sessionStorage.removeItem(claveBorrador); }}>Descartar borrador y revisar versión actual</button>
+        </div>}
+        {pendiente && !resultado && (
+          <div className="cf-error">
+            <span>Hay una operación {pendiente.estado === 'listo' ? 'pendiente de terminar' : 'por verificar'}. Las notas confirmadas no se vuelven a emitir.
+              {pendiente.puede_retomar && <button disabled={emitiendo} onClick={() => void enviar(pendiente.clase, pendiente.entrada, pendiente.motivo, pendiente.version ?? version)}>Retomar / verificar operación</button>}
+              {pendiente.puede_cancelar && <button disabled={emitiendo} onClick={async () => {
+                if (!operacionGlobal.comenzar()) return; envioEnCurso.current = true; setEmitiendo(true);
+                let cancelado = false;
+                try {
+                  const r = await fetch(`/api/facturacion/operaciones/${pendiente.id}`, { method: 'DELETE', headers: authHeaders() });
+                  const d = await r.json(); if (!r.ok) throw new Error(d.error);
+                  sessionStorage.removeItem(clavePendiente); cancelado = true; onListo();
+                } catch (e: any) { setError(e.message); }
+                finally { envioEnCurso.current = false; setEmitiendo(false); operacionGlobal.terminar(); }
+                if (cancelado) cerrar();
+              }}>Cancelar el intento rechazado</button>}
+              {!pendiente.puede_retomar && ' Verificá los comprobantes en InfoManager antes de continuar.'}
+            </span>
+          </div>
+        )}
+        {bloqueoProductos && !resultado && <div className="cf-error">{bloqueoProductos}</div>}
         {resultado ? (
           <div className="cf-listo">
             {resultado.emitidos.map((e, i) => (
@@ -224,10 +296,10 @@ export function CorregirFacturaModal(
             {resultado.fallados.map((f, i) => (
               <p key={'f' + i} className="cf-mal"><AlertTriangle size={16} /> {f}</p>
             ))}
-            <button className="cf-btn primario" onClick={onCerrar}>Listo</button>
+            <button className="cf-btn primario" onClick={cerrar}>Listo</button>
           </div>
         ) : !cargando && factura && (
-          <>
+          <fieldset disabled={emitiendo || !!pendiente || borradorDesactualizado} style={{ border: 0, padding: 0, minWidth: 0 }}>
             <div className="cf-solapas">
               <button className={modo === 'productos' ? 'activa' : ''} onClick={() => setModo('productos')}>
                 Corregir productos
@@ -273,7 +345,7 @@ export function CorregirFacturaModal(
                   </p>
                 )}
                 <div className="cf-pie">
-                  <button className="cf-btn" onClick={onCerrar} disabled={emitiendo}>Cancelar</button>
+                  <button className="cf-btn" onClick={cerrar} disabled={emitiendo}>Cancelar</button>
                   <button className="cf-btn primario" onClick={() => void emitirFinanciera()}
                           disabled={emitiendo || !(nun(finImporte) > 0) || !finMotivo.trim()}>
                     {emitiendo ? <><Loader2 size={15} className="spin" /> Emitiendo…</>
@@ -320,11 +392,11 @@ export function CorregirFacturaModal(
                     <tr key={f.cod_articulo} className={cambio ? 'cambiado' : ''}>
                       <td>{f.descripcion ?? `Artículo ${f.cod_articulo}`}</td>
                       <td className="n">
-                        <input inputMode="decimal" value={String(f.cantidad)}
+                        <input aria-label={`Cantidad de ${f.descripcion}`} inputMode="decimal" value={String(f.cantidad)}
                                onChange={e => tocar(i, 'cantidad', e.target.value)} />
                       </td>
                       <td className="n">
-                        <input inputMode="decimal" value={String(f.precio)}
+                        <input aria-label={`Precio de ${f.descripcion}`} inputMode="decimal" value={String(f.precio)}
                                onChange={e => tocar(i, 'precio', e.target.value)} />
                       </td>
                       {/* 🪤 De sólo lectura: el descuento es el que trae la factura. Para corregirlo
@@ -368,7 +440,7 @@ export function CorregirFacturaModal(
             </table>
 
             <div className="cf-agregar">
-              <input value={buscando} onChange={e => setBuscando(e.target.value)}
+              <input aria-label="Buscar producto para corregir" value={buscando} onChange={e => setBuscando(e.target.value)}
                      placeholder="Agregar un producto que faltó…" />
               {!!candidatos.length && (
                 <ul className="cf-candidatos">
@@ -417,20 +489,20 @@ export function CorregirFacturaModal(
             )}
 
             <div className="cf-pie">
-              <input className="cf-motivo" value={motivo} maxLength={200}
+              <input aria-label="Motivo de la corrección" className="cf-motivo" value={motivo} maxLength={200}
                      onChange={e => setMotivo(e.target.value)}
                      placeholder="Motivo (va en las observaciones): lista mal cargada, no lo quiso…" />
-              <button className="cf-btn" onClick={onCerrar} disabled={emitiendo}>Cancelar</button>
+              <button className="cf-btn" onClick={cerrar} disabled={emitiendo}>Cancelar</button>
               <button className="cf-btn primario" onClick={() => void emitir()}
-                      disabled={!vista || emitiendo || (!vista.nc.length && !vista.nd.length)}>
+                      disabled={!vista || emitiendo || !!bloqueoProductos || (!vista.nc.length && !vista.nd.length)}>
                 {emitiendo ? <><Loader2 size={15} className="spin" /> Emitiendo…</> : 'Emitir la corrección'}
               </button>
             </div>
             </>
             )}
-          </>
+          </fieldset>
         )}
       </div>
-    </div>
+    </dialog>
   );
 }

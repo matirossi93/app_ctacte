@@ -1,3 +1,4 @@
+import { respuestaReparto } from './test-helpers/repartoRpc.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /**
@@ -18,7 +19,7 @@ const m = vi.hoisted(() => ({
   imClient: vi.fn(),
 }));
 
-vi.mock('./infomanager.js', () => ({
+vi.mock('./infomanager.js', () => { const fuente = {
   // El cache de /ventas se limpia junto con las vistas (10/09/2026).
   invalidarCacheVentas: vi.fn(),
   invalidarCacheItems: vi.fn(),
@@ -26,9 +27,9 @@ vi.mock('./infomanager.js', () => ({
   fetchVentasItems: m.fetchVentasItems,
   cabeceraComprobante: m.cabeceraComprobante,
   fetchVentas: m.fetchVentas,
-  imClient: m.imClient,
+  imClient: m.imClient, imGetRetry: (fn: any) => fn(),
   fechaArgentina: () => '2026-09-08',
-}));
+}; return { ...fuente, invalidarIM: vi.fn(), leerComprobante: async (id: string) => ({ cabecera: await (fuente as any).cabeceraComprobante(id), items: await (fuente as any).getItemsComprobante(id) }) }; });
 vi.mock('./facturarIM.js', () => ({ emitirNotaCredito: m.emitirNotaCredito }));
 vi.mock('./pedidos.js', () => ({ usuarioIM: vi.fn(async () => 'jorgelina') }));
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
@@ -40,16 +41,18 @@ let escrituras: Array<{ tabla: string; op: string; valor: any }> = [];
 
 function fakeSb() {
   m.sbMock.mockImplementation(() => ({
+    rpc: respuestaReparto(() => tablas, (tabla, op, valor, filtros) => { escrituras.push({ tabla, op, valor, filtros } as any); }),
     from: (t: string) => {
       const res = tablas[t] ?? { data: null, error: null };
+      const lista = t === 'presupuestos_facturados' && res.data && !Array.isArray(res.data) ? { ...res, data: [] } : res;
       const q: any = {
-        then: (r: any, j: any) => Promise.resolve(res).then(r, j),
+        then: (r: any, j: any) => Promise.resolve(lista).then(r, j),
         maybeSingle: () => Promise.resolve(res),
         insert: (v: any) => { escrituras.push({ tabla: t, op: 'insert', valor: v }); return { ...q, maybeSingle: () => Promise.resolve({ data: { id: 'aj1', ...v }, error: null }) }; },
         update: (v: any) => { escrituras.push({ tabla: t, op: 'update', valor: v }); return q; },
         delete: () => { escrituras.push({ tabla: t, op: 'delete', valor: null }); return q; },
       };
-      for (const k of ['select', 'eq', 'in', 'is', 'not', 'order', 'limit']) q[k] = () => q;
+      for (const k of ['range', 'or', 'select', 'eq', 'in', 'is', 'not', 'order', 'limit']) q[k] = () => q;
       return q;
     },
   }));
@@ -57,7 +60,7 @@ function fakeSb() {
 
 function llamar(fn: any, { rol = 'administrativo', params = {}, body = {}, query = {} } = {}) {
   let status = 200; let out: any;
-  const req: any = { user: { rol, sub: 'u1' }, params, body, query };
+  const req: any = { user: { rol, sub: 'u1' }, params, body: { version_esperada:1, ...body }, query: { version_esperada:1, ...query } };
   const res: any = { status: (s: number) => { status = s; return res; }, json: (b: any) => { out = b; } };
   return fn(req, res).then(() => ({ status, body: out }));
 }
@@ -65,14 +68,14 @@ function llamar(fn: any, { rol = 'administrativo', params = {}, body = {}, query
 const HOJA = {
   id: 'h1', numero: 3395, fecha: '2026-09-08', estado: 'abierta', cod_empresa: 1,
   hojas_ruta_pedidos: [
-    { im_comprobante_id: '10', cod_cliente: 1093, cliente_nombre: 'ARON, Jorge', total: 100000, facturado_at: '2026-09-08T12:00:00Z', im_factura_numero: 50360 },
-    { im_comprobante_id: '20', cod_cliente: 500, cliente_nombre: 'MORELLI', total: 50000, facturado_at: '2026-09-08T12:00:00Z', im_factura_numero: 50361 },
+    { im_comprobante_id: '10', cod_empresa:1, cod_cliente: 1093, cliente_nombre: 'ARON, Jorge', total: 100000, facturado_at: '2026-09-08T12:00:00Z', im_factura_numero: 50360 },
+    { im_comprobante_id: '20', cod_empresa:1, cod_cliente: 500, cliente_nombre: 'MORELLI', total: 50000, facturado_at: '2026-09-08T12:00:00Z', im_factura_numero: 50361 },
   ],
 };
 /** Una nota de crédito como la devuelve `GET /ventas/{id}`. */
 const NC_EN_IM = {
   id: 'nc-99', tipo_comprobante: 'NC', tipo_factura: 'B', numero: 30058,
-  cod_cliente: 1093, total: 20000, anulada: 'N', observaciones: 'NO PIDIO SEGUN HR 3395',
+  cod_empresa:1, cod_cliente: 1093, total: 20000, anulada: 'N', observaciones: 'NO PIDIO SEGUN HR 3395',
 };
 const RENGLONES = [
   { id_comprobante: '10', cod_articulo: 661, cantidad: 10, precio: 5000, iva_por: 0, cod_vendedor: 2, cod_lista_precios: 13 },
@@ -93,123 +96,6 @@ beforeEach(() => {
   m.imClient.mockResolvedValue({ get: vi.fn(async () => ({ data: NC_EN_IM })) });
 });
 
-describe('cargar una diferencia (con la emisión habilitada)', () => {
-  // 🔑 Hoy el interruptor está APAGADO porque IM rechaza las NC del punto 777. Estos tests
-  // cubren el camino de emisión para el día que Sistec arregle la validación.
-  beforeEach(() => { process.env.IM_NC_EMISION_HABILITADA = '1'; });
-  afterEach(() => { delete process.env.IM_NC_EMISION_HABILITADA; });
-
-  it('🔴 emite la NC y la deja registrada con su número', async () => {
-    const r = await llamar(crearAjuste, {
-      params: { id: 'h1' },
-      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 4 }] },
-    });
-    expect(r.status).toBe(200);
-    expect(r.body.ajuste).toMatchObject({ importe: 20000, numero: 29800 });
-    const upd = escrituras.find(e => e.op === 'update')!.valor;
-    expect(upd).toMatchObject({ im_ajuste_numero: 29800, im_ajuste_id: 'nc1' });
-    expect(upd.emitido_at).toBeTruthy();
-  });
-
-  it('🔴 la fila se escribe ANTES de emitir: dos personas no emiten la misma NC', async () => {
-    await llamar(crearAjuste, {
-      params: { id: 'h1' },
-      body: { im_comprobante_id: '10', motivo: 'SIN STOCK', items: [{ cod_articulo: 661, cantidad: 1 }] },
-    });
-    expect(escrituras[0].op).toBe('insert');
-    expect(m.emitirNotaCredito).toHaveBeenCalled();
-  });
-
-  it('🔴 NO se puede acreditar más de lo que se entregó', async () => {
-    // Un error de tipeo dejaría al cliente con saldo a favor de la nada.
-    const r = await llamar(crearAjuste, {
-      params: { id: 'h1' },
-      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 11 }] },
-    });
-    expect(r.status).toBe(409);
-    expect(r.body.error).toMatch(/se entregaron 10/);
-    expect(m.emitirNotaCredito).not.toHaveBeenCalled();
-  });
-
-  it('🔴 tampoco un artículo que no estaba en el pedido', async () => {
-    const r = await llamar(crearAjuste, {
-      params: { id: 'h1' },
-      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 999, cantidad: 1 }] },
-    });
-    expect(r.status).toBe(409);
-    expect(m.emitirNotaCredito).not.toHaveBeenCalled();
-  });
-
-  it('🔴 el precio sale del comprobante original, no de lo que mande la pantalla', async () => {
-    // La NC devuelve lo que se COBRÓ. Si el precio viniera del body, se podría acreditar de más.
-    await llamar(crearAjuste, {
-      params: { id: 'h1' },
-      body: { im_comprobante_id: '10', motivo: 'CERRADO', items: [{ cod_articulo: 661, cantidad: 2, precio: 999999 }] },
-    });
-    const enviado = m.emitirNotaCredito.mock.calls[0][0];
-    expect(enviado.items[0].precio).toBe(5000);
-    expect(enviado.total).toBe(10000);
-  });
-
-  it('🔴 la observación lleva la referencia a la hoja, como la escribe la oficina', async () => {
-    // De 724 NC en 90 días, 287 dicen "SEGUN HR ####". Se respeta esa convención.
-    await llamar(crearAjuste, {
-      params: { id: 'h1' },
-      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
-    });
-    expect(m.emitirNotaCredito.mock.calls[0][0].observaciones).toBe('NO PIDIO SEGUN HR 3395');
-  });
-
-  it('🔴 si IM no contesta, la fila NO se borra: puede que la NC haya salido', async () => {
-    m.emitirNotaCredito.mockResolvedValue({ ok: false, error: 'timeout', sinRespuesta: true });
-    const r = await llamar(crearAjuste, {
-      params: { id: 'h1' },
-      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
-    });
-    expect(r.status).toBe(502);
-    expect(r.body.error).toMatch(/no contestó|verificalo/i);
-    expect(escrituras.some(e => e.op === 'delete')).toBe(false);
-  });
-
-  it('si IM RECHAZA, se suelta la fila para poder corregir y reintentar', async () => {
-    m.emitirNotaCredito.mockResolvedValue({ ok: false, error: 'Talonario cerrado' });
-    const r = await llamar(crearAjuste, {
-      params: { id: 'h1' },
-      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
-    });
-    expect(r.status).toBe(502);
-    expect(escrituras.some(e => e.op === 'delete')).toBe(true);
-  });
-
-  it('🔴 un ajuste a medias de ese pedido frena otro nuevo', async () => {
-    tablas['hojas_ruta_ajustes'] = { data: [{ id: 'viejo', emitido_at: null, reclamado_at: new Date().toISOString() }], error: null };
-    const r = await llamar(crearAjuste, {
-      params: { id: 'h1' },
-      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
-    });
-    expect(r.status).toBe(409);
-    expect(m.emitirNotaCredito).not.toHaveBeenCalled();
-  });
-
-  it('un pedido que no está en la hoja se rechaza', async () => {
-    const r = await llamar(crearAjuste, {
-      params: { id: 'h1' },
-      body: { im_comprobante_id: '999', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
-    });
-    expect(r.status).toBe(409);
-  });
-
-  it('sin motivo no se emite: es lo que se lee después en IM', async () => {
-    const r = await llamar(crearAjuste, {
-      params: { id: 'h1' }, body: { im_comprobante_id: '10', items: [{ cod_articulo: 661, cantidad: 1 }] },
-    });
-    expect(r.status).toBe(400);
-  });
-
-  it('🔴 un vendedor no emite notas de crédito', async () => {
-    expect((await llamar(crearAjuste, { rol: 'vendedor', params: { id: 'h1' } })).status).toBe(403);
-  });
-});
 
 describe('el número final de la hoja', () => {
   it('🔴 descuenta las NC emitidas y suma las ND', async () => {
@@ -269,97 +155,8 @@ describe('listar', () => {
 });
 
 /** Hallazgos de la auditoría del 08/09/2026 sobre las notas de crédito. */
-describe('lo que ya se acreditó antes', () => {
-  beforeEach(() => { process.env.IM_NC_EMISION_HABILITADA = '1'; });
-  afterEach(() => { delete process.env.IM_NC_EMISION_HABILITADA; });
 
-  it('🔴 dos notas de crédito no pueden sumar más de lo que se entregó', async () => {
-    // Cargar dos veces la misma diferencia emitía dos NC enteras y el cliente quedaba con saldo
-    // a favor del doble. El guard anterior sólo miraba los ajustes SIN emitir, o sea ninguno.
-    tablas['hojas_ruta_ajustes'] = {
-      data: [{ id: 'v1', emitido_at: 'x', tipo: 'nc', importe: 50000, items: [{ cod_articulo: 661, cantidad: 10 }] }],
-      error: null,
-    };
-    const r = await llamar(crearAjuste, {
-      params: { id: 'h1' },
-      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
-    });
-    expect(r.status).toBe(409);
-    expect(r.body.error).toMatch(/ya se acreditaron 10/);
-    expect(m.emitirNotaCredito).not.toHaveBeenCalled();
-  });
 
-  it('lo que falta acreditar sí se puede', async () => {
-    tablas['hojas_ruta_ajustes'] = {
-      data: [{ id: 'v1', emitido_at: 'x', tipo: 'nc', importe: 20000, items: [{ cod_articulo: 661, cantidad: 4 }] }],
-      error: null,
-    };
-    const r = await llamar(crearAjuste, {
-      params: { id: 'h1' },
-      body: { im_comprobante_id: '10', motivo: 'SIN STOCK', items: [{ cod_articulo: 661, cantidad: 6 }] },
-    });
-    expect(r.status).toBe(200);
-  });
-
-  it('🔴 los renglones acreditados quedan guardados: son la base de ese control', async () => {
-    await llamar(crearAjuste, {
-      params: { id: 'h1' },
-      body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 3 }] },
-    });
-    const fila = escrituras.find(e => e.op === 'insert')!.valor;
-    expect(fila.items).toEqual([{ cod_articulo: 661, cantidad: 3, precio: 5000, iva_por: 0, cod_lista_precios: 13 }]);
-  });
-});
-
-describe('contra qué se puede emitir', () => {
-  beforeEach(() => { process.env.IM_NC_EMISION_HABILITADA = '1'; });
-  afterEach(() => { delete process.env.IM_NC_EMISION_HABILITADA; });
-
-  it('🔴 no se acredita un pedido que todavía no se facturó', async () => {
-    tablas['hojas_ruta'] = {
-      data: { ...HOJA, hojas_ruta_pedidos: [{ im_comprobante_id: '10', cod_cliente: 1093, total: 100000, facturado_at: null, im_factura_numero: null }] },
-      error: null,
-    };
-    const r = await llamar(crearAjuste, {
-      params: { id: 'h1' }, body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
-    });
-    expect(r.status).toBe(409);
-    expect(r.body.error).toMatch(/no se facturó/i);
-  });
-
-  it('🔴 ni contra un comprobante ANULADO en InfoManager', async () => {
-    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-08', anulada: true, existe: true });
-    const r = await llamar(crearAjuste, {
-      params: { id: 'h1' }, body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
-    });
-    expect(r.status).toBe(502);
-    expect(m.emitirNotaCredito).not.toHaveBeenCalled();
-  });
-
-  it('🔴 ni cuando IM no contesta si sigue vigente', async () => {
-    m.cabeceraComprobante.mockResolvedValue({ fecha: null, anulada: null, existe: null });
-    const r = await llamar(crearAjuste, {
-      params: { id: 'h1' }, body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
-    });
-    expect(r.status).toBe(502);
-    expect(m.emitirNotaCredito).not.toHaveBeenCalled();
-  });
-
-  it('🔴 ni sobre una hoja CERRADA: ya se liquidó', async () => {
-    tablas['hojas_ruta'] = { data: { ...HOJA, estado: 'cerrada' }, error: null };
-    const r = await llamar(crearAjuste, {
-      params: { id: 'h1' }, body: { im_comprobante_id: '10', motivo: 'NO PIDIO', items: [{ cod_articulo: 661, cantidad: 1 }] },
-    });
-    expect(r.status).toBe(409);
-    expect(r.body.error).toMatch(/cerrada/i);
-  });
-});
-
-/**
- * 🔴 El camino real: InfoManager NO deja emitir notas de crédito por API en el punto 777 (su
- * validación del número no distingue el tipo de comprobante, probado el 08/09/2026). La oficina
- * la emite en IM y el panel la VINCULA.
- */
 describe('vincular una nota de crédito ya emitida en IM', () => {
   it('🔴 emitir desde el panel está apagado y lo dice', async () => {
     const r = await llamar(crearAjuste, {
@@ -462,5 +259,17 @@ describe('candidatas a vincular', () => {
     tablas['hojas_ruta_ajustes'] = { data: [], error: null };
     const r = await llamar(candidatasAVincular, { params: { id: 'h1' }, query: { im_comprobante_id: '10' } });
     expect(r.body.candidatas).toHaveLength(0);
+  });
+});
+
+describe('no existe un emisor alternativo bajo flag', () => {
+  it.each(['0','1',undefined])('flag %s conserva501 y cero IM', async flag => {
+    if (flag == null) delete process.env.IM_NC_EMISION_HABILITADA; else process.env.IM_NC_EMISION_HABILITADA = flag;
+    const r = await llamar(crearAjuste, { params: { id: 'h1' }, body: { im_comprobante_id: '10', motivo: 'devolución', items: [{cod_articulo:661,cantidad:1}] } });
+    expect(r.status).toBe(501); expect(m.emitirNotaCredito).not.toHaveBeenCalled();
+    delete process.env.IM_NC_EMISION_HABILITADA;
+  });
+  it('mantiene permisos de oficina', async () => {
+    expect((await llamar(crearAjuste, { rol: 'vendedor', params: {id:'h1'} })).status).toBe(403);
   });
 });

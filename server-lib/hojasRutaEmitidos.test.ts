@@ -1,3 +1,4 @@
+import { respuestaReparto } from './test-helpers/repartoRpc.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
@@ -43,6 +44,7 @@ vi.mock('./facturarIM.js', async (original) => ({
   proximoNumeroFactura: m.proximoNumeroFactura,
 }));
 vi.mock('./pedidos.js', () => ({ usuarioIM: vi.fn(async () => 'jorgelina') }));
+vi.mock('./repartoDatos.js', async original => ({ ...(await original<any>()), verificarEntregas: async (filas:any[]) => filas.map(p => ({ ...p, cod_empresa:1,tipo:'RE',tipo_comprobante:'RE',fecha:p.fecha??'2026-09-08' })) }));
 vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSupabase: () => true }));
 
 const { quitarPedido, borrarHoja, asignarPedidos } = await import('./hojasRuta.js');
@@ -52,6 +54,7 @@ let escrituras: Array<{ tabla: string; op: string; valor: any }> = [];
 
 function fakeSb() {
   m.sbMock.mockImplementation(() => ({
+    rpc: respuestaReparto(() => tablas, (tabla, op, valor, filtros) => { escrituras.push({ tabla, op, valor, filtros } as any); }),
     from: (t: string) => {
       const res = tablas[t] ?? { data: null, error: null };
       const q: any = {
@@ -62,7 +65,7 @@ function fakeSb() {
         update: (v: any) => { escrituras.push({ tabla: t, op: 'update', valor: v }); return q; },
         delete: () => { escrituras.push({ tabla: t, op: 'delete', valor: null }); return q; },
       };
-      for (const k of ['select', 'eq', 'in', 'order', 'limit', 'not', 'is', 'or']) q[k] = () => q;
+      for (const k of ['range', 'or', 'select', 'eq', 'in', 'order', 'limit', 'not', 'is', 'or']) q[k] = () => q;
       return q;
     },
   }));
@@ -70,7 +73,7 @@ function fakeSb() {
 
 function llamar(fn: any, { rol = 'administrativo', params = {}, body = {}, query = {} } = {}) {
   let status = 200; let out: any;
-  const req: any = { user: { rol, sub: 'u1' }, params, body, query };
+  const req: any = { user: { rol, sub: 'u1' }, params, body: { version_esperada:1, ...body }, query: { version_esperada:1, ...query } };
   const res: any = { status: (s: number) => { status = s; return res; }, json: (b: any) => { out = b; } };
   return fn(req, res).then(() => ({ status, body: out }));
 }

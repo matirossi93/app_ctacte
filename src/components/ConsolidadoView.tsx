@@ -1,3 +1,4 @@
+import { useLecturaVigente } from '../utils/useLecturaVigente';
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, AlertTriangle, Boxes, ChevronRight, RefreshCw } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
@@ -55,24 +56,29 @@ export function ConsolidadoView({ desde, hasta }: { desde: string; hasta: string
     const [soloFaltantes, setSoloFaltantes] = useState(true);
     const [abierto, setAbierto] = useState<number | null>(null);
 
+    const { iniciar: iniciarLectura } = useLecturaVigente(`${desde}|${hasta}`);
     const cargar = useCallback(async (refrescar = false) => {
+        const lectura = iniciarLectura(refrescar); if (!lectura) return;
         setCargando(true); setError(null);
         // Si falla, no puede quedar la lista anterior debajo de un cartel de error.
         setArticulos([]); setTotales(null);
         try {
             const r = await fetch(
                 `/api/presupuestos/consolidado?desde=${desde}&hasta=${hasta}${refrescar ? '&refrescar=1' : ''}`,
-                { headers: authHeaders() });
+                { headers: authHeaders(), signal: lectura.signal });
             const d = await r.json().catch(() => null);
+            if (!lectura.vigente()) return;
             if (!r.ok) throw new Error(d?.error ?? 'No se pudo armar el consolidado');
             setArticulos(d.articulos ?? []);
             setTotales(d.totales ?? null);
+            lectura.confirmar();
         } catch (e: any) {
+            if (!lectura.vigente()) return;
             setError(e?.message ?? 'Error de conexión');
         } finally {
-            setCargando(false);
+            if (lectura.vigente()) setCargando(false);
         }
-    }, [desde, hasta]);
+    }, [desde, hasta, iniciarLectura]);
 
     useEffect(() => { void cargar(); }, [cargar]);
 

@@ -31,7 +31,7 @@ export interface Peso {
   /** Cuánto pesan. Lo que se compara contra la capacidad del camión. */
   kg: number;
   /**
-   * Renglones que no se pudieron pesar (sin equivalencia en el catálogo). Se informa porque
+   * Renglones que no se pudieron pesar (cantidad ilegible o sin equivalencia en el catálogo). Se informa porque
    * si son muchos, `kg` MIENTE POR ABAJO y la hoja puede sobrecargar el camión sin avisar.
    */
   renglones_sin_peso: number;
@@ -45,14 +45,19 @@ export function pesoDeRenglones(renglones: RenglonPesable[]): Peso {
   let kg = 0;
   let sinPeso = 0;
   for (const r of renglones ?? []) {
-    const cant = Number(r?.cantidad);
-    if (!Number.isFinite(cant) || cant <= 0) continue;
+    const dato = r?.cantidad;
+    const cant = Number(dato);
+    // Number(null), Number('') y Number(false) dan cero: no acreditan un peso conocido.
+    if ((typeof dato !== 'number' && typeof dato !== 'string') ||
+        (typeof dato === 'string' && !dato.trim()) || !Number.isFinite(cant) || cant < 0 ||
+        !Number.isFinite((bultos + cant) * 100)) { sinPeso += 1; continue; }
+    if (cant === 0) continue; // Cero explícito: no viaja mercadería en este renglón.
     bultos += cant;
     const eq = Number(r?.equivalencia_um);
     // 🪤 Un artículo sin equivalencia cargada pesa CERO, no uno. Verificado contra IM: con el
     // fallback de 1 kg por unidad, el remito 77147 daba 564,64 en vez de 492,60. El bulto sí
     // cuenta —el paquete viaja igual— pero los kilos no se inventan.
-    if (Number.isFinite(eq) && eq > 0) kg += cant * eq;
+    if (Number.isFinite(eq) && eq > 0 && Number.isFinite((kg + cant * eq) * 100)) kg += cant * eq;
     else sinPeso += 1;
   }
   return { bultos: dos(bultos), kg: dos(kg), renglones_sin_peso: sinPeso };

@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useOperacionReparto } from './RepartoContext';
+import { contextoReparto } from '../utils/contextoReparto';
+import { useLecturaVigente } from '../utils/useLecturaVigente';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     AlertTriangle, Truck, Plus, Loader2, X, Wand2, MapPin, Package,
     ChevronRight, RefreshCw, Trash2, Printer, CheckCircle2, Store, Lock, Unlock, FileMinus,
@@ -41,7 +44,7 @@ interface Pendiente {
     total: number;
     bultos: number;
     kg: number;
-    renglones_sin_peso: number;
+    renglones_sin_peso: number; peso_completo?: boolean;
     fecha: string | null;
     /** De un día anterior y todavía sin salir: hay que mirarlo. */
     de_otro_dia: boolean;
@@ -57,6 +60,7 @@ interface Pendiente {
 }
 
 interface HojaPedido {
+    tipo_comprobante?: string; peso_completo?: boolean;
     im_comprobante_id: string;
     im_numero: number | null;
     cliente_nombre: string | null;
@@ -73,6 +77,7 @@ interface HojaPedido {
 }
 
 interface Hoja {
+    version: number;
     id: string; numero: number; turno: string | null; transporte: string | null;
     /**
      * 🔑 EL DÍA EN QUE SALE EL CAMIÓN. Mati (10/09/2026): *"las hojas de ruta tienen que poder
@@ -91,7 +96,7 @@ interface Hoja {
     cerrada_at: string | null;
     pedidos: HojaPedido[];
     totales: { pedidos: number; bultos: number; kg: number };
-    carga: { porcentaje: number | null; excedido: boolean; sobra_kg: number | null };
+    carga: { completa?: boolean; porcentaje: number | null; excedido: boolean; sobra_kg: number | null };
 }
 
 interface Camion { id: string; nombre: string; capacidad_kg: number }
@@ -113,6 +118,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
      * siguientes"*. Arranca en el final del rango —el día que se está mirando— y se puede mover
      * sin tocar el rango: se arma la hoja de mañana con los pedidos que ya están hoy.
      */
+    const operacion = useOperacionReparto('Modificar entrega');
     const [fecha, setFecha] = useState(hasta);
     // Si se mueve el rango, la fecha de la hoja lo sigue, salvo que ya la hayan elegido a mano.
     const [fechaTocada, setFechaTocada] = useState(false);
@@ -120,7 +126,10 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
     /** El buscador: sobre los pedidos que ya están en pantalla, por cliente o por comprobante. */
     const [busqueda, setBusqueda] = useState('');
     const [pendientes, setPendientes] = useState<Pendiente[]>([]);
+    const versionesHoja = useRef(new Map<string, number>());
     const [hojas, setHojas] = useState<Hoja[]>([]);
+    const [cargandoHojas, setCargandoHojas] = useState(true);
+    const [errorHojas, setErrorHojas] = useState<string | null>(null);
     const [camiones, setCamiones] = useState<Camion[]>([]);
     /** Los choferes activos (Mati: NIÑO, VICTOR, DANIEL, MARIO, ELVIO, EDUARDO). */
     const [choferes, setChoferes] = useState<Chofer[]>([]);
@@ -140,11 +149,12 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
      */
     const [zonasAbiertas, setZonasAbiertas] = useState<Set<string>>(new Set());
     /** En el celular las dos columnas quedan una abajo de la otra: se muestra una por vez. */
-    const [panel, setPanel] = useState<'pedidos' | 'hojas'>('pedidos');
+    const [hojaEnlace] = useState(() => contextoReparto(location.search, hasta).hoja);
+    const [panel, setPanel] = useState<'pedidos' | 'hojas'>(hojaEnlace ? 'hojas' : 'pedidos');
     /** Qué hoja se está imprimiendo. */
     const [imprimiendo, setImprimiendo] = useState<string | null>(null);
     /** Qué hoja tiene abierto el panel de diferencias de entrega (notas de crédito). */
-    const [ajustandoId, setAjustandoId] = useState<string | null>(null);
+    const [ajustando, setAjustando] = useState<Hoja | null>(null);
     /**
      * 🔑 Mati (10/09/2026): *"estaría bueno que las hojas de ruta puedan ser desplegables o
      * plegables porque se hace muy larga la lista"*. Se guarda quién está PLEGADA y no quién
@@ -156,6 +166,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
      * desaparecen con el filtro de fecha y es difícil encontrarlas"*.
      */
     const [historico, setHistorico] = useState(false);
+    const [siguienteHoja, setSiguienteHoja] = useState<number | null>(null);
 
     /**
      * Las hojas solas. Sale de Supabase: es instantáneo.
@@ -165,11 +176,35 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
      * pantalla se quedaba ~7 segundos dura para guardar un dato que vive en nuestra base
      * (Mati, 07/09/2026: "revisar y pulir la velocidad al interactuar con la página").
      */
-    const cargarHojas = useCallback(async () => {
-        const h = await fetch(historico ? '/api/hojas-ruta?todas=1' : `/api/hojas-ruta?desde=${desde}&hasta=${hasta}`, { headers: authHeaders() });
-        const d = await h.json().catch(() => null);
-        if (h.ok) setHojas(d?.hojas ?? []);
-    }, [desde, hasta, historico]);
+    const { iniciar: iniciarHojas } = useLecturaVigente(`${desde}|${hasta}|${historico}`);
+    const { iniciar: iniciarPendientes } = useLecturaVigente(`${desde}|${hasta}`);
+    const { iniciar: iniciarArrastre } = useLecturaVigente(`${desde}|${hasta}`);
+    const { iniciar: iniciarChoferes } = useLecturaVigente('choferes');
+    const [conflictosAsignacion, setConflictosAsignacion] = useState<any[]>([]);
+    const cargarHojas = useCallback(async (antes?: number, forzar = true) => {
+        const lectura = iniciarHojas(forzar); if (!lectura) return;
+        setCargandoHojas(true); setErrorHojas(null);
+        if (!antes) setHojas([]);
+        try {
+            const h = await fetch(historico ? `/api/hojas-ruta?todas=1${antes ? `&antes=${antes}` : ''}` : `/api/hojas-ruta?desde=${desde}&hasta=${hasta}`, { headers: authHeaders(), signal: lectura.signal });
+            const d = await h.json().catch(() => null);
+            if (!lectura.vigente()) return;
+            if (!h.ok) throw new Error(d?.error ?? 'No se pudieron consultar las hojas');
+            for (const hoja of d?.hojas ?? []) versionesHoja.current.set(hoja.id, hoja.version);
+            setHojas(previas => antes ? [...previas, ...(d?.hojas ?? [])] : d?.hojas ?? []);
+            setSiguienteHoja(d?.siguiente ?? null); lectura.confirmar();
+        } catch (e: any) { if (lectura.vigente()) setErrorHojas(e?.message ?? 'No se pudieron consultar las hojas'); }
+        finally { if (lectura.vigente()) setCargandoHojas(false); }
+    }, [desde, hasta, historico, iniciarHojas]);
+    useEffect(() => { void cargarHojas(undefined, false); }, [cargarHojas]);
+
+    const enlaceUbicado = useRef(false);
+    useEffect(() => {
+        if (enlaceUbicado.current || !hojaEnlace || !hojas.some(h => h.id === hojaEnlace)) return;
+        enlaceUbicado.current = true;
+        const nodo = document.getElementById(`hoja-${hojaEnlace}`);
+        nodo?.scrollIntoView({ block: 'center' }); nodo?.focus({ preventScroll: true });
+    }, [hojaEnlace, hojas]);
 
     /**
      * Los pendientes: esto sí va a IM y tarda unos segundos.
@@ -179,47 +214,53 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
      * oficina quiere ver —las hojas que ya armó— sale de nuestra base en milisegundos.
      */
     const cargar = useCallback(async (refrescar = false) => {
+        const lectura = iniciarPendientes(refrescar); if (!lectura) return;
+        setPendientes([]); setConflictosAsignacion([]);
+        avisarRecarga();
         setCargando(true); setError(null);
         // Lo rápido primero, sin await: la pantalla se dibuja mientras IM contesta.
-        void cargarHojas();
-        void fetch('/api/hojas-ruta/camiones', { headers: authHeaders() })
+        void fetch('/api/hojas-ruta/camiones', { headers: authHeaders(), signal: lectura.signal })
             .then(r => r.ok ? r.json() : null)
-            .then(d => { if (d?.camiones) setCamiones(d.camiones); })
+            .then(d => { if (lectura.vigente() && d?.camiones) setCamiones(d.camiones); })
             .catch(() => { /* sin la flota igual se puede armar la hoja */ });
         try {
             const p = await fetch(
                 `/api/hojas-ruta/pendientes?desde=${desde}&hasta=${hasta}${refrescar ? '&refrescar=1' : ''}`,
-                { headers: authHeaders() });
+                { headers: authHeaders(), signal: lectura.signal });
             const dp = await p.json().catch(() => null);
             if (!p.ok) throw new Error(dp?.error ?? 'No se pudieron traer los pedidos');
+            if (!lectura.vigente()) return;
             setPendientes(dp.pendientes ?? []);
             // 🔑 Los días de los que no se pudieron traer los renglones: esos remitos salen con
             // 0 kg y la hoja parece entrar en el camión cuando puede no entrar. El server lo
             // calculaba y nadie lo leía (auditoría del 08/09/2026).
             setDiasSinPeso(Array.isArray(dp.dias_sin_items) ? dp.dias_sin_items : []);
-            setSel(new Set());
+            setConflictosAsignacion(dp.conflictos_asignacion ?? []);
+            setSel(s => new Set([...s].filter(id => (dp.pendientes ?? []).some((p: Pendiente) => p.im_comprobante_id === id))));
+            lectura.confirmar();
         } catch (e: any) {
-            setError(e?.message ?? 'Error de conexión');
+            if (lectura.vigente()) setError(e?.message ?? 'Error de conexión');
         } finally {
-            setCargando(false);
+            if (lectura.vigente()) setCargando(false);
         }
-    }, [desde, hasta, cargarHojas]);
+    }, [desde, hasta, iniciarPendientes]);
 
     useEffect(() => { void cargar(); }, [cargar]);
 
     // Al volver de InfoManager: si allá se facturó o se anuló algo, acá tiene que verse.
-    useRecargarAlVolver(() => { void cargar(true); });
+    const avisarRecarga = useRecargarAlVolver(() => { if (!operacion.enCurso.current) { void cargar(true); void cargarHojas(); } });
 
     /**
      * Los choferes. Se piden UNA sola vez: son seis y no cambian de un día para el otro, así que
      * no tiene sentido volver a pedirlos cada vez que se cambia la fecha.
      */
     useEffect(() => {
-        fetch('/api/choferes', { headers: authHeaders() })
+        const lectura = iniciarChoferes(); if (!lectura) return;
+        fetch('/api/choferes', { headers: authHeaders(), signal: lectura.signal })
             .then(r => r.ok ? r.json() : null)
-            .then(d => { if (d?.choferes) setChoferes(d.choferes); })
+            .then(d => { if (lectura.vigente() && d?.choferes) { setChoferes(d.choferes); lectura.confirmar(); } })
             .catch(() => { /* sin la lista se puede armar la hoja igual, sólo no se asigna chofer */ });
-    }, []);
+    }, [iniciarChoferes]);
 
     /**
      * Cuántos pedidos vigentes quedaron de días anteriores.
@@ -229,14 +270,13 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
      * que nunca se facturaron y que, mostrados todos juntos, hacían la lista inusable.
      */
     useEffect(() => {
-        let vivo = true;
+        const lectura = iniciarArrastre(); if (!lectura) return;
         setArrastre(null);
-        fetch(`/api/hojas-ruta/arrastre?desde=${desde}&hasta=${hasta}`, { headers: authHeaders() })
+        fetch(`/api/hojas-ruta/arrastre?desde=${desde}&hasta=${hasta}`, { headers: authHeaders(), signal: lectura.signal })
             .then(r => r.ok ? r.json() : null)
-            .then(d => { if (vivo && d?.ok) setArrastre(d.cantidad ?? 0); })
+            .then(d => { if (lectura.vigente() && d?.ok) { setArrastre(d.cantidad ?? 0); lectura.confirmar(); } })
             .catch(() => { /* el aviso es opcional: si no se puede contar, no se muestra */ });
-        return () => { vivo = false; };
-    }, [desde, hasta]);
+    }, [desde, hasta, iniciarArrastre]);
 
     /** Agrupados por zona: es como se arma la hoja y como los mira la oficina. */
     const porZona = useMemo(() => {
@@ -292,6 +332,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
      * una cosa y hacía otra.
      */
     async function nuevaHoja(codZona: number | null = null, conSeleccion = false) {
+        if (!operacion.comenzar()) return;
         setTrabajando(true); setAviso(null);
         const paraMeter = conSeleccion ? seleccionados : [];
         try {
@@ -300,6 +341,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                 body: JSON.stringify({ fecha, cod_zona: codZona }),
             });
             const d = await r.json().catch(() => null);
+            if (d?.hoja?.id) versionesHoja.current.set(d.hoja.id, d.hoja.version);
             if (!r.ok) { setAviso(d?.error ?? 'No se pudo crear la hoja'); return; }
             if (paraMeter.length && d?.hoja?.id) {
                 const ok = await mandarAHoja(d.hoja.id, paraMeter);
@@ -309,20 +351,20 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                 setSel(new Set());
             }
             await cargarHojas();
-        } finally { setTrabajando(false); }
+        } finally { setTrabajando(false); operacion.terminar(); }
     }
 
     /**
      * El POST de asignar, separado para que lo usen el botón de la hoja y el de "nueva hoja
      * con estos". Devuelve si salió bien.
      */
-    async function mandarAHoja(hojaId: string, pedidos: Pendiente[], mover = false): Promise<boolean> {
+    async function mandarAHoja(hojaId: string, pedidos: Pendiente[], mover = false, origenesConfirmados?: Record<string, unknown>): Promise<boolean> {
         const r = await fetch(`/api/hojas-ruta/${hojaId}/pedidos`, {
             method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
             // 🔑 `tipo: 'RE'` le dice al server que el comprobante que llega es el REMITO, así
             // que puede guardarlo como tal sin ir a buscarlo. Las hojas viejas se armaron con
             // presupuestos y por eso el server sigue aceptando las dos formas.
-            body: JSON.stringify({ pedidos: pedidos.map(p => ({ ...p, tipo: 'RE' })), mover }),
+            body: JSON.stringify({ pedidos: pedidos.map(p => ({ ...p, tipo: 'RE' })), mover, rango: { desde, hasta }, version_esperada: versionesHoja.current.get(hojaId), origenes: origenesConfirmados ?? Object.fromEntries(pedidos.map(p => { const h = hojas.find(h => h.pedidos.some(x => x.im_comprobante_id === p.im_comprobante_id)); return [p.im_comprobante_id, h ? { hoja_id: h.id, version: h.version } : {}]; })) }),
         });
         const d = await r.json().catch(() => null);
         if (!r.ok) {
@@ -330,20 +372,21 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
             // otra hoja obliga a ir a buscarlo y sacarlo a mano — y mover pedidos entre hojas
             // es la operación MÁS COMÚN cuando una zona se pasa de kilos.
             if (d?.mover_disponible && confirm(`${d.error}\n\n¿Los paso igual a esta hoja?`)) {
-                return await mandarAHoja(hojaId, pedidos, true);
+                return await mandarAHoja(hojaId, pedidos, true, d.origenes);
             }
             setAviso(d?.error ?? 'No se pudieron asignar');
             return false;
         }
         const partes: string[] = [];
         if (d?.sin_saldo > 0) partes.push(`de ${d.sin_saldo} no se pudo traer el saldo del cliente (van en blanco en la hoja impresa)`);
-        if (d?.peso_recalculado === false) partes.push('los kilos son los que mostraba la pantalla, no se pudieron recalcular contra InfoManager');
+        if (d?.peso_recalculado === false) partes.push('hay pedidos sin peso verificado; la capacidad del camión está incompleta');
         if (partes.length) setAviso(`Se agregaron ${d.agregados}, pero ${partes.join('; ')}.`);
         return true;
     }
 
     async function asignar(hojaId: string) {
         if (!seleccionados.length) return;
+        if (!operacion.comenzar()) return;
         setTrabajando(true); setAviso(null);
         try {
             const ids = new Set(seleccionados.map(p => p.im_comprobante_id));
@@ -353,7 +396,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                 setSel(new Set());
             }
             await cargarHojas();
-        } finally { setTrabajando(false); }
+        } finally { setTrabajando(false); operacion.terminar(); }
     }
 
     /**
@@ -372,26 +415,29 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
     }
 
     async function quitar(comprobanteId: string) {
+        if (!operacion.comenzar()) return;
         setTrabajando(true); setAviso(null);
         try {
-            if (await pedir(`/api/hojas-ruta/pedidos/${comprobanteId}`, { method: 'DELETE' }, 'No se pudo sacar el pedido de la hoja')) {
+            const origen = hojas.find(h => h.pedidos.some(p => p.im_comprobante_id === comprobanteId));
+            if (await pedir(`/api/hojas-ruta/pedidos/${comprobanteId}?hoja_id=${origen?.id}&version_esperada=${origen?.version}`, { method: 'DELETE' }, 'No se pudo sacar el pedido de la hoja')) {
                 await cargarHojas();
                 // 🪤 El pedido vuelve a estar libre, pero sus datos (zona, avisos, peso) los
                 // arma el backend con IM. Se recarga la lista en segundo plano: la hoja ya se
                 // actualizó y la pantalla no espera.
-                void cargar();
+                void cargar(true);
             }
-        } finally { setTrabajando(false); }
+        } finally { setTrabajando(false); operacion.terminar(); }
     }
 
     async function editarHoja(hojaId: string, cambios: Record<string, unknown>, siFalla: string) {
+        if (!operacion.comenzar()) return;
         setTrabajando(true); setAviso(null);
         try {
             await pedir(`/api/hojas-ruta/${hojaId}`, {
-                method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cambios),
+                method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...cambios, version_esperada: versionesHoja.current.get(hojaId) }),
             }, siFalla);
             await cargarHojas();   // el camión o el turno viven en nuestra base: no hace falta ir a IM
-        } finally { setTrabajando(false); }
+        } finally { setTrabajando(false); operacion.terminar(); }
     }
 
     /**
@@ -437,12 +483,13 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
     async function marcarRetiro() {
         if (!seleccionados.length) return;
         if (!confirm(`¿Marcar ${seleccionados.length} pedido(s) como retiro en sucursal?\n\nNo salen en ninguna hoja de ruta: quedan en la lista de retiros del mes.`)) return;
+        if (!operacion.comenzar()) return;
         setTrabajando(true); setAviso(null);
         try {
             const r = await fetch('/api/retiros', {
                 method: 'POST',
                 headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+                body: JSON.stringify({ rango: { desde, hasta },
                     pedidos: seleccionados.map(p => ({
                         im_comprobante_id: p.im_comprobante_id, im_numero: p.im_numero,
                         cod_cliente: p.cod_cliente, cliente_nombre: p.cliente_nombre,
@@ -460,23 +507,25 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                 + ' Se ven en Retiros en sucursal.');
             setSel(new Set());
             // Salen de pendientes: la lista se rehace contra IM, sin bloquear la pantalla.
-            void cargar();
-        } finally { setTrabajando(false); }
+            void cargar(true);
+        } finally { setTrabajando(false); operacion.terminar(); }
     }
 
     async function borrarHoja(hojaId: string, numero: number) {
         if (!confirm(`¿Borrar la hoja ${numero}? Los pedidos vuelven a la lista de pendientes.`)) return;
+        if (!operacion.comenzar()) return;
         setTrabajando(true); setAviso(null);
         try {
-            if (await pedir(`/api/hojas-ruta/${hojaId}`, { method: 'DELETE' }, 'No se pudo borrar la hoja')) {
+            if (await pedir(`/api/hojas-ruta/${hojaId}?version_esperada=${versionesHoja.current.get(hojaId)}`, { method: 'DELETE' }, 'No se pudo borrar la hoja')) {
                 await cargarHojas();
-                void cargar();     // los pedidos vuelven a pendientes, sin bloquear la pantalla
+                void cargar(true);     // los pedidos vuelven a pendientes, sin bloquear la pantalla
             }
-        } finally { setTrabajando(false); }
+        } finally { setTrabajando(false); operacion.terminar(); }
     }
 
     return (
         <div className="hr-root">
+            {!!conflictosAsignacion.length && <div className="hr-aviso" role="alert">Asignaciones a revisar: {conflictosAsignacion.map(p => `${p.cliente_nombre ?? "Cliente"} · ID ${p.im_comprobante_id}`).join("; ")}. Estos comprobantes no se ofrecen para otra hoja hasta conciliar sus vínculos.</div>}
             <div className="hr-top">
                 {/* QUÉ pedidos se ven: lo elige el rango del header, arriba. */}
                 <span className="hr-fecha-rango">
@@ -558,14 +607,14 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                     <h2 className="hr-col-title"><MapPin size={16} /> Pedidos sin asignar</h2>
 
                     {cargando && <div className="hr-cargando"><Loader2 className="spin" size={20} /> Trayendo los pedidos…</div>}
-                    {!cargando && !pendientes.length && (
+                    {!cargando && !error && !pendientes.length && (
                         <div className="hr-vacio"><Package size={26} /><span>No quedan pedidos sin asignar.</span></div>
                     )}
 
                     {/* 🪤 Buscando no hay nada que plegar: si la zona del cliente que buscás queda
                         cerrada, el buscador "no encuentra nada" aunque lo haya encontrado. Mati
                         (10/09/2026) pidió un buscador acá — ya estaba, lo que faltaba era esto. */}
-                    {!!busqueda.trim() && !porZona.length && !cargando && (
+                    {!!busqueda.trim() && !porZona.length && !cargando && !error && (
                         <div className="hr-vacio"><Search size={22} />
                             <span>Ningún pedido sin asignar coincide con “{busqueda}”.</span>
                         </div>
@@ -627,7 +676,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                         </div>
                                         <div className="hr-ped-meta">
                                             RE {p.im_numero ?? '—'} · {money(p.total)} · {p.bultos} bultos
-                                            {p.renglones_sin_peso > 0 && (
+                                            {(!p.peso_completo || p.renglones_sin_peso > 0) && (
                                                 <span className="hr-sinpeso" title="Estos renglones no tienen peso cargado en el catálogo: los kilos de este pedido son un mínimo, puede pesar más">
                                                     · {p.renglones_sin_peso} sin peso
                                                 </span>
@@ -671,11 +720,14 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                             </button>
                         )}
                         {historico && <span className="hr-hojas-cuenta">{hojas.length} hojas</span>}
+                        {siguienteHoja != null && <button className="hr-btn ghost chico" onClick={() => void cargarHojas(siguienteHoja)}>Cargar más hojas</button>}
                     </div>
 
-                    {!hojas.length && !cargando && (
+                    {errorHojas && <div className="hr-aviso error" role="alert">{errorHojas}</div>}
+                    {cargandoHojas && <div className="hr-cargando" role="status"><Loader2 className="spin" size={20} /> Trayendo las hojas…</div>}
+                    {!hojas.length && !cargandoHojas && !errorHojas && (
                         <div className="hr-vacio"><Truck size={26} />
-                            <span>{historico ? 'Todavía no hay ninguna hoja.' : 'Todavía no hay hojas para este día.'}</span>
+                            <span>{historico ? 'Todavía no hay ninguna hoja.' : 'Todavía no hay hojas para este rango.'}</span>
                         </div>
                     )}
 
@@ -684,7 +736,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                       const cerrada = h.estado === 'cerrada';
                       const plegada = plegadas.has(h.id);
                       return (
-                        <div className={`hr-hoja${h.carga.excedido ? ' excedida' : ''}${cerrada ? ' cerrada' : ''}${plegada ? ' plegada' : ''}`} key={h.id}>
+                        <div id={`hoja-${h.id}`} tabIndex={-1} className={`hr-hoja${h.carga.excedido ? ' excedida' : ''}${cerrada ? ' cerrada' : ''}${plegada ? ' plegada' : ''}`} key={h.id}>
                             <div className="hr-hoja-head">
                                 {/* 🔑 Plegar: con muchas hojas la lista se hace interminable. El
                                     número y el resumen quedan siempre a la vista. */}
@@ -697,6 +749,10 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                     {plegada ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
                                 </button>
                                 <span className="hr-hoja-num">Hoja {h.numero}</span>
+                                <button className="hr-btn ghost chico" aria-label={`Copiar enlace a hoja ${h.numero}`} onClick={async () => {
+                                    const u = new URL(location.href); u.searchParams.set('etapa', 'hojas'); u.searchParams.set('hoja', h.id); u.searchParams.set('desde', h.fecha); u.searchParams.set('hasta', h.fecha);
+                                    try { await navigator.clipboard.writeText(u.toString()); setAviso(`Enlace a hoja ${h.numero} copiado.`); } catch { setAviso(`Enlace: ${u.toString()}`); }
+                                }}>Enlace</button>
                                 {plegada && (
                                     <span className="hr-plegada-resumen">
                                         {String(h.fecha ?? '').slice(0, 10)} · {h.pedidos.length} pedido{h.pedidos.length === 1 ? '' : 's'}
@@ -786,6 +842,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                     {h.capacidad_kg ? ` de ${kilos(Number(h.capacidad_kg))} · ${h.carga.porcentaje}%` : ' · sin camión asignado'}
                                 </span>
                             </div>
+                            {h.carga.completa === false && <div className="hr-aviso">Carga incompleta: hay pedidos sin peso verificado.</div>}
                             {h.carga.excedido && (
                                 <div className="hr-excede"><AlertTriangle size={13} /> Se pasa {kilos(Math.abs(h.carga.sobra_kg ?? 0))} de la capacidad</div>
                             )}
@@ -807,7 +864,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                             )}
                                         </div>
                                         <div className="hr-ped-meta">
-                                            PR {p.im_numero ?? '—'} · {kilos(Number(p.kg ?? 0))}
+                                            {p.tipo_comprobante ?? 'Comprobante'} {p.im_numero ?? '—'} · {kilos(Number(p.kg ?? 0))}
                                             {p.saldo_anterior != null
                                                 ? <> · saldo <b>{money(Number(p.saldo_anterior))}</b></>
                                                 : <span className="hr-sinpeso" title="No se pudo traer el saldo: va en blanco en la hoja impresa"> · sin saldo</span>}
@@ -836,7 +893,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                 Sólo tiene sentido con la hoja armada. */}
                             {!!h.pedidos.length && (
                                 <div className="hr-hoja-pie">
-                                    <button className="hr-btn ghost chico" onClick={() => setAjustandoId(h.id)} disabled={trabajando}>
+                                    <button className="hr-btn ghost chico" onClick={() => setAjustando(h)} disabled={trabajando}>
                                         <FileMinus size={14} /> Diferencias
                                     </button>
                                     <button className="hr-btn chico" onClick={() => void cerrarHoja(h)} disabled={trabajando}>
@@ -854,15 +911,14 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
             {imprimiendo && <ImprimirHoja hojaId={imprimiendo} onClose={() => setImprimiendo(null)} />}
 
             {/* Lo que volvió del reparto: las notas de crédito y el número final de la hoja. */}
-            {ajustandoId && (() => {
-                const h = hojas.find(x => x.id === ajustandoId);
-                if (!h) return null;
+            {ajustando && (() => {
+                const h = ajustando;
                 return (
                     <AjustesHojaModal
                         hojaId={h.id}
                         numero={h.numero}
                         pedidos={h.pedidos}
-                        onClose={() => setAjustandoId(null)}
+                        onClose={() => setAjustando(null)}
                         onCambio={() => void cargarHojas()}
                     />
                 );

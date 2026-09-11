@@ -1,3 +1,4 @@
+import { itemsPorFechas } from './itemsRango.js';
 /**
  * Hojas de ruta: el panel con el que la oficina arma lo que sale en cada camión.
  *
@@ -26,6 +27,7 @@ import { armarFraccionado, totalesFraccionado } from './fraccionado.js';
 import { formatosDeBolsa } from './formatosBolsa.js';
 import { sugerirRepartos } from './sugerirRepartos.js';
 import { saldoAnteriorDeLaHoja, ajusteDeNotas } from './saldoCliente.js';
+import { emitidosDe, mutarReparto, verificarEntregas, enriquecerEntregas, notasDeHoja, notasUnicas } from './repartoDatos.js';
 import { proximoNumeroHoja } from './numeroHojaRuta.js';
 
 /** Sólo la oficina. Devuelve true si ya contestó el 403. */
@@ -160,15 +162,16 @@ export async function sugerenciaDelDia(req: Request & { user?: JwtPayload }, res
   try {
     const rango = rangoPedido(req);
     const fecha = rango.hasta;
-    const [{ pendientes }, { data: camiones }] = await Promise.all([
+    const [{ pendientes }, { data: camiones, error: errorCamiones }] = await Promise.all([
       vistaRemitos(rango.desde, rango.hasta),
       sb().from('hojas_ruta_camiones').select('id, nombre, capacidad_kg')
         .eq('tenant_id', TENANT_ID).eq('activo', true),
     ]);
+    if (errorCamiones) throw new Error(errorCamiones.message);
     const flota = (camiones ?? []).map((c: any) => ({
       id: String(c.id), nombre: String(c.nombre), capacidad_kg: Number(c.capacidad_kg),
     }));
-    res.json({ ok: true, fecha, ...sugerirRepartos(pendientes as any, flota) });
+    res.json({ ok: true, fecha, sin_peso: pendientes.filter((p: any) => !p.peso_completo), ...sugerirRepartos(pendientes.filter((p: any) => p.peso_completo) as any, flota) });
   } catch (err: any) {
     console.error('[sugerenciaDelDia]', err?.message);
     res.status(502).json({ error: `No se pudo armar la sugerencia: ${err?.message ?? 'sin respuesta de IM'}` });
@@ -189,14 +192,21 @@ export async function arrastreDelDia(req: Request & { user?: JwtPayload }, res: 
     // rango de tres días, los remitos de esos tres días ya están en pantalla y no son arrastre.
     const { desde: inicio, hasta: fecha } = rangoPedido(req);
     const desde = fechaArgentina(new Date(inicio + 'T12:00:00Z').getTime() - VENTANA_DIAS * 864e5);
-    const ventas = await fetchVentas(desde, fecha);
+    const corte = String(process.env.HOJAS_RUTA_DESDE ?? '2026-09-09');
+    const piso = corte === 'todo' ? desde : desde < corte ? corte : desde;
+    const anterior = fechaArgentina(new Date(inicio + 'T12:00:00Z').getTime() - 864e5);
+    if (piso > anterior) { res.json({ ok: true, fecha, cantidad: 0, desde: piso, por_fecha: {} }); return; }
+    const ventas = await fetchVentas(piso, anterior);
     // 🔄 Cuenta REMITOS, igual que la pantalla: un remito de la semana pasada que no salió es
     // mercadería facturada esperando el camión, y ése es el aviso que importa.
     const previos = ventas.filter((v: any) =>
-      String(v.tipo_comprobante ?? '').trim() === 'RE' &&
+      Number(v.cod_empresa) === PEDIDO_EMPRESA_DEFAULT && String(v.tipo_comprobante ?? '').trim() === 'RE' &&
       String(v.anulada ?? '').trim().toUpperCase() !== 'S' &&
       String(v.fecha ?? '').slice(0, 10) < inicio);
-    const ids = previos.map((p: any) => String(p.id));
+    const emitidos = await emitidosDe(previos.map((p: any) => String(p.id)));
+    const alias = new Map<string, string[]>();
+    for (const p of previos) alias.set(String(p.id), [String(p.id), ...emitidos.filter(e => String(e.im_remito_id) === String(p.id)).map(e => String(e.im_comprobante_id))]);
+    const ids = [...new Set([...alias.values()].flat())];
     /**
      * 🪤 Esto truncaba en 400 ids. Con remitos son ~55-67 por día contra ~39 presupuestos, así
      * que sobre 15 días son ~800: los 400 restantes no se chequeaban contra nada y se contaban
@@ -207,15 +217,17 @@ export async function arrastreDelDia(req: Request & { user?: JwtPayload }, res: 
     for (let i = 0; i < ids.length; i += 200) {
       const tanda = ids.slice(i, i + 200);
       // Los que ya están en una hoja no son arrastre: alguien se ocupó.
-      const { data: asignados } = await sb().from('hojas_ruta_pedidos')
-        .select('im_comprobante_id').in('im_comprobante_id', tanda);
+      const { data: asignados, error: errAsignados } = await sb().from('hojas_ruta_pedidos')
+        .select('im_comprobante_id,hojas_ruta!inner(tenant_id)').eq('hojas_ruta.tenant_id', TENANT_ID).in('im_comprobante_id', tanda);
+      if (errAsignados) throw new Error(errAsignados.message);
       for (const a of asignados ?? []) yaEn.add(String((a as any).im_comprobante_id));
       // Ni los que el cliente pasa a buscar: ésos tampoco esperan un camión.
-      const { data: retiros } = await sb().from('retiros_sucursal')
+      const { data: retiros, error: errRetiros } = await sb().from('retiros_sucursal')
         .select('im_comprobante_id').eq('tenant_id', TENANT_ID).in('im_comprobante_id', tanda);
+      if (errRetiros) throw new Error(errRetiros.message);
       for (const r of retiros ?? []) yaEn.add(String((r as any).im_comprobante_id));
     }
-    const sueltos = previos.filter((p: any) => !yaEn.has(String(p.id)));
+    const sueltos = previos.filter((p: any) => !alias.get(String(p.id))!.some(id => yaEn.has(id)));
     const porFecha: Record<string, number> = {};
     for (const p of sueltos) porFecha[String(p.fecha).slice(0, 10)] = (porFecha[String(p.fecha).slice(0, 10)] ?? 0) + 1;
     res.json({ ok: true, fecha, cantidad: sueltos.length, desde, por_fecha: porFecha });
@@ -244,31 +256,22 @@ export async function listarHojas(req: Request & { user?: JwtPayload }, res: Res
     const base = sb().from('hojas_ruta')
       .select('*, hojas_ruta_camiones(nombre, capacidad_kg), choferes(nombre), hojas_ruta_pedidos(*)')
       .eq('tenant_id', TENANT_ID);
-    const { data: hojas, error } = todas
-      ? await base.order('numero', { ascending: false }).limit(MAX_HOJAS_HISTORICO)
+    if (todas && req.query.antes && /^\d+$/.test(String(req.query.antes))) base.lt('numero', Number(req.query.antes));
+    const { data: hojasLeidas, error } = todas
+      ? await base.order('numero', { ascending: false }).limit(51)
       : await base.gte('fecha', desde).lte('fecha', hasta).order('fecha').order('numero');
     if (error) { res.status(500).json({ error: error.message }); return; }
+    const hojas = todas ? (hojasLeidas ?? []).slice(0, 50) : hojasLeidas;
+    const siguiente = todas && (hojasLeidas ?? []).length > 50 ? hojas?.at(-1)?.numero : null;
     // 🔑 Lo emitido se cruza contra `presupuestos_facturados`, que es la fuente viva: los campos
     // copiados en `hojas_ruta_pedidos` son de cuando se armó la hoja, y si el pedido se facturó
     // DESPUÉS quedaban vacíos (auditoría del 08/09/2026).
-    const idsEnHojas = (hojas ?? []).flatMap((h: any) => (h.hojas_ruta_pedidos ?? []).map((p: any) => String(p.im_comprobante_id)));
-    const { data: emitidos } = idsEnHojas.length
-      ? await sb().from('presupuestos_facturados')
-          .select('im_comprobante_id, im_factura_numero, im_remito_id, im_remito_numero, facturado_at')
-          .eq('tenant_id', TENANT_ID)
-          .or(`im_comprobante_id.in.(${idsEnHojas.join(',')}),im_remito_id.in.(${idsEnHojas.join(',')})`)
-      : { data: [] as any[] };
-    // Por los dos caminos: hojas viejas armadas con presupuestos y nuevas armadas con remitos.
-    const emitidoPor = new Map<string, any>();
-    for (const e of emitidos ?? []) {
-      emitidoPor.set(String((e as any).im_comprobante_id), e);
-      if ((e as any).im_remito_id) emitidoPor.set(String((e as any).im_remito_id), e);
-    }
-
+    const todosEnriquecidos = await enriquecerEntregas((hojas ?? []).flatMap((h: any) => h.hojas_ruta_pedidos ?? []));
+    const emitidoPor = new Map(todosEnriquecidos.map((p: any) => [String(p.im_comprobante_id), p]));
     const conCarga = (hojas ?? []).map((h: any) => {
       const ps = (h.hojas_ruta_pedidos ?? []).map((p: any) => {
         const e = emitidoPor.get(String(p.im_comprobante_id));
-        return e ? { ...p, im_factura_numero: e.im_factura_numero, im_remito_numero: e.im_remito_numero, facturado_at: e.facturado_at } : p;
+        return e ?? p;
       });
       const kg = ps.reduce((s: number, p: any) => s + Number(p.kg ?? 0), 0);
       const bultos = ps.reduce((s: number, p: any) => s + Number(p.bultos ?? 0), 0);
@@ -285,12 +288,12 @@ export async function listarHojas(req: Request & { user?: JwtPayload }, res: Res
         capacidad_kg: cap ?? null,
         pedidos: ps.sort((a: any, b: any) => a.orden - b.orden),
         totales: { pedidos: ps.length, bultos: Math.round(bultos * 100) / 100, kg: Math.round(kg * 100) / 100 },
-        carga: cargaDelCamion(kg, cap),
+        carga: { ...cargaDelCamion(kg, cap), completa: ps.every((p: any) => p.peso_completo === true) },
       };
     });
-    res.json({ ok: true, desde, hasta, fecha: hasta, hojas: conCarga });
+    res.json({ ok: true, desde, hasta, fecha: hasta, hojas: conCarga, siguiente });
   } catch (err: any) {
-    res.status(500).json({ error: err?.message ?? 'error' });
+    res.status(err.status ?? 500).json({ error: err?.message ?? 'error' });
   }
 }
 
@@ -326,41 +329,18 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
      * antes del cambio a remitos se imprimía con el número de PRESUPUESTO y el repartidor llevaba
      * un papel que no coincide con el remito. Auditoría del 08/09/2026.
      */
-    const idsImpresos = pedidosCrudos.map((p: any) => String(p.im_comprobante_id))
-      .filter((id: string) => /^[0-9]+$/.test(id));
-    const { data: emitidosImp } = idsImpresos.length
-      ? await sb().from('presupuestos_facturados')
-          .select('im_comprobante_id, im_remito_id, im_remito_numero, im_factura_id, im_factura_numero, facturado_at, total')
-          .eq('tenant_id', TENANT_ID)
-          .or(`im_comprobante_id.in.(${idsImpresos.join(',')}),im_remito_id.in.(${idsImpresos.join(',')})`)
-      : { data: [] as any[] };
-    const vivoPor = new Map<string, any>();
-    for (const e of emitidosImp ?? []) {
-      vivoPor.set(String((e as any).im_comprobante_id), e);
-      if ((e as any).im_remito_id) vivoPor.set(String((e as any).im_remito_id), e);
-    }
-    const pedidos = pedidosCrudos.map((p: any) => {
-      const e = vivoPor.get(String(p.im_comprobante_id));
-      /**
-       * 🔴 EL IMPORTE ES EL DE LA FACTURA, no el que se copió al armar la hoja. Mati (10/09/2026)
-       * sobre URUEÑA: *"en la hoja de ruta tampoco impacta esa modificación"* — el pedido decía
-       * $1.111.521,00 y la factura salió por $1.073.534,08. El repartidor cobra por este papel.
-       */
-      return e
-        ? { ...p, im_remito_numero: p.im_remito_numero ?? e.im_remito_numero,
-            im_factura_id: p.im_factura_id ?? e.im_factura_id, facturado_at: p.facturado_at ?? e.facturado_at,
-            total: e.facturado_at && e.total != null ? Number(e.total) : p.total }
-        : p;
-    });
-
+    const pedidos = await notasDeHoja(String(req.params.id), await enriquecerEntregas(pedidosCrudos));
+    const { data: respaldos, error: errorRespaldos } = await sb().from('hojas_ruta_saldos').select('*').eq('hoja_id', String(req.params.id));
+    if (errorRespaldos) throw new Error(`No pude leer los respaldos de saldo: ${errorRespaldos.message}`);
+    const nuevosSaldos: any[] = [];
     // Agrupado por cliente, como la hoja impresa: un cliente puede tener varios comprobantes
     // y abajo el "Total por cliente".
-    const porCliente = new Map<number, any>();
+    const porCliente = new Map<string, any>();
     for (const p of pedidos) {
-      const k = Number(p.cod_cliente);
+      const k = `${p.cod_empresa ?? 'desconocida'}|${p.cod_cliente}`;
       if (!porCliente.has(k)) {
         porCliente.set(k, {
-          cod_cliente: k, cliente_nombre: p.cliente_nombre, saldo_anterior: p.saldo_anterior,
+          cod_cliente: Number(p.cod_cliente), cod_empresa: p.cod_empresa, cliente_nombre: p.cliente_nombre, saldo_anterior: null,
           comprobantes: [], total: 0, bultos: 0, kg: 0,
         });
       }
@@ -370,14 +350,14 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
         bultos: Number(p.bultos ?? 0), kg: Number(p.kg ?? 0), total: Number(p.total ?? 0),
         im_remito_numero: p.im_remito_numero ?? null,
         im_factura_id: p.im_factura_id ?? null,
-        facturado: !!p.facturado_at,
+        facturado: !!p.facturado_at, factura_origen: p.factura_origen, notas: p.notas,
       });
       c.total += Number(p.total ?? 0);
       c.bultos += Number(p.bultos ?? 0);
       c.kg += Number(p.kg ?? 0);
       // 🪤 El saldo es del CLIENTE, no del comprobante: si tiene dos pedidos no se suma dos
       // veces. Se queda con el primero que tenga uno cargado.
-      if (c.saldo_anterior == null && p.saldo_anterior != null) c.saldo_anterior = p.saldo_anterior;
+
     }
 
     /**
@@ -390,23 +370,6 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
      * El vínculo nota→factura vive de nuestro lado (`facturas_correcciones`): la API de IM no
      * tiene ningún campo que lo guarde.
      */
-    const facturasDeLaHoja = [...new Set(pedidos
-      .map((p: any) => p.im_factura_id).filter(Boolean).map(String))];
-    const notasPorFactura = new Map<string, Array<{ tipo: string; total: number; id: string; numero: number | null }>>();
-    if (facturasDeLaHoja.length) {
-      const { data: correcciones } = await sb().from('facturas_correcciones')
-        .select('im_factura_id, im_comprobante_id, tipo, numero, total')
-        .eq('tenant_id', TENANT_ID).in('im_factura_id', facturasDeLaHoja);
-      for (const n of correcciones ?? []) {
-        const k = String((n as any).im_factura_id);
-        if (!notasPorFactura.has(k)) notasPorFactura.set(k, []);
-        notasPorFactura.get(k)!.push({
-          tipo: String((n as any).tipo), total: Number((n as any).total ?? 0),
-          id: String((n as any).im_comprobante_id), numero: (n as any).numero ?? null,
-        });
-      }
-    }
-
     /**
      * 🔴 EL SALDO ANTERIOR SALE DE LOS COMPROBANTES IMPAGOS, NO DEL CRÉDITO DISPONIBLE.
      *
@@ -422,49 +385,38 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
      * Si InfoManager no contesta queda el guardado: es viejo, pero es lo que había.
      */
     await Promise.all([...porCliente.values()].map(async (c: any) => {
-      const notas = c.comprobantes.flatMap((x: any) =>
-        x.im_factura_id ? (notasPorFactura.get(String(x.im_factura_id)) ?? []) : []);
-      // El total del camión ya descuenta la nota de crédito.
+      const notas = notasUnicas(c.comprobantes.flatMap((x: any) => x.notas ?? []));
       c.ajuste_notas = ajusteDeNotas(notas);
-      c.notas = notas.map((n: any) => ({ tipo: n.tipo, numero: n.numero, total: n.total }));
+      c.notas = notas.map(n => ({ tipo: n.tipo, numero: n.numero, total: n.total }));
       c.total = Math.round((Number(c.total ?? 0) + c.ajuste_notas) * 100) / 100;
+      const excluir = [...c.comprobantes.map((x: any) => x.im_factura_id).filter(Boolean), ...notas.map(n => n.id)];
+      c.saldo_fuente = 'desconocido'; c.saldo_actualizado = false;
+      if (!c.cod_empresa || c.comprobantes.some((x: any) => !x.im_factura_id)) return;
+      const consultado_at = new Date().toISOString();
       try {
-        const pendientes = await comprobantesPendientesCliente(Number(c.cod_cliente), Number((hoja as any).cod_empresa) || 1);
-        const deEstaEntrega = [
-          ...c.comprobantes.map((x: any) => x.im_factura_id).filter(Boolean),
-          ...notas.map((n: any) => n.id),
-        ];
-        c.saldo_anterior = saldoAnteriorDeLaHoja(pendientes, deEstaEntrega);
-      } catch (e: any) {
-        console.warn(`[impresionHoja] sin deuda al día del cliente ${c.cod_cliente}, uso el guardado:`, e?.message);
+        const pendientes = await comprobantesPendientesCliente(c.cod_cliente, c.cod_empresa);
+        c.saldo_anterior = saldoAnteriorDeLaHoja(pendientes, excluir);
+        c.saldo_fuente = 'en_vivo'; c.saldo_actualizado = true; c.saldo_consultado_at = consultado_at;
+        nuevosSaldos.push({ cod_empresa: c.cod_empresa, cod_cliente: c.cod_cliente, consultado_at, pendientes: pendientes.map(p => ({ id: p.id, saldo: p.saldo })) });
+      } catch {
+        const respaldo = (respaldos ?? []).find((r: any) => Number(r.cod_empresa) === c.cod_empresa && Number(r.cod_cliente) === c.cod_cliente);
+        if (respaldo) {
+          c.saldo_anterior = saldoAnteriorDeLaHoja(respaldo.pendientes, excluir);
+          c.saldo_fuente = 'respaldo'; c.saldo_consultado_at = respaldo.consultado_at;
+        }
       }
     }));
+    if (nuevosSaldos.length) await mutarReparto(req.user?.sub, 'saldo_guardar', { hoja_id: String(req.params.id), saldos: nuevosSaldos });
 
     // ── Fraccionado: lo que se vende por kilo, producto por producto ──────────
     // 🔑 El armado vive en `fraccionado.ts` y lo comparte con la etapa de presupuestos, que es
     // donde la oficina lo prepara ahora (antes del armado de la hoja).
-    let fraccionado: ReturnType<typeof armarFraccionado> = [];
-    try {
-      const cat = await fetchArticulosCatalogo();
-      const ids = new Set(pedidos.map((p: any) => String(p.im_comprobante_id)));
-      // 🪤 Esto mapeaba cada pedido a la fecha de LA HOJA, así que siempre daba un solo día y los
-    // renglones de un comprobante de otra fecha no entraban: el galpón preparaba de menos.
-    // `asignarPedidos` ya lo hacía bien (`p.fecha ?? hoja.fecha`). Auditoría del 08/09/2026.
-    const dias = [...new Set(pedidos.map((p: any) =>
-      String(p.fecha ?? (hoja as any).fecha ?? '').slice(0, 10)).filter(Boolean))];
-      const renglones: Array<{ cod_articulo: number; cantidad: number }> = [];
-      for (const f of dias.slice(0, 6)) {
-        for (const it of await fetchVentasItems(f, f).catch(() => [] as any[])) {
-          if (!ids.has(String((it as any).id_comprobante))) continue;
-          renglones.push({ cod_articulo: Number((it as any).cod_articulo), cantidad: Number((it as any).cantidad) });
-        }
-      }
-      fraccionado = armarFraccionado(renglones, cat, formatosDeBolsa());
-    } catch (e: any) {
-      // Sin el detalle no se puede imprimir el listado de fraccionado, pero la hoja de ruta sí:
-      // se devuelve vacío y la pantalla avisa, en vez de fallar entera.
-      console.warn('[impresionHoja] no pude armar el fraccionado:', e?.message);
-    }
+    const cat = await fetchArticulosCatalogo();
+    const idsFraccionado = new Set(pedidos.map(p => String(p.im_comprobante_id)));
+    const diasFraccionado = [...new Set(pedidos.map(p => String(p.fecha ?? '').slice(0, 10)).filter(Boolean))];
+    const detalleFraccionado = await itemsPorFechas(diasFraccionado);
+    const sinItemsFraccionado = pedidos.filter(p => !detalleFraccionado.items.some(it => String(it.id_comprobante) === String(p.im_comprobante_id)));
+    const fraccionado = armarFraccionado(detalleFraccionado.items.filter(it => idsFraccionado.has(String(it.id_comprobante))).map(it => ({ cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad) })), cat, formatosDeBolsa());
 
     const totales = pedidos.reduce((acc: any, p: any) => ({
       bultos: acc.bultos + Number(p.bultos ?? 0),
@@ -501,15 +453,16 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
         clientes: porCliente.size, comprobantes: pedidos.length,
         bultos: Math.round(totales.bultos * 100) / 100,
         kg: Math.round(totales.kg * 100) / 100,
-        total: Math.round(totales.total * 100) / 100,
+        total: Math.round([...porCliente.values()].reduce((s, c) => s + c.total, 0) * 100) / 100,
       },
-      fraccionado,
+      fraccionado, fraccionado_completo: detalleFraccionado.completo && sinItemsFraccionado.length === 0, dias_faltantes: detalleFraccionado.dias_faltantes,
       fraccionado_totales: totalesFraccionado(fraccionado),
       sin_saldo: [...porCliente.values()].filter((c: any) => c.saldo_anterior == null).length,
+      sin_actualizar_saldo: [...porCliente.values()].filter((c: any) => !c.saldo_actualizado).length,
     });
   } catch (err: any) {
     console.error('[impresionHoja]', err?.message);
-    res.status(500).json({ error: err?.message ?? 'error' });
+    res.status(err.status ?? 500).json({ error: err?.message ?? 'error' });
   }
 }
 
@@ -536,30 +489,19 @@ export async function crearHoja(req: Request & { user?: JwtPayload }, res: Respo
     const fecha = /^\d{4}-\d{2}-\d{2}$/.test(String(b.fecha ?? '')) ? String(b.fecha) : fechaArgentina();
     // El número sigue al último y comparte serie con las hojas que la oficina hace en IM, para
     // que puedan hablar de "la 3402" sin traducir entre dos numeraciones (ver numeroHojaRuta).
-    const { data: ultima } = await sb().from('hojas_ruta')
-      .select('numero').eq('tenant_id', TENANT_ID).order('numero', { ascending: false }).limit(1).maybeSingle();
-    const numero = Number(b.numero) || proximoNumeroHoja(ultima?.numero as number | null);
-    const { data, error } = await sb().from('hojas_ruta').insert({
-      tenant_id: TENANT_ID, fecha, numero,
+    const numero = Number(b.numero) || null; // La asignación automática ocurre bajo el lock SQL.
+    const data = await mutarReparto(req.user?.sub, 'hoja_crear', {
+      tenant_id: TENANT_ID, fecha, numero, numero_minimo: proximoNumeroHoja(null),
       turno: b.turno ? String(b.turno) : null,
       transporte: b.transporte ? String(b.transporte) : null,
       camion_id: b.camion_id ? String(b.camion_id) : null,
       cod_zona: Number.isFinite(Number(b.cod_zona)) && Number(b.cod_zona) > 0 ? Number(b.cod_zona) : null,
       observaciones: b.observaciones ? String(b.observaciones) : null,
       created_by: req.user?.sub ?? null,
-    }).select().maybeSingle();
-    if (error) {
-      // El número es único por tenant: si dos personas crean una hoja a la vez, la segunda
-      // choca. Se dice claro en vez de un 500 que no se entiende.
-      if ((error as any).code === '23505') {
-        res.status(409).json({ error: `Ya existe una hoja de ruta con el número ${numero}. Probá de nuevo.` });
-        return;
-      }
-      res.status(500).json({ error: error.message }); return;
-    }
+    });
     res.json({ ok: true, hoja: data });
   } catch (err: any) {
-    res.status(500).json({ error: err?.message ?? 'error' });
+    res.status(err.status ?? 500).json({ error: err?.message ?? 'error' });
   }
 }
 
@@ -582,11 +524,14 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
       return;
     }
 
-    const entrada: any[] = Array.isArray(req.body?.pedidos) ? req.body.pedidos : [];
+    let entrada: any[] = Array.isArray(req.body?.pedidos) ? req.body.pedidos : [];
     if (!entrada.length) { res.status(400).json({ error: 'No mandaste ningún pedido' }); return; }
 
     // ¿Alguno ya está en otra hoja? Se avisa antes de tocar nada: un comprobante en dos hojas
     // se carga en dos camiones.
+    entrada = await verificarEntregas(entrada, req.body?.rango);
+    if (entrada.some(p => p.tipo !== 'RE')) { res.status(409).json({ error: 'Las nuevas hojas se arman con remitos.' }); return; }
+    entrada = await enriquecerEntregas(entrada);
     const ids = entrada.map(p => String(p.im_comprobante_id));
     if (ids.some(id => !/^[0-9]+$/.test(id))) {
       // 🪤 Los ids van interpolados en el `.or()` de más abajo, y `.or()` NO escapa como `.in()`:
@@ -616,7 +561,7 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
     const idsYGemelos = [...new Set([...ids, ...ids.map(i => gemelo.get(i)).filter(Boolean) as string[]])];
 
     const { data: yaAsignados, error: errAsig } = await sb().from('hojas_ruta_pedidos')
-      .select('im_comprobante_id, hoja_id, im_numero, hojas_ruta(numero, estado)').in('im_comprobante_id', idsYGemelos);
+      .select('im_comprobante_id, hoja_id, im_numero, hojas_ruta!inner(numero, estado, version,tenant_id)').eq('hojas_ruta.tenant_id', TENANT_ID).in('im_comprobante_id', idsYGemelos);
     // Si no se puede consultar, no se asigna: el aviso de "ya está en otra hoja" es lo único que
     // evita que la misma mercadería salga en dos camiones.
     if (errAsig) { res.status(502).json({ error: `No pude verificar si esos pedidos ya están en otra hoja: ${errAsig.message}` }); return; }
@@ -676,6 +621,7 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
       res.status(409).json({
         error: `Estos pedidos ya están en otra hoja de ruta: ${enOtra.map((a: any) => a.im_numero ?? a.im_comprobante_id).join(', ')}. Sacalos de ahí primero.`,
         mover_disponible: true,
+        origenes: Object.fromEntries(enOtra.map((a: any) => [String(a.im_comprobante_id), { hoja_id: a.hoja_id, version: a.hojas_ruta?.version }])),
         en_otra_hoja: enOtra.map((a: any) => String(a.im_comprobante_id)),
       });
       return;
@@ -686,9 +632,20 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
     // 🪤 De la MISMA fuente que la impresión: este número es el respaldo para cuando IM no
     // conteste al imprimir, y guardar acá uno de otro reporte dejaba dos verdades distintas.
     const saldos = new Map<number, number | null>();
-    await Promise.all([...new Set(entrada.map(p => Number(p.cod_cliente)))].map(async (cod) => {
-      try { saldos.set(cod, saldoAnteriorDeLaHoja(await comprobantesPendientesCliente(cod), [])); }
-      catch { saldos.set(cod, null); }   // sin saldo se imprime en blanco, como hoy
+    const snapshots: any[] = [];
+    const { data: previos, error: errPrevios } = await sb().from('hojas_ruta_pedidos').select('*').eq('hoja_id', hojaId);
+    if (errPrevios) throw new Error(errPrevios.message);
+    const previstas = await notasDeHoja(hojaId, await enriquecerEntregas([...(previos ?? []).filter((p: any) => !ids.includes(String(p.im_comprobante_id))), ...entrada]));
+    await Promise.all([...new Set(entrada.map(p => Number(p.cod_cliente)))].map(async cod => {
+      const empresa = entrada.find(p => Number(p.cod_cliente) === cod)!.cod_empresa;
+      const consultado_at = new Date().toISOString();
+      try {
+        const pendientes = await comprobantesPendientesCliente(cod, empresa);
+        const delCliente = previstas.filter(p => Number(p.cod_cliente) === cod && Number(p.cod_empresa) === empresa);
+        const excluir = [...delCliente.map(p => p.im_factura_id).filter(Boolean), ...delCliente.flatMap(p => p.notas.map((n: any) => n.id))];
+        saldos.set(cod, delCliente.every(p => p.im_factura_id) ? saldoAnteriorDeLaHoja(pendientes, excluir) : null);
+        snapshots.push({ cod_empresa: empresa, cod_cliente: cod, consultado_at, pendientes: pendientes.map(p => ({ id: p.id, saldo: p.saldo })) });
+      } catch { saldos.set(cod, null); }
     }));
 
     const { data: ultimo } = await sb().from('hojas_ruta_pedidos')
@@ -716,14 +673,14 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
     // deciden en qué camión entra la mercadería: si la pantalla quedó abierta desde ayer, o
     // alguien editó el pedido mientras tanto, guardar el número viejo arma una hoja que no
     // entra y eso se descubre en el galpón, cargando.
-    const pesos = new Map<string, { bultos: number; kg: number }>();
+    const pesos = new Map<string, { bultos: number; kg: number; renglones_sin_peso: number }>();
     try {
       const cat = await fetchArticulosCatalogo();
       const porComprobante = new Map<string, any[]>();
       // Sólo los días de los comprobantes que se están asignando: pedir la ventana entera
       // tarda 23 s y esto corre con el usuario esperando.
       const dias = [...new Set(entrada.map((p: any) => String(p.fecha ?? hoja.fecha).slice(0, 10)).filter(Boolean))];
-      const tandas = await Promise.all(dias.slice(0, 6).map(f => fetchVentasItems(f, f).catch(() => [] as any[])));
+      const tandas = await Promise.all(dias.map(f => fetchVentasItems(f, f).catch(() => [] as any[])));
       for (const it of tandas.flat()) {
         const k = String((it as any).id_comprobante);
         if (!porComprobante.has(k)) porComprobante.set(k, []);
@@ -746,7 +703,8 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
       const peso = pesos.get(String(p.im_comprobante_id));
       const emitido = facturado.get(String(p.im_comprobante_id));
       return {
-        hoja_id: hojaId,
+        hoja_id: hojaId, cod_empresa: p.cod_empresa, factura_origen: p.factura_origen, tipo_comprobante: p.tipo_comprobante, datos_consultados_at: p.datos_consultados_at,
+        peso_completo: !!peso && peso.renglones_sin_peso === 0, renglones_sin_peso: peso?.renglones_sin_peso ?? null,
         im_comprobante_id: String(p.im_comprobante_id),
         im_numero: p.im_numero != null ? Number(p.im_numero) : null,
         cod_cliente: Number(p.cod_cliente),
@@ -779,32 +737,16 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
         facturado_at: emitido?.facturado_at ?? (p.tipo === 'RE' ? new Date().toISOString() : null),
       };
     });
-    let { error } = await sb().from('hojas_ruta_pedidos').upsert(filas, { onConflict: 'im_comprobante_id' });
-    // 🪤 `total` lo agrega la migración 033. Si todavía no corrió, un insert con una columna
-    // inexistente falla ENTERO y no se puede armar ninguna hoja. Se reintenta sin el importe:
-    // lo único que se pierde es que salga impreso, y eso se nota; quedarse sin panel, no.
-    if (error && /total/i.test(error.message) && /column|schema/i.test(error.message)) {
-      console.warn('[asignarPedidos] sin columna `total` (¿falta la migración 033?), guardo sin el importe');
-      const sinTotal = filas.map(({ total, ...resto }) => resto);
-      ({ error } = await sb().from('hojas_ruta_pedidos').upsert(sinTotal, { onConflict: 'im_comprobante_id' }));
-    }
-    // Mismo criterio para `fecha`, que la agrega la migración 037: sin ella se pierde que el
-    // fraccionado cubra el arrastre, pero la hoja se arma igual.
-    if (error && /fecha/i.test(error.message) && /column|schema/i.test(error.message)) {
-      console.warn('[asignarPedidos] sin columna `fecha` (¿falta la migración 037?), guardo sin ella');
-      const sinFecha = filas.map(({ fecha, ...resto }) => resto);
-      ({ error } = await sb().from('hojas_ruta_pedidos').upsert(sinFecha, { onConflict: 'im_comprobante_id' }));
-    }
-    if (error) { res.status(500).json({ error: error.message }); return; }
+    await mutarReparto(req.user?.sub, 'asignar', { hoja_id: hojaId, version_esperada: req.body?.version_esperada, pedidos: filas, saldos: snapshots, mover: req.body?.mover === true, origenes: req.body?.origenes ?? {} });
     invalidarVista(); invalidarRemitos();
     res.json({
       ok: true, agregados: filas.length,
       sin_saldo: filas.filter(f => f.saldo_anterior == null).length,
-      peso_recalculado: pesos.size === entrada.length,
+      peso_recalculado: filas.every(f => f.peso_completo),
     });
   } catch (err: any) {
     console.error('[asignarPedidos]', err?.message);
-    res.status(500).json({ error: err?.message ?? 'error' });
+    res.status(err.status ?? 500).json({ error: err?.message ?? 'error' });
   }
 }
 
@@ -875,13 +817,11 @@ export async function editarHoja(req: Request & { user?: JwtPayload }, res: Resp
       }
     }
 
-    const { data, error } = await sb().from('hojas_ruta').update(cambios)
-      .eq('id', String(req.params.id)).eq('tenant_id', TENANT_ID).select().maybeSingle();
-    if (error) { res.status(500).json({ error: error.message }); return; }
-    if (!data) { res.status(404).json({ error: 'Hoja de ruta no encontrada' }); return; }
+    delete cambios.cerrada_at; delete cambios.cerrada_por;
+    const data = await mutarReparto(req.user?.sub, 'hoja_editar', { hoja_id: String(req.params.id), version_esperada: req.body?.version_esperada, cambios });
     res.json({ ok: true, hoja: data });
   } catch (err: any) {
-    res.status(500).json({ error: err?.message ?? 'error' });
+    res.status(err.status ?? 500).json({ error: err?.message ?? 'error' });
   }
 }
 
@@ -930,10 +870,8 @@ export async function borrarHoja(req: Request & { user?: JwtPayload }, res: Resp
   // Los pedidos se sueltan primero: si se borrara la hoja con pedidos adentro, el cascade se
   // los llevaría y nadie sabría que esos comprobantes quedaron sin repartir.
   // 📌 Lo facturado NO se pierde: vive en `presupuestos_facturados`, que no se toca acá.
-  const { error: e1 } = await sb().from('hojas_ruta_pedidos').delete().eq('hoja_id', id);
-  if (e1) { res.status(500).json({ error: e1.message }); return; }
-  const { error } = await sb().from('hojas_ruta').delete().eq('id', id).eq('tenant_id', TENANT_ID);
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  try { await mutarReparto(req.user?.sub, 'hoja_borrar', { hoja_id: id, version_esperada: req.query.version_esperada }); }
+  catch (err: any) { res.status(err.status ?? 500).json({ error: err.message }); return; }
   invalidarVista(); invalidarRemitos();   // los pedidos volvieron a estar libres
   res.json({ ok: true });
 }
@@ -945,8 +883,8 @@ export async function quitarPedido(req: Request & { user?: JwtPayload }, res: Re
   // Sólo se frena si la hoja está cerrada: sacar un pedido de una hoja abierta es normal, y el
   // registro de lo facturado vive en otra tabla que no se toca.
   const { data: fila, error: errFila } = await sb().from('hojas_ruta_pedidos')
-    .select('hoja_id, im_numero, hojas_ruta(numero, estado)')
-    .eq('im_comprobante_id', comprobanteId).maybeSingle();
+    .select('hoja_id, im_numero, hojas_ruta!inner(numero, estado, version,tenant_id)')
+    .eq('hojas_ruta.tenant_id', TENANT_ID).eq('im_comprobante_id', comprobanteId).maybeSingle();
   // 🪤 Sin esto el guard fallaba ABIERTO: si la consulta se caía, `fila` venía null, la hoja
   // parecía abierta y se borraba el pedido de una hoja ya liquidada.
   if (errFila) { res.status(502).json({ error: `No pude verificar el estado de la hoja: ${errFila.message}` }); return; }
@@ -968,9 +906,8 @@ export async function quitarPedido(req: Request & { user?: JwtPayload }, res: Re
     });
     return;
   }
-  const { error } = await sb().from('hojas_ruta_pedidos')
-    .delete().eq('im_comprobante_id', comprobanteId);
-  if (error) { res.status(500).json({ error: error.message }); return; }
+  try { await mutarReparto(req.user?.sub, 'quitar', { hoja_id: req.query.hoja_id, im_comprobante_id: comprobanteId, version_esperada: req.query.version_esperada }); }
+  catch (err: any) { res.status(err.status ?? 500).json({ error: err.message }); return; }
   invalidarVista(); invalidarRemitos();   // el pedido volvió a estar libre y la lista quedó vieja
   res.json({ ok: true });
 }

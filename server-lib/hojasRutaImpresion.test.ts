@@ -42,9 +42,9 @@ function fakeSb() {
     from: (tabla: string) => {
       const res = tabla === 'hojas_ruta'
         ? { data: hojaDevuelta, error: null }
-        : { data: facturadosDevueltos, error: null };
+        : { data: tabla === 'presupuestos_facturados' ? facturadosDevueltos : [], error: null };
       const q: any = { then: (r: any, j: any) => Promise.resolve(res).then(r, j), maybeSingle: () => Promise.resolve(res) };
-      for (const k of ['select', 'eq', 'in', 'order', 'limit', 'not', 'is', 'or']) q[k] = () => q;
+      for (const k of ['range','order','select', 'eq', 'in', 'order', 'limit', 'not', 'is', 'or']) q[k] = () => q;
       return q;
     },
   }));
@@ -104,7 +104,7 @@ describe('cabecera impresa de la hoja', () => {
       }],
     });
     facturadosDevueltos = [{
-      im_comprobante_id: '58700637', im_remito_id: '58800100', im_remito_numero: 77289,
+      im_comprobante_id: '58700637', cod_cliente:1093, im_remito_id: '58800100', im_remito_numero: 77289,
       im_factura_numero: 50358, facturado_at: '2026-09-08T12:00:00Z',
     }];
     const r = await llamar();

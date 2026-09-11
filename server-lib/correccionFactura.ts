@@ -1,3 +1,6 @@
+import { ivaExplicita } from './identidadIM.js';
+import { conIVAConfiable, identidadFiscal, exigirIdentidadFiscal, ErrorFiscal } from './fiscalRenglones.js';
+import { invalidarIM } from './infomanager.js';
 /**
  * CORREGIR UNA FACTURA YA EMITIDA, con notas de crédito y de débito.
  *
@@ -34,8 +37,10 @@ import { puedeArmarHojasDeRuta } from './permisos.js';
 import {
   fetchVentasItems, fetchClientesIMCon, cabeceraComprobante, fechaArgentina, moverFechaComprobante,
 } from './infomanager.js';
+import { exigirTipoEmpresa, ErrorVersion } from './versionPresupuesto.js';
 import { diaValido } from './moverFechaComprobante.js';
-import { emitirNotaCredito, emitirNotaDebito, letraDeFactura } from './facturarIM.js';
+import { letraDeFactura } from './facturarIM.js';
+import { ErrorOperacion, idOperacion, buscarOperacion, estadoCorreccion, validarVersion, iniciarOperacion, ejecutarOperacion, resumenOperacion, verificarPeticion, cancelarOperacion } from './operacionesCorreccion.js';
 import { usuarioIM } from './pedidos.js';
 import { invalidarVista } from './vistaPresupuestos.js';
 import { invalidarRemitos } from './vistaRemitos.js';
@@ -135,7 +140,7 @@ export function articulosAmbiguos(rs: RenglonCorreccion[]): number[] {
     const cod = Number(r.cod_articulo);
     const p = visto.get(cod);
     if (!p) { visto.set(cod, r); continue; }
-    if (Math.abs(Number(p.precio) - Number(r.precio)) > CERO || descuentoDe(p) !== descuentoDe(r)) malos.add(cod);
+    if (Math.abs(Number(p.precio) - Number(r.precio)) > CERO || descuentoDe(p) !== descuentoDe(r) || p.iva_por !== r.iva_por) malos.add(cod);
   }
   return [...malos].sort((a, b) => a - b);
 }
@@ -334,6 +339,7 @@ export async function verFacturaParaCorregir(req: Request & { user?: JwtPayload 
   if (!/^\d+$/.test(id)) { res.status(400).json({ error: 'Falta la factura.' }); return; }
   try {
     const cab = await cabeceraComprobante(id);
+    exigirTipoEmpresa(cab, 'FA');
     if (cab.existe === false) { res.status(404).json({ error: 'Esa factura ya no está en InfoManager.' }); return; }
     if (cab.existe !== true) { res.status(502).json({ error: 'No pude leer la factura en InfoManager. Probá de nuevo en un rato.' }); return; }
     if (cab.anulada) { res.status(409).json({ error: 'Esa factura está anulada: no hay nada que corregir.' }); return; }
@@ -355,7 +361,7 @@ export async function verFacturaParaCorregir(req: Request & { user?: JwtPayload 
       cantidad: Number(it.cantidad) || 0,
       precio: Number(it.precio_orig ?? 0) || Number(it.precio ?? 0) || 0,
       descripcion: String(it.detalle ?? '').trim() || `Artículo ${it.cod_articulo}`,
-      iva_por: Number(it.iva_por ?? 0) || 0,
+      iva_por: ivaExplicita(it.iva_por),
       cod_lista_precios: it.cod_lista_precios != null ? Number(it.cod_lista_precios) : null,
       descuento_porc: Number(it.descuento_porc ?? 0) || 0,
     }));
@@ -371,7 +377,9 @@ export async function verFacturaParaCorregir(req: Request & { user?: JwtPayload 
       return;
     }
     // El mismo artículo repetido AL MISMO PRECIO sí: se muestra en una fila con la suma.
-    const renglones = consolidarRenglones(crudos.filter((r: any) => r.cod_articulo > 0));
+    const originales = consolidarRenglones(crudos.filter((r: any) => r.cod_articulo > 0)).sort((a, b) => a.cod_articulo - b.cod_articulo);
+    const estado = await estadoCorreccion(id, originales, cab);
+    const renglones = estado.renglones.map(r => ({ ...r, descripcion: originales.find(o => o.cod_articulo === r.cod_articulo)?.descripcion ?? r.descripcion }));
 
     res.json({
       ok: true,
@@ -381,15 +389,16 @@ export async function verFacturaParaCorregir(req: Request & { user?: JwtPayload 
         id, numero: cab.numero, fecha, cod_cliente: cab.cod_cliente,
         cliente_nombre: (cliente as any)?.razon_social ?? (cliente as any)?.nombre ?? null,
         categoria_iva: (cliente as any)?.categoria_iva ?? null,
-        letra: letraDeFactura((cliente as any)?.categoria_iva),
+        letra: cab.tipo_factura,
         cod_empresa: cab.cod_empresa, cod_vendedor: cab.cod_vendedor,
         cod_lista_precios: cab.cod_lista_precios,
       },
-      renglones,
+      renglones, version: estado.version, bloqueo_productos: estado.bloqueo,
+      operacion: estado.operacion ? resumenOperacion(estado.operacion) : null,
     });
   } catch (err: any) {
     console.error('[verFacturaParaCorregir]', err?.message);
-    res.status(502).json({ error: `No pude leer la factura: ${err?.message ?? 'sin respuesta de InfoManager'}` });
+    res.status(err instanceof ErrorOperacion || err instanceof ErrorVersion || err instanceof ErrorFiscal ? err.status : 502).json({ error: `No pude leer la factura: ${err?.message ?? 'sin respuesta de InfoManager'}` });
   }
 }
 
@@ -403,273 +412,136 @@ export async function verFacturaParaCorregir(req: Request & { user?: JwtPayload 
  * emite.
  */
 export async function corregirFactura(req: Request & { user?: JwtPayload }, res: Response) {
-  if (frenaSiNoPuede(req, res)) return;
-  const id = String(req.body?.im_factura_id ?? '').trim();
-  if (!/^\d+$/.test(id)) { res.status(400).json({ error: 'Falta la factura.' }); return; }
-  const pedidos: any[] = Array.isArray(req.body?.renglones) ? req.body.renglones : [];
-  const emitir = req.body?.emitir === true;
-  const motivo = String(req.body?.motivo ?? '').trim().slice(0, 200);
-
-  try {
-    const cab = await cabeceraComprobante(id);
-    if (cab.existe !== true || cab.anulada !== false) {
-      res.status(409).json({ error: 'No pude verificar que la factura siga vigente en InfoManager.' });
-      return;
-    }
-    const fecha = cab.fecha ?? fechaArgentina();
-    const items = (await fetchVentasItems(fecha, fecha)).filter((it: any) => String(it.id_comprobante) === id);
-    if (!items.length) { res.status(502).json({ error: 'No pude traer los renglones de la factura.' }); return; }
-
-    const originales: RenglonCorreccion[] = items.map((it: any) => ({
-      cod_articulo: Number(it.cod_articulo) || 0,
-      cantidad: Number(it.cantidad) || 0,
-      precio: Number(it.precio_orig ?? 0) || Number(it.precio ?? 0) || 0,
-      // 🔴 Sin esto la nota sale por el bruto: en la FA B 50422 eran $112.406,73 de más.
-      descuento_porc: Number(it.descuento_porc ?? 0) || 0,
-      descripcion: String(it.detalle ?? '').trim() || undefined,
-      iva_por: Number(it.iva_por ?? 0) || 0,
-      cod_lista_precios: it.cod_lista_precios != null ? Number(it.cod_lista_precios) : null,
-    }));
-
-    /**
-     * 🪤 Los renglones SIN artículo no se pueden mandar a IM (`cod_articulo` es int64
-     * obligatorio) y se descartan de los dos lados: si están en la factura y en lo pedido, la
-     * diferencia da cero y no molestan.
-     */
-    const finales: RenglonCorreccion[] = pedidos
-      .map(r => ({
-        cod_articulo: Number(r?.cod_articulo) || 0,
-        cantidad: Number(r?.cantidad) || 0,
-        precio: Number(r?.precio) || 0,
-        descuento_porc: Number(r?.descuento_porc ?? 0) || 0,
-        descripcion: r?.descripcion != null ? String(r.descripcion) : undefined,
-        iva_por: r?.iva_por != null ? Number(r.iva_por) : null,
-        cod_lista_precios: r?.cod_lista_precios != null ? Number(r.cod_lista_precios) : null,
-      }))
-      .filter(r => r.cod_articulo > 0 && r.cantidad > 0);
-
-    const conArticulo = originales.filter(r => r.cod_articulo > 0);
-    // Mismo corte que al abrir la pantalla: lo que no se puede representar no se emite.
-    const ambiguos = articulosAmbiguos(conArticulo);
-    if (ambiguos.length) {
-      res.status(409).json({ error: `Esta factura tiene el artículo ${ambiguos.join(', ')} repetido a precios distintos: hay que corregirla en InfoManager. No se emitió nada.` });
-      return;
-    }
-    const correccion = calcularCorreccion(conArticulo, finales);
-
-    if (!correccion.nc.length && !correccion.nd.length) {
-      res.status(400).json({ error: 'No hay ninguna diferencia con lo que dice la factura.' });
-      return;
-    }
-
-    const clientes = await fetchClientesIMCon([cab.cod_cliente ?? 0]).catch(() => [] as any[]);
-    const cliente = clientes.find((c: any) => Number(c.cod_cliente) === Number(cab.cod_cliente));
-    const letra = letraDeFactura((cliente as any)?.categoria_iva);
-    if (!letra) {
-      res.status(409).json({ error: `No se sabe qué letra le corresponde al cliente ${cab.cod_cliente} (condición de IVA: ${(cliente as any)?.categoria_iva ?? 'sin cargar'}). Hacelo a mano.` });
-      return;
-    }
-
-    if (!emitir) {
-      res.json({ ok: true, previsualizacion: true, letra, ...correccion });
-      return;
-    }
-
-    // ── De acá para abajo se emiten comprobantes REALES ────────────────────────────────────
-    /**
-     * 🔴 Se comprueba que la tabla del vínculo EXISTA antes de emitir nada. Sin esto, en una base
-     * donde todavía no corrió la migración 038 la nota sale en InfoManager y después no se puede
-     * registrar: queda una nota de crédito real que el panel no ve y que nadie sabe que existe.
-     * Cuesta una consulta y evita el peor de los estados.
-     */
-    const { error: errTabla } = await sb().from('facturas_correcciones').select('id').limit(1);
-    if (errTabla) {
-      res.status(503).json({ error: `Todavía no está la tabla de correcciones en la base (${errTabla.message}). Hay que correr la migración 038 antes de emitir. No se emitió nada.` });
-      return;
-    }
-
-    const usuario = await usuarioIM(req.user);
-    /**
-     * 🪤 La API de IM no tiene ningún campo para relacionar la NC con su factura. La oficina lo
-     * escribe en las observaciones y el panel hace lo mismo, para que se lea igual desde IM.
-     */
-    /**
-     * 🔗 Va el número Y el id interno. El número es lo que lee una persona —es la convención que
-     * la oficina ya escribe a mano, "SEGUN FACTURA 50415"— y el id es lo que identifica el
-     * comprobante sin ambigüedad, que es lo que InfoManager usa para relacionarlos.
-     */
-    const obs = `SEGUN FACTURA ${cab.numero ?? id} [FA:${id}]${motivo ? ` - ${motivo}` : ''}`.slice(0, 500);
-    const base = {
-      cod_empresa: Number(cab.cod_empresa) || 1,
-      cod_cliente: Number(cab.cod_cliente),
-      cod_vendedor: Number(cab.cod_vendedor) || 0,
-      categoria_iva: (cliente as any)?.categoria_iva,
-      cod_lista_precios: Number(cab.cod_lista_precios) || 12,
-      usuario,
-      observaciones: obs,
-      fecha: fechaArgentina(),
-      cod_deposito: 1,
-    };
-
-    const emitidos: Array<{ tipo: string; numero: number | null; id: string; total: number }> = [];
-    const fallados: string[] = [];
-
-    if (correccion.nc.length) {
-      const r = await emitirNotaCredito({
-        ...base, total: correccion.total_nc, items: correccion.nc as any, numero: null,
-      } as any);
-      if (r.ok) emitidos.push({ tipo: r.tipo, numero: r.numero, id: r.id, total: correccion.total_nc });
-      else {
-        console.error(`[corregirFactura] NC rechazada · factura ${cab.numero}: ${r.error}`);
-        fallados.push(`La nota de crédito no salió: ${r.error}`);
-      }
-    }
-    /**
-     * 🪤 La ND se emite aunque la NC haya fallado, y al revés: son dos correcciones distintas y
-     * frenar la segunda porque falló la primera dejaría la factura a medio corregir sin que nadie
-     * lo sepa. Lo que salió se registra; lo que no, se dice.
-     */
-    if (correccion.nd.length) {
-      const r = await emitirNotaDebito({
-        ...base, total: correccion.total_nd, items: correccion.nd as any, numero: null,
-      } as any);
-      if (r.ok) emitidos.push({ tipo: r.tipo, numero: r.numero, id: r.id, total: correccion.total_nd });
-      else {
-        console.error(`[corregirFactura] ND rechazada · factura ${cab.numero}: ${r.error}`);
-        fallados.push(`La nota de débito no salió: ${r.error}`);
-      }
-    }
-
-    // El vínculo con la factura vive de nuestro lado: IM no lo guarda en ningún campo.
-    if (emitidos.length) {
-      const { error } = await sb().from('facturas_correcciones').insert(emitidos.map(e => ({
-        tenant_id: TENANT_ID,
-        im_factura_id: id,
-        im_factura_numero: cab.numero ?? null,
-        cod_cliente: Number(cab.cod_cliente),
-        tipo: e.tipo, im_comprobante_id: e.id, numero: e.numero, total: e.total,
-        motivo: motivo || null,
-        creado_por: req.user?.sub ?? null,
-      })));
-      if (error) {
-        console.error('[corregirFactura] no pude registrar la corrección:', error.message);
-        fallados.push(`Salieron ${emitidos.map(e => `${e.tipo} ${e.numero}`).join(' y ')} pero NO se pudieron registrar (${error.message}). ANOTALOS.`);
-      }
-    }
-
-    // Lo emitido cambia los totales del cliente: las dos vistas tienen que verlo ya.
-    invalidarVista(); invalidarRemitos();
-    res.json({ ok: true, emitidos, fallados, letra, ...correccion });
-  } catch (err: any) {
-    console.error('[corregirFactura]', err?.message);
-    res.status(502).json({ error: `No se pudo corregir: ${err?.message ?? 'sin respuesta de InfoManager'}` });
-  }
+  return tramitarCorreccion(req, res, 'productos');
 }
 
-/**
- * POST /api/facturacion/nota-financiera — una NC o ND que NO saca mercadería.
- *
- * body: `{ im_factura_id, tipo: 'NC'|'ND', importe, motivo, emitir? }`
- *
- * Mati (10/09/2026): *"la NC puede ser financiera, por alguna diferencia de cambio"*. Se cuelga
- * igual de una factura —para que el cliente sepa a qué corresponde y para que la hoja de ruta la
- * descuente del pedido— pero el importe lo escribe una persona en vez de salir de los renglones.
- *
- * 🔴 Sin `emitir: true` no toca nada, igual que la corrección por renglones.
- */
 export async function notaFinanciera(req: Request & { user?: JwtPayload }, res: Response) {
+  return tramitarCorreccion(req, res, 'financiera');
+}
+
+/** El mismo contrato para preview, primera emisión y reanudación de una operación durable. */
+async function tramitarCorreccion(req: Request & { user?: JwtPayload }, res: Response, clase: 'productos' | 'financiera') {
   if (frenaSiNoPuede(req, res)) return;
-  const id = String(req.body?.im_factura_id ?? '').trim();
-  if (!/^\d+$/.test(id)) { res.status(400).json({ error: 'Falta la factura.' }); return; }
-  const tipo = String(req.body?.tipo ?? 'NC').toUpperCase() === 'ND' ? 'ND' : 'NC';
-  const motivo = String(req.body?.motivo ?? '').trim().slice(0, 200);
-  const emitir = req.body?.emitir === true;
-
-  let renglon: RenglonCorreccion;
   try {
-    renglon = renglonDeAjuste(Number(req.body?.importe), motivo);
-  } catch (e: any) {
-    res.status(400).json({ error: e?.message ?? 'Importe inválido.' });
-    return;
-  }
-  /**
-   * 🔴 El motivo es obligatorio. En la factura corregida por renglones se entiende sola mirando
-   * los productos; acá el importe sale de la nada y sin el motivo escrito nadie puede reconstruir
-   * después por qué se le acreditó esa plata al cliente.
-   */
-  if (!motivo) {
-    res.status(400).json({ error: 'Escribí el motivo: es lo que se lee en InfoManager y lo único que explica el importe.' });
-    return;
-  }
-
-  try {
+    const id = String(req.body?.im_factura_id ?? '').trim();
+    if (!/^\d+$/.test(id)) throw new ErrorOperacion('Falta la factura.', 400);
+    const emitir = req.body?.emitir === true;
+    const motivo = String(req.body?.motivo ?? '').trim().slice(0, 200);
+    let finales: RenglonCorreccion[] = [];
+    let entrada: { renglones: RenglonCorreccion[] } | { tipo: 'NC' | 'ND'; importe: number };
+    if (clase === 'productos') {
+      if (!Array.isArray(req.body?.renglones)) throw new ErrorOperacion('Faltan los renglones completos de la corrección.', 400);
+      finales = req.body.renglones.map((r: any) => {
+        const n = { cod_articulo: Number(r?.cod_articulo), cantidad: Number(r?.cantidad), precio: Number(r?.precio),
+          descuento_porc: Number(r?.descuento_porc ?? 0), iva_por: r?.iva_por == null ? undefined : Number(r.iva_por),
+          cod_lista_precios: r?.cod_lista_precios == null ? null : Number(r.cod_lista_precios),
+          descripcion: r?.descripcion == null ? undefined : String(r.descripcion) };
+        if (!Number.isSafeInteger(n.cod_articulo) || n.cod_articulo <= 0 || !Number.isFinite(n.cantidad) || n.cantidad < 0 ||
+            !Number.isFinite(n.precio) || n.precio < 0 || !Number.isFinite(n.descuento_porc) || n.descuento_porc < 0 || n.descuento_porc > 100 ||
+            (n.iva_por != null && !Number.isFinite(n.iva_por)) || (n.cod_lista_precios != null && !Number.isSafeInteger(n.cod_lista_precios))) {
+          throw new ErrorOperacion('Hay un renglón inválido. No se emitió nada.', 400);
+        }
+        return n;
+      }).filter((r: RenglonCorreccion) => r.cantidad > 0);
+      if (articulosAmbiguos(finales).length) throw new ErrorFiscal('No se pueden consolidar artículos con precio, descuento o IVA distinto.');
+      finales = consolidarRenglones(finales).sort((a, b) => a.cod_articulo - b.cod_articulo);
+      // Quitar undefined antes de comparar con jsonb (que no lo conserva).
+      entrada = JSON.parse(JSON.stringify({ renglones: finales }));
+    } else {
+      if (!['NC', 'ND'].includes(req.body?.tipo)) throw new ErrorOperacion('Elegí NC o ND.', 400);
+      const r = renglonDeAjuste(Number(req.body?.importe), motivo);
+      if (!motivo) throw new ErrorOperacion('Escribí el motivo de la nota.', 400);
+      entrada = { tipo: req.body.tipo, importe: r.precio };
+    }
+    const operacionId = emitir ? idOperacion(req.body?.operacion_id) : null;
+    const existente = operacionId ? await buscarOperacion(operacionId) : null;
+    if (existente) {
+      verificarPeticion(existente, id, clase, entrada, motivo);
+      if (existente.estado === 'completo') { res.json(await ejecutarOperacion(existente)); return; }
+    }
     const cab = await cabeceraComprobante(id);
-    if (cab.existe !== true || cab.anulada !== false) {
-      res.status(409).json({ error: 'No pude verificar que la factura siga vigente en InfoManager.' });
-      return;
+    exigirTipoEmpresa(cab, 'FA');
+    if (cab.existe !== true || cab.anulada !== false) throw new ErrorOperacion('No pude verificar que la factura siga vigente en InfoManager.');
+    const clientes = await fetchClientesIMCon([cab.cod_cliente ?? 0]);
+    const cliente = clientes.find(c => Number(c.cod_cliente) === Number(cab.cod_cliente));
+    const letra = String(cab.tipo_factura ?? '').trim();
+    if (!['A', 'B'].includes(letra) || letraDeFactura(cliente?.categoria_iva) !== letra) {
+      throw new ErrorFiscal('La letra original de la factura no coincide con la condición de IVA actual. Revisala en InfoManager antes de emitir notas.');
     }
-    const clientes = await fetchClientesIMCon([cab.cod_cliente ?? 0]).catch(() => [] as any[]);
-    const cliente = clientes.find((c: any) => Number(c.cod_cliente) === Number(cab.cod_cliente));
-    const letra = letraDeFactura((cliente as any)?.categoria_iva);
-    if (!letra) {
-      res.status(409).json({ error: `No se sabe qué letra le corresponde al cliente ${cab.cod_cliente}. Hacela a mano.` });
-      return;
+    if (existente) exigirIdentidadFiscal(cab, existente.peticion.origen);
+    const fecha = cab.fecha ?? fechaArgentina();
+    const items = (await fetchVentasItems(fecha, fecha, { sinCache: true })).filter((it: any) => String(it.id_comprobante) === id);
+    if (!items.length) throw new ErrorOperacion('No pude traer los renglones de la factura.', 502);
+    const crudos: RenglonCorreccion[] = items.filter((it: any) => Number(it.cod_articulo) > 0).map((it: any) => ({
+      cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad),
+      precio: Number(it.precio_orig ?? 0) || Number(it.precio ?? 0), descuento_porc: Number(it.descuento_porc ?? 0),
+      descripcion: String(it.detalle ?? '').trim() || undefined, iva_por: ivaExplicita(it.iva_por),
+      cod_lista_precios: it.cod_lista_precios == null ? null : Number(it.cod_lista_precios),
+    }));
+    if (articulosAmbiguos(crudos).length) throw new ErrorOperacion('La factura repite artículos a precios diferentes. Corregila en InfoManager.');
+    const originales = consolidarRenglones(crudos).sort((a, b) => a.cod_articulo - b.cod_articulo);
+    const estado = await estadoCorreccion(id, originales, cab);
+    if (existente) {
+      const resultado = await ejecutarOperacion(existente);
+      invalidarIM(); invalidarVista(); invalidarRemitos(); res.json(resultado); return;
     }
-
-    const total = renglon.precio;
-    if (!emitir) {
-      res.json({ ok: true, previsualizacion: true, letra, tipo, total, renglon });
-      return;
+    if (estado.operacion) throw new ErrorOperacion(`Hay una operación pendiente (${estado.operacion.id}). Volvé a abrir la factura para retomarla o verificarla.`);
+    if (clase === 'productos' && estado.bloqueo) throw new ErrorOperacion(estado.bloqueo);
+    if (emitir) validarVersion(req.body?.version, estado.version);
+    if (clase === 'productos') {
+      finales = await conIVAConfiable(finales, originales, true);
+      for (const r of finales) {
+        const previo = estado.renglones.find(o => o.cod_articulo === r.cod_articulo);
+        for (const campo of ['cantidad', 'precio', 'descuento_porc'] as const) {
+          const valor = Number(r[campo] ?? 0);
+          if ((!previo || Math.abs(valor - Number(previo[campo] ?? 0)) > 1e-9) && Math.abs(valor - Math.round(valor * 10000) / 10000) > 1e-9) {
+            throw new ErrorFiscal(`El ${campo} modificado del artículo ${r.cod_articulo} admite hasta cuatro decimales; el valor original intacto se conserva.`);
+          }
+        }
+      }
     }
-
-    // Misma guarda que la corrección: si no está la tabla del vínculo, no se emite nada.
-    const { error: errTabla } = await sb().from('facturas_correcciones').select('id').limit(1);
-    if (errTabla) {
-      res.status(503).json({ error: `Todavía no está la tabla de correcciones en la base (${errTabla.message}). No se emitió nada.` });
-      return;
+    const correccion = clase === 'productos' ? calcularCorreccion(estado.renglones, finales) : (() => {
+      const e = entrada as { tipo: 'NC' | 'ND'; importe: number };
+      const r = renglonDeAjuste(e.importe, motivo);
+      return { nc: e.tipo === 'NC' ? [r] : [], nd: e.tipo === 'ND' ? [r] : [],
+        total_nc: e.tipo === 'NC' ? e.importe : 0, total_nd: e.tipo === 'ND' ? e.importe : 0,
+        diferencia: e.tipo === 'NC' ? -e.importe : e.importe };
+    })();
+    if (clase === 'productos') {
+      const total = (rs: RenglonCorreccion[]) => rs.reduce((n, r) => n + Number(r.cantidad) * netoUnitario(r.precio, descuentoDe(r)), 0);
+      const esperado = centavos(total(finales) - total(estado.renglones));
+      if (Math.abs(centavos(correccion.total_nd - correccion.total_nc) - esperado) > 0.010001) {
+        throw new ErrorFiscal('La precisión de InfoManager cambia la diferencia de la corrección en más de un centavo. Revisá cantidades/precios antes de emitir.');
+      }
+    } else {
+      const enriquecer = (rs: RenglonCorreccion[]) => conIVAConfiable(rs.map(r => ({ ...r, cod_lista_precios: Number(cab.cod_lista_precios) || 12 })), []);
+      correccion.nc = await enriquecer(correccion.nc); correccion.nd = await enriquecer(correccion.nd);
     }
-
-    const usuario = await usuarioIM(req.user);
+    if (!correccion.nc.length && !correccion.nd.length) throw new ErrorOperacion('No hay ninguna diferencia con el estado corregido de la factura.', 400);
+    if ((correccion.nc.length && !(correccion.total_nc > 0)) || (correccion.nd.length && !(correccion.total_nd > 0))) {
+      throw new ErrorOperacion('La diferencia es menor a un centavo. No se emitió nada.', 400);
+    }
+    if (!letra || !(Number(cab.cod_vendedor) > 0) || !(Number(cab.cod_cliente) > 0) || !(Number(cab.cod_empresa) > 0)) {
+      throw new ErrorOperacion('Falta verificar cliente, empresa, vendedor o condición de IVA. Corregila en InfoManager.');
+    }
+    if (!emitir) { res.json({ ok: true, previsualizacion: true, letra, version: estado.version, ...correccion }); return; }
     const base = {
-      cod_empresa: Number(cab.cod_empresa) || 1,
-      cod_cliente: Number(cab.cod_cliente),
-      cod_vendedor: Number(cab.cod_vendedor) || 0,
-      categoria_iva: (cliente as any)?.categoria_iva,
-      cod_lista_precios: Number(cab.cod_lista_precios) || 12,
-      usuario,
-      observaciones: `${motivo} SEGUN FACTURA ${cab.numero ?? id} [FA:${id}]`.slice(0, 500),
-      fecha: fechaArgentina(),
-      cod_deposito: 1,
-      total,
-      items: [renglon] as any,
-      numero: null,
+      cod_empresa: Number(cab.cod_empresa), cod_cliente: Number(cab.cod_cliente), cod_vendedor: Number(cab.cod_vendedor),
+      categoria_iva: cliente?.categoria_iva, cod_lista_precios: Number(cab.cod_lista_precios) || 12,
+      usuario: await usuarioIM(req.user), observaciones: `SEGUN FACTURA ${cab.numero ?? id} [FA:${id}] - ${motivo}`.slice(0, 500),
+      fecha: fechaArgentina(), cod_deposito: 1, numero: null,
     };
-    const r = tipo === 'NC' ? await emitirNotaCredito(base as any) : await emitirNotaDebito(base as any);
-    if (!r.ok) {
-      console.error(`[notaFinanciera] ${tipo} rechazada · factura ${cab.numero}: ${r.error}`);
-      res.status(502).json({ error: `La ${tipo === 'NC' ? 'nota de crédito' : 'nota de débito'} no salió: ${r.error}` });
-      return;
-    }
-
-    const { error } = await sb().from('facturas_correcciones').insert({
-      tenant_id: TENANT_ID,
-      im_factura_id: id,
-      im_factura_numero: cab.numero ?? null,
-      cod_cliente: Number(cab.cod_cliente),
-      tipo: r.tipo, im_comprobante_id: r.id, numero: r.numero, total,
-      motivo,
-      creado_por: req.user?.sub ?? null,
-    });
-    const fallados = error
-      ? [`Salió la ${r.tipo} ${r.numero} pero NO se pudo registrar (${error.message}). ANOTALA.`]
-      : [];
-    if (error) console.error('[notaFinanciera] no pude registrar:', error.message);
-
-    invalidarVista(); invalidarRemitos();
-    res.json({ ok: true, emitidos: [{ tipo: r.tipo, numero: r.numero, id: r.id, total }], fallados, letra });
+    const componentes: Array<{ tipo: 'NC' | 'ND'; datos: any }> = [];
+    if (correccion.nc.length) componentes.push({ tipo: 'NC', datos: { ...base, observaciones: `${base.observaciones} [OP:${operacionId}:NC]`, total: correccion.total_nc, items: correccion.nc } });
+    if (correccion.nd.length) componentes.push({ tipo: 'ND', datos: { ...base, observaciones: `${base.observaciones} [OP:${operacionId}:ND]`, total: correccion.total_nd, items: correccion.nd } });
+    const o = await iniciarOperacion({ id: operacionId!, factura: id, version: estado.version, clase,
+      peticion: { entrada, motivo, numero_factura: cab.numero ?? null, origen: identidadFiscal(cab) }, componentes,
+      originales: JSON.parse(JSON.stringify(originales)), finales, usuario: req.user?.sub ?? null });
+    const resultado = await ejecutarOperacion(o);
+    invalidarIM(); invalidarVista(); invalidarRemitos(); res.json({ ...resultado, letra, ...correccion });
   } catch (err: any) {
-    console.error('[notaFinanciera]', err?.message);
-    res.status(502).json({ error: `No se pudo emitir: ${err?.message ?? 'sin respuesta de InfoManager'}` });
+    invalidarIM(); invalidarVista(); invalidarRemitos();
+    res.status(err instanceof ErrorOperacion || err instanceof ErrorVersion || err instanceof ErrorFiscal ? err.status : 502).json({ error: err?.message ?? 'No se pudo procesar la corrección.' });
   }
 }
 
@@ -696,6 +568,7 @@ export async function moverFechaFactura(req: Request & { user?: JwtPayload }, re
 
   try {
     const cab = await cabeceraComprobante(id);
+    exigirTipoEmpresa(cab, 'FA');
     if (cab.existe === false) { res.status(404).json({ error: 'Esa factura ya no está en InfoManager.' }); return; }
     if (cab.existe !== true) { res.status(502).json({ error: 'No pude leer la factura en InfoManager.' }); return; }
     if (cab.anulada) { res.status(409).json({ error: 'Esa factura está anulada.' }); return; }
@@ -730,7 +603,7 @@ export async function moverFechaFactura(req: Request & { user?: JwtPayload }, re
     }
 
     // Las vistas van por rango de fechas: con la fecha cambiada, lo cacheado ya no sirve.
-    invalidarVista(); invalidarRemitos();
+    invalidarIM(); invalidarVista(); invalidarRemitos();
     res.json({ ok: true, fecha, numero: cab.numero, remito, avisos });
   } catch (err: any) {
     console.error('[moverFechaFactura]', err?.message);
@@ -748,4 +621,13 @@ export async function historialCorrecciones(req: Request & { user?: JwtPayload }
     .order('created_at', { ascending: false });
   if (error) { res.status(500).json({ error: error.message }); return; }
   res.json({ ok: true, correcciones: data ?? [] });
+}
+
+/** Cancela sólo una operación cuyo primer POST recibió rechazo inequívoco. */
+export async function cancelarCorreccion(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  try {
+    await cancelarOperacion(idOperacion(req.params.id));
+    res.json({ ok: true });
+  } catch (e: any) { res.status(e instanceof ErrorOperacion ? e.status : 503).json({ error: e.message }); }
 }

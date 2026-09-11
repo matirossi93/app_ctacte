@@ -1,98 +1,94 @@
 name: CI
-
-# Corre el mismo pipeline que el deploy de EasyPanel (build del front + del server + tests)
-# en cada push a main y en cada PR contra main. Es el gate que faltaba: el PR #14
-# se mergeó roto porque validó `npm test` pero nunca `npm run build` (tsc -b reventaba).
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-
-# Si llega un push/PR nuevo, cancela el run viejo del mismo ref (ahorra minutos).
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
-# Mínimo privilegio: el CI solo necesita leer el repo.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
-
 jobs:
-  # Gate bloqueante: si esto falla, el deploy también fallaría. Marcar como required
-  # en Branch protection (Settings → Branches → main).
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
-    timeout-minutes: 15 # el pipeline real corre en 2-4 min; techo para que un cuelgue no facture 6h
+    timeout-minutes: 25
+    outputs:
+      build: ${{ steps.identity.outputs.build }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node 22
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22 # calza con el Dockerfile (node:22-alpine)
+          node-version: 22
           cache: npm
-
-      - name: Install deps (npm ci)
+      - name: Instalar dependencias exactas
         run: npm ci
-
-      - name: Build front (tsc -b && vite build)
+      - name: Auditoría de dependencias de producción
+        run: npm audit --omit=dev
+      - name: Compilar frontend
         run: npm run build
-
-      - name: Build server (tsc -p tsconfig.server.json)
+      - name: Compilar servidor e identificar versión
         run: npm run build:server
-
-      - name: Tests (vitest run)
+      - name: Tests unitarios
         run: npm test
-
-  # Dispara el rebuild en EasyPanel, pero SOLO si el build y los tests pasaron.
-  # Antes el Rebuild se apretaba a mano en el panel sin saber cómo había salido el CI:
-  # se podía publicar un commit roto. Acá el gate viene de arriba (needs: build-and-test).
-  #
-  # El secreto EASYPANEL_DEPLOY_URL es la URL del *deploy webhook del servicio* — sirve
-  # para una sola cosa (redeployar cta_cte) y no da acceso al panel. Se saca del propio
-  # servicio en EasyPanel y se rota desde ahí si hace falta.
+      - name: Migraciones y concurrencia en PostgreSQL aislado
+        run: npm run test:reparto:db
+      - name: Instalar navegador
+        run: npx playwright install --with-deps chromium
+      - name: Navegador local con API simulada
+        run: npm run test:reparto:browser
+      - name: Identidad del código probado
+        id: identity
+        run: echo "build=$(node scripts/build-info.mjs)" >> "$GITHUB_OUTPUT"
+      - name: Construir imagen de producción
+        run: docker build -t ctacte-ci:test .
+      - name: Imagen sin root, sin red y con SQLite temporal
+        env:
+          EXPECTED_BUILD: ${{ steps.identity.outputs.build }}
+        run: python3 tests/reparto/docker-smoke.py ctacte-ci:test "$EXPECTED_BUILD"
+      - name: Evidencia de navegador
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reparto-browser
+          path: tests/artifacts-reparto
+          if-no-files-found: ignore
+          retention-days: 7
   deploy:
     name: Deploy (EasyPanel)
     needs: build-and-test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
-      - name: Disparar rebuild
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Disparar un único rebuild
         env:
           DEPLOY_URL: ${{ secrets.EASYPANEL_DEPLOY_URL }}
         run: |
-          # Sin el secreto cargado el paso avisa y sale bien: el workflow queda inerte
-          # en vez de pintar de rojo todos los push hasta que alguien lo configure.
           if [ -z "$DEPLOY_URL" ]; then
-            echo "::warning::EASYPANEL_DEPLOY_URL no está configurado — no se disparó el deploy."
-            exit 0
+            echo "::error::EASYPANEL_DEPLOY_URL no está configurado; no hubo despliegue."
+            exit 1
           fi
-          # -f: un 4xx/5xx del panel tiene que romper el job, no pasar de largo.
-          curl -fsS --max-time 60 -X POST "$DEPLOY_URL" && echo "rebuild disparado"
-
-  # Job informativo: NO bloquea el merge (hoy hay ~500 errores de eslint, casi todo
-  # no-explicit-any). Da visibilidad para ir limpiándolo. NO marcar como required.
+          curl -fsS --max-time 60 -o /dev/null -X POST "$DEPLOY_URL"
+      - name: Verificar versión publicada y esquema listo
+        env:
+          EXPECTED_BUILD: ${{ needs.build-and-test.outputs.build }}
+        run: node scripts/verificar-despliegue.mjs
   lint:
     name: Lint (informativo)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node 22
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
-      - name: Install deps (npm ci)
-        run: npm ci
-
-      - name: Lint (eslint)
-        run: npm run lint
+      - run: npm ci
+      - run: npm run lint

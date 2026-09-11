@@ -91,3 +91,10 @@ describe('pesoDeRenglones — la carga del camión', () => {
     expect(total > 4000).toBe(true);
   });
 });
+
+it.each(['dato ilegible', '', '  ', null, undefined, NaN, Infinity, -1])('cantidad desconocida %s no acredita peso completo', cantidad => {
+  expect(pesoDeRenglones([{cantidad,equivalencia_um:25}])).toMatchObject({kg:0,bultos:0,renglones_sin_peso:1});
+});
+it('cero real y string numérico son distintos de una cantidad ilegible', () => {
+  expect(pesoDeRenglones([{cantidad:0,equivalencia_um:null},{cantidad:'2',equivalencia_um:25}])).toEqual({kg:50,bultos:2,renglones_sin_peso:0});
+});

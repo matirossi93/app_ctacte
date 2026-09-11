@@ -1,3 +1,5 @@
+import { useOperacionReparto } from './RepartoContext';
+import { useDialogoReparto, estiloDialogo } from '../utils/useDialogoReparto';
 import { useEffect, useState } from 'react';
 
 /** Hoy en Argentina (UTC-3 fija), que es con lo que trabaja la oficina. */
@@ -45,6 +47,8 @@ interface PedidoPrevio {
 }
 
 interface Previa {
+    fecha_maxima_emision: string;
+    max_adelanto_dias: number;
     pedidos: PedidoPrevio[];
     a_emitir: {
         facturas: number; remitos: number; clientes: number; total: number;
@@ -72,6 +76,7 @@ export function FacturarModal(
     { ids: string[]; desde: string; hasta: string; onClose: (huboCambios: boolean) => void },
 ) {
     const query = `ids=${ids.join(',')}&desde=${desde}&hasta=${hasta}`;
+    const operacionGlobal = useOperacionReparto('FacturarModal');
     const [previa, setPrevia] = useState<Previa | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [emitiendo, setEmitiendo] = useState(false);
@@ -93,13 +98,16 @@ export function FacturarModal(
     const [fechaEmision, setFechaEmision] = useState(hoyISO);
 
     useEffect(() => {
-        fetch(`/api/facturacion/previa?${query}`, { headers: authHeaders() })
+        const controller = new AbortController(); let vivo = true;
+        fetch(`/api/facturacion/previa?${query}`, { headers: authHeaders(), signal: controller.signal })
             .then(async r => {
                 const d = await r.json().catch(() => null);
+                if (!vivo) return;
                 if (!r.ok) throw new Error(d?.error ?? 'No se pudo revisar qué se puede facturar');
                 setPrevia(d);
             })
-            .catch(e => setError(e?.message ?? 'Error de conexión'));
+            .catch(e => { if (vivo) setError(e?.message ?? 'Error de conexión'); });
+        return () => { vivo = false; controller.abort(); };
     }, [query]);
 
     // Mientras se está emitiendo, cerrar la pestaña deja comprobantes emitidos a medias y sin
@@ -112,7 +120,8 @@ export function FacturarModal(
     }, [emitiendo]);
 
     async function emitir() {
-        if (emitiendo || intentado) return;          // un doble clic no emite dos veces
+        if (operacionGlobal.enCurso.current || emitiendo || intentado || !fechaEmision || (previa?.fecha_maxima_emision && fechaEmision > previa.fecha_maxima_emision)) return;          // un doble clic no emite dos veces
+        if (!operacionGlobal.comenzar()) return;
         setEmitiendo(true); setIntentado(true); setError(null);
         try {
             const r = await fetch('/api/facturacion', {
@@ -127,7 +136,7 @@ export function FacturarModal(
             // el mensaje no puede decir "no se emitió nada".
             setError(`${e?.message ?? 'Error de conexión'}. **No se sabe qué llegó a emitirse**: puede que el servidor haya seguido emitiendo. Cerrá esta ventana, actualizá la lista y fijate qué quedó facturado ANTES de reintentar.`);
         } finally {
-            setEmitiendo(false);
+            setEmitiendo(false); operacionGlobal.terminar();
         }
     }
 
@@ -138,14 +147,15 @@ export function FacturarModal(
     const enNegativo = (previa?.pedidos ?? []).filter(p => p.estado !== 'no_se_puede' && p.sin_stock?.length);
     // Si se intentó emitir, al cerrar SIEMPRE se recarga: aunque la respuesta no haya llegado,
     // del otro lado puede haber comprobantes nuevos.
-    const cerrar = () => { if (!emitiendo) onClose(intentado || !!resultado); };
+    const cerrar = () => { if (!operacionGlobal.enCurso.current) onClose(intentado || !!resultado); };
 
+    const dialogo = useDialogoReparto(cerrar);
     return createPortal(
-        <div className="fac-overlay" onClick={e => { if (e.target === e.currentTarget) cerrar(); }}>
+        <dialog ref={dialogo} style={estiloDialogo} aria-label="Facturar pedidos" className="fac-overlay" onClick={e => { if (e.target === e.currentTarget) cerrar(); }}>
             <div className="fac-modal">
                 <div className="fac-head">
                     <Receipt size={17} />
-                    <h2>Facturar {ids.length} {ids.length === 1 ? 'pedido' : 'pedidos'}</h2>
+                    <h2 id="fac-titulo">Facturar {ids.length} {ids.length === 1 ? 'pedido' : 'pedidos'}</h2>
                     <button className="fac-cerrar" onClick={cerrar} disabled={emitiendo} title={emitiendo ? 'Esperá a que termine de emitir' : 'Cerrar'}>
                         <X size={18} />
                     </button>
@@ -180,11 +190,12 @@ export function FacturarModal(
                             anteriores y la factura tiene que llevar ESA fecha (Mati, 09/09/2026). */}
                         <label className="fac-fecha">
                             Fecha de los comprobantes
-                            <input type="date" value={fechaEmision} disabled={emitiendo}
+                            <input type="date" value={fechaEmision} max={previa.fecha_maxima_emision} disabled={emitiendo}
                                    onChange={e => setFechaEmision(e.target.value)} />
                             {fechaEmision !== hoyISO() && (
                                 <span className="fac-fecha-aviso">no es hoy</span>
                             )}
+                            <small>Fecha máxima permitida: {previa.fecha_maxima_emision} ({previa.max_adelanto_dias} días de adelanto).</small>
                         </label>
 
                         <table className="fac-tabla">
@@ -317,7 +328,7 @@ export function FacturarModal(
                     </>
                 )}
             </div>
-        </div>,
+        </dialog>,
         document.body,
     );
 }

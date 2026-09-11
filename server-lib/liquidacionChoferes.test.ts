@@ -24,7 +24,7 @@ function fakeSb() {
     from: (t: string) => {
       const res = tablas[t] ?? { data: null, error: null };
       const q: any = { then: (r: any, j: any) => Promise.resolve(res).then(r, j), maybeSingle: () => Promise.resolve(res) };
-      for (const k of ['select', 'eq', 'in', 'gte', 'lte', 'order', 'limit']) q[k] = () => q;
+      for (const k of ['range','or','select', 'eq', 'in', 'gte', 'lte', 'order', 'limit']) q[k] = () => q;
       return q;
     },
   }));
@@ -42,8 +42,8 @@ function hoja(over: Record<string, any> = {}) {
     id: 'h1', numero: 3395, fecha: '2026-09-08', estado: 'cerrada',
     chofer_id: 'c-nino', choferes: { nombre: 'NIÑO' },
     hojas_ruta_pedidos: [
-      { cod_cliente: 1, total: 100000, bultos: 10, kg: 400 },
-      { cod_cliente: 2, total: 50000, bultos: 5, kg: 200 },
+      { im_comprobante_id: '70001', cod_cliente: 1, total: 100000, bultos: 10, kg: 400 },
+      { im_comprobante_id: '70002', cod_cliente: 2, total: 50000, bultos: 5, kg: 200 },
     ],
     ...over,
   };
@@ -56,8 +56,8 @@ describe('liquidación mensual', () => {
     tablas['hojas_ruta'] = {
       data: [
         hoja(),
-        hoja({ id: 'h2', numero: 3396, hojas_ruta_pedidos: [{ cod_cliente: 1, total: 20000, bultos: 2, kg: 80 }] }),
-        hoja({ id: 'h3', numero: 3397, chofer_id: 'c-victor', choferes: { nombre: 'VICTOR' }, hojas_ruta_pedidos: [{ cod_cliente: 9, total: 500000, bultos: 50, kg: 2000 }] }),
+        hoja({ id: 'h2', numero: 3396, hojas_ruta_pedidos: [{ im_comprobante_id: '70003', cod_cliente: 1, total: 20000, bultos: 2, kg: 80 }] }),
+        hoja({ id: 'h3', numero: 3397, chofer_id: 'c-victor', choferes: { nombre: 'VICTOR' }, hojas_ruta_pedidos: [{ im_comprobante_id: '70004', cod_cliente: 9, total: 500000, bultos: 50, kg: 2000 }] }),
       ],
       error: null,
     };
