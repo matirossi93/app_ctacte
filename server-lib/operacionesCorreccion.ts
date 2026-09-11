@@ -104,9 +104,21 @@ function canonico(x: unknown): string {
   if (x && typeof x === 'object') return `{${Object.entries(x).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => JSON.stringify(k) + ':' + canonico(v)).join(',')}}`;
   return JSON.stringify(x);
 }
+/** Rechazo conocido de IM777: el validador cruza la serie de notas con facturas.
+ * Sólo orientar a emisión externa tras rechazo confirmado; nunca ante incertidumbre.
+ */
+function conflictoNumeracionNota(o: OperacionFactura): boolean {
+  return o.estado === 'listo' && !o.resultado_por_conciliar &&
+    ['NC', 'ND'].includes(o.componentes[o.indice]?.tipo) &&
+    /ya existe una (?:factura|nota) con:\s*tag\s*=\s*'S',\s*cod_empresa\s*=\s*1,\s*id_destino\s*=\s*1,\s*punto_de_venta\s*=\s*777,\s*tipo_factura\s*=\s*'[AB]'\s*y\s*numero\s*=\s*\d+/i.test(o.error ?? '');
+}
+const GUIA_NUMERACION_NOTA = 'InfoManager rechazó la nota por un conflicto de numeración en el punto 777. Reintentar desde la app no lo resuelve. Verificá en InfoManager si ya existe la nota que necesitás; si falta, emití allí sólo la nota pendiente. Después hay que conciliar su comprobante con esta operación.';
 export function resumenOperacion(o: OperacionFactura) {
+  const conflicto = conflictoNumeracionNota(o);
   return { id: o.id, clase: o.clase, estado: o.estado, entrada: o.peticion.entrada, motivo: o.peticion.motivo,
-    emitidos: o.resultados, error: o.error, resultado_por_conciliar: o.resultado_por_conciliar, puede_retomar: o.estado === 'listo',
+    emitidos: o.resultados, error: o.error, resultado_por_conciliar: o.resultado_por_conciliar,
+    puede_retomar: o.estado === 'listo' && !conflicto,
+    ...(conflicto ? { requiere_revision_numeracion: true, instruccion: GUIA_NUMERACION_NOTA } : {}),
     puede_cancelar: o.estado === 'listo' && o.indice === 0 && !o.resultados.length && !!o.error };
 }
 
@@ -116,9 +128,26 @@ export async function cancelarOperacion(id: string) {
 }
 
 export async function ejecutarOperacion(operacion: OperacionFactura) {
+  const clave = `correccion:${operacion.id}`, token = randomUUID();
+  const { data: reclamada, error } = await sb().rpc('reclamar_presupuesto', {
+    p_tenant: TENANT_ID, p_id: clave, p_token: token, p_actividad: 'corregir factura',
+  });
+  if (error || reclamada !== true) throw new ErrorOperacion('Esta corrección tiene otra operación en curso o por verificar. No se envió otra nota.');
+  try {
+    const actual = await buscarOperacion(operacion.id);
+    if (!actual) throw new ErrorOperacion('No pude releer el intento de corrección. No se envió otra nota.', 503);
+    return await ejecutarOperacionReclamada(actual);
+  } finally {
+    const { error: errSuelta } = await sb().rpc('soltar_presupuesto', { p_tenant: TENANT_ID, p_id: clave, p_token: token });
+    if (errSuelta) console.error('[correccion] no se pudo liberar el reclamo:', errSuelta.message);
+  }
+}
+
+async function ejecutarOperacionReclamada(operacion: OperacionFactura) {
   let o = operacion;
   while (o.estado !== 'completo') {
     if (o.estado !== 'listo') throw new ErrorOperacion(`La operación ${o.id} está ${o.estado === 'emitiendo' ? 'en curso o perdió la respuesta' : 'sin confirmar'}. Verificá los comprobantes en InfoManager; no se puede reemitir a ciegas.`);
+    if (conflictoNumeracionNota(o)) throw new ErrorOperacion(GUIA_NUMERACION_NOTA);
     const token = randomUUID();
     const { data: tomada, error: errToma } = await sb().rpc('tomar_paso_factura', {
       p_tenant: TENANT_ID, p_id: o.id, p_indice: o.indice, p_token: token,
@@ -148,7 +177,7 @@ export async function ejecutarOperacion(operacion: OperacionFactura) {
     }
     o = guardada as OperacionFactura;
     if (!r.ok) return { ok: false, operacion: resumenOperacion(o), emitidos: o.resultados,
-      fallados: [r.sinRespuesta ? `No se sabe si la ${c.tipo} salió. Verificá en InfoManager. ${r.error}` : `InfoManager rechazó la ${c.tipo}: ${r.error}. Podés retomar esta operación.`] };
+      fallados: [r.sinRespuesta ? `No se sabe si la ${c.tipo} salió. Verificá en InfoManager. ${r.error}` : conflictoNumeracionNota(o) ? GUIA_NUMERACION_NOTA : `InfoManager rechazó la ${c.tipo}: ${r.error}. Corregí el motivo indicado antes de retomar esta operación.`] };
   }
   return { ok: true, operacion: resumenOperacion(o), emitidos: o.resultados, fallados: [] as string[] };
 }

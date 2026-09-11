@@ -75,7 +75,7 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false) {
     // comprobante para reordenar los despachos, así que un pedido fechado para el 10 existe
     // desde antes. Un pedido que no aparece en la pantalla no entra en ninguna hoja y nadie
     // se entera hasta que llama el cliente.
-    const [ventas, cat, stock] = await Promise.all([
+    const [ventas, cat, stockInicial] = await Promise.all([
       fetchVentas(desde, hasta, { actualizar: forzar }),
       fetchArticulosCatalogo(),
       // Sin stock la pantalla igual sirve: se avisa que no se pudo consultar, no se inventa.
@@ -148,6 +148,8 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false) {
       }
     }
 
+    const codigosControl = presupuestos.flatMap(p => (renglones.get(String(p.id)) ?? []).map(r => Number(r.cod_articulo)));
+    const stock = stockInicial ? await fetchStockPorDeposito(DEPOSITO_CONTROL, false, codigosControl).catch(() => stockInicial) : null;
     tIM = Date.now() - t0;
     const ids = presupuestos.map((p: any) => String(p.id));
 

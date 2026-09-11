@@ -39,3 +39,24 @@ it('acepta cero explícito; un pedido aún sin factura no dispara consultas',asy
  expect((await actualizarImportesFacturas([original],{ventas:[{...actual,total:0}]}))[0].total).toBe(0);
  await actualizarImportesFacturas([{total:100}]);expect(m.ventas).not.toHaveBeenCalled();
 });
+it('una entrega legacy obtiene empresa de su FA vigente sólo con cliente y Casa Central confirmados',async()=>{
+ const [r]=await actualizarImportesFacturas([{...original,cod_empresa:null}],{ventas:[actual]});
+ expect(r).toMatchObject({cod_empresa:1,empresa_fuente:'factura_im',total:1073534.08});
+ await expect(actualizarImportesFacturas([{...original,cod_empresa:null}],{ventas:[{...actual,cod_empresa:2}]})).rejects.toThrow('verificar');
+ await expect(actualizarImportesFacturas([{...original,cod_empresa:null}],{ventas:[{...actual,cod_cliente:9}]})).rejects.toThrow('verificar');
+});
+it('un importe no verificable en lectura no oculta otras entregas ni muestra total viejo o cero',async()=>{
+ const mala={...original,im_factura_id:'30',im_factura_numero:50422};
+ const ventas=[actual,{...actual,id:'30',anulada:'S' as const}];
+ const r=await actualizarImportesFacturas([original,mala],{ventas,tolerarErrores:true});
+ expect(r[0].total).toBe(1073534.08);
+ expect(r[1]).toMatchObject({total:null,total_snapshot:1111521,importe_fuente:'no_verificado'});
+ expect(r[1].importe_error).toContain('50422');
+ await expect(actualizarImportesFacturas([original,mala],{ventas})).rejects.toThrow('50422');
+});
+it('lectura tolerante ante caída conserva filas desconocidas y no dispara una consulta por cada FA',async()=>{
+ m.ventas.mockRejectedValue(Error('IM no responde'));
+ const [r]=await actualizarImportesFacturas([original],{tolerarErrores:true});
+ expect(r.total).toBeNull();expect(r.importe_fuente).toBe('no_verificado');
+ expect(m.cabecera).not.toHaveBeenCalled();
+});

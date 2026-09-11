@@ -266,7 +266,7 @@ export async function listarHojas(req: Request & { user?: JwtPayload }, res: Res
     // 🔑 Lo emitido se cruza contra `presupuestos_facturados`, que es la fuente viva: los campos
     // copiados en `hojas_ruta_pedidos` son de cuando se armó la hoja, y si el pedido se facturó
     // DESPUÉS quedaban vacíos (auditoría del 08/09/2026).
-    const todosEnriquecidos = await enriquecerHojas(hojas ?? [], req.query.refrescar === '1');
+    const todosEnriquecidos = await enriquecerHojas(hojas ?? [], req.query.refrescar === '1', true);
     const emitidoPor = new Map(todosEnriquecidos.map((p: any) => [String(p.im_comprobante_id), p]));
     const conCarga = (hojas ?? []).map((h: any) => {
       const ps = (h.hojas_ruta_pedidos ?? []).map((p: any) => {

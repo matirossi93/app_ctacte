@@ -74,6 +74,19 @@ try{
    await page.screenshot({path:`out/enlace-hoja.png`.replace('out/',out+'/'),fullPage:true});
   }finally{await ctx.close();}
  });
+ await test('Una factura sin importe verificado mantiene visibles ambas hojas y restringe sólo la afectada',async()=>{
+  const mala={...hoja,id:'h2',numero:9992,pedidos:[{...hoja.pedidos[0],im_comprobante_id:'909',cliente_nombre:'CLIENTE POR VERIFICAR',total:null,importe_error:'Factura50422 requiere revisión'}]};
+  const {page,ctx}=await setup(1440,{url:'/reparto?etapa=hojas&desde=2026-09-10&hasta=2026-09-10',ready:'.hr-hoja',beforeGoto:p=>p.route('**/api/hojas-ruta?**',r=>reply(r,{hojas:[hoja,mala]}))});
+  try{
+   assert(await page.locator('.hr-hoja').count()===2,'Ocultó todas las hojas');
+   const afectada=page.locator('.hr-hoja').filter({hasText:'CLIENTE POR VERIFICAR'});
+   await afectada.getByText('Importe por verificar: Factura50422 requiere revisión',{exact:true}).waitFor();
+   assert(await afectada.getByRole('button',{name:'Cerrar hoja',exact:true}).isDisabled(),'Permite cerrar importe desconocido');
+   assert(await afectada.getByTitle('Verificá los importes pendientes antes de imprimir').isDisabled(),'Permite imprimir importe desconocido');
+   const sana=page.locator('.hr-hoja').filter({hasNotText:'CLIENTE POR VERIFICAR'});
+   assert(await sana.getByRole('button',{name:'Cerrar hoja',exact:true}).isEnabled(),'Bloqueó una hoja sana');
+  }finally{await ctx.close();}
+ });
  await test('Vincular NC conserva contexto y resultado durante petición demorada',async()=>{
   const {page,ctx}=await setup(1440,{url:'/reparto?etapa=hojas&desde=2026-09-10&hasta=2026-09-10&hoja=h1',ready:'.hr-hoja',beforeGoto:async p=>{
    await p.route('**/api/hojas-ruta?**',r=>reply(r,{hojas:[hoja]}));

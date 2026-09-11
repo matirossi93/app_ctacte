@@ -17,6 +17,7 @@ const { huellaPresupuesto, exigirHuella } = await import('./versionPresupuesto.j
 
 // DB en memoria para ejercitar el handler. La atomicidad SQL se comprueba además en PG aislado.
 let estados: any[], operaciones: any[], notas: any[], falloCheckpoint: boolean, falloLectura: boolean;
+let reclamos: Map<string, string>;
 const copy = (v: any) => JSON.parse(JSON.stringify(v));
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const original = [{ iva_por:0, id_comprobante: '101', cod_articulo: 100, cantidad: 10, precio: 100, precio_orig: 100 }];
@@ -39,6 +40,14 @@ function db() {
     },
     async rpc(name: string, p: any) {
       const error = (message: string) => ({ data: null, error: { code: 'P0001', message } });
+      if (name === 'reclamar_presupuesto') {
+        if (reclamos.has(p.p_id)) return {data:false,error:null};
+        reclamos.set(p.p_id,p.p_token);return {data:true,error:null};
+      }
+      if (name === 'soltar_presupuesto') {
+        if (reclamos.get(p.p_id)!==p.p_token) return {data:false,error:null};
+        reclamos.delete(p.p_id);return {data:true,error:null};
+      }
       if (name === 'ajuste_entrega_sin_conciliar') return {data:m.ajuste(),error:null};
       if (name === 'iniciar_operacion_factura') {
         let e = estados.find(e => e.im_factura_id === p.p_factura);
@@ -78,7 +87,7 @@ async function llamar(body: any, fn: any = corregirFactura) {
   return res;
 }
 beforeEach(() => {
-  vi.clearAllMocks(); estados = []; operaciones = []; notas = []; falloCheckpoint = false; falloLectura = false;
+  vi.clearAllMocks(); estados = []; operaciones = []; notas = []; reclamos = new Map(); falloCheckpoint = false; falloLectura = false;
   m.sb.mockImplementation(db);
   m.ajuste.mockReturnValue(false);
   m.items.mockResolvedValue(copy(original));
@@ -122,6 +131,41 @@ describe('journal y estado corregido: handlers reales', () => {
     expect((await llamar(body)).body.operacion.estado).toBe('incierto');
     expect((await llamar(body)).code).toBe(409);
     expect(m.nc).toHaveBeenCalledTimes(1); expect(m.nd).not.toHaveBeenCalled();
+  });
+  it('colisión conocida777 conserva rechazo y bloquea replay sin volver a llamar IM', async () => {
+    m.nc.mockResolvedValue({ ok: false, sinRespuesta: false, error: "HTTP 400: Validaciones: Ya existe una factura con: tag = 'S', cod_empresa = 1, id_destino = 1, punto_de_venta = 777, tipo_factura = 'B' y numero = 30079." });
+    const primera = await llamar(cuerpo(8));
+    expect(primera.body.operacion).toMatchObject({ estado: 'listo', puede_retomar: false,
+      puede_cancelar: true, requiere_revision_numeracion: true });
+    expect(primera.body.fallados[0]).toContain('conciliar');
+    expect((await llamar({}, verFacturaParaCorregir)).body.operacion.puede_retomar).toBe(false);
+    expect((await llamar(cuerpo(8))).code).toBe(409);
+    expect(m.nc).toHaveBeenCalledTimes(1); expect(notas).toHaveLength(0);
+    expect(operaciones[0]).toMatchObject({ estado: 'listo', indice: 0, resultados: [] });
+  });
+  it('un snapshot anterior al rechazo777 no puede reclamar y emitir de nuevo', async () => {
+    const {ejecutarOperacion}=await import('./operacionesCorreccion.js');
+    let anterior:any;
+    m.nc.mockImplementation(async()=>{anterior=copy({...operaciones[0],estado:'listo',error:null});return {ok:false,sinRespuesta:false,error:"Ya existe una factura con: tag = 'S', cod_empresa = 1, id_destino = 1, punto_de_venta = 777, tipo_factura = 'B' y numero = 30079."};});
+    await llamar(cuerpo(8));
+    await expect(ejecutarOperacion(anterior)).rejects.toThrow('conflicto de numeración');
+    expect(m.nc).toHaveBeenCalledTimes(1);expect(reclamos.size).toBe(0);
+  });
+  it('colisión ND después de NC conserva la nota emitida y no permite cancelar ni reenviar', async () => {
+    m.nd.mockResolvedValue({ ok: false, sinRespuesta: false, error: "Ya existe una factura con: tag = 'S', cod_empresa = 1, id_destino = 1, punto_de_venta = 777, tipo_factura = 'B' y numero = 742." });
+    const b = cuerpo(8); b.renglones.push({ cod_articulo: 200, iva_por: 0, cantidad: 1, precio: 50 });
+    const r = await llamar(b);
+    expect(r.body.operacion).toMatchObject({ puede_retomar: false, puede_cancelar: false, requiere_revision_numeracion: true });
+    expect(r.body.emitidos).toHaveLength(1);
+    expect((await llamar(b)).code).toBe(409);
+    expect(m.nc).toHaveBeenCalledTimes(1); expect(m.nd).toHaveBeenCalledTimes(1);
+  });
+  it('un resultado contradictorio sigue incierto y nunca indica emitir en IM', async () => {
+    m.nc.mockResolvedValue({ ok: false, sinRespuesta: true, error: "Ya existe una factura con: tag = 'S', cod_empresa = 1, id_destino = 1, punto_de_venta = 777, tipo_factura = 'B' y numero = 30079." });
+    const r = await llamar(cuerpo(8));
+    expect(r.body.operacion).toMatchObject({ estado: 'incierto', puede_retomar: false, puede_cancelar: false });
+    expect(r.body.operacion.requiere_revision_numeracion).toBeUndefined();
+    expect(r.body.fallados[0]).toContain('No se sabe');
   });
   it('checkpoint fallido conserva emitiendo y número emitido en error; jamás reenvía', async () => {
     falloCheckpoint = true;
@@ -169,6 +213,21 @@ it('la huella es estable entre formatos/orden y ata notas libres, dinero e ident
 
 
 describe('identidad fiscal y precisión autoritativas', () => {
+  it.each([null, undefined, ''])('un precio pendiente%s se rechaza sin emitir ni crear journal', async precio => {
+    const b=cuerpo(10); b.renglones.push({cod_articulo:200,cantidad:1,precio:precio as any,cod_lista_precios:14});
+    expect((await llamar(b)).code).toBe(400);
+    expect(m.nd).not.toHaveBeenCalled(); expect(operaciones).toHaveLength(0);
+  });
+  it.each([12,13,14,15])('producto agregado conserva lista%s, bruto, descuento e IVA verificado en la ND', async lista => {
+    m.catalogo.mockResolvedValue(new Map([[200,{iva_por:21}]]));
+    const b=cuerpo(10); b.renglones.push({cod_articulo:200,cantidad:2,precio:800,descuento_porc:25,cod_lista_precios:lista});
+    const previa=await llamar({...b,emitir:false});
+    expect(previa.body.nd[0]).toMatchObject({cod_articulo:200,cantidad:2,precio:800,descuento_porc:25,cod_lista_precios:lista,iva_por:21});
+    expect(previa.body.total_nd).toBe(1200); expect(m.nd).not.toHaveBeenCalled();
+    expect((await llamar(b)).body.ok).toBe(true);
+    expect(m.nd.mock.calls[0][0]).toMatchObject({total:1200,items:[expect.objectContaining({cod_articulo:200,cantidad:2,precio:800,descuento_porc:25,cod_lista_precios:lista,iva_por:21})]});
+    expect(m.nc).not.toHaveBeenCalled();
+  });
   it('IVA del navegador no puede cambiar original21 a0; omitirlo conserva21', async()=>{
     m.items.mockResolvedValue([{...original[0],iva_por:21}]);
     const b=cuerpo(12); b.renglones[0].iva_por=0;

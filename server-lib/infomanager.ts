@@ -442,8 +442,36 @@ const STOCK_TTL_MS = 10 * 60 * 1000;
 
 
 const lecturasStock = new LecturasCompartidas<Map<number, number>>(STOCK_TTL_MS);
-export function fetchStockPorDeposito(codDeposito: number, force = false) { return lecturasStock.obtener(String(codDeposito), () => leerStockPorDeposito(codDeposito), { actualizar: force }); }
-export function invalidarIM() { invalidarCacheVentas(); invalidarCacheItems(); lecturasStock.invalidar(); lecturasSaldos.invalidar(); invalidarCacheNumeracion(); }
+const lecturasStockArticulo = new LecturasCompartidas<any>(STOCK_TTL_MS, 500);
+export async function fetchStockPorDeposito(codDeposito: number, force = false, codigos: number[] = []) {
+  if (force) lecturasStockArticulo.invalidar();
+  const base = await lecturasStock.obtener(String(codDeposito), () => leerStockPorDeposito(codDeposito), { actualizar: force });
+  const faltantes = [...new Set(codigos)].filter(c => Number.isSafeInteger(c) && c > 0 && !base.has(c));
+  if (!faltantes.length) return base;
+  const stock = new Map(base);
+  // IM omite artículos con cero en el listado del depósito. La consulta puntual sí
+  // devuelve ese cero explícito; no inferirlo de una ausencia ni usar el total global.
+  for (let i = 0; i < faltantes.length; i += 2) await Promise.all(faltantes.slice(i, i + 2).map(async cod => {
+    try {
+      const data = await lecturasStockArticulo.obtener(String(cod), async () => {
+        const cli = await imClient();
+        return (await imGetRetry(() => cli.get(`/articulos/stock_existencias/${cod}`), `stock artículo ${cod}`)).data;
+      });
+      const cantidad = stockPuntualDelDeposito(data, codDeposito);
+      if (cantidad != null) stock.set(cod, cantidad);
+    } catch { /* La ausencia sigue desconocida: el control explica qué artículo falta. */ }
+  }));
+  return stock;
+}
+export function stockPuntualDelDeposito(data: any, deposito: number): number | null {
+  const filas = data?.Existencias ?? data?.existencias;
+  if (!Array.isArray(filas)) return null;
+  const delDeposito = filas.filter(r => Number(r.codDeposito ?? r.cod_deposito) === deposito);
+  if (delDeposito.length !== 1) return null;
+  const valor = delDeposito[0].stock;
+  return valor != null && String(valor).trim() !== '' && Number.isFinite(Number(valor)) ? Number(valor) : null;
+}
+export function invalidarIM() { invalidarCacheVentas(); invalidarCacheItems(); lecturasStock.invalidar(); lecturasStockArticulo.invalidar(); lecturasSaldos.invalidar(); invalidarCacheNumeracion(); }
 async function leerStockPorDeposito(codDeposito: number): Promise<Map<number, number>> {
   const cli = await imClient();
   const { data } = await imGetRetry(

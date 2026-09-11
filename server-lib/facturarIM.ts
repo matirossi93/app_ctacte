@@ -771,8 +771,7 @@ async function emitirNota(
     };
     /** Un solo lugar para decidir si el rechazo se reintenta y cómo. Igual que en la factura. */
     const reintentar = (error: string): boolean => {
-      // 🪤 Sólo el choque de NUMERACIÓN sube el número. Un "ya existe" por otra cosa haría subir
-      // tres veces y terminar diciendo "los números ya estaban usados", que sería mentira.
+      // Las notas conservan su propia serie: ninguna colisión habilita avanzar el número.
       if (/ya existe|n[uú]mero.*existe/i.test(error)) return false;
       const art = articuloFueraDeLista(error);
       if (art != null) { items = sinListaDelArticulo(items, art); return true; }
