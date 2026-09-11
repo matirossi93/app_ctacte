@@ -12,6 +12,7 @@ import { idIM } from './identidadIM.js';
  * `reference_im_api_facturar_remitos_20260907` en la memoria.
  */
 import { imClient, fetchVentas, fetchVentasParaNumeracion, fechaArgentina, horaArgentina } from './infomanager.js';
+import { claveDeSerie, objetivoValido, proximoDeLaSerie, type SerieComprobante } from './serieNumeracion.js';
 
 /** Cómo factura cada tipo de cliente. Sale de 3.887 facturas reales de la semana del 01/09. */
 export type CategoriaIva = 'CF' | 'RI' | 'RM' | string;
@@ -55,10 +56,11 @@ export interface ItemAFacturar {
  *
  *   observaciones: " [Remito Automático -FA:58764473]"
  *
- * 🪤 No hay ningún campo para esto: `VentasRemitosCrear` no tiene uno, `/comprobantes-relacion`
- * es de sólo lectura, y `genero_re_auto: 'S'` —que es lo que dispara el remito automático desde
- * la pantalla de IM— la API lo DESCARTA (probado el 09/09/2026: se manda 'S' y queda 'N').
- * Así que se replica la convención de IM, que es lo único que queda escrito del vínculo.
+ * 🪤 **Sin método documentado para hacerlo de otra forma**: `VentasRemitosCrear` no expone un
+ * campo de asociación, `/comprobantes-relacion` sólo tiene GET, y mandar `genero_re_auto: 'S'`
+ * —el flag con el que la pantalla de IM dispara su remito automático— quedó en 'N' cuando se
+ * probó el 09/09/2026. Eso es UN intento por UNA vía, no prueba de que no exista otra. Mientras
+ * tanto se replica la convención de IM, que es lo único que queda escrito del vínculo.
  */
 export function marcaDeFactura(idFactura: string | number | null | undefined): string {
   const id = String(idFactura ?? '').trim();
@@ -122,7 +124,8 @@ const NUMERO_NC_AUTO = String(process.env.IM_NUMERO_NC_AUTO ?? '0') === '1';
  * 'N' por prudencia, en una variable para cambiarlo sin deploy si IM se queja.
  */
 const NC_GENERO_RE_AUTO = process.env.IM_NC_GENERO_RE_AUTO || 'N';
-const ID_DESTINO = Number(process.env.IM_ID_DESTINO_FACTURA || 1);
+/** Destino de las facturas. Exportado: el tablero arma la serie con el MISMO valor. */
+export const ID_DESTINO = Number(process.env.IM_ID_DESTINO_FACTURA || 1);
 const CUENTA_VENTA = process.env.IM_CUENTA_VENTA_PEDIDOS || '4100002';
 
 /**
@@ -151,22 +154,27 @@ const UNIDAD_NEGOCIO = Number(process.env.IM_UNIDAD_NEGOCIO || 1);
  * tiempo no se emitió ninguna, devuelve `null` y NO se inventa un número — arrancar una
  * numeración por las nuestras es peor que no facturar.
  */
+/**
+ * @param serie empresa, destino y tag del comprobante que se va a emitir. **Obligatorio y
+ *              explícito**: el máximo tiene que salir de la MISMA serie que IM valida. Sin esto
+ *              el cálculo miraba todas las empresas y todos los destinos juntos, y en una
+ *              instalación multiempresa el número podía venir de un talonario ajeno.
+ *
+ * 🪤 Una fila cuyo empresa/destino/tag no se pueda leer NO cuenta. Es la caída segura: quedarse
+ * corto propone un número tomado —que IM rechaza y se ve— y pasarse saltea la serie en silencio.
+ */
 export async function proximoNumeroFactura(
-  letra: 'A' | 'B', puntoDeVenta: number, dias = 30, tipo: 'FA' | 'NC' | 'ND' = 'FA',
+  letra: 'A' | 'B', puntoDeVenta: number, dias: number, tipo: 'FA' | 'NC' | 'ND', serie: SerieComprobante,
 ): Promise<number | null> {
+  // 🔴 Sin una serie completa no se consulta nada: el número saldría de un conjunto que no es
+  // el que IM valida.
+  if (!objetivoValido(serie, puntoDeVenta, letra, tipo)) return null;
   // 🪤 `hasta` mira ADELANTE (ver DIAS_ADELANTE_REMITO): la oficina factura hoy el reparto de
   // mañana, y esas facturas ya tienen número.
   const hasta = fechaArgentina(Date.now() + DIAS_ADELANTE_REMITO * 864e5);
-  const maxDe = async (diasAtras: number): Promise<number | null> => {
+  const maxDe = async (diasAtras: number) => {
     const ventas = await fetchVentasParaNumeracion(fechaArgentina(Date.now() - diasAtras * 864e5), hasta);
-    const nums = ventas
-      .filter((v: any) =>
-        String(v.tipo_comprobante ?? '').trim() === tipo &&
-        String(v.tipo_factura ?? '').trim() === letra &&
-        Number(v.punto_de_venta) === puntoDeVenta)
-      .map((v: any) => Number(v.numero))
-      .filter((n) => Number.isFinite(n));
-    return nums.length ? Math.max(...nums) + 1 : null;
+    return proximoDeLaSerie(ventas, serie, tipo, letra, puntoDeVenta);
   };
   /**
    * ⏱️ Primero la ventana corta. Medido contra IM el 09/09/2026: 30 días son 58.119 filas y
@@ -175,7 +183,16 @@ export async function proximoNumeroFactura(
    * semana siempre hay comprobantes del talonario; la ventana larga queda para el caso raro
    * (talonario nuevo, feriados) y es el único que paga los 31 s.
    */
-  return (await maxDe(Math.min(DIAS_BUSQUEDA_CORTA, dias))) ?? (dias > DIAS_BUSQUEDA_CORTA ? await maxDe(dias) : null);
+  const corta = await maxDe(Math.min(DIAS_BUSQUEDA_CORTA, dias));
+  if (corta.estado === 'ok') return corta.numero;
+  // 🪤 Sólo se amplía ante un VACÍO. Con incertidumbre, más filas no la resuelven: la esconden.
+  if (corta.estado === 'incierto' || dias <= DIAS_BUSQUEDA_CORTA) {
+    if (corta.estado === 'incierto') console.warn(`[numeracion] ${tipo} ${letra} pv${puntoDeVenta}: ${corta.motivo}`);
+    return null;
+  }
+  const larga = await maxDe(dias);
+  if (larga.estado === 'incierto') console.warn(`[numeracion] ${tipo} ${letra} pv${puntoDeVenta}: ${larga.motivo}`);
+  return larga.estado === 'ok' ? larga.numero : null;
 }
 
 /** Sólo una validación inequívoca permite reintentar un POST. */
@@ -268,7 +285,15 @@ function cabecera(d: DatosComprobante, fecha: string) {
  * con `cod_vendedor: 12` arriba y abajo). Esa pantalla escribe la base directo; la API no lo
  * expone. Para tenerlo por API hay que pedírselo a Sistec.
  */
-function renglones(items: ItemAFacturar[], _codVendedor: number) {
+/**
+ * @param descuentoExplicito manda `descuento_porc: 0` en vez de omitirlo.
+ *
+ * 🪤 `VentasItemsCrear` lo marca **required**, y omitirlo cuando vale 0 deja el renglón sin un
+ * campo obligatorio del contrato. La API lo venía aceptando, así que **esto no prueba ser la
+ * causa de ningún rechazo**: es cumplir el contrato donde hoy no se cumple. Se activa sólo en
+ * las notas —el camino que está fallando— para no tocar factura y remito, que funcionan.
+ */
+function renglones(items: ItemAFacturar[], _codVendedor: number, descuentoExplicito = false) {
   return items.map((it) => ({
     // 🔴 Siempre un artículo del catálogo: `cod_articulo` es int64 obligatorio en el schema de
     // facturas y remitos. `""` no deserializa y `0` no existe (probado el 09/09/2026). Los
@@ -282,7 +307,9 @@ function renglones(items: ItemAFacturar[], _codVendedor: number) {
     // de negocio" — la cuenta la tiene en 0 en el plan de cuentas.
     cod_unidad_negocio: UNIDAD_NEGOCIO,
     ...(it.cod_lista_precios != null ? { cod_lista_precios: it.cod_lista_precios } : {}),
-    ...(it.descuento_porc ? { descuento_porc: it.descuento_porc } : {}),
+    // El descuento positivo viaja igual que siempre; con 0, sólo cambia que se escriba.
+    ...(it.descuento_porc ? { descuento_porc: it.descuento_porc }
+      : descuentoExplicito ? { descuento_porc: 0 } : {}),
   }));
 }
 
@@ -332,7 +359,13 @@ export async function emitirFactura(d: DatosComprobante): Promise<ResultadoEmisi
   }
   // El número lo calculamos nosotros: IM no lo asigna (ver proximoNumeroFactura). Se puede
   // pasar ya calculado para no consultarlo una vez por factura al facturar una hoja entera.
-  let numero = d.numero ?? await proximoNumeroFactura(letra, PTO_VENTA_FACTURA);
+  const serieFa: SerieComprobante = { cod_empresa: d.cod_empresa, id_destino: ID_DESTINO, tag: 'S' };
+  // 🔴 También con `numero` explícito: si el contexto no es una serie válida, el número
+  // precalculado pertenece a un talonario que no se puede acreditar. No se emite a ciegas.
+  if (!objetivoValido(serieFa, PTO_VENTA_FACTURA, letra, 'FA')) {
+    return { ok: false, error: 'No se puede determinar el talonario de la factura (empresa, destino o punto de venta ilegibles).', raw: null };
+  }
+  let numero = d.numero ?? await proximoNumeroFactura(letra, PTO_VENTA_FACTURA, 30, 'FA', serieFa);
   if (numero == null) {
     return { ok: false, error: `No pude averiguar el próximo número de factura ${letra} del punto de venta ${PTO_VENTA_FACTURA}: no hay ninguna emitida en los últimos 30 días. Facturá a mano.` };
   }
@@ -736,14 +769,19 @@ async function emitirNota(
   if (PTO_VENTA_NC !== 777 || ID_DESTINO_NC !== 1 || NUMERO_NC_AUTO) {
     return { ok: false, error: 'Las NC/ND deben usar el punto 777, destino Manual (1), con numeración de su propia serie. Corregí la configuración de la app. No se envió la nota.' };
   }
-  const numero = d.numero ?? await proximoNumeroFactura(letra, PTO_VENTA_NC, 30, tipo);
+  const serieNota: SerieComprobante = { cod_empresa: d.cod_empresa, id_destino: ID_DESTINO_NC, tag: 'S' };
+  // 🔴 Igual que la factura: un `numero` precalculado no exime de acreditar su talonario.
+  if (!objetivoValido(serieNota, PTO_VENTA_NC, letra, tipo)) {
+    return { ok: false, error: `No se puede determinar el talonario de la ${que} (empresa, destino o punto de venta ilegibles).`, raw: null };
+  }
+  const numero = d.numero ?? await proximoNumeroFactura(letra, PTO_VENTA_NC, 30, tipo, serieNota);
   if (numero == null || !Number.isSafeInteger(numero) || numero <= 0) {
     return { ok: false, error: `No pude verificar el próximo número de ${que} ${letra} del punto 777. Emitila en InfoManager y vinculala desde el panel.` };
   }
 
   const fecha = fechaPedida(d);
   const cli = await imClient();
-  let items = renglones(d.items, d.cod_vendedor);
+  let items = renglones(d.items, d.cod_vendedor, true);
   // Sólo el rechazo de una lista admite ajustar el payload. Nunca avanzar la serie por colisión.
   for (let intento = 0; intento < 3; intento++) {
     const payload = {
@@ -790,3 +828,5 @@ async function emitirNota(
   }
   return { ok: false, error: `No se pudo emitir la ${que} ${letra}: InfoManager rechazó los tres intentos.` };
 }
+
+export { claveDeSerie, type SerieComprobante };

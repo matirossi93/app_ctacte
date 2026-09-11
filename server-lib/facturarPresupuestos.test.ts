@@ -1006,3 +1006,52 @@ describe('regresiones de integridad remito/factura', () => {
     expect(m.fetchVentas.mock.calls[0][2]).toEqual({sinCache:true});
   });
 });
+
+/**
+ * 🔴 EL CONTADOR DE NÚMEROS VA POR SERIE COMPLETA, NO POR LETRA.
+ *
+ * El talonario que IM valida incluye empresa, destino y tag además del punto y la letra. Con un
+ * contador sólo por letra, una tanda con pedidos de dos empresas mezclaría dos talonarios.
+ *
+ * 🪤 HOY ESA MEZCLA NO PUEDE OCURRIR, y no por el contador: `facturarSeleccion` llama a
+ * `exigirTipoEmpresa(cab, 'PR')`, que **rechaza todo presupuesto que no sea de
+ * `PEDIDO_EMPRESA_DEFAULT`** antes de emitir nada. Por eso no hay un caso de tanda con dos
+ * empresas que probar acá: el handler la corta antes. La partición queda igual —es defensa en
+ * profundidad y no cuesta nada—, y lo que se prueba es que el número se pide CON la serie.
+ */
+describe('numeración por serie', () => {
+  beforeEach(() => {
+    m.proximoNumeroFactura.mockResolvedValue(501);
+    m.emitirFactura.mockImplementation(async (d: any) => ({ ok: true, id: 'f1', numero: d.numero, tipo: 'FA B' }));
+  });
+
+  it('🔑 el número se pide con la serie completa, no sólo con la letra', async () => {
+    await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    const [letra, pv, dias, tipo, serie] = m.proximoNumeroFactura.mock.calls[0] as any[];
+    expect({ letra, tipo }).toEqual({ letra: 'B', tipo: 'FA' });
+    expect(Number.isFinite(pv) && Number.isFinite(dias)).toBe(true);
+    // 🪤 Exacta: `expect.any(Number)` daba por buena cualquier empresa, que es justo lo que
+    // este cambio vino a impedir.
+    expect(serie).toEqual({ cod_empresa: 1, id_destino: 1, tag: 'S' });
+  });
+
+  /**
+   * 🪤 Esto NO prueba que no se emita: el mock emite igual. Prueba lo que le toca al handler —
+   * que no invente un número—. Quién corta cuando no hay número es el emisor, y eso se prueba
+   * en facturarIM.test.ts.
+   */
+  it('🔑 sin número de serie, el handler no pasa uno inventado', async () => {
+    m.proximoNumeroFactura.mockResolvedValue(null);
+    await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect((m.emitirFactura.mock.calls[0] as any[])?.[0]?.numero ?? null).toBeNull();
+  });
+
+  /** 🪤 El guard que hoy hace imposible la mezcla. Si algún día se abre, el contador ya está listo. */
+  it('🔑 un presupuesto de otra empresa no se factura, y se dice por qué', async () => {
+    m.cabeceraComprobante.mockResolvedValue({ existe: true, anulada: false, cod_vendedor: '2', cod_empresa: 2, cod_cliente: 1093 });
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(m.emitirFactura).not.toHaveBeenCalled();
+    // Exigir el motivo real: con una alternativa laxa, el test pasaría por cualquier otra falla.
+    expect(JSON.stringify(r.body)).toMatch(/Casa Central/i);
+  });
+});

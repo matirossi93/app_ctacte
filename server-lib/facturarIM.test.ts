@@ -367,6 +367,9 @@ describe('el vendedor de la venta', () => {
  * 50403 y los tres intentos (50403, 50404, 50405) chocaban todos. El mensaje que veía Jorgelina
  * —"Ya existe una factura ... numero: [50405]"— era el del tercer intento.
  */
+/** La serie del circuito: empresa 1, destino Manual, tag 'S'. */
+const SERIE = { cod_empresa: 1, id_destino: 1, tag: 'S' };
+
 describe('proximoNumeroFactura — la numeración no sigue a la fecha', () => {
   it('🔴 la ventana mira ADELANTE: la oficina factura hoy el reparto de mañana', async () => {
     const get = vi.fn(async () => ({ data: { results: [] } }));
@@ -375,7 +378,7 @@ describe('proximoNumeroFactura — la numeración no sigue a la fecha', () => {
     } as any);
     vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
     const { proximoNumeroFactura } = await import('./facturarIM.js');
-    await proximoNumeroFactura('B', 777);
+    await proximoNumeroFactura('B', 777, 30, 'FA', SERIE);
     const params = (get.mock.calls[0] as any[])[1].params;
     expect(params.fechaHasta > new Date().toISOString().slice(0, 10)).toBe(true);
   });
@@ -425,9 +428,9 @@ describe('la numeración no paga 30 días de ventas cuando alcanza con 7', () =>
   };
 
   it('🔴 con facturas en la última semana consulta UNA sola ventana corta', async () => {
-    const get = conVentas([{ numero: 50410, tipo_comprobante: 'FA', tipo_factura: 'B', punto_de_venta: 777 }]);
+    const get = conVentas([{ numero: 50410, tipo_comprobante: 'FA', tipo_factura: 'B', punto_de_venta: 777, ...SERIE }]);
     const { proximoNumeroFactura } = await import('./facturarIM.js');
-    expect(await proximoNumeroFactura('B', 777)).toBe(50411);
+    expect(await proximoNumeroFactura('B', 777, 30, 'FA', SERIE)).toBe(50411);
     expect(get).toHaveBeenCalledTimes(1);
     const { fechaDesde, fechaHasta } = (get.mock.calls[0] as any[])[1].params;
     // Una semana atrás, no un mes: es la diferencia entre 5 s y 31 s.
@@ -439,7 +442,7 @@ describe('la numeración no paga 30 días de ventas cuando alcanza con 7', () =>
     // Ninguna factura del talonario: la ventana corta vuelve vacía y hay que mirar más atrás.
     const get = conVentas([{ numero: 900, tipo_comprobante: 'RE', punto_de_venta: 7 }]);
     const { proximoNumeroFactura } = await import('./facturarIM.js');
-    await proximoNumeroFactura('B', 777);
+    await proximoNumeroFactura('B', 777, 30, 'FA', SERIE);
     expect(get).toHaveBeenCalledTimes(2);
     const corta = (get.mock.calls[0] as any[])[1].params;
     const larga = (get.mock.calls[1] as any[])[1].params;
@@ -454,16 +457,16 @@ describe('la numeración no paga 30 días de ventas cuando alcanza con 7', () =>
 describe('la numeración no le pide a IM la misma lista dos veces seguidas', () => {
   it('dos búsquedas seguidas del mismo rango son UNA sola consulta', async () => {
     const get = vi.fn(async () => ({ data: { results: [
-      { numero: 50410, tipo_comprobante: 'FA', tipo_factura: 'B', punto_de_venta: 777 },
-      { numero: 1200, tipo_comprobante: 'FA', tipo_factura: 'A', punto_de_venta: 777 },
+      { numero: 50410, tipo_comprobante: 'FA', tipo_factura: 'B', punto_de_venta: 777, ...SERIE },
+      { numero: 1200, tipo_comprobante: 'FA', tipo_factura: 'A', punto_de_venta: 777, ...SERIE },
     ] } }));
     vi.mocked(axios.create).mockReturnValue({
       post: vi.fn(), get, put: vi.fn(), interceptors: { request: { use: vi.fn() } },
     } as any);
     vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
     const { proximoNumeroFactura } = await import('./facturarIM.js');
-    expect(await proximoNumeroFactura('B', 777)).toBe(50411);
-    expect(await proximoNumeroFactura('A', 777)).toBe(1201);
+    expect(await proximoNumeroFactura('B', 777, 30, 'FA', SERIE)).toBe(50411);
+    expect(await proximoNumeroFactura('A', 777, 30, 'FA', SERIE)).toBe(1201);
     expect(get).toHaveBeenCalledTimes(1);
   });
 
@@ -715,3 +718,177 @@ describe('respuesta ambigua después de POST: no habilita otra emisión', () => 
   try {const {emitirNotaCredito}=await import('./facturarIM.js');const post=mockIM({});expect(await emitirNotaCredito({...DATOS,numero:30080})).toMatchObject({ok:false});expect(post).not.toHaveBeenCalled();}
   finally {vi.unstubAllEnvs();vi.resetModules();}
  });
+
+/**
+ * 🔴 EL NÚMERO SALE DE LA SERIE A LA QUE VA A PERTENECER EL COMPROBANTE.
+ *
+ * InfoManager nombra al rechazar un número repetido: *"tag = 'S', cod_empresa = 1,
+ * id_destino = 1, punto_de_venta = 777, tipo_factura = 'B' y numero = …"*. El cálculo filtraba
+ * sólo tipo, letra y punto: en una instalación con más de una empresa, el máximo podía venir de
+ * un talonario ajeno.
+ */
+describe('proximoNumeroFactura — el número sale de la serie correcta', () => {
+  const venta = (extra: any) => ({
+    tipo_comprobante: 'FA', tipo_factura: 'B', punto_de_venta: 777,
+    cod_empresa: 1, id_destino: 1, tag: 'S', ...extra,
+  });
+  const conVentas = async (filas: any[]) => {
+    const get = vi.fn(async () => ({ data: { results: filas } }));
+    vi.mocked(axios.create).mockReturnValue({ post: vi.fn(), get, put: vi.fn(), interceptors: { request: { use: vi.fn() } } } as any);
+    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+    const { proximoNumeroFactura, invalidarCacheNumeracion } = await import('./facturarIM.js').then(async m => ({
+      ...m, invalidarCacheNumeracion: (await import('./infomanager.js')).invalidarCacheNumeracion,
+    }));
+    invalidarCacheNumeracion();
+    return proximoNumeroFactura('B', 777, 30, 'FA', SERIE);
+  };
+
+  it('🔑 una serie de OTRA EMPRESA no mueve el número', async () => {
+    expect(await conVentas([venta({ numero: 100 }), venta({ numero: 9999, cod_empresa: 2 })])).toBe(101);
+  });
+
+  it('🔑 ni la de otro DESTINO', async () => {
+    expect(await conVentas([venta({ numero: 100 }), venta({ numero: 9999, id_destino: 3 })])).toBe(101);
+  });
+
+  it('🔑 ni la de otro TAG', async () => {
+    expect(await conVentas([venta({ numero: 100 }), venta({ numero: 9999, tag: 'N' })])).toBe(101);
+  });
+
+  it('sigue respetando tipo, letra y punto de venta', async () => {
+    expect(await conVentas([
+      venta({ numero: 100 }),
+      venta({ numero: 9999, tipo_comprobante: 'NC' }),
+      venta({ numero: 9998, tipo_factura: 'A' }),
+      venta({ numero: 9997, punto_de_venta: 999 }),
+    ])).toBe(101);
+  });
+
+  /**
+   * 🔴 UNA FILA QUE NO SE PUEDE UBICAR NO SE SALTEA: CORTA.
+   *
+   * Saltearla parece prudente y no lo es: si resultara ser de esta serie y tuviera el número más
+   * alto, el máximo saldría más bajo y propondríamos un correlativo YA USADO. Sólo se descarta
+   * lo demostrablemente ajeno; ante la duda no hay número.
+   */
+  it('🔑 una fila compatible SIN empresa, destino o tag deja el número en null', async () => {
+    for (const falta of [{ cod_empresa: null }, { id_destino: undefined }, { tag: null }]) {
+      expect(await conVentas([venta({ numero: 100 }), venta({ numero: 9999, ...falta })]), JSON.stringify(falta)).toBeNull();
+    }
+  });
+
+  it('🔑 ni con valores ilegibles o que sólo coincidirían por coerción', async () => {
+    for (const malo of [{ cod_empresa: 'x' }, { id_destino: [1] }, { tag: ['S'] }, { cod_empresa: true }, { punto_de_venta: '777abc' }, { cod_empresa: 1.5 }, { id_destino: 1e20 }]) {
+      expect(await conVentas([venta({ numero: 100 }), venta({ numero: 9999, ...malo })]), JSON.stringify(malo)).toBeNull();
+    }
+  });
+
+  it('🔑 una PROPIA con número ilegible tampoco deja emitir', async () => {
+    expect(await conVentas([venta({ numero: 100 }), venta({ numero: 'abc' })])).toBeNull();
+    expect(await conVentas([venta({ numero: 100 }), venta({ numero: null })])).toBeNull();
+  });
+
+  /** El caso concreto: 50400 legible + una que podría ser nuestra. No puede salir 50401. */
+  it('🔑 mezcla de una válida y una potencialmente propia ilegible: NO emite el siguiente', async () => {
+    const r = await conVentas([venta({ numero: 50400 }), venta({ numero: 50999, tag: null })]);
+    expect(r).not.toBe(50401);
+    expect(r).toBeNull();
+  });
+
+  it('🪤 pasado el entero seguro, el +1 deja de ser el siguiente: null', async () => {
+    expect(await conVentas([venta({ numero: Number.MAX_SAFE_INTEGER })])).toBeNull();
+  });
+
+  it('🪤 una serie ajena ilegible en tipo o letra tampoco se puede descartar', async () => {
+    expect(await conVentas([venta({ numero: 100 }), venta({ numero: 9999, tipo_comprobante: null })])).toBeNull();
+  });
+
+  it('la empresa y el punto sí cuentan cuando vienen como texto', async () => {
+    expect(await conVentas([venta({ numero: 100, cod_empresa: '1', punto_de_venta: '777' })])).toBe(101);
+  });
+
+  it('sin ninguna fila de la serie, no inventa un número', async () => {
+    expect(await conVentas([venta({ numero: 500, cod_empresa: 2 })])).toBeNull();
+  });
+});
+
+/**
+ * 🪤 `VentasItemsCrear` marca `descuento_porc` como **required**, y el armado lo omitía cuando
+ * valía 0. La API lo venía aceptando, así que esto NO prueba ser la causa de ningún rechazo: es
+ * cumplir el contrato donde no se cumplía. Se acota a las notas para no tocar factura y remito.
+ */
+describe('el renglón de una nota cumple el contrato', () => {
+  const emitir = async (items: any[]) => {
+    const post = vi.fn(async () => ({ data: { id: '1', numero: 30079 } }));
+    vi.mocked(axios.create).mockReturnValue({
+      post, get: vi.fn(async () => ({ data: { results: [] } })), put: vi.fn(),
+      interceptors: { request: { use: vi.fn() } },
+    } as any);
+    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+    const { emitirNotaCredito } = await import('./facturarIM.js');
+    await emitirNotaCredito({
+      cod_empresa: 1, cod_cliente: 1039, cod_vendedor: 2, usuario: 'anto', categoria_iva: 'CF',
+      cod_lista_precios: 12, total: 100, numero: 30079, items,
+    } as any);
+    return (post.mock.calls[0] as any[])?.[1];
+  };
+
+  it('🔑 con descuento 0 el campo VIAJA, no se omite', async () => {
+    const p = await emitir([{ cod_articulo: 610, cantidad: 5, precio: 100, iva_por: 21, descuento_porc: 0 }]);
+    expect(p.items[0]).toHaveProperty('descuento_porc', 0);
+  });
+
+  it('🔑 y sin el campo en el origen, también', async () => {
+    const p = await emitir([{ cod_articulo: 610, cantidad: 5, precio: 100, iva_por: 21 }]);
+    expect(p.items[0]).toHaveProperty('descuento_porc', 0);
+  });
+
+  it('🪤 un descuento positivo se conserva tal cual', async () => {
+    const p = await emitir([{ cod_articulo: 610, cantidad: 5, precio: 100, iva_por: 21, descuento_porc: 15 }]);
+    expect(p.items[0].descuento_porc).toBe(15);
+  });
+
+  it('🪤 el precio y el IVA del renglón no se tocan', async () => {
+    const p = await emitir([{ cod_articulo: 610, cantidad: 5, precio: 1234.56, iva_por: 10.5, descuento_porc: 0 }]);
+    expect(p.items[0]).toMatchObject({ cod_articulo: 610, cantidad: 5, precio: 1234.56, iva_por: 10.5 });
+  });
+});
+
+/** 🔴 Un `numero` precalculado NO exime de acreditar su talonario: si no, es un bypass. */
+describe('el contexto se valida aunque el número venga dado', () => {
+  const emitir = async (fn: 'factura' | 'nota', datos: any) => {
+    const post = vi.fn(async () => ({ data: { id: '1', numero: 999 } }));
+    vi.mocked(axios.create).mockReturnValue({
+      post, get: vi.fn(async () => ({ data: { results: [] } })), put: vi.fn(),
+      interceptors: { request: { use: vi.fn() } },
+    } as any);
+    vi.mocked(axios.post).mockResolvedValue({ data: { token: 'tok' } } as any);
+    const m = await import('./facturarIM.js');
+    const base = { cod_cliente: 1, cod_vendedor: 2, usuario: 'u', categoria_iva: 'CF',
+      cod_lista_precios: 12, total: 100, numero: 50500,
+      items: [{ cod_articulo: 1, cantidad: 1, precio: 100, iva_por: 0 }] };
+    const r = fn === 'factura'
+      ? await m.emitirFactura({ ...base, ...datos } as any)
+      : await m.emitirNotaCredito({ ...base, ...datos } as any);
+    return { r, post };
+  };
+
+  it('🔑 con empresa inválida NO se hace el POST, aunque el número venga dado', async () => {
+    for (const empresa of [0, -1, 1.5, 'x', null, undefined, true]) {
+      const { r, post } = await emitir('factura', { cod_empresa: empresa });
+      expect(r.ok, String(empresa)).toBe(false);
+      expect(post, String(empresa)).not.toHaveBeenCalled();
+    }
+  });
+
+  it('🔑 lo mismo para la nota', async () => {
+    const { r, post } = await emitir('nota', { cod_empresa: null });
+    expect(r.ok).toBe(false);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('con una empresa válida sí emite', async () => {
+    const { post } = await emitir('factura', { cod_empresa: 1 });
+    expect(post).toHaveBeenCalled();
+  });
+});

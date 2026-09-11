@@ -40,7 +40,8 @@ import {
   fetchVentas, fechaArgentina, fetchStockPorDeposito, fetchArticulosCatalogo, comprobantesVigentes, getItemsComprobante,
 } from './infomanager.js';
 import { buscarFacturasYaEmitidas } from './facturaYaEmitida.js';
-import { emitirFactura, emitirRemito, emitirRemitoMasivo, letraDeFactura, proximoNumeroFactura } from './facturarIM.js';
+import { emitirFactura, emitirRemito, emitirRemitoMasivo, letraDeFactura, proximoNumeroFactura,
+  claveDeSerie, ID_DESTINO as ID_DESTINO_FACTURA, type SerieComprobante } from './facturarIM.js';
 import type { DatosComprobante } from './facturarIM.js';
 import { usuarioIM } from './pedidos.js';
 import { vistaDeRango, invalidarVista } from './vistaPresupuestos.js';
@@ -781,13 +782,28 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
     // cacheado (lo usó prepararFacturacion), así que no cuesta una llamada más.
     const catalogoEmision = await fetchArticulosCatalogo().catch(() => new Map());
 
-    // 🔑 El número de factura se calcula UNA vez y después se incrementa: IM no lo asigna y
-    // averiguarlo cuesta ~6 s. Si otro lo tomó mientras tanto, `emitirFactura` sube al siguiente.
-    const numeros: Record<string, number | null> = { A: null, B: null };
-    for (const letra of ['A', 'B'] as const) {
-      if (preparados.some(p => p.estado === 'listo' && p.letra === letra)) {
-        numeros[letra] = await proximoNumeroFactura(letra, Number(process.env.IM_PTO_VENTA_FACTURA || 777));
-      }
+    /**
+     * 🔑 El número de factura se calcula UNA vez y después se incrementa: IM no lo asigna y
+     * averiguarlo cuesta ~6 s. Si otro lo tomó mientras tanto, `emitirFactura` sube al siguiente.
+     *
+     * 🔴 EL CONTADOR VA POR SERIE COMPLETA, NO POR LETRA. Cada pedido trae su propia
+     * `cod_empresa`, y el talonario que IM valida incluye empresa, destino y tag además del
+     * punto y la letra. Con un contador sólo por letra, una tanda con pedidos de dos empresas
+     * habría mezclado dos talonarios en la misma cuenta: el número de la segunda empresa saldría
+     * de la serie de la primera. No se elige una empresa "representativa" ni se asume que la
+     * instalación es de una sola.
+     */
+    const PV_FACTURA = Number(process.env.IM_PTO_VENTA_FACTURA || 777);
+    const serieDe = (p: any): SerieComprobante => ({
+      cod_empresa: Number(p.datos.cod_empresa), id_destino: ID_DESTINO_FACTURA, tag: 'S',
+    });
+    const numeros = new Map<string, number | null>();
+    for (const p of preparados) {
+      if (p.estado !== 'listo' || !p.datos || !p.letra) continue;
+      const serie = serieDe(p);
+      const clave = claveDeSerie(serie, 'FA', p.letra, PV_FACTURA);
+      if (numeros.has(clave)) continue;
+      numeros.set(clave, await proximoNumeroFactura(p.letra, PV_FACTURA, 30, 'FA', serie));
     }
 
     for (const p of preparados) {
@@ -853,8 +869,9 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
         if (!reclamo.ok) { fallados.push(`${quien}: ${reclamo.error}`); continue; }
 
         const letra = p.letra!;
-        const fa = await emitirFactura({ ...p.datos, numero: numeros[letra] } as any);
-        if (fa.ok && fa.numero != null) numeros[letra] = Number(fa.numero) + 1;
+        const claveSerie = claveDeSerie(serieDe(p), 'FA', letra, PV_FACTURA);
+        const fa = await emitirFactura({ ...p.datos, numero: numeros.get(claveSerie) ?? null } as any);
+        if (fa.ok && fa.numero != null) numeros.set(claveSerie, Number(fa.numero) + 1);
         if (!fa.ok) {
           // Al log también: en pantalla se pierde, y es lo único que dice POR QUÉ IM la rechazó.
           console.error(`[facturarSeleccion] FACTURA rechazada · ${quien}: ${fa.error}`, JSON.stringify(fa.raw ?? null).slice(0, 600));
