@@ -737,6 +737,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                       // 🔒 Cerrada = ya volvió del reparto y se liquidó: no se le toca nada.
                       const cerrada = h.estado === 'cerrada';
                       const plegada = plegadas.has(h.id);
+                      const sinPesoVerificado = h.pedidos.filter(p => p.peso_completo !== true);
                       return (
                         <div id={`hoja-${h.id}`} tabIndex={-1} className={`hr-hoja${h.carga.excedido ? ' excedida' : ''}${cerrada ? ' cerrada' : ''}${plegada ? ' plegada' : ''}`} key={h.id}>
                             <div className="hr-hoja-head">
@@ -844,7 +845,15 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                     {h.capacidad_kg ? ` de ${kilos(Number(h.capacidad_kg))} · ${h.carga.porcentaje}%` : ' · sin camión asignado'}
                                 </span>
                             </div>
-                            {h.carga.completa === false && <div className="hr-aviso">Carga incompleta: hay pedidos sin peso verificado.</div>}
+                            {h.carga.completa === false && (
+                                <details className="hr-peso-pendiente">
+                                    <summary>Peso estimado{sinPesoVerificado.length > 0 && ` · ${sinPesoVerificado.length} pedido${sinPesoVerificado.length === 1 ? '' : 's'} sin verificar`}</summary>
+                                    <p>Falta verificar el peso de estos pedidos para confirmar los kilos y compararlos con la capacidad del camión.</p>
+                                    <ul>{sinPesoVerificado.map(p => (
+                                        <li key={p.im_comprobante_id}>{p.cliente_nombre ?? 'Cliente'}{p.im_numero != null && ` · Comprobante ${p.im_numero}`}</li>
+                                    ))}</ul>
+                                </details>
+                            )}
                             {h.carga.excedido && (
                                 <div className="hr-excede"><AlertTriangle size={13} /> Se pasa {kilos(Math.abs(h.carga.sobra_kg ?? 0))} de la capacidad</div>
                             )}

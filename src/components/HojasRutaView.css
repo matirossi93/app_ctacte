@@ -155,6 +155,10 @@
 .hr-barra-fill { height: 100%; background: linear-gradient(90deg, #06652F, #4C8F39); border-radius: 999px; transition: width 0.2s; }
 .hr-hoja.excedida .hr-barra-fill { background: linear-gradient(90deg, #a33b26, #d98b7a); }
 .hr-carga-txt { font-size: 0.75rem; color: var(--color-text-muted); white-space: nowrap; }
+.hr-peso-pendiente { font-size: 0.75rem; color: var(--color-text-muted); overflow-wrap: anywhere; }
+.hr-peso-pendiente summary { cursor: pointer; }
+.hr-peso-pendiente p { margin: 0.4rem 0; }
+.hr-peso-pendiente ul { margin: 0; padding-left: 1.25rem; }
 .hr-excede { display: flex; align-items: center; gap: 0.3rem; font-size: 0.78rem; font-weight: 600; color: #a33b26; }
 
 .hr-hoja-ped {
