@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Mi reparto · Prototipo de Semillero</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f5f1;color:#243a30;font:16px/1.5 system-ui,sans-serif}
+button,summary{font:inherit}button{cursor:pointer}button:focus-visible,summary:focus-visible,a:focus-visible{outline:3px solid #b47712;outline-offset:4px}
+.demo{background:#fff5d9;color:#654d18;text-align:center;padding:9px 16px;font-size:13px}
+header{background:#fff;border-bottom:1px solid #dce2da;padding:18px max(20px,calc((100vw - 940px)/2));display:flex;justify-content:space-between;align-items:center;gap:16px}
+.brand{font-weight:750;letter-spacing:.02em}.role{font-size:13px;color:#61736a}
+main{max-width:940px;margin:auto;padding:30px 20px 60px}h1{font-size:32px;line-height:1.15;margin:0 0 10px;letter-spacing:-.6px}
+.sub{margin:0;color:#61736a}.trip{background:#234b39;color:white;padding:24px;margin:25px 0}
+.trip-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.trip h2{font-size:21px;margin:0 0 6px}.trip p{margin:0;color:#e0e8e1;font-size:14px}
+.facts{display:flex;flex-wrap:wrap;gap:30px;margin-top:24px}.facts strong{display:block;font-size:24px;line-height:1.1}.facts span{font-size:13px;color:#e0e8e1}
+.progress{background:#62816d;height:5px;margin-top:22px}.progress span{display:block;width:33.333%;height:100%;background:#deec9d}
+.filters{display:flex;gap:8px;margin:28px 0 18px;flex-wrap:wrap}.filters button{border:1px solid #cbd5cd;padding:9px 14px;background:white;color:#3c5145;border-radius:5px;font-size:14px}.filters button[aria-pressed=true]{background:#234b39;color:white;border-color:#234b39}
+.stop{background:#fff;border:1px solid #d8e0d8;margin-bottom:14px;padding:20px}.stop[hidden]{display:none}
+.stop-head{display:flex;justify-content:space-between;gap:12px}.number{color:#718275;font-size:12px;font-weight:650;letter-spacing:.08em}
+.stop h2{font-size:19px;margin:5px 0}.address{font-size:14px;color:#61736a;margin:0 0 10px}.badge{align-self:start;white-space:nowrap;font-size:12px;font-weight:650;padding:5px 9px;background:#eef2ed;color:#41604b}.badge.next{background:#edf2cf;color:#4e5c17}.badge.done{background:#e7f1eb;color:#2e6846}
+.window{font-size:14px;margin:8px 0}.note{font-size:14px;background:#f4f5f0;padding:11px 13px;margin:15px 0 10px}
+summary{cursor:pointer;font-size:14px;font-weight:650;padding:12px 0;list-style-position:inside}
+.items{border-top:1px solid #e3e8e1;margin-top:8px}.item{padding:11px 0;border-bottom:1px solid #e3e8e1;display:grid;grid-template-columns:1fr auto;gap:16px;font-size:14px}.item small{display:block;color:#61736a}.item strong{white-space:nowrap;font-size:14px}
+.action{margin-top:15px;background:white;border:1px solid #9eb5a5;color:#244e38;padding:10px 13px;border-radius:4px;font-size:14px}
+.helper{font-size:13px;color:#637467;margin:20px 0 0}.empty{padding:30px;text-align:center;border:1px dashed #bfcbbf}
+dialog{border:1px solid #b9c7bd;max-width:460px;width:calc(100% - 36px);padding:25px;color:#243a30}dialog::backdrop{background:#17261dc0}dialog h2{margin:0 0 16px;font-size:23px}dialog p{font-size:15px}.pending{padding:12px;background:#fff5d9;color:#654d18}dialog button{padding:10px 20px;background:#234b39;color:white;border:0;margin-top:12px}
+footer{font-size:12px;color:#718275;border-top:1px solid #dce2da;padding-top:22px;margin-top:30px}
+@media(max-width:540px){header{padding:15px 20px}main{padding-top:24px}h1{font-size:29px}.trip{padding:20px}.facts{gap:24px}.facts strong{font-size:22px}.stop{padding:17px}.stop h2{font-size:18px}.stop-head{gap:8px}.badge{font-size:11px}.role{max-width:110px;text-align:right}}
+</style>
+</head>
+<body>
+<div class="demo">Prototipo de consulta · Datos ficticios · No registra operaciones</div>
+<header><div class="brand">SEMILLERO</div><div class="role">Vista del repartidor</div></header>
+<main>
+<h1>Mi reparto</h1>
+<p class="sub">Tus paradas y la información para cada entrega.</p>
+<section class="trip" aria-labelledby="viaje">
+ <div class="trip-top"><div><h2 id="viaje">Viaje de ejemplo</h2><p>Turno mañana · Camión de muestra</p></div><span aria-label="En recorrido">En recorrido</span></div>
+ <div class="facts"><div><strong>1 de 3</strong><span>paradas completadas</span></div><div><strong>34</strong><span>bultos de salida</span></div><div><strong>925 kg</strong><span>carga de salida</span></div></div>
+ <div class="progress" role="progressbar" aria-label="Paradas completadas" aria-valuemin="0" aria-valuemax="3" aria-valuenow="1"><span></span></div>
+</section>
+<div class="filters" role="group" aria-label="Filtrar paradas">
+ <button type="button" data-filter="all" aria-pressed="true">Todas · 3</button>
+ <button type="button" data-filter="pending" aria-pressed="false">Pendientes · 2</button>
+ <button type="button" data-filter="done" aria-pressed="false">Completadas · 1</button>
+</div>
+<div id="paradas" aria-live="polite">
+<article class="stop" data-state="pending">
+ <div class="stop-head"><div><span class="number">PARADA 02</span><h2>Cliente de ejemplo A</h2></div><span class="badge next">Próxima visita</span></div>
+ <p class="address">Destino de muestra A · Ubicación por confirmar</p>
+ <p class="window">Recibe de 9:00 a 12:00 · 21 bultos · 625 kg</p>
+ <div class="note">Descargar por la entrada lateral. Consultar al llegar.</div>
+ <details><summary>Ver remito y productos</summary><div class="items">
+  <div class="item"><div>Remito de ejemplo A<small>Balanceado · Bolsas de 30 kg</small></div><strong>20 bolsas</strong></div>
+  <div class="item"><div>Mezcla fraccionada<small>1 paquete de 25 kg</small></div><strong>25 kg</strong></div>
+ </div><button class="action" type="button" id="comprobantes">Ver comprobante de pago de ejemplo</button></details>
+</article>
+<article class="stop" data-state="pending">
+ <div class="stop-head"><div><span class="number">PARADA 03</span><h2>Cliente de ejemplo B</h2></div><span class="badge">Pendiente</span></div>
+ <p class="address">Destino de muestra B · Ubicación por confirmar</p>
+ <p class="window">Recibe de 10:00 a 13:00 · 8 bultos · 200 kg</p>
+ <div class="note">Avisar antes de iniciar la descarga.</div>
+ <details><summary>Ver remito y productos</summary><div class="items">
+  <div class="item"><div>Remito de ejemplo B<small>Granos · Bolsas de 25 kg</small></div><strong>8 bolsas</strong></div>
+ </div></details>
+</article>
+<article class="stop" data-state="done">
+ <div class="stop-head"><div><span class="number">PARADA 01</span><h2>Cliente de ejemplo C</h2></div><span class="badge done">Completada</span></div>
+ <p class="address">Destino de muestra C</p><p class="window">Estado ficticio de las 8:45 · 5 bultos · 100 kg</p>
+ <details><summary>Ver remito y productos</summary><div class="items">
+  <div class="item"><div>Remito de ejemplo C<small>Alimento · Bolsas de 20 kg</small></div><strong>5 bolsas</strong></div>
+ </div></details>
+</article>
+</div>
+<p class="helper">El orden y la asignación del reparto los define la oficina.</p>
+<footer>Primera propuesta para revisar el diseño. Los estados, horarios, clientes y documentos son ejemplos. Esta pantalla no confirma entregas, no verifica pagos y no modifica la aplicación en uso.</footer>
+</main>
+<dialog id="pago" aria-labelledby="pago-titulo">
+ <h2 id="pago-titulo">Comprobante de ejemplo</h2>
+ <p>Cliente de ejemplo A · Transferencia informada</p>
+ <p class="pending"><strong>Pendiente de verificación</strong><br>La carga de un comprobante no confirma que el dinero esté acreditado.</p>
+ <p>En el circuito integrado, este estado provendrá del módulo de Recibos que ya utiliza la empresa.</p>
+ <form method="dialog"><button>Cerrar</button></form>
+</dialog>
+<script>
+document.querySelectorAll('[data-filter]').forEach(button=>{
+ button.addEventListener('click',()=>{
+  document.querySelectorAll('[data-filter]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));
+  document.querySelectorAll('.stop').forEach(stop=>{stop.hidden=button.dataset.filter!=='all'&&stop.dataset.state!==button.dataset.filter});
+ });
+});
+document.getElementById('comprobantes').addEventListener('click',()=>document.getElementById('pago').showModal());
+</script>
+</body>
+</html>
