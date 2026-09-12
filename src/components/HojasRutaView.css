@@ -309,3 +309,14 @@ button.hr-badge { cursor: pointer; font-family: inherit; }
 .hr-hojas-barra { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; }
 .hr-hojas-cuenta { font-size: 0.78rem; color: var(--color-text-muted); }
 .hr-btn.ghost.activo { background: rgba(6, 101, 47, 0.1); border-color: #06652F; color: #06652F; }
+
+/**
+ * 🔑 Un pedido cuya factura no se pudo verificar (12/09/2026).
+ *
+ * Se muestra —que exista es parte del problema— pero no se puede elegir: sin importe acreditado
+ * no se sabe cuánto se le cobra al cliente. 🪤 Y NO se dibuja un $ 0,00: un cero se lee como un
+ * importe real.
+ */
+.hr-ped.sin-verificar { opacity: 0.85; border-left: 3px solid #b45309; }
+.hr-sin-importe { color: #b45309; font-weight: 700; }
+.hr-zona-pendiente { color: #b45309; }

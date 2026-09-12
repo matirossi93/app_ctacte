@@ -171,7 +171,18 @@ export async function sugerenciaDelDia(req: Request & { user?: JwtPayload }, res
     const flota = (camiones ?? []).map((c: any) => ({
       id: String(c.id), nombre: String(c.nombre), capacidad_kg: Number(c.capacidad_kg),
     }));
-    res.json({ ok: true, fecha, sin_peso: pendientes.filter((p: any) => !p.peso_completo), ...sugerirRepartos(pendientes.filter((p: any) => p.peso_completo) as any, flota) });
+    /**
+     * 🔴 Sin importe acreditado no entra en la sugerencia: se le asignaría camión a un pedido que
+     * después la asignación rechaza. Va aparte, para que se vea que quedó afuera y por qué.
+     */
+    const sinImporte = pendientes.filter((p: any) => !!p.importe_error);
+    const repartibles = pendientes.filter((p: any) => p.peso_completo && !p.importe_error);
+    res.json({
+      ok: true, fecha,
+      sin_peso: pendientes.filter((p: any) => !p.peso_completo && !p.importe_error),
+      sin_importe: sinImporte,
+      ...sugerirRepartos(repartibles as any, flota),
+    });
   } catch (err: any) {
     console.error('[sugerenciaDelDia]', err?.message);
     res.status(502).json({ error: `No se pudo armar la sugerencia: ${err?.message ?? 'sin respuesta de IM'}` });

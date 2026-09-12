@@ -41,7 +41,9 @@ interface Pendiente {
     cod_zona: number | null;
     zona: string;
     zona_origen: 'im' | 'nombre' | 'ninguno';
-    total: number;
+    /** 🪤 `null` cuando no se pudo verificar contra InfoManager: NO es cero. */
+    total: number | null;
+    importe_error?: string | null;
     bultos: number;
     kg: number;
     renglones_sin_peso: number; peso_completo?: boolean;
@@ -238,7 +240,10 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
             // calculaba y nadie lo leía (auditoría del 08/09/2026).
             setDiasSinPeso(Array.isArray(dp.dias_sin_items) ? dp.dias_sin_items : []);
             setConflictosAsignacion(dp.conflictos_asignacion ?? []);
-            setSel(s => new Set([...s].filter(id => (dp.pendientes ?? []).some((p: Pendiente) => p.im_comprobante_id === id))));
+            // 🪤 Y se suelta lo que dejó de poder elegirse: una fila ya seleccionada cuya factura
+            // pasó a no verificarse no puede quedar marcada esperando entrar a una hoja.
+            setSel(s => new Set([...s].filter(id =>
+                (dp.pendientes ?? []).some((p: Pendiente) => p.im_comprobante_id === id && !p.importe_error))));
             lectura.confirmar();
         } catch (e: any) {
             if (lectura.vigente()) setError(e?.message ?? 'Error de conexión');
@@ -298,7 +303,9 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
         });
     }, [pendientes, busqueda]);
 
-    const seleccionados = useMemo(() => pendientes.filter(p => sel.has(p.im_comprobante_id)), [pendientes, sel]);
+    // 🪤 Filtra también por elegible: defensa contra una selección vieja que sobrevivió a un
+    // refresco en el que esa fila pasó a no tener importe acreditado.
+    const seleccionados = useMemo(() => pendientes.filter(p => sel.has(p.im_comprobante_id) && !p.importe_error), [pendientes, sel]);
     const kgSel = seleccionados.reduce((s, p) => s + p.kg, 0);
     // 🔑 Separados a propósito: "36 para revisar" sobre 59 no dice nada y se deja de mirar.
     // Uno es plata que la empresa pierde, el otro es un cliente al que le cobran de más.
@@ -310,14 +317,27 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
     const sinFactura = pendientes.filter(p => p.im_factura_numero == null).length;
     const facturaDeducida = pendientes.filter(p => p.factura_origen === 'elegida').length;
 
+    /**
+     * 🔴 UNA FILA SIN IMPORTE ACREDITADO NO SE PUEDE ELEGIR.
+     *
+     * Su factura no se pudo verificar en InfoManager, así que no se sabe cuánto se le cobra al
+     * cliente. Mandarla a una hoja la haría viajar con un importe que nadie confirmó — y el
+     * backend la rechaza igual, pero recién después de intentar armar la hoja.
+     */
+    const elegible = (p: Pendiente) => !p.importe_error;
+
     function toggle(id: string) {
+        const fila = pendientes.find(p => p.im_comprobante_id === id);
+        if (fila && !elegible(fila)) return;
         setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
     }
     function abrirCerrarZona(k: string) {
         setZonasAbiertas(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
     }
     function toggleZona(filas: Pendiente[]) {
-        const ids = filas.map(f => f.im_comprobante_id);
+        // 🪤 Sólo las elegibles: si no, la zona quedaría en indeterminado para siempre.
+        const ids = filas.filter(elegible).map(f => f.im_comprobante_id);
+        if (!ids.length) return;
         const todos = ids.every(i => sel.has(i));
         setSel(s => {
             const n = new Set(s);
@@ -625,16 +645,19 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                     {porZona.map(g => {
                         const k = String(g.cod_zona ?? 'sin');
                         const abierta = zonasAbiertas.has(k) || !!busqueda.trim();
-                        const elegidos = g.filas.filter(f => sel.has(f.im_comprobante_id)).length;
+                        const elegibles = g.filas.filter(elegible);
+                        const elegidos = elegibles.filter(f => sel.has(f.im_comprobante_id)).length;
                         const conAviso = g.filas.filter(f => f.im_factura_numero == null).length;
+                        const sinVerificar = g.filas.length - elegibles.length;
                         return (
                         <div className={`hr-zona${abierta ? ' abierta' : ''}`} key={k}>
                             <div className="hr-zona-head">
                                 {/* El checkbox elige la zona entera sin tener que desplegarla. */}
                                 <input
                                     type="checkbox" title="Elegir toda la zona"
-                                    checked={elegidos === g.filas.length && !!g.filas.length}
-                                    ref={el => { if (el) el.indeterminate = elegidos > 0 && elegidos < g.filas.length; }}
+                                    checked={elegidos === elegibles.length && !!elegibles.length}
+                                    disabled={!elegibles.length}
+                                    ref={el => { if (el) el.indeterminate = elegidos > 0 && elegidos < elegibles.length; }}
                                     onChange={() => toggleZona(g.filas)}
                                 />
                                 <button className="hr-zona-abrir" onClick={() => abrirCerrarZona(k)}>
@@ -643,13 +666,16 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                     <span className="hr-zona-meta">
                                         {g.filas.length} ped · {kilos(g.kg)}
                                         {conAviso > 0 && <span className="hr-zona-alerta" title="Pedidos por debajo de la lista que corresponde"> · {conAviso} ⚠</span>}
+                                        {sinVerificar > 0 && <span className="hr-zona-pendiente" title="No se pudo verificar su importe en InfoManager: no se pueden elegir"> · {sinVerificar} sin verificar</span>}
                                         {elegidos > 0 && <span className="hr-zona-elegidos"> · {elegidos} elegidos</span>}
                                     </span>
                                 </button>
                             </div>
                             {abierta && g.filas.map(p => (
-                                <label className={`hr-ped${sel.has(p.im_comprobante_id) ? ' sel' : ''}`} key={p.im_comprobante_id}>
-                                    <input type="checkbox" checked={sel.has(p.im_comprobante_id)} onChange={() => toggle(p.im_comprobante_id)} />
+                                <label className={`hr-ped${sel.has(p.im_comprobante_id) ? ' sel' : ''}${p.importe_error ? ' sin-verificar' : ''}`} key={p.im_comprobante_id}>
+                                    <input type="checkbox" checked={sel.has(p.im_comprobante_id)} disabled={!elegible(p)}
+                                           title={p.importe_error ? 'No se puede elegir: falta verificar su importe' : undefined}
+                                           onChange={() => toggle(p.im_comprobante_id)} />
                                     <div className="hr-ped-info">
                                         <div className="hr-ped-cli">
                                             <span>{p.cliente_nombre}</span>
@@ -677,13 +703,17 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                             {p.zona_origen === 'nombre' && <span className="hr-badge tenue" title="La zona se dedujo del nombre del cliente, no está cargada en InfoManager">zona estimada</span>}
                                         </div>
                                         <div className="hr-ped-meta">
-                                            RE {p.im_numero ?? '—'} · {money(p.total)} · {p.bultos} bultos
+                                            RE {p.im_numero ?? '—'} · {p.importe_error
+                                                ? <b className="hr-sin-importe">importe sin verificar</b>
+                                                : money(Number(p.total))} · {p.bultos} bultos
                                             {(!p.peso_completo || p.renglones_sin_peso > 0) && (
                                                 <span className="hr-sinpeso" title="Estos renglones no tienen peso cargado en el catálogo: los kilos de este pedido son un mínimo, puede pesar más">
                                                     · {p.renglones_sin_peso} sin peso
                                                 </span>
                                             )}
                                         </div>
+                                        {/* 🔑 Por qué no se puede elegir. Se lee, no se adivina de un tooltip. */}
+                                        {p.importe_error && <div className="hr-sinpeso" role="status">{p.importe_error}</div>}
                                         {/* 🔑 Lo que escribió el vendedor. Acá decide en qué camión va y en
                                             qué orden, y ahí puede decir "entregar el jueves temprano" o
                                             "avisar antes de ir" (Mati, 08/09/2026). */}

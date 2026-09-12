@@ -68,7 +68,7 @@ try {
     await new Promise(r => setTimeout(r,200));
   }
   if (!ready) throw new Error(`El preview no estuvo listo: ${startup}`);
-  const allowed = ['browser-regresiones.mjs','browser-finanzas.mjs','browser-operaciones.mjs','browser-impresion.mjs','browser-contexto.mjs','browser-listas.mjs','browser-pedido-rechazado.mjs','browser-control-fa-re.mjs'];
+  const allowed = ['browser-regresiones.mjs','browser-finanzas.mjs','browser-operaciones.mjs','browser-impresion.mjs','browser-contexto.mjs','browser-listas.mjs','browser-pedido-rechazado.mjs','browser-control-fa-re.mjs','browser-importe-sin-verificar.mjs'];
   const scripts = process.env.REPARTO_BROWSER_ONLY ? [process.env.REPARTO_BROWSER_ONLY] : allowed;
   if (scripts.some(s=>!allowed.includes(s))) throw new Error('Fixture de navegador desconocida');
   for (const script of scripts) await run(script);
