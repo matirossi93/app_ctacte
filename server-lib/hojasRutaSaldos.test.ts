@@ -9,7 +9,7 @@ async function imprimir(){const res:any={statusCode:200,status(n:number){this.st
 beforeEach(()=>{vi.clearAllMocks();m.pendientes.mockResolvedValue(pendientes);m.rpc.mockResolvedValue({data:{ok:true},error:null});m.tablas={
  hojas_ruta:{id:'h',numero:3405,fecha:'2026-09-11',estado:'abierta',hojas_ruta_pedidos:[{im_comprobante_id:'10',im_numero:10,cod_cliente:7,cod_empresa:1,total:100,saldo_anterior:9999,fecha:'2026-09-11',kg:1,bultos:1}]},
  presupuestos_facturados:[{im_comprobante_id:'1',im_remito_id:'10',im_factura_id:'20',cod_cliente:7,cod_empresa:1,total:80,facturado_at:'2026-09-11'}],
- hojas_ruta_ajustes:[{im_comprobante_id:'10',im_ajuste_id:'30',tipo:'nc',importe:10,im_ajuste_numero:30,emitido_at:'2026-09-11'}],
+ hojas_ruta_ajustes:[{hoja_id:'h',im_comprobante_id:'10',im_ajuste_id:'30',tipo:'nc',importe:10,im_ajuste_numero:30,emitido_at:'2026-09-11'}],
  hojas_ruta_saldos:[{cod_cliente:7,cod_empresa:1,pendientes,consultado_at:'2026-09-10T10:00:00Z'}]
 };});
 it('FA80 + NC10 sólo ajuste: cliente70, pie70 y saldo previo20',async()=>{const r=await imprimir();expect(r.statusCode).toBe(200);expect(r.body.clientes[0]).toMatchObject({total:70,saldo_anterior:20,saldo_fuente:'en_vivo'});expect(r.body.totales.total).toBe(70);expect(m.rpc.mock.calls[0][1].p_datos.saldos[0].pendientes).toEqual(pendientes);});

@@ -18,7 +18,7 @@ legacy = [
     '036_ajustes_de_entrega.sql', '037_fecha_del_comprobante_en_la_hoja.sql',
     '038_correcciones_de_factura.sql',
 ]
-new = ['039_integridad_facturacion.sql', '040_integridad_reparto.sql', '041_integridad_fiscal_cruzada.sql', '042_importes_al_cierre.sql']
+new = ['039_integridad_facturacion.sql', '040_integridad_reparto.sql', '041_integridad_fiscal_cruzada.sql', '042_importes_al_cierre.sql', '043_notas_existentes_nd.sql']
 # La lista es explícita: existen dos migraciones históricas con prefijo 035.
 bootstrap = '''CREATE ROLE service_role BYPASSRLS;
 CREATE ROLE anon;
@@ -55,6 +55,7 @@ try:
     subprocess.run([sys.executable,str(tests/'db-regresiones.py'),container],check=True)
     subprocess.run([sys.executable,str(tests/'db-hojas-regresiones.py'),container],check=True)
     subprocess.run([sys.executable,str(tests/'db-cruce-notas.py'),container],check=True)
+    subprocess.run([sys.executable,str(tests/'db-vinculo-notas.py'),container],check=True)
     subprocess.run([sys.executable,str(tests/'db-readiness-checks.py'),container],check=True)
     subprocess.run([sys.executable,str(tests/'db-cierre-importes.py'),container],check=True)
 finally:

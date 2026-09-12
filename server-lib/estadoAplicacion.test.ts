@@ -3,23 +3,23 @@ import express from 'express';
 import type { Server } from 'node:http';
 vi.mock('node:fs', () => ({ default: { readFileSync: () => { throw new Error('sin metadata'); } } }));
 vi.mock('./supabase.js', () => ({ hasSupabase: () => false, sb: vi.fn() }));
-import { crearComprobadorEsquema, estadoPreparacion, exigirEsquemaReparto, saludProceso } from './estadoAplicacion.js';
+import { crearComprobadorEsquema, estadoPreparacion, exigirEsquemaReparto, exigirVinculoNotas, saludProceso } from './estadoAplicacion.js';
 
 describe('preparación de reparto', () => {
   it('comparte ocho verificaciones concurrentes y revalida tras TTL', async () => {
     let now = 1000;
-    let finish!: (v: { listo: boolean; version: number }) => void;
-    const query = vi.fn(() => new Promise<{ listo: boolean; version: number }>(resolve => { finish = resolve; }));
+    let finish!: (v: { listo: boolean; version: number; vinculo: boolean }) => void;
+    const query = vi.fn(() => new Promise<{ listo: boolean; version: number; vinculo: boolean }>(resolve => { finish = resolve; }));
     const ready = crearComprobadorEsquema(query, () => now);
     const pending = Array.from({ length: 8 }, () => ready());
     await Promise.resolve();
     expect(query).toHaveBeenCalledTimes(1);
-    finish({ listo: true, version: 42 });
+    finish({ listo: true, version: 42, vinculo: true });
     expect((await Promise.all(pending)).every(x => x.listo)).toBe(true);
     expect((await ready()).listo).toBe(true);
     expect(query).toHaveBeenCalledTimes(1);
     now += 30_001;
-    query.mockResolvedValueOnce({ listo: true, version: 42 });
+    query.mockResolvedValueOnce({ listo: true, version: 42, vinculo: true });
     expect((await ready()).listo).toBe(true);
     expect(query).toHaveBeenCalledTimes(2);
   });
@@ -69,5 +69,33 @@ describe('rutas Express sin esquema ni credenciales', () => {
     expect((await fetch(url + '/api/hojas-ruta', { method: 'POST' })).status).toBe(503);
     expect(writes).not.toHaveBeenCalled();
     expect((await fetch(url + '/api/hojas-ruta')).status).toBe(200);
+  });
+});
+
+/**
+ * 🔑 Capacidad POR FUNCIÓN. La 043 puede tardar en aplicarse, y mientras tanto la facturación
+ * tiene que seguir andando: lo único que se apaga es vincular notas existentes.
+ */
+describe('vincular notas existentes, como capacidad aparte', () => {
+  const comprobar = (valor: any) => crearComprobadorEsquema(async () => valor, () => 0);
+
+  it('🔴 sin la 043 aplicada, el resto de la app sigue lista', async () => {
+    const ready = comprobar({ listo: true, version: 42, vinculo: false });
+    expect(await ready()).toMatchObject({ listo: true, vinculo: false });
+  });
+
+  /** En esta suite `hasSupabase()` es false, así que la capacidad nunca se puede acreditar. */
+  it('🔴 y la ruta de vincular corta con 503, sin tocar nada', async () => {
+    let status = 0; let cuerpo: any; let siguió = false;
+    const res: any = { status: (s: number) => { status = s; return res; }, json: (b: any) => { cuerpo = b; } };
+    await exigirVinculoNotas({ method: 'POST' } as any, res, () => { siguió = true; });
+    expect(siguió).toBe(false);
+    expect(status).toBe(503);
+    expect(cuerpo.error).toMatch(/no se modificó nada/i);
+  });
+
+  it('un error de lectura no habilita el vínculo', async () => {
+    const ready = crearComprobadorEsquema(async () => { throw new Error('sin base'); }, () => 0);
+    expect(await ready()).toMatchObject({ listo: false, vinculo: false });
   });
 });

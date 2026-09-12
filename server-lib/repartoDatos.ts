@@ -17,6 +17,24 @@ export async function mutarReparto(actor: string | undefined, accion: string, da
   if (data == null) throw new ErrorReparto('La base no confirmó el cambio. Verificá la migración 040.', 503);
   return data;
 }
+/**
+ * Vincular una nota que ya existe en IM. Función propia, no `mutar_reparto`: la identidad de la
+ * factura de destino se resuelve dentro del mismo lock y se coteja contra la que vio el operador.
+ */
+export async function vincularNotaRPC(actor: string | undefined, hojaId: string, version: unknown, ajuste: Record<string, unknown>, facturaEsperada: string) {
+  const { data, error } = await sb().rpc('vincular_nota_existente', {
+    p_tenant: TENANT_ID, p_actor: actor, p_hoja: hojaId,
+    p_version: version == null || version === '' ? null : Number(version),
+    p_ajuste: ajuste, p_factura_esperada: facturaEsperada,
+  });
+  if (error) {
+    if (['PGRST202', '42883', '42703'].includes(error.code)) throw new ErrorReparto('Falta aplicar la migración 043 para vincular notas. No se modificó nada.', 503);
+    if (error.code === '23505') throw new ErrorReparto('Esa nota ya está vinculada a una entrega.', 409);
+    throw new ErrorReparto(error.message, 409);
+  }
+  if (data == null) throw new ErrorReparto('La base no confirmó el vínculo. Verificá la migración 043.', 503);
+  return data;
+}
 export async function emitidosDe(ids: string[]) {
   const unicos = [...new Set(ids)];
   const consultados = new Set<string>();
@@ -73,12 +91,96 @@ export async function verificarEntregas(entrada: any[], rango?: { desde?: string
       tipo, tipo_comprobante: tipo, datos_consultados_at: ahora };
   });
 }
-export interface NotaEntrega { id: string; tipo: string; total: number; numero: number | null }
-export function notasUnicas(notas: NotaEntrega[]) {
-  return [...new Map(notas.filter(n => n.id).map(n => [n.id, n])).values()];
+/**
+ * `origen` dice de qué fuente salió: `correccion` es el journal de correcciones de factura y
+ * `panel` el vínculo de la hoja. Una misma nota puede estar en las DOS, y eso cambia lo que se
+ * puede hacer con ella: soltar el vínculo del panel no la saca del total si el journal la sostiene.
+ */
+export type OrigenNota = 'panel' | 'correccion';
+export interface NotaEntrega { id: string; tipo: string; total: number; numero: number | null; origen?: OrigenNota; fuentes?: OrigenNota[] }
+/** Ya deduplicada, con TODAS las fuentes donde aparece. */
+export type NotaConciliada = NotaEntrega & { fuentes: OrigenNota[] };
+/**
+ * La misma nota puede llegar por dos caminos —el journal de correcciones y el ajuste de la
+ * entrega— y no se cuenta dos veces.
+ *
+ * 🔴 Deduplicar con un Map es "gana el último", y el orden acá lo decide en qué tabla estaba la
+ * fila. Sirve cuando las dos copias dicen lo mismo; si difieren en tipo o en importe, elegir por
+ * orden es elegir al azar una cifra que termina en un PAGO. Esas no se suman ni se descartan: se
+ * devuelven como problema para que quien arma el total corte en vez de publicar un número.
+ *
+ * Lo mismo con un tipo que no es NC ni ND o un importe ilegible: `!/^nc/` no es "es débito", y un
+ * `Infinity` sumado da un total que parece un número.
+ */
+export type ProblemaNota = { id: string; motivo: 'conflicto' | 'tipo' | 'importe' };
+
+const signoNota = (n: { tipo?: unknown }): -1 | 1 | null => {
+  const t = String(n.tipo ?? '');
+  return /^nc/i.test(t) ? -1 : /^nd/i.test(t) ? 1 : null;
+};
+const totalNota = (n: { total?: unknown }): number | null => {
+  const v = Number(n.total);
+  return Number.isFinite(v) ? Math.abs(v) : null;
+};
+
+export function conciliarNotas(entradas: NotaEntrega[]): { notas: NotaConciliada[]; problemas: ProblemaNota[] } {
+  const por = new Map<string, NotaEntrega>(), medida = new Map<string, { signo: number; total: number }>();
+  const fuentes = new Map<string, Set<OrigenNota>>();
+  const problemas = new Map<string, ProblemaNota>();
+  const marcar = (id: string, motivo: ProblemaNota['motivo']) => {
+    if (!problemas.has(id)) problemas.set(id, { id, motivo });
+    por.delete(id); medida.delete(id);
+  };
+  for (const n of entradas) {
+    const id = String(n.id ?? '').trim();
+    if (!id) continue;                      // sin id no hay con qué deduplicar: misma regla de siempre
+    if (problemas.has(id)) continue;
+    const signo = signoNota(n), total = totalNota(n);
+    if (signo === null) { marcar(id, 'tipo'); continue; }
+    if (total === null) { marcar(id, 'importe'); continue; }
+    /**
+     * 🔑 De dónde vino se ACUMULA aunque la fila se descarte por repetida. Quedarse sólo con la
+     * primera hacía que una nota presente en las dos fuentes se viera como si fuera sólo del
+     * panel — y entonces la pantalla ofrecía soltarla, cuando soltar el vínculo no la saca del
+     * total: el journal la sigue descontando igual.
+     */
+    // 🪤 Y también las que ya venían acumuladas: esto se concilia dos veces —una por entrega y
+    // otra por hoja— y mirar sólo `origen` en la segunda pasada perdía la fuente que se había
+    // descartado por repetida en la primera.
+    const deEsta = [...(n.fuentes ?? []), ...(n.origen ? [n.origen] : [])];
+    if (deEsta.length) {
+      if (!fuentes.has(id)) fuentes.set(id, new Set());
+      for (const f of deEsta) fuentes.get(id)!.add(f);
+    }
+    const previa = medida.get(id);
+    if (!previa) { por.set(id, n); medida.set(id, { signo, total }); continue; }
+    if (previa.signo !== signo || Math.abs(previa.total - total) > 0.005) marcar(id, 'conflicto');
+  }
+  return {
+    notas: [...por.entries()].map(([id, n]) => ({ ...n, fuentes: [...(fuentes.get(id) ?? [])] })),
+    problemas: [...problemas.values()],
+  };
 }
-export function netoNotas(notas: NotaEntrega[]) {
-  return Math.round(notasUnicas(notas).reduce((s, n) => s + (/^nc/i.test(n.tipo) ? -1 : 1) * Math.abs(n.total), 0) * 100) / 100;
+
+const MOTIVO: Record<ProblemaNota['motivo'], string> = {
+  conflicto: 'figura con dos importes o tipos distintos',
+  tipo: 'no dice si es de crédito o de débito',
+  importe: 'tiene un importe ilegible',
+};
+/** El mensaje nombra la nota: quien lo lee tiene que poder ir a buscarla. */
+export function errorDeNotas(problemas: ProblemaNota[], donde: string): ErrorReparto {
+  const d = problemas.map(p => `la nota ${p.id} ${MOTIVO[p.motivo]}`).join('; ');
+  return new ErrorReparto(`No se puede calcular el total de ${donde}: ${d}. Corregilo antes de seguir.`, 409);
+}
+
+/** 🔴 Corta en vez de devolver un total al que le falta una nota o le sobra una mal leída. */
+export function notasUnicas(notas: NotaEntrega[], donde = 'esta entrega') {
+  const { notas: limpias, problemas } = conciliarNotas(notas);
+  if (problemas.length) throw errorDeNotas(problemas, donde);
+  return limpias;
+}
+export function netoNotas(notas: NotaEntrega[], donde = 'esta entrega') {
+  return Math.round(notasUnicas(notas, donde).reduce((s, n) => s + signoNota(n)! * Math.abs(Number(n.total)), 0) * 100) / 100;
 }
 /** Misma fuente base para impresión, retiro y liquidación; el snapshot original no se pisa. */
 export async function enriquecerEntregas(filas: any[], actualizar = false, consultarImportes = true, tolerarErrores = false) {
@@ -111,26 +213,56 @@ export async function enriquecerEntregas(filas: any[], actualizar = false, consu
   return consultarImportes ? actualizarImportesFacturas(enriquecidas, { actualizar, tolerarErrores }) : enriquecidas;
 }
 
-export async function notasDeHoja(hojaId: string, filas: any[]) {
-  const facturas = [...new Set(filas.map(f => f.im_factura_id).filter(Boolean).map(String))];
+/**
+ * Las notas de cada hoja: journal de correcciones + ajustes emitidos desde el panel, una sola vez.
+ *
+ * 🔑 Misma fuente para la impresión, el modal y la liquidación del chofer. Leer sólo
+ * `hojas_ruta_ajustes` —como hacía la liquidación— deja afuera las notas que se emitieron por el
+ * circuito de corrección de factura, y el chofer cobra sobre un importe que no descuenta lo que
+ * volvió.
+ *
+ * 🪤 Por LOTES, no por hoja: un mes son decenas de hojas y dos consultas por cada una es un
+ * barrido entero de la pantalla de liquidación.
+ */
+export async function notasDeHojas(grupos: { hojaId: string; filas: any[] }[]) {
+  const todas = grupos.flatMap(g => g.filas);
+  const facturas = [...new Set(todas.map(f => f.im_factura_id).filter(Boolean).map(String))];
   const porFactura = new Map<string, NotaEntrega[]>();
   for (let i = 0; i < facturas.length; i += 150) {
     const notas = await leerPaginas(() => sb().from('facturas_correcciones').select('im_factura_id,im_comprobante_id,tipo,total,numero')
       .eq('tenant_id', TENANT_ID).in('im_factura_id', facturas.slice(i, i + 150)).order('id'));
     for (const n of notas) {
       const k = String(n.im_factura_id);
-      porFactura.set(k, [...(porFactura.get(k) ?? []), { id: String(n.im_comprobante_id), tipo: n.tipo, total: Number(n.total), numero: n.numero }]);
+      porFactura.set(k, [...(porFactura.get(k) ?? []), { id: String(n.im_comprobante_id), tipo: n.tipo, total: Number(n.total), numero: n.numero, origen: 'correccion' }]);
     }
   }
-  const ajustes = await leerPaginas(() => sb().from('hojas_ruta_ajustes').select('*').eq('tenant_id', TENANT_ID)
-    .eq('hoja_id', hojaId).not('emitido_at', 'is', null).order('id'));
-  const emitidos = await emitidosDe(filas.map(f => String(f.im_comprobante_id)));
-  return filas.map(f => {
-    const e = emitidos.find(e => String(e.im_comprobante_id) === String(f.im_comprobante_id) || String(e.im_remito_id) === String(f.im_comprobante_id));
-    const ids = new Set([f.im_comprobante_id, e?.im_comprobante_id, e?.im_remito_id].filter(Boolean).map(String));
-    const notas = notasUnicas([...(porFactura.get(String(f.im_factura_id)) ?? []), ...(ajustes ?? []).filter(a => ids.has(String(a.im_comprobante_id))).map(a => ({ id: String(a.im_ajuste_id ?? ''), tipo: a.im_ajuste_tipo ?? a.tipo, total: Number(a.importe), numero: a.im_ajuste_numero }))]);
-    return { ...f, notas };
-  });
+  const hojaIds = [...new Set(grupos.map(g => String(g.hojaId)))];
+  const porHoja = new Map<string, any[]>();
+  for (let i = 0; i < hojaIds.length; i += 150) {
+    const ajustes = await leerPaginas(() => sb().from('hojas_ruta_ajustes').select('*').eq('tenant_id', TENANT_ID)
+      .in('hoja_id', hojaIds.slice(i, i + 150)).not('emitido_at', 'is', null).order('id'));
+    for (const a of ajustes) porHoja.set(String(a.hoja_id), [...(porHoja.get(String(a.hoja_id)) ?? []), a]);
+  }
+  const emitidos = await emitidosDe(todas.map(f => String(f.im_comprobante_id)));
+  // 🪤 Primero gana, igual que el `find` que reemplaza: con dos filas que cubren el mismo id, la
+  // que se elija no puede depender de por cuál de las dos claves entró.
+  const primero = new Map<string, any>();
+  for (const e of emitidos) {
+    for (const k of [e.im_comprobante_id, e.im_remito_id]) if (k && !primero.has(String(k))) primero.set(String(k), e);
+  }
+  return grupos.map(g => ({
+    hojaId: g.hojaId,
+    filas: g.filas.map(f => {
+      const e = primero.get(String(f.im_comprobante_id));
+      const ids = new Set([f.im_comprobante_id, e?.im_comprobante_id, e?.im_remito_id].filter(Boolean).map(String));
+      const notas = notasUnicas([...(porFactura.get(String(f.im_factura_id)) ?? []), ...(porHoja.get(String(g.hojaId)) ?? []).filter(a => ids.has(String(a.im_comprobante_id))).map(a => ({ id: String(a.im_ajuste_id ?? ''), tipo: a.im_ajuste_tipo ?? a.tipo, total: Number(a.importe), numero: a.im_ajuste_numero, origen: 'panel' as const }))],
+        `la entrega ${f.im_comprobante_id}`);
+      return { ...f, notas };
+    }),
+  }));
+}
+export async function notasDeHoja(hojaId: string, filas: any[]) {
+  return (await notasDeHojas([{ hojaId, filas }]))[0].filas;
 }
 
 /** Las listas que se suman deben leerse completas, sin depender del límite de PostgREST. */

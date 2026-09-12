@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { saludProceso, estadoPreparacion, exigirEsquemaReparto } from './server-lib/estadoAplicacion.js';
+import { saludProceso, estadoPreparacion, exigirEsquemaReparto, exigirVinculoNotas } from './server-lib/estadoAplicacion.js';
 import express from 'express';
 import cors from 'cors';
 import compression from 'compression';
@@ -735,7 +735,8 @@ app.get('/api/hojas-ruta/:id/ajustes', requireJwt, (req: any, res) => listarAjus
 app.post('/api/hojas-ruta/:id/ajustes', requireJwt, (req: any, res) => crearAjuste(req, res));
 // 🔑 El camino de hoy: la NC se hace en IM y acá se vincula (IM no la deja emitir por API).
 app.get('/api/hojas-ruta/:id/ajustes/candidatas', requireJwt, (req: any, res) => candidatasAVincular(req, res));
-app.post('/api/hojas-ruta/:id/ajustes/vincular', requireJwt, (req: any, res) => vincularAjuste(req, res));
+// Las guardas de la 043 son lo único que impide contar una nota dos veces: sin ellas, no se ata.
+app.post('/api/hojas-ruta/:id/ajustes/vincular', requireJwt, exigirVinculoNotas, (req: any, res) => vincularAjuste(req, res));
 app.put('/api/hojas-ruta/:id', requireJwt, (req: any, res) => editarHoja(req, res));
 app.delete('/api/hojas-ruta/:id', requireJwt, (req: any, res) => borrarHoja(req, res));
 

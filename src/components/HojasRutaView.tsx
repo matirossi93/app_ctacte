@@ -114,6 +114,32 @@ const kilos = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 
  * rango"*. Antes esta pantalla tenía su propio selector de UN día y su propio `?dias=N` para
  * estirar hacia atrás, así que el rango que elegía la oficina arriba no llegaba hasta acá.
  */
+/**
+ * Varios avisos de contexto, en UNA línea.
+ *
+ * 🔑 Apilados empujan la pantalla hacia abajo: con tres banners arriba, la hoja que se vino a
+ * mirar queda fuera de la vista y el operador scrollea antes de poder trabajar. Acá se dice
+ * cuántos hay y se abren cuando se los quiere leer.
+ *
+ * 🪤 No se borra ninguno, y con uno solo se muestra abierto: esconder un aviso único detrás de un
+ * clic es peor que el banner que reemplaza.
+ */
+function AvisosDeContexto({ avisos }: { avisos: React.ReactNode[] }) {
+    const items = avisos.filter(Boolean);
+    const [abierto, setAbierto] = useState(false);
+    if (!items.length) return null;
+    if (items.length === 1) return <div className="hr-aviso"><AlertTriangle size={15} /><span>{items[0]}</span></div>;
+    return (
+        <div className="hr-aviso">
+            <AlertTriangle size={15} />
+            {abierto
+                ? <div className="hr-avisos-lista">{items.map((a, i) => <div key={i}>· {a}</div>)}</div>
+                : <span>Hay <b>{items.length} avisos</b> sobre estos días.</span>}
+            <button onClick={() => setAbierto(v => !v)}>{abierto ? 'Ocultar' : 'Ver'}</button>
+        </div>
+    );
+}
+
 export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }) {
     /**
      * 🔑 CON QUÉ FECHA SE CREA UNA HOJA NUEVA. Mati (09/09/2026): *"las hojas de ruta tendrían que
@@ -587,28 +613,21 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                 </div>
             </div>
 
-            {!!arrastre && (
-                <div className="hr-aviso">
-                    <AlertTriangle size={15} />
-                    <span>
-                        Hay <b>{arrastre}</b> pedidos anteriores al {desde.slice(8, 10)}/{desde.slice(5, 7)} que
-                        siguen sin salir. Estirá el <b>Desde</b> de arriba para verlos.
-                    </span>
-                </div>
-            )}
-            {aviso && <div className="hr-aviso"><AlertTriangle size={15} /><span>{aviso}</span><button onClick={() => setAviso(null)}><X size={14} /></button></div>}
             {/* 🔴 Los kilos mienten POR ABAJO: una hoja puede parecer que entra en el camión y no
                 entrar. Es lo único que no se puede deducir mirando la pantalla. */}
-            {diasSinPeso.length > 0 && (
-                <div className="hr-aviso">
-                    <AlertTriangle size={15} />
-                    <span>
-                        No se pudieron traer los renglones de {diasSinPeso.length} día(s)
-                        ({diasSinPeso.join(', ')}): esos remitos van con <b>0 kg</b>, así que el peso
-                        del camión está calculado <b>de menos</b>. Probá con menos días o volvé a actualizar.
-                    </span>
-                </div>
-            )}
+            <AvisosDeContexto avisos={[
+                !!arrastre && <>
+                    Hay <b>{arrastre}</b> pedidos anteriores al {desde.slice(8, 10)}/{desde.slice(5, 7)} que
+                    siguen sin salir. Estirá el <b>Desde</b> de arriba para verlos.
+                </>,
+                diasSinPeso.length > 0 && <>
+                    No se pudieron traer los renglones de {diasSinPeso.length} día(s)
+                    ({diasSinPeso.join(', ')}): esos remitos van con <b>0 kg</b>, así que el peso
+                    del camión está calculado <b>de menos</b>. Probá con menos días o volvé a actualizar.
+                </>,
+            ]} />
+            {/* Éste sí va suelto: es la respuesta a algo que la persona acaba de hacer. */}
+            {aviso && <div className="hr-aviso"><AlertTriangle size={15} /><span>{aviso}</span><button onClick={() => setAviso(null)}><X size={14} /></button></div>}
 
             {error && <div className="hr-aviso error"><AlertTriangle size={15} /><span>{error}</span></div>}
 
@@ -936,7 +955,9 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                             {!!h.pedidos.length && (
                                 <div className="hr-hoja-pie">
                                     <button className="hr-btn ghost chico" onClick={() => setAjustando(h)} disabled={trabajando}>
-                                        <FileMinus size={14} /> Diferencias
+                                        {/* 🔑 Lo que se hace acá es registrar notas: "Diferencias" no
+                                            decía de qué. Con la hoja cerrada es sólo lectura. */}
+                                        <FileMinus size={14} /> {cerrada ? 'Ver notas NC/ND' : 'Vincular NC/ND'}
                                     </button>
                                     <button className="hr-btn chico" onClick={() => void cerrarHoja(h)} disabled={trabajando || (!cerrada && h.pedidos.some(p => p.importe_error))}>
                                         {cerrada ? <><Unlock size={14} /> Reabrir</> : <><Lock size={14} /> Cerrar hoja</>}
@@ -952,7 +973,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
 
             {imprimiendo && <ImprimirHoja hojaId={imprimiendo} onClose={() => setImprimiendo(null)} />}
 
-            {/* Lo que volvió del reparto: las notas de crédito y el número final de la hoja. */}
+            {/* Lo que volvió del reparto: las notas NC/ND y el número final de la hoja. */}
             {ajustando && (() => {
                 const h = ajustando;
                 return (

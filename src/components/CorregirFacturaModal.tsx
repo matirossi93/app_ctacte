@@ -366,8 +366,10 @@ export function CorregirFacturaModal(
                 {/* 🔑 No saca mercadería: es plata. Diferencia de cambio, intereses, bonificación. */}
                 <p className="cf-nota">
                   Para lo que no saca mercadería: una diferencia de cambio, intereses, una
-                  bonificación. Va contra la factura {factura.numero}, así que la hoja de ruta lo
-                  descuenta del pedido.
+                  bonificación. Va contra la factura {factura.numero}, así que la hoja de ruta
+                  {/* 🪤 Decía "lo descuenta" siempre, y una ND SUMA: el texto afirmaba lo
+                      contrario de lo que iba a pasar con la mitad de las notas. */}
+                  {finTipo === 'ND' ? ' lo suma al pedido.' : ' lo descuenta del pedido.'}
                 </p>
                 <div className="cf-fila-fin">
                   <label>

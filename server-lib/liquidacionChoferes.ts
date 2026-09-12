@@ -25,7 +25,7 @@ import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
 import type { JwtPayload } from './auth.js';
 import { puedeArmarHojasDeRuta } from './permisos.js';
-import { leerPaginas, enriquecerHojas } from './repartoDatos.js';
+import { leerPaginas, enriquecerHojas, notasDeHojas, notasUnicas } from './repartoDatos.js';
 import { fechaArgentina } from './infomanager.js';
 
 function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
@@ -67,22 +67,32 @@ export async function liquidacionMensual(req: Request & { user?: JwtPayload }, r
     const { desde, hasta } = limitesDelMes(mes);
 
     const hojas = await leerPaginas(() => sb().from('hojas_ruta')
-      .select('id, numero, fecha, estado, cierres_importes, chofer_id, transporte, cerrada_at, choferes(nombre), hojas_ruta_pedidos(*), hojas_ruta_ajustes(tipo, importe, emitido_at)')
+      .select('id, numero, fecha, estado, cierres_importes, chofer_id, transporte, cerrada_at, choferes(nombre), hojas_ruta_pedidos(*)')
       .eq('tenant_id', TENANT_ID).gte('fecha', desde).lte('fecha', hasta).order('fecha').order('id'));
 
     const enriquecidos = await enriquecerHojas(hojas ?? [], req.query.refrescar === '1');
     const porId = new Map(enriquecidos.map(p => [String(p.im_comprobante_id), p]));
+    const pedidosDe = (h: any) => (h.hojas_ruta_pedidos ?? []).map((p: any) => porId.get(String(p.im_comprobante_id)) ?? p);
+    /**
+     * 🔑 Las notas salen de la MISMA fuente que la impresión y el modal de la hoja: journal de
+     * correcciones + ajustes del panel. Leyendo sólo `hojas_ruta_ajustes` quedaban afuera las
+     * notas emitidas por el circuito de corrección de factura, y el chofer cobraba sobre un
+     * importe que no descontaba lo que volvió.
+     */
+    const notasPorHoja = new Map((await notasDeHojas((hojas ?? []).map((h: any) => ({ hojaId: String(h.id), filas: pedidosDe(h) }))))
+      .map(g => [g.hojaId, notasUnicas(g.filas.flatMap((f: any) => f.notas ?? []), `la hoja ${g.hojaId}`)]));
     const porChofer = new Map<string, any>();
     let abiertas = 0;
     let importeAbierto = 0;
 
     for (const h of (hojas ?? []) as any[]) {
-      const pedidos = (h.hojas_ruta_pedidos ?? []).map((p: any) => porId.get(String(p.im_comprobante_id)) ?? p);
+      const pedidos = pedidosDe(h);
       const despachado = pedidos.reduce((s: number, p: any) => s + Number(p.total ?? 0), 0);
-      // Lo que volvió: sólo los ajustes ya emitidos en InfoManager.
-      const emitidos = (h.hojas_ruta_ajustes ?? []).filter((a: any) => a.emitido_at);
-      const nc = emitidos.filter((a: any) => a.tipo === 'nc').reduce((s: number, a: any) => s + Number(a.importe ?? 0), 0);
-      const nd = emitidos.filter((a: any) => a.tipo === 'nd').reduce((s: number, a: any) => s + Number(a.importe ?? 0), 0);
+      // 🔴 Si dos fuentes cuentan la misma nota distinto, `notasUnicas` ya cortó: de acá sale un
+      // pago y un total elegido por orden de lectura es un pago elegido al azar.
+      const notas = notasPorHoja.get(String(h.id)) ?? [];
+      const nc = notas.filter(n => /^nc/i.test(String(n.tipo ?? ''))).reduce((s: number, n: any) => s + Math.abs(Number(n.total)), 0);
+      const nd = notas.filter(n => /^nd/i.test(String(n.tipo ?? ''))).reduce((s: number, n: any) => s + Math.abs(Number(n.total)), 0);
       const importe = despachado - nc + nd;
       const kg = pedidos.reduce((s: number, p: any) => s + Number(p.kg ?? 0), 0);
       const bultos = pedidos.reduce((s: number, p: any) => s + Number(p.bultos ?? 0), 0);
@@ -106,7 +116,7 @@ export async function liquidacionMensual(req: Request & { user?: JwtPayload }, r
           chofer: h.choferes?.nombre ?? (h.chofer_id ? 'Chofer dado de baja' : 'Sin chofer asignado'),
           hojas: 0, pedidos: 0, clientes: new Set<number>(), bultos: 0, kg: 0, importe: 0,
           // Se muestran aparte: es lo que el chofer llevó y volvió sin entregar.
-          despachado: 0, notas_credito: 0,
+          despachado: 0, notas_credito: 0, notas_debito: 0,
           numeros: [] as number[],
         });
       }
@@ -119,6 +129,7 @@ export async function liquidacionMensual(req: Request & { user?: JwtPayload }, r
       c.importe += importe;
       c.despachado += despachado;
       c.notas_credito += nc;
+      c.notas_debito += nd;
       c.numeros.push(h.numero);
     }
 
@@ -127,7 +138,7 @@ export async function liquidacionMensual(req: Request & { user?: JwtPayload }, r
         ...c,
         clientes: c.clientes.size,
         bultos: redondear(c.bultos), kg: redondear(c.kg), importe: redondear(c.importe),
-        despachado: redondear(c.despachado), notas_credito: redondear(c.notas_credito),
+        despachado: redondear(c.despachado), notas_credito: redondear(c.notas_credito), notas_debito: redondear(c.notas_debito),
       }))
       .sort((a, b) => b.importe - a.importe);
 
@@ -142,12 +153,15 @@ export async function liquidacionMensual(req: Request & { user?: JwtPayload }, r
       },
       // Lo que todavía no se puede liquidar, para que se vea antes de pagar.
       sin_cerrar: { hojas: abiertas, importe: redondear(importeAbierto) },
-      // El importe ya descuenta las notas de crédito emitidas desde el panel.
+      // El importe ya descuenta las notas de crédito y suma las de débito, vengan del panel o
+      // del circuito de corrección de factura.
       incluye_ajustes: true,
       notas_credito: redondear(choferes.reduce((s, c) => s + c.notas_credito, 0)),
+      notas_debito: redondear(choferes.reduce((s, c) => s + c.notas_debito, 0)),
     });
   } catch (err: any) {
     console.error('[liquidacionMensual]', err?.message);
-    res.status(500).json({ error: err?.message ?? 'error' });
+    // Un dato que no cierra no es un fallo del servidor: es algo que hay que corregir en la hoja.
+    res.status(Number.isInteger(err?.status) ? err.status : 500).json({ error: err?.message ?? 'error' });
   }
 }

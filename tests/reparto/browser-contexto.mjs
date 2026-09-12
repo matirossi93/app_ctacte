@@ -90,19 +90,22 @@ try{
  await test('Vincular NC conserva contexto y resultado durante petición demorada',async()=>{
   const {page,ctx}=await setup(1440,{url:'/reparto?etapa=hojas&desde=2026-09-10&hasta=2026-09-10&hoja=h1',ready:'.hr-hoja',beforeGoto:async p=>{
    await p.route('**/api/hojas-ruta?**',r=>reply(r,{hojas:[hoja]}));
-   await p.route('**/api/hojas-ruta/h1/ajustes',r=>reply(r,{hoja,ajustes:[],despachado:300000,notas_credito:0,notas_debito:0,final:300000,pendientes_de_emitir:0}));
-   await p.route('**/api/hojas-ruta/h1/ajustes/candidatas',r=>reply(r,{candidatas:[{im_ajuste_id:'901',numero:901,tipo:'NC B',fecha:'2026-09-10',cod_cliente:101,importe:100,observaciones:'NC SIMULADA',menciona_esta_hoja:true}]}));
+   await p.route('**/api/hojas-ruta/h1/ajustes',r=>reply(r,{hoja,ajustes:[],notas:[],despachado:300000,notas_credito:0,notas_debito:0,final:300000,pendientes_de_emitir:0,
+    entregas:[{im_comprobante_id:'101',im_numero:101,cliente_nombre:'CLIENTE ALFA',cod_cliente:101,total:150000,im_factura_id:'58796590',im_factura_numero:50456}]}));
+   await p.route('**/api/hojas-ruta/h1/ajustes/candidatas',r=>reply(r,{candidatas:[{im_ajuste_id:'901',numero:901,tipo:'NC B',signo:-1,fecha:'2026-09-10',cod_cliente:101,importe:100,observaciones:'NC SIMULADA',menciona_esta_hoja:true}]}));
   }});let release=()=>{};
   try{
    let calls=0,sent;const gate=new Promise(r=>release=r);
    await page.route('**/api/hojas-ruta/h1/ajustes/vincular',async r=>{calls++;sent=r.request().postDataJSON();await gate;await reply(r,{ok:true,advertencia:'VÍNCULO CONFIRMADO'}).catch(()=>{});});
-   await page.getByRole('button',{name:'Diferencias',exact:true}).click();
+   await page.getByRole('button',{name:'Vincular NC/ND',exact:true}).click();
    await page.locator('.aj-modal').getByRole('button',{name:'Buscar',exact:true}).click();
    await page.locator('.aj-modal').getByRole('button',{name:'Vincular',exact:true}).click();await until(()=>calls===1);
    assert(await page.locator('.aj-cerrar').isDisabled(),'Puede cerrar vínculo en curso');
    assert(await page.locator('.of-tabs button').first().isDisabled(),'Puede navegar durante vínculo');
    await page.keyboard.press('Escape');assert(await page.locator('.aj-modal').isVisible(),'Escape desmonta vínculo');
    assert(sent.im_ajuste_id==='901'&&sent.im_comprobante_id==='101'&&sent.version_esperada===2,'Se perdió identidad/versión del vínculo');
+   // La factura y el detalle vistos viajan como condición: el server corta si cambiaron.
+   assert(sent.im_factura_id==='58796590'&&sent.esperado?.tipo==='NC B'&&sent.esperado?.numero===901,'Se perdió lo que se vio en pantalla');
    release();await page.getByText('VÍNCULO CONFIRMADO',{exact:true}).waitFor();assert(calls===1,'Duplicó vínculo');
   }finally{release();await ctx.close();}
  });

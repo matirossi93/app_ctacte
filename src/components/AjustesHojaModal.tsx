@@ -7,17 +7,20 @@ import { authHeaders } from '../utils/auth';
 import './AjustesHojaModal.css';
 
 /**
- * EL NÚMERO FINAL DE LA HOJA: lo despachado menos lo que volvió.
+ * EL NÚMERO FINAL DE LA HOJA: lo despachado, menos las notas de crédito, más las de débito.
  *
  * Mati (08/09/2026): *"una vez que vuelve el repartidor se hacen NC o facturas por dif de
  * mercadería y eso impacta en el num final de la hoja"*, y ese número es la base del pago al
  * chofer — *"a ellos se les paga en función a lo que entregan"*.
  *
- * 🔴 Acá se VINCULA, no se emite. La API de InfoManager rechaza las notas de crédito en el punto
- * de venta 777 (su validación de unicidad del número no mira el tipo de comprobante, así que la
- * serie de NC choca con facturas viejas — probado el 08/09/2026 con 7 payloads y 13 rutas). La
- * nota se emite en la pantalla de IM como siempre y desde acá se ata al pedido: el importe y el
- * número los lee el server de la NC real, nunca de lo que se tipeó en esta pantalla.
+ * 🔴 Acá se REGISTRA una nota que ya existe, no se emite ninguna. Los intentos de emitirla por la
+ * API en el punto 777 fueron rechazados por la numeración (probado el 08 y el 11/09/2026); por
+ * qué los rechaza IM internamente no lo sabemos. La nota se emite en la pantalla de IM como
+ * siempre y desde acá se ata a la entrega: el importe, el tipo y el número los lee el server de
+ * la nota real, nunca de lo que se tipeó en esta pantalla.
+ *
+ * 🪤 Vincular no devuelve mercadería ni reingresa stock, y tampoco crea una relación entre
+ * comprobantes dentro de InfoManager: deja registrado en ESTA hoja que la nota le corresponde.
  */
 
 interface Pedido {
@@ -43,13 +46,45 @@ interface Ajuste {
 interface Candidata {
     im_ajuste_id: string;
     numero: number | null;
+    /** Completo, con la letra: `NC B`, `ND A`. */
     tipo: string;
+    /** `-1` resta, `+1` suma. Lo decide el tipo en InfoManager, no esta pantalla. */
+    signo: -1 | 1;
     fecha: string;
     cod_cliente: number;
     importe: number;
     observaciones: string;
     /** La oficina escribe "SEGUN HR 3210" en las observaciones: esas van primero. */
     menciona_esta_hoja: boolean;
+}
+
+/** Una nota que afecta el total, venga del panel o del circuito de corrección de factura. */
+interface Nota {
+    im_ajuste_id: string;
+    tipo: string;
+    numero: number | null;
+    importe: number;
+    signo: -1 | 1;
+    /**
+     * De dónde sale. `correccion` = la emitió el circuito de corrección de factura; `ambas` = está
+     * en el journal Y vinculada desde acá. En los dos casos el journal la sostiene, así que soltar
+     * el vínculo no cambiaría el total.
+     */
+    origen: 'panel' | 'correccion' | 'ambas';
+    ajuste_id: string | null;
+    motivo: string | null;
+    im_comprobante_id: string | null;
+}
+
+/** La entrega a la que se ata la nota, con la factura que le corresponde HOY. */
+interface Entrega {
+    im_comprobante_id: string;
+    im_numero: number | null;
+    cliente_nombre: string | null;
+    cod_cliente: number | null;
+    total: number | null;
+    im_factura_id: string | null;
+    im_factura_numero: number | null;
 }
 
 interface Totales {
@@ -63,7 +98,14 @@ interface Totales {
     hoja: { version: number; id: string; numero: number; fecha: string; estado: string };
 }
 
-const money = (n: number) => '$' + Math.round(n).toLocaleString('es-AR');
+/**
+ * 🔴 CON CENTAVOS, a diferencia del resto del panel.
+ *
+ * Acá se confirma un importe: redondeando, una nota de $12.500,51 se lee "12.501" y el operador
+ * aprueba una cifra que nunca vio. En una lista que sólo se mira, el redondeo no engaña a nadie;
+ * en un botón que graba, sí.
+ */
+const money = (n: number) => '$' + Number(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }: {
     hojaId: string;
@@ -79,6 +121,8 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
     const [requiereVerificar, setRequiereVerificar] = useState(false);
     const [totales, setTotales] = useState<Totales | null>(null);
     const [ajustes, setAjustes] = useState<Ajuste[]>([]);
+    const [notas, setNotas] = useState<Nota[]>([]);
+    const [entregas, setEntregas] = useState<Entrega[]>([]);
     const [candidatas, setCandidatas] = useState<Candidata[] | null>(null);
     const [cargando, setCargando] = useState(true);
     const [buscando, setBuscando] = useState(false);
@@ -98,6 +142,8 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
             if (!r.ok) throw new Error(d?.error ?? 'No se pudieron traer los ajustes');
             setTotales(d); setRequiereVerificar(false); lectura.confirmar();
             setAjustes(d.ajustes ?? []);
+            setNotas(d.notas ?? []);
+            setEntregas(d.entregas ?? []);
         } catch (e: any) {
             if (!lectura.vigente()) return;
             setError(e?.message ?? 'Error de conexión');
@@ -119,10 +165,10 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
             const r = await fetch(`/api/hojas-ruta/${hojaId}/ajustes/candidatas`, { headers: authHeaders(), signal: lectura.signal });
             const d = await r.json().catch(() => null);
             if (!lectura.vigente()) return;
-            if (!r.ok) throw new Error(d?.error ?? 'No se pudieron traer las notas de crédito');
+            if (!r.ok) throw new Error(d?.error ?? 'No se pudieron traer las notas');
             setCandidatas(d.candidatas ?? []);
             if (!(d.candidatas ?? []).length) {
-                setAviso('No hay notas de crédito sin vincular para los clientes de esta hoja. Emitila en InfoManager y volvé a buscar.');
+                setAviso('No hay notas sin registrar para los clientes de esta hoja. Emitila en InfoManager y volvé a buscar.');
             }
         } catch (e: any) {
             if (!lectura.vigente()) return;
@@ -147,7 +193,9 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
         const suyos = pedidosPorCliente.get(Number(c.cod_cliente)) ?? [];
         // Con un solo pedido del cliente no hay nada que elegir; con varios, lo elige la oficina.
         const comprobante = destino[c.im_ajuste_id] ?? (suyos.length === 1 ? suyos[0].im_comprobante_id : '');
-        if (!comprobante) { setError('Elegí a qué pedido corresponde esa nota de crédito.'); return; }
+        if (!comprobante) { setError('Elegí a qué entrega corresponde esa nota.'); return; }
+        const entrega = entregas.find(e => e.im_comprobante_id === comprobante);
+        if (!entrega?.im_factura_id) { setError('Esa entrega todavía no tiene una factura identificada. Conciliala antes de vincular.'); return; }
         if (requiereVerificar || !operacion.comenzar()) return;
         invalidarBusqueda(); setBuscando(false);
         setTrabajando(true); setError(null); setAviso(null);
@@ -155,10 +203,23 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
             const r = await fetch(`/api/hojas-ruta/${hojaId}/ajustes/vincular`, {
                 method: 'POST',
                 headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({ im_comprobante_id: comprobante, im_ajuste_id: c.im_ajuste_id, version_esperada: totales?.hoja.version }),
+                body: JSON.stringify({
+                    im_comprobante_id: comprobante, im_ajuste_id: c.im_ajuste_id,
+                    version_esperada: totales?.hoja.version,
+                    /**
+                     * 🔴 Lo que se está viendo en pantalla, para que el server corte si cambió.
+                     * NO es la fuente del importe: eso lo lee él de la nota real.
+                     */
+                    im_factura_id: entrega.im_factura_id,
+                    esperado: { tipo: c.tipo, numero: c.numero, importe: c.importe },
+                }),
             });
             const d = await r.json().catch(() => null);
-            if (!r.ok) throw new Error(d?.error ?? 'No se pudo vincular');
+            if (!r.ok) {
+                // Si cambió algo desde que se mostró, la lista vieja ya no sirve.
+                if (d?.recargar) { setCandidatas(null); invalidarBusqueda(); }
+                throw new Error(d?.error ?? 'No se pudo vincular');
+            }
             if (d?.advertencia) setAviso(d.advertencia);
             setCandidatas(cs => (cs ?? []).filter(x => x.im_ajuste_id !== c.im_ajuste_id));
             await cargar(true);
@@ -171,15 +232,15 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
         }
     }
 
-    async function desvincular(a: Ajuste) {
-        if (!confirm(`¿Desvincular la ${a.im_ajuste_tipo ?? 'nota'} ${a.im_ajuste_numero ?? ''} de ${money(a.importe)}?\n\nLa nota sigue existiendo en InfoManager: acá sólo se suelta el vínculo con el pedido.`)) return;
+    async function desvincular(a: { id: string; tipo: string; numero: number | null; importe: number }) {
+        if (!confirm(`¿Soltar la ${a.tipo} ${a.numero ?? ''} de ${money(a.importe)}?\n\nLa nota sigue existiendo en InfoManager: acá sólo se saca de esta hoja.`)) return;
         if (requiereVerificar || !operacion.comenzar()) return;
         invalidarBusqueda(); setBuscando(false);
         setTrabajando(true); setError(null);
         try {
             const r = await fetch(`/api/hojas-ruta/ajustes/${a.id}?version_esperada=${totales?.hoja.version}`, { method: 'DELETE', headers: authHeaders() });
             const d = await r.json().catch(() => null);
-            if (!r.ok) throw new Error(d?.error ?? 'No se pudo desvincular');
+            if (!r.ok) throw new Error(d?.error ?? 'No se pudo soltar');
             await cargar(true);
             onCambio();
         } catch (e: any) {
@@ -201,11 +262,11 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
     const cerrar = () => { if (!operacion.enCurso.current) onClose(); };
     const dialogo = useDialogoReparto(cerrar);
     return (
-        <dialog ref={dialogo} style={estiloDialogo} aria-label={`Diferencias de entrega hoja ${numero}`} className="aj-fondo" onClick={e => { if (e.target === e.currentTarget) cerrar(); }}>
+        <dialog ref={dialogo} style={estiloDialogo} aria-label={`Notas de crédito y débito de la hoja ${numero}`} className="aj-fondo" onClick={e => { if (e.target === e.currentTarget) cerrar(); }}>
             <fieldset disabled={trabajando} className="aj-modal" style={{ border: 0, margin: 0, minWidth: 0 }} onClick={e => e.stopPropagation()}>
                 <header className="aj-head">
-                    <h3><FileMinus size={17} /> Hoja {numero} — diferencias de entrega</h3>
-                    <button className="aj-cerrar" onClick={cerrar} aria-label="Cerrar diferencias de entrega"><X size={18} /></button>
+                    <h3><FileMinus size={17} /> Hoja {numero} — notas NC/ND</h3>
+                    <button className="aj-cerrar" onClick={cerrar} aria-label="Cerrar notas de la hoja"><X size={18} /></button>
                 </header>
 
                 {requiereVerificar && <div className="aj-error" role="alert">Verificá el estado actual antes de otra modificación. <button disabled={cargando} onClick={() => void cargar(true)}>Volver a leer los vínculos</button></div>}
@@ -219,7 +280,10 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
                         {totales.notas_debito > 0 && (
                             <div><span>Notas de débito</span><b>+ {money(totales.notas_debito)}</b></div>
                         )}
-                        <div className="final"><span>Entregado (se liquida)</span><b>{money(totales.final)}</b></div>
+                        {/* 🪤 No dice "entregado": una nota es un ajuste de la CUENTA, y decir que
+                            algo se entregó porque bajó el importe sería afirmar un hecho físico
+                            que este número no conoce. */}
+                        <div className="final"><span>Total ajustado · base de liquidación</span><b>{money(totales.final)}</b></div>
                     </div>
                 )}
 
@@ -238,29 +302,67 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
                 {error && <div className="aj-error"><AlertTriangle size={14} /> {error}</div>}
                 {aviso && <div className="aj-aviso"><AlertTriangle size={14} /> {aviso}</div>}
 
-                {/* ─── Lo ya vinculado ─────────────────────────────────────────── */}
+                {/* ─── Lo que ya afecta el total ───────────────────────────────── */}
                 <section className="aj-seccion">
-                    <h4>Notas vinculadas ({ajustes.length})</h4>
-                    {!ajustes.length && !cargando && (
-                        <p className="aj-vacio">Todavía no hay ninguna. Si el repartidor volvió con mercadería, la nota de crédito se emite en InfoManager y después se vincula acá.</p>
+                    <h4>Notas de esta hoja ({notas.length})</h4>
+                    {!notas.length && !cargando && (
+                        <p className="aj-vacio">Ninguna todavía. Si el repartidor volvió con mercadería, la nota se emite en InfoManager y después se registra acá.</p>
                     )}
-                    {ajustes.map(a => (
+                    {/**
+                      * 🔑 Están TODAS las que mueven el número, no sólo las que se ataron desde
+                      * esta pantalla: una emitida por el circuito de corrección de factura ya
+                      * descuenta igual, y si no se listara el total no cuadraría con lo que se ve.
+                      * Ésas no tienen vínculo propio que soltar — borrar acá no las sacaría de
+                      * ningún lado.
+                      */}
+                    {notas.map(n => (
+                        <div className="aj-fila" key={n.im_ajuste_id}>
+                            <div>
+                                <div className="aj-fila-tit">
+                                    {n.tipo} {n.numero ?? '—'}
+                                    <b className={n.signo > 0 ? 'suma' : 'resta'}>
+                                        {n.signo > 0 ? '+' : '−'} {money(n.importe)}
+                                    </b>
+                                </div>
+                                <div className="aj-fila-meta">
+                                    {n.im_comprobante_id ? nombrePedido(n.im_comprobante_id) : 'Corrección de factura'}
+                                    {n.motivo ? ` · ${n.motivo}` : ''}
+                                    {n.origen !== 'panel' && <span className="aj-tag"> desde corrección de factura</span>}
+                                </div>
+                            </div>
+                            {n.ajuste_id ? (
+                                <button className="aj-icono" title={cerrada ? 'La hoja está cerrada' : 'Sacar de esta hoja'}
+                                    onClick={() => void desvincular({ id: n.ajuste_id!, tipo: n.tipo, numero: n.numero, importe: n.importe })}
+                                    disabled={trabajando || requiereVerificar || cerrada}>
+                                    <Trash2 size={14} />
+                                </button>
+                            ) : (
+                                /* 🪤 Antes acá había un botón de sacar: la nota seguía descontando
+                                   igual por el journal, así que prometía algo que no pasaba. */
+                                /* 🪤 Y sin mandar a nadie a "sacarla desde la corrección": ahí
+                                   tampoco hay un botón para eso. Lo que se sabe es que el total no
+                                   cambiaría. */
+                                <span className="aj-fila-meta" title="Forma parte de una corrección de factura; quitar el vínculo no cambiaría el total.">—</span>
+                            )}
+                        </div>
+                    ))}
+
+                    {/* Uno a medias no bajó ninguna cuenta corriente, así que no cuenta todavía. */}
+                    {ajustes.filter(a => !a.emitido_at).map(a => (
                         <div className="aj-fila" key={a.id}>
                             <div>
                                 <div className="aj-fila-tit">
                                     {a.im_ajuste_tipo ?? (a.tipo === 'nd' ? 'ND' : 'NC')} {a.im_ajuste_numero ?? '—'}
-                                    <b className={a.tipo === 'nd' ? 'suma' : 'resta'}>
-                                        {a.tipo === 'nd' ? '+' : '−'} {money(a.importe)}
-                                    </b>
+                                    <b>{money(a.importe)}</b>
                                 </div>
                                 <div className="aj-fila-meta">
                                     {nombrePedido(a.im_comprobante_id)} · {a.motivo}
-                                    {/* Sólo lo emitido baja el número final: uno a medias no bajó
-                                        ninguna cuenta corriente y no se puede contar como entregado. */}
-                                    {!a.emitido_at && <b className="warn"> · sin emitir: no descuenta</b>}
+                                    <b className="warn"> · sin emitir: no cuenta</b>
                                 </div>
                             </div>
-                            <button className="aj-icono" title={cerrada ? 'La hoja está cerrada' : 'Desvincular del pedido'} onClick={() => void desvincular(a)} disabled={trabajando || requiereVerificar || cerrada}>
+                            <button className="aj-icono" title={cerrada ? 'La hoja está cerrada' : 'Sacar de esta hoja'}
+                                onClick={() => void desvincular({ id: a.id, tipo: a.im_ajuste_tipo ?? a.tipo.toUpperCase(), numero: a.im_ajuste_numero, importe: a.importe })}
+                                disabled={trabajando || requiereVerificar || cerrada}>
                                 <Trash2 size={14} />
                             </button>
                         </div>
@@ -270,14 +372,17 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
                 {/* ─── Lo que se puede vincular ────────────────────────────────── */}
                 <section className="aj-seccion">
                     <h4>
-                        Notas de crédito en InfoManager
+                        Notas en InfoManager
                         <button className="aj-btn chico" onClick={() => void buscarCandidatas()} disabled={buscando || cerrada}>
                             {buscando ? <Loader2 size={13} className="girando" /> : <RefreshCw size={13} />} Buscar
                         </button>
                     </h4>
                     <p className="aj-ayuda">
-                        Busca las notas de crédito de los clientes de esta hoja, desde su fecha en adelante.
-                        Las que dicen <b>SEGUN HR {numero}</b> en las observaciones aparecen primero.
+                        Busca las notas de crédito y débito de los clientes de esta hoja, desde su fecha en
+                        adelante. Las que dicen <b>SEGUN HR {numero}</b> en las observaciones aparecen primero.
+                        {/* 🪤 Sin prometer lo que no hace: no devuelve mercadería, no reingresa stock y no
+                            relaciona los comprobantes dentro de InfoManager. */}
+                        <br /><b>Vincular</b> registra la nota en esta hoja y ajusta su total.
                     </p>
 
                     {(candidatas ?? []).map(c => {
@@ -286,13 +391,30 @@ export function AjustesHojaModal({ hojaId, numero, pedidos, onClose, onCambio }:
                             <div className={`aj-fila candidata${c.menciona_esta_hoja ? ' mencionada' : ''}`} key={c.im_ajuste_id}>
                                 <div>
                                     <div className="aj-fila-tit">
-                                        {c.tipo} {c.numero ?? '—'} <b>{money(c.importe)}</b>
+                                        {c.tipo} {c.numero ?? '—'}
+                                        <b className={c.signo > 0 ? 'suma' : 'resta'}>{c.signo > 0 ? '+' : '−'} {money(c.importe)}</b>
                                         {c.menciona_esta_hoja && <span className="aj-tag">nombra esta hoja</span>}
                                     </div>
                                     <div className="aj-fila-meta">
                                         {c.fecha} · cliente {c.cod_cliente}
                                         {c.observaciones ? ` · ${c.observaciones}` : ''}
                                     </div>
+                                    {/* 🔑 A qué factura va a parar: es lo que el server revalida bajo
+                                        lock al confirmar, así que tiene que verse antes. */}
+                                    {(() => {
+                                        const elegido = destino[c.im_ajuste_id] ?? (suyos.length === 1 ? suyos[0].im_comprobante_id : '');
+                                        const e = entregas.find(x => x.im_comprobante_id === elegido);
+                                        if (!elegido) return null;
+                                        return e?.im_factura_id
+                                            ? <div className="aj-fila-meta">
+                                                {/* 🔑 El cliente va SIEMPRE, aunque tenga una sola entrega y no
+                                                    haya nada que elegir: sin el nombre, el número de factura
+                                                    solo no alcanza para darse cuenta de que es otra persona. */}
+                                                Se registra sobre la factura <b>{e.im_factura_numero ?? e.im_factura_id}</b>
+                                                {e.cliente_nombre ? <> de <b>{e.cliente_nombre}</b></> : null}
+                                              </div>
+                                            : <div className="aj-fila-meta warn">Esa entrega todavía no tiene factura identificada: conciliala antes de vincular.</div>;
+                                    })()}
                                     {/* Con un solo pedido del cliente no se pregunta nada. */}
                                     {suyos.length > 1 && (
                                         <select

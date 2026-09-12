@@ -68,13 +68,13 @@ function llamar(fn: any, { rol = 'administrativo', params = {}, body = {}, query
 const HOJA = {
   id: 'h1', numero: 3395, fecha: '2026-09-08', estado: 'abierta', cod_empresa: 1,
   hojas_ruta_pedidos: [
-    { im_comprobante_id: '10', cod_empresa:1, cod_cliente: 1093, cliente_nombre: 'ARON, Jorge', total: 100000, facturado_at: '2026-09-08T12:00:00Z', im_factura_numero: 50360 },
+    { im_comprobante_id: '10', cod_empresa:1, cod_cliente: 1093, cliente_nombre: 'ARON, Jorge', total: 100000, facturado_at: '2026-09-08T12:00:00Z', im_factura_id: '58796590', im_factura_numero: 50360 },
     { im_comprobante_id: '20', cod_empresa:1, cod_cliente: 500, cliente_nombre: 'MORELLI', total: 50000, facturado_at: '2026-09-08T12:00:00Z', im_factura_numero: 50361 },
   ],
 };
 /** Una nota de crédito como la devuelve `GET /ventas/{id}`. */
 const NC_EN_IM = {
-  id: 'nc-99', tipo_comprobante: 'NC', tipo_factura: 'B', numero: 30058,
+  id: '58900099', tipo_comprobante: 'NC', tipo_factura: 'B', numero: 30058,
   cod_empresa:1, cod_cliente: 1093, total: 20000, anulada: 'N', observaciones: 'NO PIDIO SEGUN HR 3395',
 };
 const RENGLONES = [
@@ -98,23 +98,26 @@ beforeEach(() => {
 
 
 describe('el número final de la hoja', () => {
-  it('🔴 descuenta las NC emitidas y suma las ND', async () => {
-    const t = totalesConAjustes(HOJA, [
-      { tipo: 'nc', importe: 20000, emitido_at: 'x' },
-      { tipo: 'nd', importe: 5000, emitido_at: 'x' },
+  /** Las notas llegan ya conciliadas de la fuente común: journal de correcciones + panel. */
+  it('🔴 descuenta las NC y suma las ND', async () => {
+    const t = totalesConAjustes(HOJA, [], [
+      { tipo: 'NC B', total: 20000 },
+      { tipo: 'ND B', total: 5000 },
     ]);
     expect(t).toMatchObject({ despachado: 150000, notas_credito: 20000, notas_debito: 5000, final: 135000 });
   });
 
   it('🔴 un ajuste SIN emitir no descuenta: no bajó ninguna cuenta corriente', async () => {
-    // Si descontara, al chofer se le pagaría de menos por algo que no pasó.
-    const t = totalesConAjustes(HOJA, [{ tipo: 'nc', importe: 20000, emitido_at: null }]);
+    // Si descontara, al chofer se le pagaría de menos por algo que no pasó. La fuente común ya
+    // filtra por `emitido_at`, así que ese ajuste no llega como nota — pero sí se cuenta como
+    // pendiente, para que se vea que falta.
+    const t = totalesConAjustes(HOJA, [{ tipo: 'nc', importe: 20000, emitido_at: null }], []);
     expect(t.final).toBe(150000);
     expect(t.pendientes_de_emitir).toBe(1);
   });
 
-  it('sin ajustes, el final es lo despachado', async () => {
-    expect(totalesConAjustes(HOJA, []).final).toBe(150000);
+  it('sin notas, el final es lo despachado', async () => {
+    expect(totalesConAjustes(HOJA, [], []).final).toBe(150000);
   });
 });
 
@@ -147,15 +150,81 @@ describe('borrar un ajuste', () => {
 });
 
 describe('listar', () => {
+  // La hoja está abierta: el importe de la factura sale de IM, como en producción.
+  beforeEach(() => {
+    m.cabeceraComprobante.mockResolvedValue({ fecha: '2026-09-08', anulada: false, existe: true, total: 100000, tipo_comprobante: 'FA', cod_cliente: 1093, cod_empresa: 1 });
+  });
+
+  const vinculada = (over: any = {}) => ({
+    id: 'aj1', hoja_id: 'h1', im_comprobante_id: '10', im_ajuste_id: '58900001', im_ajuste_numero: 30079,
+    tipo: 'nc', im_ajuste_tipo: 'NC B', importe: 10000, emitido_at: 'x', ...over,
+  });
+
   it('devuelve los ajustes con el desglose del número final', async () => {
-    tablas['hojas_ruta_ajustes'] = { data: [{ tipo: 'nc', importe: 10000, emitido_at: 'x' }], error: null };
+    tablas['hojas_ruta_ajustes'] = { data: [vinculada()], error: null };
     const r = await llamar(listarAjustes, { params: { id: 'h1' } });
     expect(r.body).toMatchObject({ despachado: 150000, notas_credito: 10000, final: 140000 });
+  });
+
+  /**
+   * 🔑 El modal leía sólo `hojas_ruta_ajustes` y mostraba un final más alto que el papel de la
+   * misma hoja, que sí descuenta las notas del circuito de corrección de factura.
+   */
+  it('🔑 una nota que sólo está en el journal de correcciones también cuenta', async () => {
+    tablas['hojas_ruta_ajustes'] = { data: [], error: null };
+    tablas['facturas_correcciones'] = { data: [{ im_factura_id: '58796590', im_comprobante_id: '58900002', tipo: 'NC B', total: 25000, numero: 30080 }], error: null };
+    tablas['presupuestos_facturados'] = { data: [{ im_comprobante_id: '10', im_factura_id: '58796590', cod_cliente: 1093, cod_empresa: 1, total: 100000, facturado_at: 'x' }], error: null };
+    const r = await llamar(listarAjustes, { params: { id: 'h1' } });
+    expect(r.body.notas_credito).toBe(25000);
+  });
+
+  it('🔑 la misma nota por las dos fuentes se cuenta una sola vez', async () => {
+    tablas['hojas_ruta_ajustes'] = { data: [vinculada({ im_ajuste_id: '58900002', importe: 25000 })], error: null };
+    tablas['facturas_correcciones'] = { data: [{ im_factura_id: '58796590', im_comprobante_id: '58900002', tipo: 'NC B', total: 25000, numero: 30080 }], error: null };
+    tablas['presupuestos_facturados'] = { data: [{ im_comprobante_id: '10', im_factura_id: '58796590', cod_cliente: 1093, cod_empresa: 1, total: 100000, facturado_at: 'x' }], error: null };
+    const r = await llamar(listarAjustes, { params: { id: 'h1' } });
+    expect(r.body.notas_credito).toBe(25000);
+    expect(r.body.final).toBe(125000);
+  });
+
+  /**
+   * 🔴 CASO REAL (ANDRADES, NC B 13): la misma nota está en el journal Y vinculada desde el
+   * panel. Marcarla como "del panel" hacía que la pantalla ofreciera sacarla, y borrar esa fila
+   * NO cambia el total — el journal la sigue descontando. El botón prometía un efecto que no
+   * ocurre, y se descubría después de tocarlo.
+   */
+  it('🔑 una nota sostenida por las DOS fuentes cuenta una vez y no se ofrece sacar', async () => {
+    tablas['hojas_ruta_ajustes'] = { data: [vinculada({ im_ajuste_id: '58900002', importe: 25000 })], error: null };
+    tablas['facturas_correcciones'] = { data: [{ im_factura_id: '58796590', im_comprobante_id: '58900002', tipo: 'NC B', total: 25000, numero: 30080 }], error: null };
+    tablas['presupuestos_facturados'] = { data: [{ im_comprobante_id: '10', im_factura_id: '58796590', cod_cliente: 1093, cod_empresa: 1, total: 100000, facturado_at: 'x' }], error: null };
+    const r = await llamar(listarAjustes, { params: { id: 'h1' } });
+    expect(r.body.notas).toHaveLength(1);
+    expect(r.body.notas[0]).toMatchObject({ im_ajuste_id: '58900002', origen: 'ambas', ajuste_id: null });
+    expect(r.body.notas_credito).toBe(25000);
+  });
+
+  it('🔑 y una que SÓLO vinculó el panel sí se puede sacar', async () => {
+    tablas['hojas_ruta_ajustes'] = { data: [vinculada()], error: null };
+    tablas['facturas_correcciones'] = { data: [], error: null };
+    const r = await llamar(listarAjustes, { params: { id: 'h1' } });
+    expect(r.body.notas[0]).toMatchObject({ origen: 'panel', ajuste_id: 'aj1' });
+  });
+
+  it('🔑 si las dos fuentes discrepan, no se publica un final', async () => {
+    tablas['hojas_ruta_ajustes'] = { data: [vinculada({ im_ajuste_id: '58900002', importe: 40000 })], error: null };
+    tablas['facturas_correcciones'] = { data: [{ im_factura_id: '58796590', im_comprobante_id: '58900002', tipo: 'NC B', total: 25000, numero: 30080 }], error: null };
+    tablas['presupuestos_facturados'] = { data: [{ im_comprobante_id: '10', im_factura_id: '58796590', cod_cliente: 1093, cod_empresa: 1, total: 100000, facturado_at: 'x' }], error: null };
+    const r = await llamar(listarAjustes, { params: { id: 'h1' } });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/58900002/);
   });
 });
 
 /** Hallazgos de la auditoría del 08/09/2026 sobre las notas de crédito. */
 
+
+/** Lo que el operador tenía en pantalla: sin esto no se vincula (ver los tests de más abajo). */
+const VISTO = { im_factura_id: '58796590', esperado: { tipo: 'NC B', numero: 30058, importe: 20000 } };
 
 describe('vincular una nota de crédito ya emitida en IM', () => {
   it('🔴 emitir desde el panel está apagado y lo dice', async () => {
@@ -172,7 +241,7 @@ describe('vincular una nota de crédito ya emitida en IM', () => {
     // de lo que alguien tipeó.
     const r = await llamar(vincularAjuste, {
       params: { id: 'h1' },
-      body: { im_comprobante_id: '10', im_ajuste_id: 'nc-99', importe: 999999 },
+      body: { ...VISTO, im_comprobante_id: '10', im_ajuste_id: '58900099', importe: 999999 },
     });
     expect(r.status).toBe(200);
     const fila = escrituras.find(e => e.op === 'insert')!.valor;
@@ -183,7 +252,7 @@ describe('vincular una nota de crédito ya emitida en IM', () => {
   it('🔴 no se vincula una NC de OTRO cliente', async () => {
     m.imClient.mockResolvedValue({ get: vi.fn(async () => ({ data: { ...NC_EN_IM, cod_cliente: 777 } })) });
     const r = await llamar(vincularAjuste, {
-      params: { id: 'h1' }, body: { im_comprobante_id: '10', im_ajuste_id: 'nc-99' },
+      params: { id: 'h1' }, body: { ...VISTO, im_comprobante_id: '10', im_ajuste_id: '58900099' },
     });
     expect(r.status).toBe(409);
     expect(r.body.error).toMatch(/cliente/i);
@@ -192,26 +261,147 @@ describe('vincular una nota de crédito ya emitida en IM', () => {
 
   it('🔴 ni una ANULADA, ni algo que no sea una nota de crédito', async () => {
     m.imClient.mockResolvedValue({ get: vi.fn(async () => ({ data: { ...NC_EN_IM, anulada: 'S' } })) });
-    expect((await llamar(vincularAjuste, { params: { id: 'h1' }, body: { im_comprobante_id: '10', im_ajuste_id: 'nc-99' } })).status).toBe(409);
+    expect((await llamar(vincularAjuste, { params: { id: 'h1' }, body: { ...VISTO, im_comprobante_id: '10', im_ajuste_id: '58900099' } })).status).toBe(409);
 
     m.imClient.mockResolvedValue({ get: vi.fn(async () => ({ data: { ...NC_EN_IM, tipo_comprobante: 'FA' } })) });
-    expect((await llamar(vincularAjuste, { params: { id: 'h1' }, body: { im_comprobante_id: '10', im_ajuste_id: 'nc-99' } })).status).toBe(409);
+    expect((await llamar(vincularAjuste, { params: { id: 'h1' }, body: { ...VISTO, im_comprobante_id: '10', im_ajuste_id: '58900099' } })).status).toBe(409);
   });
 
   it('🔴 la misma NC no se vincula dos veces: se descontaría dos veces del pago', async () => {
     tablas['hojas_ruta_ajustes'] = { data: null, error: { code: '23505', message: 'duplicate key' } };
     const r = await llamar(vincularAjuste, {
-      params: { id: 'h1' }, body: { im_comprobante_id: '10', im_ajuste_id: 'nc-99' },
+      params: { id: 'h1' }, body: { ...VISTO, im_comprobante_id: '10', im_ajuste_id: '58900099' },
     });
     expect(r.status).toBe(409);
     expect(r.body.error).toMatch(/ya está vinculada/i);
+  });
+
+  /**
+   * 🔑 Hasta hoy sólo se podían vincular NC. Una ND es lo contrario: SUMA. Si el signo saliera
+   * del formulario en vez del tipo verificado en IM, una nota de débito podría descontarle al
+   * chofer plata que en realidad se le cobró de más al cliente.
+   */
+  it('🔑 una NOTA DE DÉBITO se vincula y suma', async () => {
+    m.imClient.mockResolvedValue({ get: vi.fn(async () => ({ data: { ...NC_EN_IM, tipo_comprobante: 'ND', numero: 746 } })) });
+    const r = await llamar(vincularAjuste, {
+      params: { id: 'h1' }, body: { ...VISTO, esperado: { tipo: 'ND B', numero: 746, importe: 20000 }, im_comprobante_id: '10', im_ajuste_id: '58900099' },
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.ajuste).toMatchObject({ tipo: 'ND B', signo: 1 });
+    expect(escrituras.find(e => e.op === 'insert')!.valor).toMatchObject({ tipo: 'nd', importe: 20000, im_ajuste_numero: 746 });
+  });
+
+  /**
+   * 🔴 La lista de candidatas puede venir de caché. Entre verla y confirmar, la nota pudo cambiar
+   * de importe, de tipo o de número: grabar el valor nuevo en silencio sería descontarle a la
+   * hoja —y al pago del chofer— una cifra que nadie miró.
+   */
+  describe('si algo cambió entre mostrar y confirmar', () => {
+    const confirmar = (esperado: any, extra: any = {}) => llamar(vincularAjuste, {
+      params: { id: 'h1' },
+      body: { im_factura_id: '58796590', im_comprobante_id: '10', im_ajuste_id: '58900099', esperado: esperado ?? VISTO.esperado, ...extra },
+    });
+
+    it('🔑 el importe cambió: no se graba y se pide recargar', async () => {
+      const r = await confirmar({ tipo: 'NC B', numero: 30058, importe: 12000 });
+      expect(r.status).toBe(409);
+      expect(r.body.recargar).toBe(true);
+      expect(r.body.error).toMatch(/20000/);
+      expect(escrituras.some(e => e.op === 'insert')).toBe(false);
+    });
+
+    it('🔑 el tipo o el número cambiaron: tampoco', async () => {
+      expect((await confirmar({ tipo: 'ND B', numero: 30058, importe: 20000 })).status).toBe(409);
+      expect((await confirmar({ tipo: 'NC B', numero: 99999, importe: 20000 })).status).toBe(409);
+      expect(escrituras.some(e => e.op === 'insert')).toBe(false);
+    });
+
+    it('🔑 la FACTURA de destino cambió: la nota iría a un comprobante que nadie miró', async () => {
+      const r = await confirmar(null, { im_factura_id: '58799606' });
+      expect(r.status).toBe(409);
+      expect(r.body.recargar).toBe(true);
+      expect(r.body.error).toMatch(/factura/i);
+      expect(escrituras.some(e => e.op === 'insert')).toBe(false);
+    });
+
+    /**
+     * 🔴 Si faltaran, la confirmación se saltearía sola: el caso peligroso (la nota cambió) es
+     * justo el que no manda el dato. Por eso son obligatorios, no "si vienen, se comparan".
+     */
+    it('🔑 sin lo que se vio en pantalla no se vincula', async () => {
+      for (const body of [
+        { im_comprobante_id: '10', im_ajuste_id: '58900099' },
+        { im_comprobante_id: '10', im_ajuste_id: '58900099', im_factura_id: '58796590' },
+        { im_comprobante_id: '10', im_ajuste_id: '58900099', esperado: { tipo: 'NC B', numero: 30058, importe: 20000 } },
+        { im_comprobante_id: '10', im_ajuste_id: '58900099', im_factura_id: '58796590', esperado: 'NC 30058' },
+      ]) {
+        escrituras = [];
+        const r = await llamar(vincularAjuste, { params: { id: 'h1' }, body });
+        expect(r.status, JSON.stringify(body)).toBe(400);
+        expect(escrituras.some(e => e.op === 'insert')).toBe(false);
+      }
+    });
+
+    /**
+     * 🔴 Un `{}` o un `"ilegible"` haría que cada comparación se saltee sola y la confirmación
+     * pase siempre — justo en el caso que se quería atrapar. Se exige cada campo legible.
+     */
+    it('🔑 un esperado vacío, parcial o ilegible NO confirma nada', async () => {
+      for (const esperado of [
+        {},
+        { tipo: null, numero: 'ilegible', importe: 'ilegible' },
+        { tipo: 'NC B' },
+        { numero: 30058, importe: 20000 },
+        { tipo: 'NC B', numero: 30058 },
+        { tipo: 'NC B', numero: 0, importe: 20000 },
+        { tipo: 'NC B', numero: 30.5, importe: 20000 },
+        { tipo: 'NC B', numero: true, importe: 20000 },
+        { tipo: 'NC B', numero: 30058, importe: 0 },
+        { tipo: 'NC B', numero: 30058, importe: [20000] },
+        { tipo: 'NC B', numero: 30058, importe: Infinity },
+        { tipo: 'NCBASURA', numero: 30058, importe: 20000 },
+        { tipo: 'NC', numero: 30058, importe: 20000 },       // sin letra no alcanza
+        [{ tipo: 'NC B', numero: 30058, importe: 20000 }],
+      ]) {
+        escrituras = [];
+        const r = await confirmar(esperado as any);
+        expect(r.status, JSON.stringify(esperado)).toBe(400);
+        expect(r.body.recargar).toBeUndefined();
+        expect(escrituras.some(e => e.op === 'insert')).toBe(false);
+      }
+    });
+
+    /** 🪤 'NC A' y 'NC B' son comprobantes distintos: comparar sólo "NC" deja pasar el cambio. */
+    it('🔑 la LETRA cambió: es otro comprobante', async () => {
+      const r = await confirmar({ tipo: 'NC A', numero: 30058, importe: 20000 });
+      expect(r.status).toBe(409);
+      expect(r.body.recargar).toBe(true);
+      expect(r.body.error).toMatch(/NC B/);
+      expect(escrituras.some(e => e.op === 'insert')).toBe(false);
+    });
+
+    it('y si no cambió nada, entra', async () => {
+      const r = await confirmar({ tipo: 'NC B', numero: 30058, importe: 20000 });
+      expect(r.status).toBe(200);
+    });
+  });
+
+  /** 🪤 Sin id que acredite qué contestó IM no se puede atar plata a una hoja. */
+  it('🔑 una respuesta de IM que no acredita su id no vincula', async () => {
+    for (const id of [null, undefined, {}, true, '58900098']) {
+      escrituras = [];
+      m.imClient.mockResolvedValue({ get: vi.fn(async () => ({ data: { ...NC_EN_IM, id } })) });
+      const r = await llamar(vincularAjuste, { params: { id: 'h1' }, body: { ...VISTO, im_comprobante_id: '10', im_ajuste_id: '58900099' } });
+      expect(r.status, JSON.stringify(id)).toBe(409);
+      expect(escrituras.some(e => e.op === 'insert')).toBe(false);
+    }
   });
 
   it('avisa si la nota es más grande que el pedido, pero deja vincularla', async () => {
     // Una NC puede cubrir varios pedidos: el dato de IM es el que manda.
     m.imClient.mockResolvedValue({ get: vi.fn(async () => ({ data: { ...NC_EN_IM, total: 500000 } })) });
     const r = await llamar(vincularAjuste, {
-      params: { id: 'h1' }, body: { im_comprobante_id: '10', im_ajuste_id: 'nc-99' },
+      params: { id: 'h1' }, body: { ...VISTO, esperado: { tipo: 'NC B', numero: 30058, importe: 500000 }, im_comprobante_id: '10', im_ajuste_id: '58900099' },
     });
     expect(r.status).toBe(200);
     expect(r.body.advertencia).toMatch(/MAYOR/);
@@ -220,7 +410,7 @@ describe('vincular una nota de crédito ya emitida en IM', () => {
   it('🔴 sobre una hoja CERRADA no se vincula nada', async () => {
     tablas['hojas_ruta'] = { data: { ...HOJA, estado: 'cerrada' }, error: null };
     const r = await llamar(vincularAjuste, {
-      params: { id: 'h1' }, body: { im_comprobante_id: '10', im_ajuste_id: 'nc-99' },
+      params: { id: 'h1' }, body: { im_comprobante_id: '10', im_ajuste_id: '58900099' },
     });
     expect(r.status).toBe(409);
   });
@@ -229,27 +419,76 @@ describe('vincular una nota de crédito ya emitida en IM', () => {
 describe('candidatas a vincular', () => {
   it('🔴 pone primero las que mencionan la hoja: es lo que la oficina ya escribe', async () => {
     m.fetchVentas.mockResolvedValue([
-      { id: 'a', tipo_comprobante: 'NC', tipo_factura: 'B', numero: 1, cod_cliente: 1093, total: 1000, fecha: '2026-09-09', anulada: 'N', observaciones: 'SIN STOCK' },
-      { id: 'b', tipo_comprobante: 'NC', tipo_factura: 'B', numero: 2, cod_cliente: 1093, total: 2000, fecha: '2026-09-09', anulada: 'N', observaciones: 'NO PIDIO SEGUN HR 3395' },
-      { id: 'c', tipo_comprobante: 'FA', tipo_factura: 'B', numero: 3, cod_cliente: 1093, total: 3000, fecha: '2026-09-09', anulada: 'N' },
-      { id: 'd', tipo_comprobante: 'NC', tipo_factura: 'B', numero: 4, cod_cliente: 999, total: 4000, fecha: '2026-09-09', anulada: 'N' },
+      { id: '58900001', tipo_comprobante: 'NC', tipo_factura: 'B', numero: 1, cod_cliente: 1093, cod_empresa: 1, total: 1000, fecha: '2026-09-09', anulada: 'N', observaciones: 'SIN STOCK' },
+      { id: '58900002', tipo_comprobante: 'NC', tipo_factura: 'B', numero: 2, cod_cliente: 1093, cod_empresa: 1, total: 2000, fecha: '2026-09-09', anulada: 'N', observaciones: 'NO PIDIO SEGUN HR 3395' },
+      { id: '58900003', tipo_comprobante: 'FA', tipo_factura: 'B', numero: 3, cod_cliente: 1093, cod_empresa: 1, total: 3000, fecha: '2026-09-09', anulada: 'N' },
+      { id: '58900004', tipo_comprobante: 'NC', tipo_factura: 'B', numero: 4, cod_cliente: 999, cod_empresa: 1, total: 4000, fecha: '2026-09-09', anulada: 'N' },
     ]);
     tablas['hojas_ruta_ajustes'] = { data: [], error: null };
 
     const r = await llamar(candidatasAVincular, { params: { id: 'h1' }, query: { im_comprobante_id: '10' } });
 
-    // Sólo NC del cliente del pedido, y la que menciona la hoja va primera.
-    expect(r.body.candidatas.map((c: any) => c.im_ajuste_id)).toEqual(['b', 'a']);
+    // Sólo notas del cliente del pedido, y la que menciona la hoja va primera.
+    expect(r.body.candidatas.map((c: any) => c.im_ajuste_id)).toEqual(['58900002', '58900001']);
     expect(r.body.candidatas[0].menciona_esta_hoja).toBe(true);
   });
 
-  it('🔴 no ofrece una que ya está vinculada', async () => {
+  it('🔑 también ofrece NOTAS DE DÉBITO, y dice que suman', async () => {
     m.fetchVentas.mockResolvedValue([
-      { id: 'a', tipo_comprobante: 'NC', tipo_factura: 'B', numero: 1, cod_cliente: 1093, total: 1000, fecha: '2026-09-09', anulada: 'N', observaciones: '' },
+      { id: '58900005', tipo_comprobante: 'ND', tipo_factura: 'B', numero: 746, cod_cliente: 1093, cod_empresa: 1, total: 5000, fecha: '2026-09-09', anulada: 'N' },
     ]);
-    tablas['hojas_ruta_ajustes'] = { data: [{ im_ajuste_id: 'a' }], error: null };
+    tablas['hojas_ruta_ajustes'] = { data: [], error: null };
     const r = await llamar(candidatasAVincular, { params: { id: 'h1' }, query: { im_comprobante_id: '10' } });
-    expect(r.body.candidatas).toHaveLength(0);
+    expect(r.body.candidatas[0]).toMatchObject({ tipo: 'ND B', signo: 1 });
+  });
+
+  /**
+   * 🔴 Lo que el POST va a rechazar no se ofrece: mostrarlo es invitar a un clic que sólo puede
+   * terminar en error, y encima parece que la nota "no anda" en vez de "no corresponde".
+   */
+  it('🔑 no ofrece lo que después no se puede vincular', async () => {
+    const base = { id: '58900006', tipo_comprobante: 'NC', tipo_factura: 'B', numero: 9, cod_cliente: 1093, cod_empresa: 1, total: 5000, fecha: '2026-09-09', anulada: 'N' };
+    for (const malo of [
+      { cod_empresa: 2 },            // otra empresa
+      { anulada: 'X' },              // vigencia que no se puede confirmar
+      { numero: null },              // sin número no se reconoce en pantalla
+      { total: 0 },                  // importe cero
+      { total: 'ochenta' },          // importe ilegible
+      { tipo_factura: '' },          // sin letra
+      { cod_cliente: 999 },          // otro cliente
+    ]) {
+      m.fetchVentas.mockResolvedValue([{ ...base, ...malo }]);
+      tablas['hojas_ruta_ajustes'] = { data: [], error: null };
+      const r = await llamar(candidatasAVincular, { params: { id: 'h1' }, query: { im_comprobante_id: '10' } });
+      expect(r.body.candidatas, JSON.stringify(malo)).toEqual([]);
+    }
+  });
+
+  /** 🪤 Una nota del journal de correcciones YA descuenta: ofrecerla es invitar a contarla dos veces. */
+  it('🔑 no ofrece una nota que ya está en el journal de correcciones', async () => {
+    m.fetchVentas.mockResolvedValue([
+      { id: '58900007', tipo_comprobante: 'NC', tipo_factura: 'B', numero: 10, cod_cliente: 1093, cod_empresa: 1, total: 5000, fecha: '2026-09-09', anulada: 'N' },
+    ]);
+    tablas['hojas_ruta_ajustes'] = { data: [], error: null };
+    tablas['facturas_correcciones'] = { data: [{ im_comprobante_id: '58900007' }], error: null };
+    const r = await llamar(candidatasAVincular, { params: { id: 'h1' }, query: { im_comprobante_id: '10' } });
+    expect(r.body.candidatas).toEqual([]);
+  });
+
+  /**
+   * 🪤 Las dos notas son válidas y sólo se diferencian en que una ya está vinculada: si la
+   * fixture tuviera algo que `verificarNota` rechaza igual —un id que no es un id, la empresa
+   * ausente—, la prueba pasaría aunque se sacara la exclusión.
+   */
+  it('🔴 no ofrece una que ya está vinculada, y sí la que no lo está', async () => {
+    const nota = (id: string, numero: number) => ({
+      id, tipo_comprobante: 'NC', tipo_factura: 'B', numero, cod_cliente: 1093, cod_empresa: 1,
+      total: 1000, fecha: '2026-09-09', anulada: 'N', observaciones: '',
+    });
+    m.fetchVentas.mockResolvedValue([nota('58900010', 1), nota('58900011', 2)]);
+    tablas['hojas_ruta_ajustes'] = { data: [{ im_ajuste_id: '58900010' }], error: null };
+    const r = await llamar(candidatasAVincular, { params: { id: 'h1' }, query: { im_comprobante_id: '10' } });
+    expect(r.body.candidatas.map((c: any) => c.im_ajuste_id)).toEqual(['58900011']);
   });
 
   it('tampoco las anuladas', async () => {

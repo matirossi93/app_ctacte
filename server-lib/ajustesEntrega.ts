@@ -2,7 +2,8 @@ import { invalidarIM } from './infomanager.js';
 import { invalidarVista } from './vistaPresupuestos.js';
 import { invalidarRemitos } from './vistaRemitos.js';
 import { randomUUID } from 'node:crypto';
-import { enriquecerEntregas, mutarReparto } from './repartoDatos.js';
+import { enriquecerEntregas, mutarReparto, leerPaginas, notasDeHoja, notasUnicas, aplicarImportesCierre, vincularNotaRPC } from './repartoDatos.js';
+import { verificarNota, cambioDesdeLaPantalla } from './notaVinculable.js';
 /**
  * Lo que se ajusta cuando VUELVE el repartidor: notas de crédito por lo que no se entregó.
  *
@@ -57,7 +58,7 @@ export async function listarAjustes(req: Request & { user?: JwtPayload }, res: R
   try {
     const hojaId = String(req.params.id);
     const { data: hoja, error: errHoja } = await sb().from('hojas_ruta')
-      .select('id, numero, fecha, estado, version, hojas_ruta_pedidos(*)')
+      .select('id, numero, fecha, estado, version, cierres_importes, hojas_ruta_pedidos(*)')
       .eq('id', hojaId).eq('tenant_id', TENANT_ID).maybeSingle();
     if (errHoja) { res.status(500).json({ error: errHoja.message }); return; }
     if (!hoja) { res.status(404).json({ error: 'Hoja de ruta no encontrada' }); return; }
@@ -66,8 +67,54 @@ export async function listarAjustes(req: Request & { user?: JwtPayload }, res: R
       .select('*').eq('tenant_id', TENANT_ID).eq('hoja_id', hojaId).order('created_at');
     if (error) { res.status(500).json({ error: error.message }); return; }
 
-    const pedidos = await enriquecerEntregas((hoja as any).hojas_ruta_pedidos ?? []);
-    res.json({ ok: true, ...totalesConAjustes({ ...hoja, hojas_ruta_pedidos: pedidos }, ajustes ?? []), ajustes: ajustes ?? [] });
+    /**
+     * 🔑 Una hoja CERRADA conserva su base histórica: se lee el snapshot del cierre y no se
+     * vuelve a preguntar a InfoManager. Si el importe se reconsultara, abrir esta pantalla podría
+     * cambiar un número ya liquidado —y encima paga el viaje a IM cada vez que alguien mira.
+     */
+    const cerrada = String((hoja as any).estado) === 'cerrada';
+    const pedidos = aplicarImportesCierre(hoja, await enriquecerEntregas((hoja as any).hojas_ruta_pedidos ?? [], false, !cerrada));
+    const conNotas = await notasDeHoja(hojaId, pedidos);
+    const notas = notasUnicas(conNotas.flatMap((p: any) => p.notas ?? []), `la hoja ${(hoja as any).numero}`);
+
+    /**
+     * 🔑 Los renglones son TODAS las notas que afectan el total, no sólo las que vinculó el
+     * panel. Una nota emitida por el circuito de corrección de factura ya descuenta acá: si no
+     * se listara, el final no cuadraría con lo que se ve y nadie sabría por qué.
+     *
+     * 🔴 Y `ajuste_id` —lo único que habilita soltarla— sólo va cuando el panel es la ÚNICA
+     * fuente. Si la misma nota también está en el journal, borrar la fila del panel no cambia el
+     * total: el journal la sigue descontando. Ofrecer el botón ahí es prometer un efecto que no
+     * ocurre, y se descubre después de tocarlo (caso real: la NC B 13 de ANDRADES).
+     */
+    const porNota = new Map((ajustes ?? []).filter((a: any) => a.im_ajuste_id).map((a: any) => [String(a.im_ajuste_id), a]));
+    const renglones = notas.map((n: any) => {
+      const a = porNota.get(String(n.id));
+      const fuentes: string[] = n.fuentes ?? [];
+      const soloPanel = fuentes.length === 1 && fuentes[0] === 'panel';
+      return {
+        im_ajuste_id: String(n.id), tipo: n.tipo, numero: n.numero ?? null,
+        importe: Math.abs(Number(n.total)), signo: /^nc/i.test(String(n.tipo ?? '')) ? -1 : 1,
+        origen: fuentes.length > 1 ? 'ambas' : (fuentes[0] ?? (a ? 'panel' : 'correccion')),
+        ajuste_id: soloPanel ? (a?.id ?? null) : null,
+        motivo: a?.motivo ?? null,
+        im_comprobante_id: a?.im_comprobante_id ?? null,
+      };
+    });
+    /**
+     * 🔑 A qué factura va a ir la nota, para que se vea ANTES de confirmar. El vínculo manda esta
+     * misma factura de vuelta y la base la revalida bajo lock: si cambió en el medio, corta.
+     */
+    const entregas = pedidos.map((p: any) => ({
+      im_comprobante_id: String(p.im_comprobante_id),
+      im_numero: p.im_numero ?? null,
+      cliente_nombre: p.cliente_nombre ?? null,
+      cod_cliente: p.cod_cliente ?? null,
+      total: p.total ?? null,
+      im_factura_id: p.im_factura_id ?? null,
+      im_factura_numero: p.im_factura_numero ?? null,
+    }));
+    res.json({ ok: true, ...totalesConAjustes({ ...hoja, hojas_ruta_pedidos: pedidos }, ajustes ?? [], notas), ajustes: ajustes ?? [], notas: renglones, entregas });
   } catch (err: any) {
     console.error('[listarAjustes]', err?.message);
     res.status(err.status ?? 500).json({ error: err?.message ?? 'error' });
@@ -75,22 +122,27 @@ export async function listarAjustes(req: Request & { user?: JwtPayload }, res: R
 }
 
 /**
- * El número final de una hoja: lo despachado menos lo acreditado.
+ * El número final de una hoja: lo despachado, menos lo acreditado, más lo debitado.
  *
- * 🪤 Sólo cuentan los ajustes EMITIDOS. Uno que quedó a medias no bajó ninguna cuenta corriente,
- * así que restarlo haría que al chofer se le pague de menos por algo que no pasó.
+ * 🔑 Las notas llegan YA conciliadas de la fuente común (journal de correcciones + ajustes del
+ * panel), que es la misma que usan la impresión y la liquidación del chofer. Sumar acá sólo
+ * `hojas_ruta_ajustes` daba un número distinto del que decía el papel de la misma hoja.
+ *
+ * 🪤 Sólo cuentan las notas EMITIDAS. Una que quedó a medias no bajó ninguna cuenta corriente,
+ * así que restarla haría que al chofer se le pague de menos por algo que no pasó — por eso la
+ * fuente común filtra por `emitido_at`.
  */
-export function totalesConAjustes(hoja: any, ajustes: any[]) {
+export function totalesConAjustes(hoja: any, ajustes: any[], notas: ReadonlyArray<{ tipo?: unknown; total?: unknown }> = []) {
   const despachado = (hoja.hojas_ruta_pedidos ?? []).reduce((s: number, p: any) => s + Number(p.total ?? 0), 0);
-  const emitidos = ajustes.filter(a => a.emitido_at);
-  const nc = emitidos.filter(a => a.tipo === 'nc').reduce((s, a) => s + Number(a.importe ?? 0), 0);
-  const nd = emitidos.filter(a => a.tipo === 'nd').reduce((s, a) => s + Number(a.importe ?? 0), 0);
+  const suma = (f: (t: string) => boolean) =>
+    notas.filter(n => f(String(n.tipo ?? ''))).reduce((s, n) => s + Math.abs(Number(n.total)), 0);
+  const nc = suma(t => /^nc/i.test(t)), nd = suma(t => /^nd/i.test(t));
   return {
     hoja: { version: hoja.version, id: hoja.id, numero: hoja.numero, fecha: hoja.fecha, estado: hoja.estado },
     despachado: redondear(despachado),
     notas_credito: redondear(nc),
     notas_debito: redondear(nd),
-    /** Lo que de verdad se entregó: la base del pago al chofer. */
+    /** La base de liquidación de la hoja. */
     final: redondear(despachado - nc + nd),
     pendientes_de_emitir: ajustes.filter(a => !a.emitido_at).length,
   };
@@ -146,12 +198,12 @@ export async function borrarAjuste(req: Request & { user?: JwtPayload }, res: Re
 }
 
 /**
- * GET /api/hojas-ruta/:id/ajustes/candidatas?im_comprobante_id= — qué notas de crédito de
- * InfoManager podrían corresponder a este pedido.
+ * GET /api/hojas-ruta/:id/ajustes/candidatas?im_comprobante_id= — qué notas de InfoManager
+ * podrían corresponder a este pedido.
  *
- * Trae las NC del cliente desde la fecha de la hoja en adelante, saca las que ya están
- * vinculadas, y marca las que mencionan el número de la hoja en las observaciones — que es
- * justo lo que la oficina ya escribe (`SEGUN HR 3210`, en 287 de 724 notas).
+ * Trae las NC y ND del cliente desde la fecha de la hoja en adelante, saca las que ya están
+ * contadas, y marca las que mencionan el número de la hoja en las observaciones — que es justo
+ * lo que la oficina ya escribe (`SEGUN HR 3210`, en 287 de 724 notas).
  */
 export async function candidatasAVincular(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
@@ -159,7 +211,7 @@ export async function candidatasAVincular(req: Request & { user?: JwtPayload }, 
     const hojaId = String(req.params.id);
     const comprobanteId = String(req.query.im_comprobante_id ?? '').trim();
     const { data: hoja, error: errHoja } = await sb().from('hojas_ruta')
-      .select('id, numero, fecha, hojas_ruta_pedidos(im_comprobante_id, cod_cliente, cliente_nombre, total)')
+      .select('id, numero, fecha, hojas_ruta_pedidos(im_comprobante_id, cod_cliente, cod_empresa, cliente_nombre, total)')
       .eq('id', hojaId).eq('tenant_id', TENANT_ID).maybeSingle();
     if (errHoja) { res.status(502).json({ error: errHoja.message }); return; }
     if (!hoja) { res.status(404).json({ error: 'Hoja de ruta no encontrada' }); return; }
@@ -174,25 +226,50 @@ export async function candidatasAVincular(req: Request & { user?: JwtPayload }, 
     const hasta = fechaArgentina(new Date(desde + 'T12:00:00Z').getTime() + DIAS_CANDIDATAS * 864e5);
     const ventas = await fetchVentas(desde, hasta > fechaArgentina() ? fechaArgentina() : hasta);
     const ncs = ventas.filter((v: any) =>
-      String(v.tipo_comprobante ?? '').trim() === 'NC' &&
+      ['NC', 'ND'].includes(String(v.tipo_comprobante ?? '').trim().toUpperCase()) &&
       String(v.anulada ?? '').trim().toUpperCase() !== 'S' &&
       clientes.has(Number(v.cod_cliente)));
 
-    // Las que ya están atadas a algún ajuste no se ofrecen de nuevo.
-    const { data: usadas, error: errUsadas } = await sb().from('hojas_ruta_ajustes')
-      .select('im_ajuste_id').eq('tenant_id', TENANT_ID).not('im_ajuste_id', 'is', null);
-    if (errUsadas) { res.status(502).json({ error: `No pude ver qué notas ya están vinculadas: ${errUsadas.message}` }); return; }
-    const yaUsadas = new Set((usadas ?? []).map((u: any) => String(u.im_ajuste_id)));
+    /**
+     * Lo que ya está contado no se vuelve a ofrecer, venga de donde venga:
+     *  · `hojas_ruta_ajustes` — ya atada a una entrega desde el panel.
+     *  · `facturas_correcciones` — el journal del circuito de corrección de factura. Esas notas
+     *    YA descuentan en el total de la hoja; ofrecerlas sería invitar a contarlas dos veces.
+     * 🪤 Paginado: son tablas que crecen con cada nota del año, y `select` sin paginar corta en
+     * el tope de PostgREST — justo las que faltan serían las más nuevas.
+     */
+    let usadas: any[], enJournal: any[];
+    try {
+      [usadas, enJournal] = await Promise.all([
+        leerPaginas(() => sb().from('hojas_ruta_ajustes').select('im_ajuste_id').eq('tenant_id', TENANT_ID).not('im_ajuste_id', 'is', null).order('id')),
+        leerPaginas(() => sb().from('facturas_correcciones').select('im_comprobante_id').eq('tenant_id', TENANT_ID).order('id')),
+      ]);
+    } catch (err: any) {
+      res.status(502).json({ error: `No pude ver qué notas ya están contadas: ${err?.message ?? 'sin respuesta'}` });
+      return;
+    }
+    const yaUsadas = new Set([...usadas.map((u: any) => String(u.im_ajuste_id)), ...enJournal.map((c: any) => String(c.im_comprobante_id))]);
 
     const numeroHoja = String((hoja as any).numero);
+    /**
+     * 🔴 La MISMA validación que exige el POST, antes de ofrecerla: una nota de otra empresa, con
+     * la vigencia ilegible, sin número o con importe inválido va a ser rechazada igual. Mostrarla
+     * es invitar a un clic que sólo puede terminar en error.
+     */
     const candidatas = ncs
       .filter((v: any) => !yaUsadas.has(String(v.id)))
+      .filter((v: any) => {
+        const p = (pedido ? [pedido] : pedidos).find((p: any) => Number(p.cod_cliente) === Number(v.cod_cliente));
+        return !!p && verificarNota(v, v.id, p, EMPRESA_DEFAULT).ok;
+      })
       .map((v: any) => {
         const obs = String(v.observaciones ?? '');
         return {
           im_ajuste_id: String(v.id),
           numero: v.numero ?? null,
-          tipo: `NC ${String(v.tipo_factura ?? '').trim()}`.trim(),
+          tipo: `${String(v.tipo_comprobante ?? '').trim().toUpperCase()} ${String(v.tipo_factura ?? '').trim()}`.trim(),
+          // 🔑 El signo sale del TIPO de IM: la NC resta y la ND suma.
+          signo: String(v.tipo_comprobante ?? '').trim().toUpperCase() === 'NC' ? -1 : 1,
           fecha: String(v.fecha ?? '').slice(0, 10),
           cod_cliente: Number(v.cod_cliente),
           importe: Math.abs(Number(v.total ?? 0)),
@@ -206,18 +283,21 @@ export async function candidatasAVincular(req: Request & { user?: JwtPayload }, 
     res.json({ ok: true, hoja: { numero: (hoja as any).numero, fecha: (hoja as any).fecha }, candidatas });
   } catch (err: any) {
     console.error('[candidatasAVincular]', err?.message);
-    res.status(502).json({ error: `No pude traer las notas de crédito de InfoManager: ${err?.message ?? 'sin respuesta'}` });
+    res.status(502).json({ error: `No pude traer las notas de InfoManager: ${err?.message ?? 'sin respuesta'}` });
   }
 }
 
 /**
- * POST /api/hojas-ruta/:id/ajustes/vincular — ata una NC ya emitida en IM a un pedido de la hoja.
+ * POST /api/hojas-ruta/:id/ajustes/vincular — ata una nota ya emitida en IM a un pedido de la hoja.
  *
- * Body: `{ im_comprobante_id, im_ajuste_id, motivo? }`.
+ * Body: `{ im_comprobante_id, im_ajuste_id, motivo?, esperado?: { tipo, numero, importe } }`.
  *
- * 🔑 El importe y el número salen de la NC REAL leída de InfoManager, nunca del body: si viniera
- * de la pantalla, el número final de la hoja —y el pago del chofer— dependería de lo que alguien
- * tipeó.
+ * 🔑 El importe, el tipo y el número salen de la nota REAL leída de InfoManager, nunca del body:
+ * si vinieran de la pantalla, el número final de la hoja —y el pago del chofer— dependería de lo
+ * que alguien tipeó. `esperado` es sólo una condición: si la nota cambió desde que se mostró, se
+ * corta y se pide recargar en vez de grabar una cifra que el operador no vio.
+ *
+ * 🪤 Esto REGISTRA la nota en la hoja: este handler no escribe nada en InfoManager ni toca stock.
  */
 export async function vincularAjuste(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
@@ -226,10 +306,10 @@ export async function vincularAjuste(req: Request & { user?: JwtPayload }, res: 
     const b = req.body ?? {};
     const comprobanteId = String(b.im_comprobante_id ?? '').trim();
     const ajusteId = String(b.im_ajuste_id ?? '').trim();
-    if (!comprobanteId || !ajusteId) { res.status(400).json({ error: 'Falta el pedido o la nota de crédito.' }); return; }
+    if (!comprobanteId || !ajusteId) { res.status(400).json({ error: 'Falta el pedido o la nota.' }); return; }
 
     const { data: hoja, error: errHoja } = await sb().from('hojas_ruta')
-      .select('id, numero, estado, hojas_ruta_pedidos(im_comprobante_id, cod_cliente, cod_empresa, cliente_nombre, total, facturado_at, im_factura_numero)')
+      .select('id, numero, estado, hojas_ruta_pedidos(im_comprobante_id, cod_cliente, cod_empresa, cliente_nombre, total, facturado_at, im_factura_id, im_factura_numero)')
       .eq('id', hojaId).eq('tenant_id', TENANT_ID).maybeSingle();
     if (errHoja) { res.status(502).json({ error: errHoja.message }); return; }
     if (!hoja) { res.status(404).json({ error: 'Hoja de ruta no encontrada' }); return; }
@@ -240,47 +320,56 @@ export async function vincularAjuste(req: Request & { user?: JwtPayload }, res: 
     const pedido = ((hoja as any).hojas_ruta_pedidos ?? []).find((p: any) => String(p.im_comprobante_id) === comprobanteId);
     if (!pedido) { res.status(409).json({ error: 'Ese pedido no está en esta hoja.' }); return; }
 
-    // ── La nota, leída de InfoManager ────────────────────────────────────────
-    const nc = await comprobanteCompleto(ajusteId);
-    if (!nc) { res.status(404).json({ error: 'No encontré esa nota de crédito en InfoManager.' }); return; }
-    if (String(nc.tipo_comprobante ?? '').trim() !== 'NC') {
-      res.status(409).json({ error: `El comprobante ${nc.numero} no es una nota de crédito (es ${nc.tipo_comprobante}).` });
-      return;
-    }
-    if (String(nc.anulada ?? '').trim().toUpperCase() === 'S') {
-      res.status(409).json({ error: `Esa nota de crédito (${nc.numero}) está ANULADA en InfoManager.` });
-      return;
-    }
-    // 🔴 Del mismo cliente: si no, se le estaría descontando a la hoja algo de otra persona.
-    if (Number(nc.cod_cliente) !== Number(pedido.cod_cliente)) {
-      res.status(409).json({ error: `Esa nota de crédito es del cliente ${nc.cod_cliente} y el pedido es del ${pedido.cod_cliente}.` });
+    /**
+     * 🔴 La factura de destino tiene que ser LA MISMA que se le mostró. La guarda de la base ya
+     * exige que la entrega tenga una sola, pero eso no alcanza: entre que se abrió la pantalla y
+     * se confirmó, la entrega pudo quedar apareada a otra factura, y la nota terminaría
+     * descontando de un comprobante que nadie miró.
+     */
+    const facturaVista = String(b.im_factura_id ?? '').trim();
+    if (!facturaVista) { res.status(400).json({ error: 'Falta la factura que se vio al vincular. Recargá la pantalla.' }); return; }
+    if (facturaVista !== String(pedido.im_factura_id ?? '')) {
+      res.status(409).json({ error: 'La factura de esta entrega cambió desde que abriste la pantalla. Recargá y revisá antes de vincular.', recargar: true });
       return;
     }
 
-    if (!pedido.cod_empresa || Number(nc.cod_empresa) !== Number(pedido.cod_empresa) || Number(nc.cod_empresa) !== EMPRESA_DEFAULT) { res.status(409).json({ error: 'La nota y la entrega deben tener la misma empresa verificada de Casa Central.' }); return; }
-    const importe = Math.abs(Number(nc.total ?? 0));
-    if (!(importe > 0)) { res.status(409).json({ error: 'Esa nota de crédito tiene importe cero.' }); return; }
+
+    // ── La nota, leída de InfoManager ────────────────────────────────────────
+    const cruda = await comprobanteCompleto(ajusteId);
+    const v = verificarNota(cruda, ajusteId, pedido, EMPRESA_DEFAULT);
+    if (!v.ok) { res.status(cruda ? 409 : 404).json({ error: v.error }); return; }
+
+    // 🔴 Sin lo que se vio en pantalla no hay contra qué comparar: se corta, no se asume.
+    const cotejo = cambioDesdeLaPantalla(v, b.esperado);
+    if (!cotejo.ok) {
+      res.status(cotejo.recargar ? 409 : 400).json({ error: cotejo.motivo, ...(cotejo.recargar ? { recargar: true } : {}) });
+      return;
+    }
 
     const fila = {
       tenant_id: TENANT_ID, hoja_id: hojaId, im_comprobante_id: comprobanteId,
       cod_cliente: Number(pedido.cod_cliente), cliente_nombre: pedido.cliente_nombre ?? null,
-      tipo: 'nc', importe, items: [], cod_empresa: Number(nc.cod_empresa),
-      motivo: String(b.motivo ?? nc.observaciones ?? 'Diferencia de entrega').slice(0, 200),
-      im_ajuste_id: String(nc.id), im_ajuste_numero: nc.numero != null ? Number(nc.numero) : null,
-      im_ajuste_tipo: `NC ${String(nc.tipo_factura ?? '').trim()}`.trim(),
+      tipo: v.tipo.toLowerCase(), importe: v.importe, items: [], cod_empresa: Number(pedido.cod_empresa),
+      motivo: String(b.motivo ?? cruda?.observaciones ?? 'Diferencia de entrega').slice(0, 200),
+      im_ajuste_id: v.id, im_ajuste_numero: v.numero,
+      im_ajuste_tipo: `${v.tipo} ${v.letra}`,
       // Ya está emitida en IM: por eso cuenta para el número final desde el momento en que se ata.
       emitido_at: new Date().toISOString(),
       created_by: req.user?.sub ?? null,
     };
-    await mutarReparto(req.user?.sub, 'ajuste_vincular', { hoja_id: hojaId, version_esperada: req.body?.version_esperada, ajuste: fila });
+    /**
+     * La comparación de arriba usa `hojas_ruta_pedidos.im_factura_id`, que es un snapshot. La
+     * definitiva la hace la base bajo su propio lock, contra `facturas_de_entrega`.
+     */
+    await vincularNotaRPC(req.user?.sub, hojaId, b.version_esperada, fila, facturaVista);
 
-    // Aviso, no bloqueo: una NC puede cubrir más de un pedido y el dato de IM es el que manda.
+    // Aviso, no bloqueo: una nota puede cubrir más de un pedido y el dato de IM es el que manda.
     const total = Number(pedido.total ?? 0);
     res.json({
       ok: true,
-      ajuste: { importe, numero: fila.im_ajuste_numero, tipo: fila.im_ajuste_tipo },
-      advertencia: importe > total
-        ? `La nota de crédito (${importe}) es MAYOR que el pedido (${total}): revisá que corresponda a este pedido y no a varios.`
+      ajuste: { importe: v.importe, numero: v.numero, tipo: fila.im_ajuste_tipo, signo: v.signo },
+      advertencia: v.importe > total
+        ? `La nota (${v.importe}) es MAYOR que el pedido (${total}): revisá que corresponda a este pedido y no a varios.`
         : null,
     });
   } catch (err: any) {

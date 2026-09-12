@@ -320,3 +320,6 @@ button.hr-badge { cursor: pointer; font-family: inherit; }
 .hr-ped.sin-verificar { opacity: 0.85; border-left: 3px solid #b45309; }
 .hr-sin-importe { color: #b45309; font-weight: 700; }
 .hr-zona-pendiente { color: #b45309; }
+
+/* Los avisos de contexto agrupados: se leen en columna, sin empujar la pantalla al estar cerrados. */
+.hr-avisos-lista { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
