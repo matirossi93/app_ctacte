@@ -8,18 +8,18 @@ import { crearComprobadorEsquema, estadoPreparacion, exigirEsquemaReparto, exigi
 describe('preparación de reparto', () => {
   it('comparte ocho verificaciones concurrentes y revalida tras TTL', async () => {
     let now = 1000;
-    let finish!: (v: { listo: boolean; version: number; vinculo: boolean }) => void;
-    const query = vi.fn(() => new Promise<{ listo: boolean; version: number; vinculo: boolean }>(resolve => { finish = resolve; }));
+    let finish!: (v: { listo: boolean; version: number; vinculo: boolean; nombre: boolean }) => void;
+    const query = vi.fn(() => new Promise<{ listo: boolean; version: number; vinculo: boolean; nombre: boolean }>(resolve => { finish = resolve; }));
     const ready = crearComprobadorEsquema(query, () => now);
     const pending = Array.from({ length: 8 }, () => ready());
     await Promise.resolve();
     expect(query).toHaveBeenCalledTimes(1);
-    finish({ listo: true, version: 42, vinculo: true });
+    finish({ listo: true, version: 42, vinculo: true, nombre: true });
     expect((await Promise.all(pending)).every(x => x.listo)).toBe(true);
     expect((await ready()).listo).toBe(true);
     expect(query).toHaveBeenCalledTimes(1);
     now += 30_001;
-    query.mockResolvedValueOnce({ listo: true, version: 42, vinculo: true });
+    query.mockResolvedValueOnce({ listo: true, version: 42, vinculo: true, nombre: true });
     expect((await ready()).listo).toBe(true);
     expect(query).toHaveBeenCalledTimes(2);
   });
@@ -80,7 +80,7 @@ describe('vincular notas existentes, como capacidad aparte', () => {
   const comprobar = (valor: any) => crearComprobadorEsquema(async () => valor, () => 0);
 
   it('🔴 sin la 043 aplicada, el resto de la app sigue lista', async () => {
-    const ready = comprobar({ listo: true, version: 42, vinculo: false });
+    const ready = comprobar({ listo: true, version: 42, vinculo: false, nombre: false });
     expect(await ready()).toMatchObject({ listo: true, vinculo: false });
   });
 

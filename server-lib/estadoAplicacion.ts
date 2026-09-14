@@ -12,7 +12,7 @@ export function leerVersionCompilada(): string {
 }
 export const VERSION_COMPILADA = leerVersionCompilada();
 
-type Resultado = { listo: boolean; version: number; vinculo: boolean };
+type Resultado = { listo: boolean; version: number; vinculo: boolean; nombre: boolean };
 /** Un sondeo compartido, con expiración corta. La comprobación no muta datos. */
 export function crearComprobadorEsquema(consultar: () => Promise<Resultado>, ahora = Date.now) {
   let guardado: { hasta: number; valor: Resultado } | null = null;
@@ -20,17 +20,17 @@ export function crearComprobadorEsquema(consultar: () => Promise<Resultado>, aho
   return async (): Promise<Resultado> => {
     if (guardado && guardado.hasta > ahora()) return guardado.valor;
     if (enCurso) return enCurso;
-    enCurso = Promise.resolve().then(consultar).then(d => ({ listo: d.listo === true && d.version === 42, version: 42, vinculo: d.vinculo === true }))
-      .catch(() => ({ listo: false, version: 42, vinculo: false }))
+    enCurso = Promise.resolve().then(consultar).then(d => ({ listo: d.listo === true && d.version === 42, version: 42, vinculo: d.vinculo === true, nombre: d.nombre === true }))
+      .catch(() => ({ listo: false, version: 42, vinculo: false, nombre: false }))
       .then(valor => { guardado = { valor, hasta: ahora() + (valor.listo ? 30_000 : 3_000) }; return valor; })
       .finally(() => { enCurso = null; });
     return enCurso;
   };
 }
 export const comprobarEsquema = crearComprobadorEsquema(async () => {
-  if (!hasSupabase()) return { listo: false, version: 42, vinculo: false };
+  if (!hasSupabase()) return { listo: false, version: 42, vinculo: false, nombre: false };
   const { data, error } = await sb().rpc('reparto_estado_esquema').abortSignal(AbortSignal.timeout(5000));
-  if (error) return { listo: false, version: 42, vinculo: false };
+  if (error) return { listo: false, version: 42, vinculo: false, nombre: false };
   // La capacidad nueva conserva version41 en el RPC para que aplicar SQL no bloquee la app anterior.
   return {
     listo: data?.listo === true && data?.version === 41 && data?.version_cierre === 42, version: 42,
@@ -40,6 +40,8 @@ export const comprobarEsquema = crearComprobadorEsquema(async () => {
      * facturación por una pantalla que ni siquiera está en uso.
      */
     vinculo: data?.vinculo_listo === true && data?.version_vinculo === 43,
+    /** El rótulo de la hoja: sin la 044 la columna no existe y guardarlo sería un error críptico. */
+    nombre: data?.nombre_listo === true && data?.version_nombre === 44,
   };
 });
 export function saludProceso(_req: Request, res: Response) {

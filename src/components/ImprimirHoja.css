@@ -76,8 +76,17 @@
 /* Una línea más marcada entre cliente y cliente, para seguir la hoja con el dedo. */
 .imp-grupo { border-bottom: 2px solid #b9a894; }
 .imp-total-cli td { background: #faf4ec; font-weight: 600; border-top: 1px solid #c9b9a3; }
-/* Las columnas que se completan a mano en la calle: vacías y con aire para escribir. */
-.imp-tabla .escribir { min-width: 88px; background: #fffdf9; }
+/**
+ * Las columnas que se completan a mano en la calle: vacías y con aire para escribir.
+ *
+ * 🔑 Mati (14/09/2026): *"dejar un poco más de espacio en la parte de cobrado para que puedan
+ * escribir más los repartidores"*. Lo que faltaba era ALTO: a mano se escribe más grande que a
+ * 8pt, y la fila medía exactamente lo que ocupaba el renglón impreso.
+ *
+ * 🪤 Acá sólo actúa cuando la pantalla es angosta: con la tabla al 100% esta columna ya se lleva
+ * más de 110px sola. El espacio del PAPEL lo fija la regla de `@media print`, más abajo.
+ */
+.imp-tabla .escribir { min-width: 110px; background: #fffdf9; }
 /* El saldo anterior SÍ va impreso: es lo que hoy escriben a mano antes de que salga el camión. */
 .imp-tabla .saldo { font-weight: 700; color: #06652F; background: #fff; }
 /* Lo que hay que cobrarle a ese cliente, sumando todos sus pedidos. Es el número que mira el
@@ -150,8 +159,17 @@
     .imp-tabla th, .imp-tabla td { border-color: #999 !important; }
     .imp-head { border-bottom: 1.2pt solid #000 !important; }
     .imp-tabla .total-cli, .imp-tabla .saldo { font-weight: 700 !important; }
-    /* Las celdas que se completan a mano tienen que quedar VACÍAS y con borde para escribir. */
-    .imp-tabla .escribir { background: #fff !important; }
+    /**
+     * Las celdas que se completan a mano quedan VACÍAS y con borde para escribir. En papel el
+     * espacio se mide en milímetros: `height` en una celda de tabla es el MÍNIMO, así que la fila
+     * crece hasta ahí aunque lo impreso ocupe menos — y eso es justamente lo que hacía falta.
+     *
+     * 🪤 Ensanchar "Cobrado" le saca ancho a "Cliente", y un nombre partido en dos líneas
+     * también agranda la fila: daba más lugar para escribir por accidente y a costa de que la
+     * hoja se leyera peor. Por eso el alto es explícito y el nombre tiene su propio mínimo.
+     */
+    .imp-tabla .escribir { background: #fff !important; min-width: 30mm !important; height: 9mm !important; }
+    .imp-tabla td:first-child, .imp-tabla th:first-child { min-width: 40mm !important; }
     /* Que un cliente no quede partido entre dos hojas: cada uno es su propio tbody. */
     .imp-grupo { page-break-inside: avoid; break-inside: avoid; }
     .imp-tabla tr { page-break-inside: avoid; }

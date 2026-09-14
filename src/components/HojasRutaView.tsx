@@ -81,6 +81,12 @@ interface HojaPedido {
 
 interface Hoja {
     version: number;
+    /**
+     * 🔑 El rótulo escrito a mano. Mati (14/09/2026): *"para poder escribirle la zona para que
+     * ayude a identificarla"*. No es `cod_zona` —el código de IM— porque justo las hojas mixtas,
+     * que son las que más necesitan un nombre, lo tienen vacío.
+     */
+    nombre?: string | null;
     id: string; numero: number; turno: string | null; transporte: string | null;
     /**
      * 🔑 EL DÍA EN QUE SALE EL CAMIÓN. Mati (10/09/2026): *"las hojas de ruta tienen que poder
@@ -190,6 +196,8 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
      * abierta: así una hoja nueva aparece abierta, que es lo que uno quiere al crearla.
      */
     const [plegadas, setPlegadas] = useState<Set<string>>(new Set());
+    /** Lo tipeado que todavía no se guardó, por hoja. Se suelta al confirmar o al desistir. */
+    const [nombres, setNombres] = useState<Record<string, string>>({});
     /**
      * 🔑 *"tener una sección donde podamos ver el histórico de todas las hojas de ruta, si no
      * desaparecen con el filtro de fecha y es difícil encontrarlas"*.
@@ -210,6 +218,8 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
     const { iniciar: iniciarArrastre } = useLecturaVigente(`${desde}|${hasta}`);
     const { iniciar: iniciarChoferes } = useLecturaVigente('choferes');
     const [conflictosAsignacion, setConflictosAsignacion] = useState<any[]>([]);
+    /** Si la base todavía no tiene la 044, el rótulo ni se ofrece: guardarlo sería un error. */
+    const [puedeNombrar, setPuedeNombrar] = useState(false);
     const cargarHojas = useCallback(async (antes?: number, forzar = true) => {
         const lectura = iniciarHojas(forzar); if (!lectura) return;
         setCargandoHojas(true); setErrorHojas(null);
@@ -222,7 +232,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
             if (!h.ok) throw new Error(d?.error ?? 'No se pudieron consultar las hojas');
             for (const hoja of d?.hojas ?? []) versionesHoja.current.set(hoja.id, hoja.version);
             setHojas(previas => antes ? [...previas, ...(d?.hojas ?? [])] : d?.hojas ?? []);
-            setSiguienteHoja(d?.siguiente ?? null); lectura.confirmar();
+            setSiguienteHoja(d?.siguiente ?? null); setPuedeNombrar(d?.capacidades?.nombre === true); lectura.confirmar();
         } catch (e: any) { if (lectura.vigente()) setErrorHojas(e?.message ?? 'No se pudieron consultar las hojas'); }
         finally { if (lectura.vigente()) setCargandoHojas(false); }
     }, [desde, hasta, historico, iniciarHojas]);
@@ -477,14 +487,16 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
         } finally { setTrabajando(false); operacion.terminar(); }
     }
 
-    async function editarHoja(hojaId: string, cambios: Record<string, unknown>, siFalla: string) {
-        if (!operacion.comenzar()) return;
+    /** Devuelve si el cambio entró: quien escribió algo a mano necesita saberlo para no perderlo. */
+    async function editarHoja(hojaId: string, cambios: Record<string, unknown>, siFalla: string): Promise<boolean> {
+        if (!operacion.comenzar()) return false;
         setTrabajando(true); setAviso(null);
         try {
-            await pedir(`/api/hojas-ruta/${hojaId}`, {
+            const ok = await pedir(`/api/hojas-ruta/${hojaId}`, {
                 method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...cambios, version_esperada: versionesHoja.current.get(hojaId) }),
             }, siFalla);
             await cargarHojas();   // el camión o el turno viven en nuestra base: no hace falta ir a IM
+            return ok;
         } finally { setTrabajando(false); operacion.terminar(); }
     }
 
@@ -801,12 +813,49 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                     {plegada ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
                                 </button>
                                 <span className="hr-hoja-num">Hoja {h.numero}</span>
+                                {/**
+                                  * 🔑 El rótulo de la hoja, al lado del número. Con cuatro hojas
+                                  * del mismo día sobre el escritorio, "3405" no dice cuál es: el
+                                  * nombre es lo que la identifica de un vistazo.
+                                  *
+                                  * 🪤 Guarda al SALIR del campo, no en cada tecla: cada cambio es
+                                  * un POST con la versión de la hoja, y tipeando se dispararían
+                                  * diez seguidos que se pisarían entre sí.
+                                  */}
+                                {puedeNombrar && (
+                                    <input
+                                        className="hr-hoja-nombre"
+                                        value={nombres[h.id] ?? h.nombre ?? ''}
+                                        placeholder="Nombre o zona…"
+                                        maxLength={60}
+                                        // Con 60 caracteres el campo no alcanza para mostrarlo entero: el
+                                        // título lo deja leer sin tener que entrar a editarlo.
+                                        title={h.nombre || 'Un nombre para identificar la hoja: la zona, el recorrido, lo que sirva'}
+                                        aria-label={`Nombre de la hoja ${h.numero}`}
+                                        disabled={trabajando || cerrada}
+                                        onChange={e => setNombres(n => ({ ...n, [h.id]: e.target.value }))}
+                                        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                        onBlur={async e => {
+                                            const valor = e.target.value.replace(/\s+/g, ' ').trim();
+                                            const soltar = () => setNombres(n => { const { [h.id]: _, ...resto } = n; return resto; });
+                                            if (valor === (h.nombre ?? '')) { soltar(); return; }
+                                            /**
+                                             * 🪤 El borrador se suelta sólo si el cambio ENTRÓ. Soltarlo
+                                             * siempre hacía que un rechazo —la hoja cambió, se cerró— le
+                                             * borrara de la pantalla lo que acababa de escribir, y hubiera
+                                             * tenido que tipearlo de nuevo para enterarse de qué pasó.
+                                             */
+                                            if (await editarHoja(h.id, { nombre: valor }, 'No se pudo cambiar el nombre de la hoja')) soltar();
+                                        }}
+                                    />
+                                )}
                                 <button className="hr-btn ghost chico" aria-label={`Copiar enlace a hoja ${h.numero}`} onClick={async () => {
                                     const u = new URL(location.href); u.searchParams.set('etapa', 'hojas'); u.searchParams.set('hoja', h.id); u.searchParams.set('desde', h.fecha); u.searchParams.set('hasta', h.fecha);
                                     try { await navigator.clipboard.writeText(u.toString()); setAviso(`Enlace a hoja ${h.numero} copiado.`); } catch { setAviso(`Enlace: ${u.toString()}`); }
                                 }}>Enlace</button>
                                 {plegada && (
                                     <span className="hr-plegada-resumen">
+                                        {h.nombre ? <b>{h.nombre} · </b> : null}
                                         {String(h.fecha ?? '').slice(0, 10)} · {h.pedidos.length} pedido{h.pedidos.length === 1 ? '' : 's'}
                                         {h.camion ? ` · ${h.camion}` : ''}
                                     </span>

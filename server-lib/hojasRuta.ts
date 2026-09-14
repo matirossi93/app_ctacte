@@ -29,6 +29,7 @@ import { sugerirRepartos } from './sugerirRepartos.js';
 import { saldoAnteriorDeLaHoja, ajusteDeNotas } from './saldoCliente.js';
 import { ErrorReparto, emitidosDe, mutarReparto, verificarEntregas, enriquecerEntregas, enriquecerHojas, aplicarImportesCierre, notasDeHoja, notasUnicas } from './repartoDatos.js';
 import { proximoNumeroHoja } from './numeroHojaRuta.js';
+import { comprobarEsquema } from './estadoAplicacion.js';
 
 /** Sólo la oficina. Devuelve true si ya contestó el 403. */
 function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
@@ -302,7 +303,14 @@ export async function listarHojas(req: Request & { user?: JwtPayload }, res: Res
         carga: { ...cargaDelCamion(kg, cap), completa: ps.every((p: any) => p.peso_completo === true) },
       };
     });
-    res.json({ ok: true, desde, hasta, fecha: hasta, hojas: conCarga, siguiente });
+    /**
+     * 🔑 Qué puede hacer esta base HOY. El rótulo de la hoja necesita la 044: si el código se
+     * publicara antes que el SQL, el campo estaría a la vista y guardarlo daría un error de
+     * columna inexistente. La comprobación está cacheada, así que no cuesta una consulta por
+     * pantalla.
+     */
+    res.json({ ok: true, desde, hasta, fecha: hasta, hojas: conCarga, siguiente,
+      capacidades: { nombre: (await comprobarEsquema()).nombre } });
   } catch (err: any) {
     res.status(err.status ?? 500).json({ error: err?.message ?? 'error' });
   }
@@ -438,7 +446,8 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
     res.json({
       ok: true,
       hoja: {
-        id: (hoja as any).id, numero: (hoja as any).numero, fecha: (hoja as any).fecha,
+        id: (hoja as any).id, numero: (hoja as any).numero, nombre: (hoja as any).nombre ?? null,
+        fecha: (hoja as any).fecha,
         turno: (hoja as any).turno,
         // 🔑 Mati (08/09/2026): *"es el mismo dato: chofer y transportista"*. El chofer asignado
         // manda, porque es el que se liquida; `transporte` queda como texto libre para las hojas
@@ -768,11 +777,29 @@ export async function asignarPedidos(req: Request & { user?: JwtPayload }, res: 
  * 07/09/2026: *"el criterio de cómo asignar los camiones tiene que seguir siendo una decisión
  * nuestra... por ahí quizás sí una sugerencia tuya"*). El sugeridor propone; acá se decide.
  */
+/**
+ * 🔑 El rótulo de la hoja. Mati (14/09/2026): *"para poder escribirle la zona para que ayude a
+ * identificarla"*. Texto libre: `cod_zona` es el código de IM y queda vacío justo en las hojas
+ * mixtas, que son las que más necesitan un nombre.
+ *
+ * 🪤 Se colapsan los espacios y se recorta a 60: esto sale impreso en la cabecera del papel que
+ * va al camión, y un salto de línea o un párrafo entero la rompen en vez de identificarla. El
+ * tope también está en la base, por si alguna vez entra por otro camino.
+ *
+ * 🪤 Sólo texto: un `{}` o un `[1]` convertidos con `String()` darían "[object Object]" impreso
+ * en la hoja. Cualquier otra cosa se lee como "sin nombre".
+ */
+export function nombreDeHoja(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  return v.replace(/\s+/g, ' ').trim().slice(0, 60) || null;
+}
+
 export async function editarHoja(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
   try {
     const b = req.body ?? {};
     const cambios: Record<string, any> = {};
+    if ('nombre' in b) cambios.nombre = nombreDeHoja(b.nombre);
     if ('turno' in b) cambios.turno = b.turno ? String(b.turno) : null;
     if ('transporte' in b) cambios.transporte = b.transporte ? String(b.transporte) : null;
     if ('camion_id' in b) cambios.camion_id = b.camion_id ? String(b.camion_id) : null;

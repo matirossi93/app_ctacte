@@ -83,3 +83,38 @@ describe('editarHoja — la fecha de reparto', () => {
     expect(r.status).toBe(400);
   });
 });
+
+/**
+ * 🔑 EL RÓTULO DE LA HOJA. Mati (14/09/2026): *"necesitamos que se le pueda poner nombre a la
+ * hoja además del número... para poder escribirle la zona para que ayude a identificarla"*.
+ *
+ * Este texto sale impreso en la cabecera del papel que va al camión, así que lo que entra tiene
+ * que quedar limpio antes de llegar a la base.
+ */
+describe('nombreDeHoja', () => {
+  it('limpia el texto sin cambiarlo', async () => {
+    const { nombreDeHoja } = await import('./hojasRuta.js');
+    expect(nombreDeHoja('Lules y Famaillá')).toBe('Lules y Famaillá');
+    expect(nombreDeHoja('  Banda del Río Salí  ')).toBe('Banda del Río Salí');
+    // 🪤 Un salto de línea pegado desde otra pantalla rompe la cabecera impresa.
+    expect(nombreDeHoja('Centro\ny\tSur')).toBe('Centro y Sur');
+  });
+
+  it('🔴 corta en 60: es lo que entra en la cabecera impresa, y lo que acepta la base', async () => {
+    const { nombreDeHoja } = await import('./hojasRuta.js');
+    expect(nombreDeHoja('x'.repeat(80))).toHaveLength(60);
+  });
+
+  it('vacío es SIN nombre, no un nombre vacío', async () => {
+    const { nombreDeHoja } = await import('./hojasRuta.js');
+    for (const v of ['', '   ', '\n', '\t ']) expect(nombreDeHoja(v), JSON.stringify(v)).toBeNull();
+  });
+
+  /** 🪤 `String({})` es "[object Object]", y eso terminaría impreso arriba de la hoja. */
+  it('🔴 lo que no es texto no es un nombre', async () => {
+    const { nombreDeHoja } = await import('./hojasRuta.js');
+    for (const v of [null, undefined, 42, true, {}, ['Lules'], new Date()]) {
+      expect(nombreDeHoja(v), JSON.stringify(v)).toBeNull();
+    }
+  });
+});

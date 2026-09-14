@@ -30,7 +30,7 @@ interface ClienteFila {
 }
 interface Fraccion { cod_articulo: number; descripcion: string; cantidades: number[]; paquetes: number; kg: number }
 interface Datos {
-    hoja: { numero: number; fecha: string; turno: string | null; transporte: string | null; camion: string | null };
+    hoja: { numero: number; nombre?: string | null; fecha: string; turno: string | null; transporte: string | null; camion: string | null };
     clientes: ClienteFila[];
     totales: { clientes: number; comprobantes: number; bultos: number; kg: number; total: number };
     fraccionado: Fraccion[];
@@ -91,7 +91,10 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
                             <img src="/logo.svg" alt="" onError={e => { (e.target as HTMLImageElement).src = '/logo.png'; }} />
                             <div>
                                 <div className="imp-empresa">Semillero El Manantial</div>
-                                <div className="imp-doc">Hoja de ruta</div>
+                                {/* 🔑 El nombre reemplaza al rótulo genérico: el repartidor agarra
+                                    "Hoja de ruta · Lules y Famaillá", no una hoja igual a las otras
+                                    tres que están sobre el escritorio. */}
+                                <div className="imp-doc">Hoja de ruta{datos.hoja.nombre ? <> · <b>{datos.hoja.nombre}</b></> : null}</div>
                             </div>
                         </div>
                         <div className="imp-head-nro">
