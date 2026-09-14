@@ -1171,6 +1171,19 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
     const { desde, hasta } = rango(req);
     const refrescar = req.query.refrescar === '1';
     /**
+     * 🔑 DÓNDE SE VA EL TIEMPO DE ESTA PANTALLA. Mati (14/09/2026): *"está lento la parte donde
+     * se factura el presupuesto, está demorando bastante"*.
+     *
+     * `vistaDeRango` ya se medía solo y decía que el 93% era espera de InfoManager, pero esta
+     * ruta hace bastante más después: leer lo emitido, comprobar anulados, actualizar importes,
+     * traer las notas y comparar cada factura con su remito. Sin el desglose, optimizar es
+     * adivinar cuál de esos cinco pesa.
+     */
+    const t0 = Date.now();
+    const etapas: Array<[string, number]> = [];
+    let marca = t0;
+    const medir = (que: string) => { const ahora = Date.now(); etapas.push([que, ahora - marca]); marca = ahora; };
+    /**
      * 🔑 EL LISTADO DEL RANGO SE LEE UNA VEZ Y SE COMPARTE EN ESTA PETICIÓN.
      *
      * Esta pantalla lo necesitaba en tres lugares —la vista, el control de anulados y la
@@ -1192,6 +1205,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
     // Acá sí se espera: los dos usos que siguen la necesitan resuelta. Ya está en vuelo desde
     // arriba, así que normalmente no cuesta nada.
     const ventasDelRango = await ventasPendientes;
+    medir('vista');
     const todos = [...vista.pendientes, ...vista.asignados];
     const aprobados = todos.filter((p: any) => p.revision?.estado === 'aprobado');
 
@@ -1204,6 +1218,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
         .eq('cod_empresa', Number(process.env.PEDIDO_EMPRESA_DEFAULT || 1))
         .gte('fecha', desde).lte('fecha', hasta).not('im_factura_id', 'is', null),
     ]);
+    medir('emitidos');
     const errEmitidos = lecturas.find(r => r.error)?.error;
     if (errEmitidos) { res.status(502).json({ error: `No pude leer qué se facturó ya: ${errEmitidos.message}` }); return; }
     const emitidos = [...new Map(lecturas.flatMap(r => r.data ?? [])
@@ -1232,6 +1247,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
       return new Map<string, string>();
     });
     for (const [id, aviso] of avisosInciertos) avisosAnulados.set(id, aviso);
+    medir('anulados+inciertos');
     // `sincronizarAnulados` ya borró o limpió lo que hacía falta: se relee para no mostrar viejo.
     const { data: alDia, error: errAlDia } = avisosAnulados.size || avisosInciertos.size
       ? await sb().from('presupuestos_facturados').select('*').eq('tenant_id', TENANT_ID)
@@ -1239,6 +1255,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
       : { data: emitidos, error: null };
     if (errAlDia) { res.status(502).json({ error: `No pude releer las facturas actualizadas: ${errAlDia.message}` }); return; }
     const actuales = await actualizarImportesFacturas(alDia ?? [], { ventas: ventasDelRango ?? await fetchVentas(desde, hasta), actualizar: refrescar, leerCabecera });
+    medir('importes');
     const porId = new Map(actuales.map((e: any) => [String(e.im_comprobante_id), e]));
 
     /**
@@ -1335,6 +1352,8 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
       // Lo que todavía no se aprobó, para que se vea por qué no está en la lista.
       sin_aprobar: todos.filter((p: any) => p.revision?.estado !== 'aprobado' && !porId.get(String(p.im_comprobante_id))?.im_factura_id).length,
     });
+    medir('armado');
+    console.log(`[tableroFacturacion] ${desde}..${hasta}: ${Date.now() - t0} ms (${etapas.map(([q, ms]) => `${q} ${ms}`).join(' · ')}) · ${filas.length} filas${refrescar ? ' · forzado' : ''}`);
   } catch (err: any) {
     console.error('[tableroFacturacion]', err?.message);
     res.status(502).json({ error: `No se pudo armar el tablero de facturación: ${err?.message ?? 'sin respuesta de IM'}` });

@@ -52,7 +52,7 @@ export async function estadoPreparacion(_req: Request, res: Response) {
   const esquema = await comprobarEsquema();
   const listo = esquema.listo && (process.env.NODE_ENV !== 'production' || VERSION_COMPILADA !== 'development');
   res.setHeader('Cache-Control','no-store');
-  res.status(listo ? 200 : 503).json({ listo, version: VERSION_COMPILADA, esquema_requerido: 42, esquema_listo: esquema.listo, vinculo_notas: esquema.vinculo });
+  res.status(listo ? 200 : 503).json({ listo, version: VERSION_COMPILADA, esquema_requerido: 42, esquema_listo: esquema.listo, vinculo_notas: esquema.vinculo, nombre_hoja: esquema.nombre });
 }
 /** Evita escrituras financieras con migración ausente o permisos incorrectos. */
 export async function exigirEsquemaReparto(req: Request, res: Response, next: NextFunction) {
