@@ -33,6 +33,19 @@ const DEPOSITO_CONTROL = Number(process.env.PEDIDO_DEPOSITO || 1);
 
 /** Tope de días para los que se piden renglones. Cada día es ~1,2 s contra IM. */
 const MAX_DIAS_ITEMS = 12;
+/**
+ * Hasta cuántos días vale la pena pedir los renglones sin saber todavía si ese día tiene
+ * presupuestos. Más allá, el trabajo de más pesa más que la espera que ahorra.
+ */
+const DIAS_ITEMS_ADELANTADOS = 4;
+/** Los días de un intervalo, inclusive, sin depender de la zona horaria. */
+function diasDelIntervalo(desde: string, hasta: string): string[] {
+  const a = Date.parse(desde + 'T12:00:00Z'), b = Date.parse(hasta + 'T12:00:00Z');
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return [];
+  const dias: string[] = [];
+  for (let t = a; t <= b && dias.length <= 31; t += 864e5) dias.push(new Date(t).toISOString().slice(0, 10));
+  return dias;
+}
 
 /**
  * La vista del rango, cacheada un rato corto.
@@ -92,6 +105,23 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false, ven
     // comprobante para reordenar los despachos, así que un pedido fechado para el 10 existe
     // desde antes. Un pedido que no aparece en la pantalla no entra en ninguna hoja y nadie
     // se entera hasta que llama el cliente.
+    /**
+     * 🔑 LOS RENGLONES ARRANCAN JUNTO CON LAS VENTAS, NO DESPUÉS.
+     *
+     * Medido en producción el 14/09/2026 sobre 20 cargas reales: la etapa `vista` es el 60-90%
+     * del tiempo del tablero y, dentro de ella, casi todo es espera de InfoManager. Pedir primero
+     * las ventas para recién ahí saber qué días tienen pedidos SUMA las dos esperas en vez de
+     * solaparlas: con el botón Actualizar —que saltea los caches— eso eran 4 a 16 segundos.
+     *
+     * 🪤 Sólo para rangos cortos, que es como se usa la pantalla (1 a 3 días en todas las cargas
+     * medidas). En un rango largo esto pediría renglones de días sin un solo presupuesto, que es
+     * exactamente lo que el camino de abajo evita: ahí se sigue esperando a las ventas.
+     */
+    const diasDelRango = diasDelIntervalo(desde, hasta);
+    const itemsAdelantados = diasDelRango.length && diasDelRango.length <= DIAS_ITEMS_ADELANTADOS
+      ? new Map(diasDelRango.map(f => [f, fetchVentasItems(f, f, { actualizar: forzar }).catch(() => null)]))
+      : null;
+
     const [ventas, cat, stockInicial] = await Promise.all([
       // 🔑 Si quien llama ya lo está leyendo, se consume esa lectura (ver `ventasYaLeidas`).
       Promise.resolve(ventasYaLeidas).then(v => v ?? fetchVentas(desde, hasta, { actualizar: forzar })),
@@ -144,12 +174,19 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false, ven
     const renglones = new Map<string, Array<{ cod_articulo: number; cantidad: any; equivalencia_um: number | null | undefined; cod_lista_precios: number; descuento_porc: number }>>();
     for (let i = 0; i < fechasConPedidos.length; i += 4) {
       const tanda = fechasConPedidos.slice(i, i + 4);
-      const resultados = await Promise.all(tanda.map(f =>
-        fetchVentasItems(f, f, { actualizar: forzar }).catch((e: any) => {
+      const resultados = await Promise.all(tanda.map(async f => {
+        // Si ya se pidió arriba, se consume esa lectura; si falló, se reintenta por el camino normal.
+        const adelantado = itemsAdelantados?.get(f);
+        if (adelantado) {
+          const items = await adelantado;
+          if (items) return items;
+        }
+        return fetchVentasItems(f, f, { actualizar: forzar }).catch((e: any) => {
           // Sin los renglones de un día, esos pedidos salen con 0 kg. Es mejor que no abrir.
           console.warn(`[hojasRuta] sin items del ${f}:`, e?.message);
           diasSinItems.push(f); return [] as any[];
-        })));
+        });
+      }));
       for (const items of resultados) {
         for (const it of items) {
           const k = String((it as any).id_comprobante);
