@@ -338,6 +338,75 @@ describe('no emitir dos veces lo mismo', () => {
   });
 });
 
+/**
+ * 🔴 EL PEDIDO QUE QUEDÓ EN DUDA PORQUE IM NO CONTESTÓ.
+ *
+ * Pasó el 14/09/2026: FRENTE NORTE (PR 58537) con la factura A 1632 emitida y el remito en
+ * timeout, y FIGUEROA (PR 58536) con el timeout en la factura. La app frena bien —reintentar a
+ * ciegas puede facturar dos veces— pero nadie lo resolvía después y la fila quedaba trabada.
+ */
+describe('conciliar lo que quedó sin respuesta', () => {
+  const incierto = (over: Record<string, any> = {}) => ({
+    im_comprobante_id: '58835613', im_numero: 58537, cod_cliente: 1093, cod_empresa: 1,
+    estado_emision: 'incierto', total: 349576, ...over,
+  });
+  const remitoEnIM = (over: Record<string, any> = {}) => ({
+    id: '58840001', numero: 77600, tipo_comprobante: 'RE', tipo_factura: 'X', cod_cliente: 1093,
+    cod_empresa: 1, anulada: 'N', observaciones: 'Pedido 58537 [Remito Automático -FA:58839000]', ...over,
+  });
+
+  it('🔑 el remito estaba en IM: se registra y el pedido se destraba solo', async () => {
+    tablas.presupuestos_facturados = { data: [incierto({ im_factura_id: '58839000', im_factura_numero: 1632 })], error: null };
+    m.fetchVentas.mockResolvedValue([remitoEnIM()]);
+    const r = await llamar(tableroFacturacion, { method: 'GET' });
+    expect(r.status).toBe(200);
+    const escrito = escrituras.find(e => e.op === 'update')?.valor;
+    expect(escrito).toMatchObject({ im_remito_id: '58840001', im_remito_numero: 77600, estado_emision: 'completo' });
+    expect(escrito.facturado_at).toBeTruthy();
+  });
+
+  it('🔑 la factura estaba en IM: se registra y queda pendiente sólo el remito', async () => {
+    tablas.presupuestos_facturados = { data: [incierto()], error: null };
+    m.fetchVentas.mockResolvedValue([{
+      id: '58839000', numero: 1632, tipo_comprobante: 'FA', tipo_factura: 'A', cod_cliente: 1093,
+      cod_empresa: 1, anulada: 'N', cod_compatibilidad: '58835613',
+    }]);
+    const r = await llamar(tableroFacturacion, { method: 'GET' });
+    expect(r.status).toBe(200);
+    expect(escrituras.find(e => e.op === 'update')?.valor)
+      .toMatchObject({ im_factura_id: '58839000', im_factura_numero: 1632, estado_emision: 'remito_pendiente' });
+  });
+
+  /**
+   * 🔴 No encontrarlo NO prueba que no salió: las observaciones se cortan en 500 caracteres y el
+   * comprobante puede tener otra fecha. Destrabarlo ahí sería habilitar una segunda emisión.
+   */
+  it('🔴 sin evidencia no escribe nada', async () => {
+    tablas.presupuestos_facturados = { data: [incierto({ im_factura_id: '58839000', im_factura_numero: 1632 })], error: null };
+    m.fetchVentas.mockResolvedValue([]);
+    const r = await llamar(tableroFacturacion, { method: 'GET' });
+    expect(r.status).toBe(200);
+    expect(escrituras.filter(e => e.op === 'update')).toEqual([]);
+  });
+
+  it('🔴 ni adopta el remito de otra factura, ni uno anulado', async () => {
+    for (const malo of [{ observaciones: '[Remito Automático -FA:99999999]' }, { anulada: 'S' }, { cod_cliente: 777 }]) {
+      escrituras.length = 0;
+      tablas.presupuestos_facturados = { data: [incierto({ im_factura_id: '58839000', im_factura_numero: 1632 })], error: null };
+      m.fetchVentas.mockResolvedValue([remitoEnIM(malo)]);
+      await llamar(tableroFacturacion, { method: 'GET' });
+      expect(escrituras.filter(e => e.op === 'update'), JSON.stringify(malo)).toEqual([]);
+    }
+  });
+
+  it('🪤 y no consulta InfoManager de más: usa el listado que la pantalla ya leyó', async () => {
+    tablas.presupuestos_facturados = { data: [incierto({ im_factura_id: '58839000', im_factura_numero: 1632 })], error: null };
+    m.fetchVentas.mockResolvedValue([remitoEnIM()]);
+    await llamar(tableroFacturacion, { method: 'GET' });
+    expect(m.fetchVentas).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('el tablero de la etapa 2', () => {
   it('una edición de la factura en IM reemplaza el importe guardado del tablero',async()=>{
     tablas.presupuestos_facturados={data:[{im_comprobante_id:'10',im_factura_id:'20',im_factura_numero:50444,cod_cliente:430,cod_empresa:1,total:1111521,facturado_at:'2026-09-11',estado_emision:'completo'}],error:null};
