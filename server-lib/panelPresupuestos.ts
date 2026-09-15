@@ -360,24 +360,48 @@ export async function corregirCantidades(req: Request & { user?: JwtPayload }, r
 }
 
 /**
- * GET /api/presupuestos/fraccionado?desde=&hasta=&todos=1 — qué hay que fraccionar.
+ * GET /api/presupuestos/fraccionado?desde=&hasta=&estado= — qué hay que fraccionar.
  *
- * Sale de los presupuestos **aprobados** del rango: es lo que se prepara antes de armar la
- * hoja. Con `todos=1` se ve sobre todos los presupuestos, aprobados o no, para adelantar
- * trabajo cuando la revisión todavía no terminó.
+ * 🔴 SALE DE LO QUE TODAVÍA NO SE FACTURÓ, que es lo que falta preparar.
+ *
+ * Mati (15/09/2026): *"Jorgelina, a medida que van llegando los pedidos, imprime la hoja para
+ * fraccionado, la envía al sector de fraccionamiento y luego factura los pedidos. Y después
+ * vuelven a llegar más pedidos, vuelve a confeccionar la hoja y vuelve a facturar. Al no tener
+ * ese filtro se junta todo de nuevo y se vuelve a enviar la misma mercadería que ya se había
+ * enviado para fraccionar"*.
+ *
+ * 🔑 Facturar es lo que marca el corte: la hoja se imprime ANTES de facturar, así que lo que ya
+ * tiene factura ya se mandó a fraccionar. Filtrando por eso, la segunda hoja del día trae sólo
+ * los pedidos nuevos.
+ *
+ * 🔄 Antes filtraba por presupuestos **aprobados**, que no dice nada sobre si esa mercadería ya
+ * se preparó: dos hojas seguidas repetían todo lo aprobado hasta ese momento.
+ *
+ * `estado`: `pendientes` (lo que falta, por defecto) · `facturados` (para reimprimir una hoja ya
+ * mandada) · `todos`.
  */
 export async function fraccionadoDelRango(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
   try {
     const { desde, hasta } = rangoPedido(req);
-    const soloAprobados = req.query.todos !== '1';
+    // `todos=1` se conserva: es el enlace que ya está en uso.
+    const estado = req.query.todos === '1' ? 'todos'
+      : ['pendientes', 'facturados', 'todos'].includes(String(req.query.estado)) ? String(req.query.estado)
+      : 'pendientes';
     const vista = await vistaDeRango(desde, hasta);
-    const elegidos = [...vista.pendientes, ...vista.asignados]
-      .filter((p: any) => !soloAprobados || p.revision?.estado === 'aprobado');
+    const delRango = [...vista.pendientes, ...vista.asignados];
+    const yaFacturado = (p: any) => !!p.factura;
+    const elegidos = delRango.filter((p: any) =>
+      estado === 'todos' ? true : estado === 'facturados' ? yaFacturado(p) : !yaFacturado(p));
     const ids = new Set(elegidos.map((p: any) => String(p.im_comprobante_id)));
+    // Para que la pantalla pueda ofrecer el otro filtro sin volver a consultar.
+    const cuenta = {
+      pendientes: delRango.filter((p: any) => !yaFacturado(p)).length,
+      facturados: delRango.filter(yaFacturado).length,
+    };
 
     if (!ids.size) {
-      res.json({ ok: true, desde, hasta, solo_aprobados: soloAprobados, comprobantes: 0, fraccionado: [], totales: { productos: 0, paquetes: 0, kg: 0 } });
+      res.json({ ok: true, desde, hasta, estado, cuenta, comprobantes: 0, fraccionado: [], totales: { productos: 0, paquetes: 0, kg: 0 } });
       return;
     }
 
@@ -392,7 +416,7 @@ export async function fraccionadoDelRango(req: Request & { user?: JwtPayload }, 
     const fraccionado = armarFraccionado(renglones, cat, formatosDeBolsa());
     res.json({
       ok: true, desde, hasta,
-      solo_aprobados: soloAprobados,
+      estado, cuenta,
       completo: detalle.completo && sinItems.length === 0, dias_faltantes: detalle.dias_faltantes, comprobantes_sin_items: sinItems,
       comprobantes: ids.size,
       fraccionado,

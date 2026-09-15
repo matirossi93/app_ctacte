@@ -118,3 +118,7 @@
 
 .fr-tabla-scroll { max-width: 100%; overflow-x: auto; }
 @media print { .fr-tabla-scroll { overflow: visible; } }
+
+/* El filtro de qué mostrar: se lee como una pregunta, no como un tilde suelto. */
+.fr-check-tit { font-size: 0.78rem; color: #6b5a45; margin-right: 0.35rem; }
+.fr-check select { font: inherit; padding: 2px 6px; border: 1px solid #d9c9ae; border-radius: 5px; background: #fff; }

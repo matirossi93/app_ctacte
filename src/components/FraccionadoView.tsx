@@ -34,11 +34,19 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
     const [lineas, setLineas] = useState<Linea[]>([]);
     const [totales, setTotales] = useState<{ productos: number; paquetes: number; kg: number } | null>(null);
     const [comprobantes, setComprobantes] = useState(0);
-    const [soloAprobados, setSoloAprobados] = useState(true);
+    /**
+     * 🔴 QUÉ FALTA FRACCIONAR, no qué está aprobado.
+     *
+     * Mati (15/09/2026): la hoja se imprime ANTES de facturar, y en el día se hacen varias. Con el
+     * filtro viejo —"sólo lo aprobado"— la segunda hoja repetía todo lo de la primera y el sector
+     * fraccionaba dos veces la misma mercadería. Facturar es lo que marca el corte.
+     */
+    const [estado, setEstado] = useState<'pendientes' | 'facturados' | 'todos'>('pendientes');
+    const [cuenta, setCuenta] = useState<{ pendientes: number; facturados: number } | null>(null);
     const [cargando, setCargando] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    const clave = `${desde}|${hasta}|${soloAprobados}`;
+    const clave = `${desde}|${hasta}|${estado}`;
     const [snapshot, setSnapshot] = useState<string | null>(null);
     const { iniciar } = useLecturaVigente(clave);
     const cargar = useCallback(async (forzar = false) => {
@@ -47,7 +55,7 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
         setCargando(true); setError(null);
         try {
             const r = await fetch(
-                `/api/presupuestos/fraccionado?desde=${desde}&hasta=${hasta}${soloAprobados ? '' : '&todos=1'}${forzar ? '&refrescar=1' : ''}`,
+                `/api/presupuestos/fraccionado?desde=${desde}&hasta=${hasta}&estado=${estado}${forzar ? '&refrescar=1' : ''}`,
                 { headers: authHeaders(), signal: lectura.signal });
             const d = await r.json().catch(() => null);
             if (!lectura.vigente()) return;
@@ -58,13 +66,15 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
             setLineas(d.fraccionado ?? []);
             setTotales(d.totales ?? null);
             setComprobantes(d.comprobantes ?? 0);
+            setCuenta(d.cuenta ?? null);
         } catch (e: any) {
             if (!lectura.vigente()) return;
+            setCuenta(null);
             setError(e?.message ?? 'Error de conexión');
         } finally {
             if (lectura.vigente()) setCargando(false);
         }
-    }, [desde, hasta, soloAprobados, clave, iniciar]);
+    }, [desde, hasta, estado, clave, iniciar]);
 
     useEffect(() => { void cargar(); }, [cargar]);
 
@@ -81,8 +91,12 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
                     <RefreshCw size={15} className={cargando ? 'spin' : ''} /> Actualizar
                 </button>
                 <label className="fr-check">
-                    <input type="checkbox" checked={soloAprobados} onChange={e => setSoloAprobados(e.target.checked)} />
-                    Sólo lo aprobado
+                    <span className="fr-check-tit">Mostrar</span>
+                    <select value={estado} onChange={e => setEstado(e.target.value as any)} disabled={cargando}>
+                        <option value="pendientes">Lo que falta fraccionar{cuenta ? ` (${cuenta.pendientes})` : ''}</option>
+                        <option value="facturados">Lo ya facturado{cuenta ? ` (${cuenta.facturados})` : ''}</option>
+                        <option value="todos">Todo el rango</option>
+                    </select>
                 </label>
                 <span className="fr-meta">{comprobantes} pedidos</span>
                 <button className="fr-btn" onClick={() => window.print()} disabled={!lineas.length || cargando || !!error || snapshot !== clave}>
@@ -95,8 +109,10 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
             {!cargando && !lineas.length && !error && (
                 <div className="fr-vacio fr-no-print">
                     <Package size={26} />
-                    <span>{soloAprobados
-                        ? 'No hay presupuestos aprobados en estos días. Aprobalos en Presupuestos, o destildá “sólo lo aprobado”.'
+                    <span>{estado === 'pendientes'
+                        ? 'No queda nada por fraccionar en estos días: los pedidos que hay ya están facturados.'
+                        : estado === 'facturados'
+                        ? 'Todavía no se facturó ningún pedido de estos días.'
                         : 'No hay nada para fraccionar en estos días.'}</span>
                 </div>
             )}

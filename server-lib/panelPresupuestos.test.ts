@@ -197,12 +197,22 @@ describe('corregir cantidades desde el panel', () => {
   });
 });
 
+/**
+ * 🔴 LA HOJA DE FRACCIONADO SALE DE LO QUE FALTA PREPARAR, NO DE LO APROBADO.
+ *
+ * Mati (15/09/2026): *"Jorgelina, a medida que van llegando los pedidos, imprime la hoja para
+ * fraccionado, la envía al sector de fraccionamiento y luego factura. Y después vuelven a llegar
+ * más pedidos, vuelve a confeccionar la hoja y vuelve a facturar. Al no tener ese filtro se junta
+ * todo de nuevo y se vuelve a enviar la misma mercadería que ya se había enviado"*.
+ *
+ * La hoja se imprime ANTES de facturar: lo que ya tiene factura ya se mandó a fraccionar.
+ */
 describe('el listado de fraccionado', () => {
-  const APROBADO = { im_comprobante_id: '10', fecha: '2026-09-08', revision: { estado: 'aprobado' } };
-  const SIN_REVISAR = { im_comprobante_id: '20', fecha: '2026-09-08', revision: null };
+  const PENDIENTE = { im_comprobante_id: '10', fecha: '2026-09-08', factura: null };
+  const FACTURADO = { im_comprobante_id: '20', fecha: '2026-09-08', factura: { tipo: 'FA A', numero: 1632, origen: 'nuestra' } };
 
-  it('🔴 sale de lo APROBADO: no se fracciona lo que todavía no se revisó', async () => {
-    m.vistaDeRango.mockResolvedValue({ ...VISTA_VACIA, pendientes: [APROBADO, SIN_REVISAR] });
+  it('🔴 la segunda hoja del día NO repite lo que ya se facturó', async () => {
+    m.vistaDeRango.mockResolvedValue({ ...VISTA_VACIA, pendientes: [PENDIENTE, FACTURADO] });
     m.fetchVentasItems.mockResolvedValue([
       { id_comprobante: '10', cod_articulo: 1, cantidad: 30 },
       { id_comprobante: '20', cod_articulo: 1, cantidad: 999 },
@@ -211,24 +221,51 @@ describe('el listado de fraccionado', () => {
     const r = await llamar(fraccionadoDelRango, { query: { desde: '2026-09-08', hasta: '2026-09-08' } });
 
     expect(r.body.comprobantes).toBe(1);
+    expect(r.body.estado).toBe('pendientes');
     // 🔄 Desde el 09/09/2026 cada renglón se parte en paquetes de 10 kg como máximo (Mati: "no
     // se fracciona más de 10 kilos"). Sin formato de bolsa conocido, 30 kg son tres paquetes.
     expect(r.body.fraccionado[0]).toMatchObject({ descripcion: 'MEZCLA FINA', cantidades: [10, 10, 10] });
   });
 
-  it('con ?todos=1 se ve todo, para adelantar trabajo antes de terminar la revisión', async () => {
-    m.vistaDeRango.mockResolvedValue({ ...VISTA_VACIA, pendientes: [APROBADO, SIN_REVISAR] });
+  /** 🔑 Lo que decide es la factura, no la revisión: un pedido sin aprobar hay que prepararlo igual. */
+  it('🔑 un pedido sin revisar entra igual: lo que falta fraccionar no depende de quién lo miró', async () => {
+    m.vistaDeRango.mockResolvedValue({ ...VISTA_VACIA, pendientes: [{ ...PENDIENTE, revision: null }] });
+    m.fetchVentasItems.mockResolvedValue([{ id_comprobante: '10', cod_articulo: 1, cantidad: 30 }]);
+    const r = await llamar(fraccionadoDelRango, {});
+    expect(r.body.comprobantes).toBe(1);
+  });
+
+  it('se puede volver a ver lo ya facturado, para reimprimir una hoja que se mandó', async () => {
+    m.vistaDeRango.mockResolvedValue({ ...VISTA_VACIA, pendientes: [PENDIENTE, FACTURADO] });
+    m.fetchVentasItems.mockResolvedValue([
+      { id_comprobante: '10', cod_articulo: 1, cantidad: 30 },
+      { id_comprobante: '20', cod_articulo: 1, cantidad: 20 },
+    ]);
+    const r = await llamar(fraccionadoDelRango, { query: { estado: 'facturados' } });
+    expect(r.body.comprobantes).toBe(1);
+    expect(r.body.fraccionado[0].cantidades).toEqual([10, 10]);   // los 20 kg del facturado
+  });
+
+  it('y todo junto con ?todos=1, que es el enlace que ya estaba en uso', async () => {
+    m.vistaDeRango.mockResolvedValue({ ...VISTA_VACIA, pendientes: [PENDIENTE, FACTURADO] });
     m.fetchVentasItems.mockResolvedValue([
       { id_comprobante: '10', cod_articulo: 1, cantidad: 30 },
       { id_comprobante: '20', cod_articulo: 1, cantidad: 20 },
     ]);
     const r = await llamar(fraccionadoDelRango, { query: { todos: '1' } });
     expect(r.body.comprobantes).toBe(2);
-    expect(r.body.fraccionado[0].cantidades).toEqual([10, 10, 10, 10, 10])   // 30 y 20 kg, en paquetes de 10 (regla del 09/09/2026);
+    expect(r.body.fraccionado[0].cantidades).toEqual([10, 10, 10, 10, 10]);
   });
 
-  it('sin nada aprobado devuelve vacío sin salir a pedirle renglones a IM', async () => {
-    m.vistaDeRango.mockResolvedValue({ ...VISTA_VACIA, pendientes: [SIN_REVISAR] });
+  it('dice cuántos hay de cada lado, para poder elegir sin volver a consultar', async () => {
+    m.vistaDeRango.mockResolvedValue({ ...VISTA_VACIA, pendientes: [PENDIENTE, FACTURADO] });
+    m.fetchVentasItems.mockResolvedValue([{ id_comprobante: '10', cod_articulo: 1, cantidad: 30 }]);
+    const r = await llamar(fraccionadoDelRango, {});
+    expect(r.body.cuenta).toEqual({ pendientes: 1, facturados: 1 });
+  });
+
+  it('con todo facturado devuelve vacío sin salir a pedirle renglones a IM', async () => {
+    m.vistaDeRango.mockResolvedValue({ ...VISTA_VACIA, pendientes: [FACTURADO] });
     const r = await llamar(fraccionadoDelRango, {});
     expect(r.body.fraccionado).toEqual([]);
     expect(m.fetchVentasItems).not.toHaveBeenCalled();
