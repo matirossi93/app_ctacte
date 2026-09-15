@@ -209,8 +209,9 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
         if (!coincide(busqueda, [p.cliente_nombre, p.im_numero, p.cod_cliente])) return false;
         if (filtro === 'todos') return true;
         if (p.factura?.origen === 'nuestra') return false;
-        if (filtro === 'sin_revisar') return !p.revision;
-        if (filtro === 'aprobados') return p.revision?.estado === 'aprobado';
+        // 🔄 "Para facturar" es todo lo que no está frenado, no sólo lo que nadie miró.
+        if (filtro === 'sin_revisar') return p.revision?.estado !== 'observado';
+        if (filtro === 'aprobados') return p.revision?.estado === 'aprobado';   // enlaces viejos
         return p.revision?.estado === 'observado';
     }), [filas, filtro, busqueda]);
 
@@ -219,10 +220,15 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
         setFilas(fs => fs.map(f => f.im_comprobante_id === id ? { ...f, revision } : f));
     }
 
+    /**
+     * 🔄 15/09/2026: sólo se usa para OBSERVAR. El estado sigue siendo un parámetro porque el
+     * backend acepta los dos y hay marcas de "aprobado" viejas que se siguen leyendo.
+     *
+     * 🪤 Se fue la guarda de "guardá los cambios antes de aprobar": marcar un pedido como
+     * problemático no lo modifica, y justamente cuando hay algo a medio editar es cuando más
+     * sentido tiene frenarlo.
+     */
     async function revisar(p: Presupuesto, estado: 'aprobado' | 'observado', observacion?: string) {
-        if (estado === 'aprobado' && reparto.borradores.has(`base:${p.im_comprobante_id}`)) {
-            setAviso('Guardá o descartá los cambios de este presupuesto antes de aprobarlo.'); return;
-        }
         if (!operacion.comenzar()) return;
         setTrabajando(p.im_comprobante_id); setAviso(null);
         try {
@@ -382,9 +388,10 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
             {/* El filtro por estado es la pantalla: lo que importa es qué FALTA revisar. */}
             <div className="pr-filtros">
                 {([
-                    ['sin_revisar', 'Sin revisar', filas.filter(f => f.factura?.origen !== 'nuestra' && !f.revision).length],
-                    ['aprobados', 'Aprobados', filas.filter(f => f.factura?.origen !== 'nuestra' && f.revision?.estado === 'aprobado').length],
-                    ['observados', 'Observados', filas.filter(f => f.factura?.origen !== 'nuestra' && f.revision?.estado === 'observado').length],
+                    // 🔄 Se fue el filtro "Aprobados": sin el paso de aprobar, lo que importa es
+                    // qué está frenado y qué no. Las marcas viejas siguen viéndose en la fila.
+                    ['sin_revisar', 'Para facturar', filas.filter(f => f.factura?.origen !== 'nuestra' && f.revision?.estado !== 'observado').length],
+                    ['observados', 'Con problema', filas.filter(f => f.factura?.origen !== 'nuestra' && f.revision?.estado === 'observado').length],
                     ['todos', 'Todos', filas.length],
                 ] as Array<[Filtro, string, number]>).map(([k, txt, n]) => (
                     <button key={k} className={filtro === k ? 'on' : ''} onClick={() => setFiltro(k)}>
@@ -486,16 +493,23 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                             </button>
 
                             <div className="pr-acciones">
+                                {/**
+                                  * 🔄 15/09/2026: se fue el botón de APROBAR. Mati: *"eliminar el
+                                  * paso donde se aprueban los presupuestos, porque estamos viendo
+                                  * que está medio al pedo... una vez que se editan, directamente se
+                                  * pueda facturar"*.
+                                  *
+                                  * 🔑 Queda OBSERVAR, que es lo contrario: marcar el pedido que
+                                  * tiene un problema para que NO se facture hasta resolverlo. Ya no
+                                  * hay que confirmar lo que está bien, sólo señalar lo que no.
+                                  */}
                                 {rev
-                                    ? <button className="pr-btn ghost chico" onClick={() => void desmarcar(p)} disabled={trabajando === p.im_comprobante_id}>Deshacer</button>
-                                    : <>
-                                        <button className="pr-btn ok chico" onClick={() => void revisar(p, 'aprobado')} disabled={trabajando === p.im_comprobante_id}>
-                                            <Check size={14} /> Aprobar
-                                        </button>
-                                        <button className="pr-btn ghost chico" onClick={() => { setObservando(p.im_comprobante_id); setMotivo(''); }} disabled={trabajando === p.im_comprobante_id}>
-                                            Observar
-                                        </button>
-                                    </>}
+                                    ? <button className="pr-btn ghost chico" onClick={() => void desmarcar(p)} disabled={trabajando === p.im_comprobante_id}>
+                                        {rev.estado === 'observado' ? 'Sacar la marca' : 'Deshacer'}
+                                      </button>
+                                    : <button className="pr-btn ghost chico" onClick={() => { setObservando(p.im_comprobante_id); setMotivo(''); }} disabled={trabajando === p.im_comprobante_id}>
+                                        <AlertTriangle size={14} /> Observar
+                                      </button>}
                                 {/**
                                  * 🔑 Imprimir está SIEMPRE, revisado o no. Estos botones vivían
                                  * dentro del bloque de "sin revisar", así que al aprobar un

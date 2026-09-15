@@ -16,17 +16,24 @@ import { MoverFechaModal } from './MoverFechaModal';
 import './FacturacionView.css';
 
 /**
- * ETAPA 2: facturar lo aprobado.
+ * ETAPA 2: facturar.
  *
  * Mati (08/09/2026): *"una vez que los presupuestos ya están ok, recién ahí entra la parte de
  * facturación y de ahí, con la factura y el remito hecho, se arma la hoja de ruta"*.
  *
- * 🔑 Acá sólo aparece lo **aprobado** en la etapa 1. Lo que todavía no se revisó se cuenta
- * aparte, para que se vea por qué no está en la lista y no parezca que se perdió.
+ * 🔄 15/09/2026: se eliminó el paso de aprobar uno por uno. Mati: *"estamos viendo que está medio
+ * al pedo ese paso... la idea es que sea lo más sencillo y rápido posible para facturar"*. Acá
+ * aparece todo lo vigente del rango; lo único que no entra es lo OBSERVADO, que se cuenta aparte
+ * para que se vea por qué falta y no parezca que se perdió.
+ *
+ * 🔑 Lo que garantiza que se factura lo que se está viendo ya no es un visto bueno manual sino la
+ * VERSIÓN de cada presupuesto, que viaja al emitir y el server coteja bajo lock.
  */
 
 interface Fila {
     im_comprobante_id: string;
+    /** La versión del presupuesto. Viaja al facturar para que el server corte si cambió. */
+    huella?: string | null;
     im_numero: number | null;
     fecha: string | null;
     cod_cliente: number;
@@ -82,12 +89,13 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
     /** Mover la fecha de una factura emitida: es uno de los tres campos que IM deja tocar. */
     const [moviendoFecha, setMoviendoFecha] = useState<string | null>(null);
     const [totales, setTotales] = useState<any>(null);
-    const [sinAprobar, setSinAprobar] = useState(0);
+    /** Los que alguien marcó con un problema: no se facturan hasta resolverlos. */
+    const [observados, setObservados] = useState(0);
     const [cargando, setCargando] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [sel, setSel] = useState<Set<string>>(new Set());
     /** Los ids que se están facturando: mientras esté abierto, el modal manda. */
-    const [facturando, setFacturando] = useState<{ ids: string[]; desde: string; hasta: string } | null>(null);
+    const [facturando, setFacturando] = useState<{ ids: string[]; huellas: Record<string, string>; desde: string; hasta: string } | null>(null);
 
     const rangoSeleccion = useRef(`${desde}|${hasta}`);
     const { iniciar: iniciarLectura } = useLecturaVigente(`${desde}|${hasta}`);
@@ -209,7 +217,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
             setPendientes(d.pendientes ?? []);
             setFacturados(d.facturados ?? []);
             setTotales(d.totales ?? null);
-            setSinAprobar(d.sin_aprobar ?? 0);
+            setObservados(d.observados ?? 0);
             setSel(s => new Set([...s].filter(id => (d.pendientes ?? []).some((p: Fila) => p.im_comprobante_id === id))));
             lectura.confirmar();
         } catch (e: any) {
@@ -310,13 +318,13 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                 );
             })()}
 
-            {/* Lo no aprobado no se puede facturar: se dice, para que no parezca que se perdió. */}
-            {sinAprobar > 0 && (
-                <p className="fc-nota"><b>{sinAprobar}</b> sin aprobar · Revisalos en Presupuestos.</p>
+            {/* Lo marcado con un problema no se factura: se dice, para que no parezca que se perdió. */}
+            {observados > 0 && (
+                <p className="fc-nota"><b>{observados}</b> con un problema marcado · No se facturan hasta resolverlos en Presupuestos.</p>
             )}
             {error && <div className="fc-aviso error"><AlertTriangle size={15} /><span>{error}</span></div>}
 
-            {cargando && <div className="fc-cargando"><Loader2 className="spin" size={20} /> Trayendo lo aprobado…</div>}
+            {cargando && <div className="fc-cargando"><Loader2 className="spin" size={20} /> Trayendo lo que hay para facturar…</div>}
             {!cargando && !error && !pendientes.length && (
                 <div className="fc-vacio">
                     <CheckCircle2 size={26} />
@@ -357,7 +365,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                         ? <span className="fc-badge grave">{p.estado_emision === 'anulado' ? 'factura anulada · requiere conciliación' : 'emisión por verificar'}</span>
                                         : p.falta_remito
                                         ? <span className="fc-badge grave">falta el remito (FA {p.im_factura_numero})</span>
-                                        : <span className="fc-badge">aprobado</span>}
+                                        : <span className="fc-badge">listo</span>}
                                 </td>
                                 {/* 🔑 Imprimir desde acá también: el circuito entero tiene que poder
                                     sacar el papel sin volver a Presupuestos (Mati, 09/09/2026). */}
@@ -543,7 +551,12 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                 <div className="fc-barra">
                     <span><b>{elegidos.length}</b> elegidos · {money(importeElegido)}</span>
                     <button className="fc-btn ghost" onClick={() => setSel(new Set())}><X size={14} /> Deseleccionar</button>
-                    <button className="fc-btn" onClick={() => setFacturando({ ids: elegidos.map(p => p.im_comprobante_id), desde, hasta })}>
+                    <button className="fc-btn" onClick={() => setFacturando({
+                        ids: elegidos.map(p => p.im_comprobante_id),
+                        // La versión que se está viendo de cada uno: el server corta si cambió.
+                        huellas: Object.fromEntries(elegidos.filter(p => p.huella).map(p => [p.im_comprobante_id, p.huella!])),
+                        desde, hasta,
+                    })}>
                         <Receipt size={15} /> Facturar {elegidos.length}
                     </button>
                 </div>
@@ -552,6 +565,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
             {facturando && (
                 <FacturarModal
                     ids={facturando.ids}
+                    huellas={facturando.huellas}
                     desde={facturando.desde}
                     hasta={facturando.hasta}
                     onClose={huboCambios => {

@@ -115,7 +115,16 @@ function fakeSb() {
 
 function llamar(fn: any, { rol = 'administrativo', body = {}, query = {}, method = 'POST' } = {}) {
   let status = 200; let out: any;
-  const req: any = { user: { rol, sub: 'u1' }, params: {}, body, query, method };
+  /**
+   * La pantalla manda SIEMPRE la versión de cada presupuesto que tenía a la vista: es lo que el
+   * server coteja bajo lock desde que se eliminó el paso de aprobar. Los tests que quieren probar
+   * qué pasa sin ese dato mandan `huellas` explícitamente.
+   */
+  const ids = (body as any).ids;
+  const conHuellas = Array.isArray(ids) && (body as any).huellas === undefined
+    ? { ...body, huellas: Object.fromEntries(ids.map((id: string) => [String(id), 'fixture'])) }
+    : body;
+  const req: any = { user: { rol, sub: 'u1' }, params: {}, body: conHuellas, query, method };
   const res: any = { status: (s: number) => { status = s; return res; }, json: (b: any) => { out = b; } };
   return fn(req, res).then(() => ({ status, body: out }));
 }
@@ -166,29 +175,50 @@ beforeEach(() => {
   tablas['presupuestos_facturados'] = { data: [], error: null };
 });
 
-describe('sólo se factura lo aprobado', () => {
-  it('🔴 un presupuesto SIN aprobar frena toda la emisión', async () => {
-    // Facturar sin revisar es justo lo que este panel vino a evitar.
+/**
+ * 🔄 15/09/2026: SE ELIMINÓ EL PASO DE APROBAR. Mati: *"eliminar el paso donde se aprueban los
+ * presupuestos, porque estamos viendo que está medio al pedo... una vez que se editan,
+ * directamente se pueda facturar. La idea es que sea lo más sencillo y rápido posible"*.
+ *
+ * Lo que se conserva es lo que de verdad protegía: que no se facture algo distinto de lo que se
+ * vio. Eso lo daba la huella atada a la aprobación; ahora la manda la pantalla.
+ */
+describe('qué se puede facturar', () => {
+  it('🔑 un presupuesto sin revisar se factura: ya no hace falta aprobar', async () => {
     m.vistaDeRango.mockResolvedValue({ ...VISTA_BASE, pendientes: [presu({ revision: null })] });
-    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
-    expect(r.status).toBe(409);
-    expect(r.body.error).toMatch(/no están aprobados|58050/);
-    expect(m.emitirFactura).not.toHaveBeenCalled();
-  });
-
-  it('🔴 uno observado tampoco pasa', async () => {
-    m.vistaDeRango.mockResolvedValue({ ...VISTA_BASE, pendientes: [presu({ revision: { estado: 'observado', observacion: 'falta stock' } })] });
-    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
-    expect(r.status).toBe(409);
-    expect(m.emitirFactura).not.toHaveBeenCalled();
-  });
-
-  it('aprobado sí: sale factura y remito', async () => {
     const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
     expect(r.status).toBe(200);
     expect(m.emitirFactura).toHaveBeenCalledTimes(1);
     expect(m.emitirRemito).toHaveBeenCalledTimes(1);
     expect(r.body.hechos[0]).toMatchObject({ factura: 50360, remito: 77291 });
+  });
+
+  /** 🔴 Lo OBSERVADO sigue frenando: es la marca de "este tiene un problema y no va". */
+  it('🔴 uno marcado con un problema frena la emisión', async () => {
+    m.vistaDeRango.mockResolvedValue({ ...VISTA_BASE, pendientes: [presu({ revision: { estado: 'observado', observacion: 'falta stock' } })] });
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/problema|58050/);
+    expect(m.emitirFactura).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 Sin la versión que se vio no hay contra qué comparar, y el caso peligroso —el presupuesto
+   * cambió entre que se miró y se apretó Facturar— es justo el que no mandaría el dato.
+   */
+  it('🔴 sin la versión que se vio en pantalla no se emite nada', async () => {
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'], huellas: {} } });
+    expect(r.status).toBe(200);            // la tanda sigue, pero ese pedido no
+    expect(m.emitirFactura).not.toHaveBeenCalled();
+    expect(String(r.body.fallados?.[0] ?? '')).toMatch(/versión del presupuesto/i);
+  });
+
+  it('🔴 y si cambió desde que se lo vio, tampoco', async () => {
+    const { exigirHuella } = await import('./versionPresupuesto.js');
+    (exigirHuella as any).mockImplementationOnce(() => { throw new Error('El presupuesto cambió o falta su versión. Actualizá y revisalo antes de continuar.'); });
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(m.emitirFactura).not.toHaveBeenCalled();
+    expect(String(r.body.fallados?.[0] ?? '')).toMatch(/cambió/i);
   });
 });
 
@@ -506,7 +536,7 @@ describe('el tablero de la etapa 2', () => {
     expect(r.body.facturados).toHaveLength(1);
     expect(r.body.facturados[0]).toMatchObject({im_factura_numero:50424,total:123,im_factura_id:'f1'});
     expect(r.body.pendientes).toEqual([]);
-    expect(r.body.sin_aprobar).toBe(0);
+    expect(r.body.observados).toBe(0);
     expect(m.emitirFactura).not.toHaveBeenCalled();
   });
 
@@ -528,14 +558,19 @@ describe('el tablero de la etapa 2', () => {
     expect(r.body.pendientes[0].falta_remito).toBe(false);
     expect(r.body.pendientes[0].estado_emision).toBe('anulado');
   });
-  it('🔴 muestra sólo lo aprobado, y avisa cuántos quedan sin aprobar', async () => {
+  /** 🔄 Sin el paso de aprobar, lo único que no llega a esta pantalla es lo OBSERVADO. */
+  it('🔑 muestra todo lo vigente, y deja afuera sólo lo marcado con un problema', async () => {
     m.vistaDeRango.mockResolvedValue({
       ...VISTA_BASE,
-      pendientes: [presu(), presu({ im_comprobante_id: '20', revision: null })],
+      pendientes: [
+        presu(),
+        presu({ im_comprobante_id: '20', revision: null }),
+        presu({ im_comprobante_id: '30', revision: { estado: 'observado', observacion: 'falta stock' } }),
+      ],
     });
     const r = await llamar(tableroFacturacion, { method: 'GET', query: {} });
-    expect(r.body.pendientes).toHaveLength(1);
-    expect(r.body.sin_aprobar).toBe(1);
+    expect(r.body.pendientes.map((p: any) => p.im_comprobante_id).sort()).toEqual(['10', '20']);
+    expect(r.body.observados).toBe(1);
   });
 
   it('🔴 separa lo que sólo espera el remito', async () => {
