@@ -391,6 +391,15 @@ async function leerArticulosCatalogo(): Promise<Map<number, ArticuloMini>> {
     page += 1;
     if (page > TOPE_PAGINAS) throw new Error(`Catálogo incompleto: supera ${TOPE_PAGINAS} páginas.`);
   }
+  /**
+   * 🔑 CUÁNTOS TRAEN LA ALÍCUOTA. De acá sale el IVA de cualquier artículo que se agregue a un
+   * presupuesto o a una nota; el que no la tiene obliga a preguntar por su lista de precios, y si
+   * además no está en ninguna lista no se puede facturar (COSTO DE DISTRIBUCION, 16/09/2026).
+   * Con el total al lado se distingue en un vistazo si le falta a UN artículo o si `/articulos`
+   * dejó de mandar el campo para todos.
+   */
+  const conIva = [...map.values()].filter(a => a.iva_por != null).length;
+  console.log(`[catálogo] ${map.size} artículos · ${conIva} con alícuota de IVA · ${map.size - conIva} sin ella`);
   return map;
 }
 
