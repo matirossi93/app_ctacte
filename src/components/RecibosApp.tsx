@@ -3,7 +3,7 @@ import { X, Camera, Upload, Check, AlertCircle, ChevronLeft, Loader2, Search, Cl
 import { authHeaders, getUser } from '../utils/auth';
 import { buscarClientes } from '../utils/buscarClientes';
 import { formatCurrency, formatCurrency2 } from '../utils/formatters';
-import { MEDIOS_PAGO_UI, DEFAULT_MEDIO_UI, normalizeMedioUI } from '../utils/mediosPago';
+import { MEDIOS_PAGO_UI, DEFAULT_MEDIO_UI, normalizeMedioUI, exigeFotoUI } from '../utils/mediosPago';
 import './RecibosApp.css';
 
 interface Props {
@@ -489,7 +489,16 @@ function UploadRecibo({ clients, defaultCodVendedor, hideCodVendedor = false, on
     };
 
     const submit = async () => {
-        if (!file) { setMsg({ kind: 'err', text: 'Falta la foto del comprobante' }); return; }
+        /**
+         * 🔑 En efectivo la foto dejó de hacer falta (Mati, 16/09/2026): el recibo en PDF que
+         * emite la app reemplaza al talonario, así que no hay nada que fotografiar. En
+         * transferencias, MercadoPago y cheque se sigue pidiendo, porque la captura ES la
+         * prueba del pago.
+         */
+        if (!file && exigeFotoUI(medioPago)) {
+            setMsg({ kind: 'err', text: `Falta la foto del comprobante (hace falta para ${MEDIOS_PAGO_UI.find(m => m.value === medioPago)?.label ?? 'este medio de pago'})` });
+            return;
+        }
         if (!codCliente) { setMsg({ kind: 'err', text: 'Elegí el cliente' }); return; }
         const montoNum = Number(monto);
         if (!monto || !isFinite(montoNum) || montoNum <= 0) { setMsg({ kind: 'err', text: 'Ingresá el monto del pago' }); return; }
@@ -497,7 +506,7 @@ function UploadRecibo({ clients, defaultCodVendedor, hideCodVendedor = false, on
         setBusy(true); setMsg(null);
         try {
             const fd = new FormData();
-            fd.append('foto', file);
+            if (file) fd.append('foto', file);
             fd.append('cod_cliente', codCliente);
             if (codVendedor) fd.append('cod_vendedor', codVendedor);
             if (monto) fd.append('monto', monto);
@@ -535,7 +544,17 @@ function UploadRecibo({ clients, defaultCodVendedor, hideCodVendedor = false, on
                 ) : (
                     <div className="rec-upload-empty">
                         <Camera size={48} />
-                        <p>Tomá una foto del comprobante o subí un archivo</p>
+                        {/* En efectivo la foto es opcional: el comprobante es el recibo que
+                            emite la app. Decirlo acá evita que el vendedor se quede buscando
+                            qué fotografiar cuando ya no escribe el talonario. */}
+                        {exigeFotoUI(medioPago) ? (
+                            <p>Tomá una foto del comprobante o subí un archivo</p>
+                        ) : (
+                            <>
+                                <p>En efectivo no hace falta foto</p>
+                                <p className="rec-upload-hint">Cargá los datos y compartile el recibo al cliente. Si igual querés adjuntar algo, podés.</p>
+                            </>
+                        )}
                     </div>
                 )}
                 <div className="rec-upload-actions">
@@ -547,7 +566,7 @@ function UploadRecibo({ clients, defaultCodVendedor, hideCodVendedor = false, on
                         onChange={e => onPickFile(e.target.files?.[0] ?? null)}
                     />
                     <button className="btn-secondary" onClick={() => fileRef.current?.click()}>
-                        <Camera size={16} /> {file ? 'Cambiar foto' : 'Tomar foto / subir'}
+                        <Camera size={16} /> {file ? 'Cambiar foto' : (exigeFotoUI(medioPago) ? 'Tomar foto / subir' : 'Adjuntar (opcional)')}
                     </button>
                 </div>
             </div>
@@ -653,7 +672,7 @@ function UploadRecibo({ clients, defaultCodVendedor, hideCodVendedor = false, on
                 <div className="rec-form-actions">
                     <button className="btn-secondary" onClick={onCancel} disabled={busy}>Cancelar</button>
                     <button className="btn-primary" onClick={submit}
-                        disabled={busy || !file || !codCliente || !monto || !(Number(monto) > 0)}
+                        disabled={busy || (!file && exigeFotoUI(medioPago)) || !codCliente || !monto || !(Number(monto) > 0)}
                         title={!monto ? 'Cargá el monto del comprobante' : undefined}>
                         {busy ? <><Loader2 size={16} className="spin" /> Enviando…</> : <><Upload size={16} /> Enviar comprobante</>}
                     </button>

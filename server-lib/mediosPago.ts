@@ -10,16 +10,38 @@ export interface MedioPago {
   label: string;           // texto visible en la UI
   forma_pago_im: FormaPagoIM;
   cuenta_env_var: string;  // nombre de la variable de entorno con el cod_cuenta InfoManager
+  /**
+   * ¿Hace falta la foto del comprobante para cargarlo?
+   *
+   * Mati (16/09/2026), al reemplazar el talonario de papel por el recibo en PDF: la foto sigue
+   * siendo obligatoria **donde ES la prueba del pago** —una transferencia, un pago de
+   * MercadoPago, un cheque— y deja de serlo en efectivo, donde el comprobante lo emite la
+   * empresa y no hay nada que fotografiar.
+   */
+  exige_foto: boolean;
 }
 
 export const MEDIOS_PAGO: MedioPago[] = [
-  { value: 'mercadopago',   label: 'MercadoPago',           forma_pago_im: 'OT', cuenta_env_var: 'IM_CUENTA_MERCADOPAGO' },
-  { value: 'recaudadora_1', label: 'Cuenta Recaudadora 1',  forma_pago_im: 'OT', cuenta_env_var: 'IM_CUENTA_RECAUDADORA_1' },
-  { value: 'recaudadora_2', label: 'Cuenta Recaudadora 2',  forma_pago_im: 'OT', cuenta_env_var: 'IM_CUENTA_RECAUDADORA_2' },
-  { value: 'banco_nacion',  label: 'Banco Nación',          forma_pago_im: 'OT', cuenta_env_var: 'IM_CUENTA_BANCO_NACION' },
-  { value: 'efectivo',      label: 'Efectivo',              forma_pago_im: 'EF', cuenta_env_var: 'IM_CUENTA_EFECTIVO' },
-  { value: 'cheque',        label: 'Cheque',                forma_pago_im: 'OT', cuenta_env_var: 'IM_CUENTA_CHEQUE' },
+  { value: 'mercadopago',   label: 'MercadoPago',           forma_pago_im: 'OT', cuenta_env_var: 'IM_CUENTA_MERCADOPAGO',   exige_foto: true },
+  { value: 'recaudadora_1', label: 'Cuenta Recaudadora 1',  forma_pago_im: 'OT', cuenta_env_var: 'IM_CUENTA_RECAUDADORA_1', exige_foto: true },
+  { value: 'recaudadora_2', label: 'Cuenta Recaudadora 2',  forma_pago_im: 'OT', cuenta_env_var: 'IM_CUENTA_RECAUDADORA_2', exige_foto: true },
+  { value: 'banco_nacion',  label: 'Banco Nación',          forma_pago_im: 'OT', cuenta_env_var: 'IM_CUENTA_BANCO_NACION',  exige_foto: true },
+  // El único sin foto: el recibo que emite la app ES el comprobante.
+  { value: 'efectivo',      label: 'Efectivo',              forma_pago_im: 'EF', cuenta_env_var: 'IM_CUENTA_EFECTIVO',      exige_foto: false },
+  // El cheque sí: la foto tiene el número, el banco y la fecha de cobro.
+  { value: 'cheque',        label: 'Cheque',                forma_pago_im: 'OT', cuenta_env_var: 'IM_CUENTA_CHEQUE',        exige_foto: true },
 ];
+
+/**
+ * ¿Hay que exigir la foto del comprobante para este medio de pago?
+ *
+ * 🪤 El default es SÍ: no saber cómo pagó no es razón para aflojar el respaldo. Sólo se afloja
+ * en los medios que lo declaran explícitamente.
+ */
+export function exigeFoto(medio: string | null | undefined): boolean {
+  const m = byValue.get(String(medio ?? '').toLowerCase());
+  return m ? m.exige_foto : true;
+}
 
 export const DEFAULT_MEDIO = 'mercadopago';
 

@@ -6,7 +6,7 @@ import type { Request, Response } from 'express';
 import { sb, TENANT_ID } from './supabase.js';
 import { ocrRecibo } from './ocrRecibo.js';
 import { crearRecibo, fetchComprobPendientes, fetchClientesIMCached, type ReciboPago, type ReciboComprobante } from './infomanager.js';
-import { getFormaPagoIM, isValidMedio } from './mediosPago.js';
+import { getFormaPagoIM, isValidMedio, exigeFoto } from './mediosPago.js';
 import { resolveCuentaCod, debugCuentasResolver, invalidateCuentasCache, listCuentasEfectivo } from './cuentasResolver.js';
 import { buscarPagoEnMP, todayISO_AR, mpConfigStatus, type MPMatch, type MPCuenta } from './mercadopago.js';
 import { ajustarImputacionIM, validarContraPendientes } from './recibosImputacion.js';
@@ -103,11 +103,22 @@ export async function uploadRecibo(req: Request & { user?: JwtPayload; file?: an
     }
 
     const file = req.file;
-    if (!file) { res.status(400).json({ error: 'Falta la foto del comprobante (campo "foto")' }); return; }
-    if (file.size > MAX_BYTES) { res.status(413).json({ error: 'Imagen demasiado grande (>10MB)' }); return; }
-    if (!ALLOWED_MIMES.has(file.mimetype)) {
-      res.status(415).json({ error: `Tipo no soportado: ${file.mimetype}` });
-      return;
+    /**
+     * 🔑 En EFECTIVO la foto dejó de ser obligatoria (Mati, 16/09/2026): el recibo en PDF que
+     * emite la app ocupa el lugar del talonario de papel, así que no hay nada que fotografiar.
+     * En transferencias, MercadoPago y cheque se sigue pidiendo, porque ahí la captura ES la
+     * prueba del pago. La regla vive en `mediosPago.ts` junto a la definición de cada medio.
+     */
+    const medioPedido = typeof req.body?.medio_pago === 'string' ? req.body.medio_pago : null;
+    if (!file && exigeFoto(medioPedido)) {
+      res.status(400).json({ error: 'Falta la foto del comprobante (campo "foto")' }); return;
+    }
+    if (file) {
+      if (file.size > MAX_BYTES) { res.status(413).json({ error: 'Imagen demasiado grande (>10MB)' }); return; }
+      if (!ALLOWED_MIMES.has(file.mimetype)) {
+        res.status(415).json({ error: `Tipo no soportado: ${file.mimetype}` });
+        return;
+      }
     }
 
     const codCliente = Number(req.body?.cod_cliente);
@@ -142,26 +153,31 @@ export async function uploadRecibo(req: Request & { user?: JwtPayload; file?: an
       codVendedor = Number(req.body?.cod_vendedor) || 0;
     }
 
-    // 1. Subir a Supabase Storage
-    const ext = extFromMime(file.mimetype);
+    // 1. Subir a Supabase Storage (sólo si vino foto: en efectivo puede no haber)
     const id = randomUUID();
-    const objectPath = `tenant/${TENANT_ID}/vendedor/${codVendedor}/${new Date().getUTCFullYear()}/${String(new Date().getUTCMonth() + 1).padStart(2, '0')}/${id}.${ext}`;
+    let objectPath: string | null = null;
+    let fileBuffer: Buffer | null = null;
+    if (file) {
+      const ext = extFromMime(file.mimetype);
+      objectPath = `tenant/${TENANT_ID}/vendedor/${codVendedor}/${new Date().getUTCFullYear()}/${String(new Date().getUTCMonth() + 1).padStart(2, '0')}/${id}.${ext}`;
 
-    // Multer ahora usa diskStorage: el archivo está en file.path, no en file.buffer.
-    // Lo leemos una vez y lo reutilizamos para storage upload + OCR.
-    const fileBuffer = await fsp.readFile(file.path);
+      // Multer ahora usa diskStorage: el archivo está en file.path, no en file.buffer.
+      // Lo leemos una vez y lo reutilizamos para storage upload + OCR.
+      fileBuffer = await fsp.readFile(file.path);
 
-    const { error: upErr } = await sb().storage.from(BUCKET).upload(objectPath, fileBuffer, {
-      contentType: file.mimetype,
-      upsert: false
-    });
-    if (upErr) { res.status(500).json({ error: `upload storage: ${upErr.message}` }); return; }
+      const { error: upErr } = await sb().storage.from(BUCKET).upload(objectPath, fileBuffer, {
+        contentType: file.mimetype,
+        upsert: false
+      });
+      if (upErr) { res.status(500).json({ error: `upload storage: ${upErr.message}` }); return; }
+    }
 
-    // 2. OCR (async, no bloquea si falla)
+    // 2. OCR (async, no bloquea si falla). Sin foto no hay nada que leer: los datos los cargó
+    //    el vendedor a mano, que es exactamente lo que pasaba con el recibo de papel.
     let ocr: any = null;
     let ocrConfidence: number | null = null;
     try {
-      if (file.mimetype.startsWith('image/')) {
+      if (file && fileBuffer && file.mimetype.startsWith('image/')) {
         const base64 = fileBuffer.toString('base64');
         const parsed = await ocrRecibo(base64, file.mimetype);
         ocr = parsed;
@@ -193,7 +209,7 @@ export async function uploadRecibo(req: Request & { user?: JwtPayload; file?: an
       referencia: ocr?.referencia ?? null,
       observaciones: req.body?.observaciones ?? null,
       foto_url: objectPath,
-      foto_mime: file.mimetype,
+      foto_mime: file?.mimetype ?? null,
       ocr_raw: ocr,
       ocr_confidence: ocrConfidence,
       status: 'pendiente_revision' as const,
@@ -204,7 +220,7 @@ export async function uploadRecibo(req: Request & { user?: JwtPayload; file?: an
     const { data, error } = await sb().from('comprobantes_pago').insert(row).select().single();
     if (error) {
       // Rollback storage
-      await sb().storage.from(BUCKET).remove([objectPath]).catch(() => {});
+      if (objectPath) await sb().storage.from(BUCKET).remove([objectPath]).catch(() => {});
       res.status(500).json({ error: `insert comprobantes_pago: ${error.message}` });
       return;
     }

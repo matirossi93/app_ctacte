@@ -605,3 +605,6 @@
 }
 .rec-compartir:active { transform: scale(.96) }
 .rec-compartir:disabled { opacity: .55; cursor: default }
+
+/* Aclaración bajo el ícono de la cámara cuando la foto no hace falta (efectivo). */
+.rec-upload-hint { font-size: 12px; color: var(--color-text-muted, #6e7670); margin-top: 2px; max-width: 34ch }
