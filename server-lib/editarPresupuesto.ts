@@ -41,6 +41,7 @@ import { huellaPresupuesto, exigirHuella, exigirTipoEmpresa, bloquearPresupuesto
 import { invalidarRemitos } from './vistaRemitos.js';
 import { verificarPreciosEditados } from './verificarPrecioEditado.js';
 import { usuariosPorCod } from './usuariosPorCod.js';
+import { vencimientoDeFactura } from './vencimientoFactura.js';
 
 function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
   if (!puedeArmarHojasDeRuta(String(req.user?.rol ?? ''))) {
@@ -450,6 +451,20 @@ export async function comprobanteParaImprimir(req: Request & { user?: JwtPayload
     ]);
     const vendedor = usuariosPorCod(vendedores as any[]).byCod.get(Number(cab.cod_vendedor))?.nombre ?? null;
 
+    /**
+     * 🔑 CUÁNDO SE LE VENCE. Mati (16/09/2026): *"buscamos bajar de forma sutil la demora en el
+     * pago de los clientes, entonces la idea es que puedan verlo ahí a mano"*.
+     *
+     * El plazo sale del maestro de clientes con el MISMO criterio que usa Amira para los
+     * mensajes de cobranza —la columna VISITA cruzada con Cond Pago— para que el papel y el
+     * mensaje nunca digan cosas distintas. Sin plazo cargado no se imprime nada.
+     */
+    const { data: operativo } = await Promise.resolve(sb().from('client_operational')
+      .select('visita, cond_pago').eq('tenant_id', TENANT_ID)
+      .eq('cod_cliente', Number(cab.cod_cliente ?? 0)).maybeSingle())
+      .catch(() => ({ data: null } as any));
+    const vencimiento = vencimientoDeFactura(cab.fecha, operativo as any);
+
     const cliente = (clientes as any[]).find(c => Number(c.cod_cliente) === Number(cab.cod_cliente));
     /**
      * 🔑 La dirección y el teléfono van EN EL PAPEL. Mati (09/09/2026): *"tiene que decir la
@@ -468,6 +483,7 @@ export async function comprobanteParaImprimir(req: Request & { user?: JwtPayload
         cliente: cliente?.razon_social ?? cliente?.nombre ?? `Cliente ${cab.cod_cliente ?? ''}`,
         domicilio, telefono,
         cod_vendedor: cab.cod_vendedor ?? null, vendedor,
+        vence: vencimiento?.fecha ?? null, dias_cta_cte: vencimiento?.dias ?? null,
       },
       items: (items as any[]).map(it => {
         const art = cat.get(Number(it.cod_articulo));

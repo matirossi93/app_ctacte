@@ -91,6 +91,12 @@ export interface DatosPresupuesto {
   domicilio?: string | null;
   telefono?: string | null;
   vendedor?: string | null;
+  /**
+   * 🔑 Cuándo se le vence al cliente, cuando tiene plazo pactado de cuenta corriente. Mati
+   * (16/09/2026): *"buscamos bajar de forma sutil la demora en el pago"*.
+   */
+  vence?: string | null;
+  dias_cta_cte?: number | null;
   fecha: string | Date;
   items: RenglonPresupuesto[];
   observaciones?: string | null;
@@ -242,6 +248,22 @@ function fichaCliente(doc: jsPDF, d: DatosPresupuesto, ancho: number, y: number)
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
     doc.text(d.vendedor, derecha, y + 8.6, { align: 'right' });
+  }
+  /**
+   * 🔑 El vencimiento, debajo del vendedor y alineado a la derecha: se lee sin buscarlo, pero no
+   * compite con el nombre del cliente. Sólo sale en la factura y sólo si hay plazo pactado — una
+   * fecha inventada en un comprobante fiscal es peor que ninguna.
+   */
+  if (d.vence && d.tipo === 'Factura') {
+    const derecha = ancho - MARGEN - 4;
+    doc.setTextColor(...GRIS);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    const plazo = d.dias_cta_cte ? ` (${d.dias_cta_cte} días)` : '';
+    // 🪤 Al mediodía UTC: `new Date('2026-10-01')` es medianoche y en Argentina cae un día antes.
+    const vence = new Date(`${String(d.vence).slice(0, 10)}T12:00:00Z`)
+      .toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    doc.text(`Vence el ${vence}${plazo}`, derecha, y + 11.8, { align: 'right' });
   }
   return y + ALTO_FICHA;
 }

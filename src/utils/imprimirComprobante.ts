@@ -46,6 +46,9 @@ export async function imprimirComprobante(
      * pasaba: el papel de la oficina salía sin ese dato.
      */
     vendedor: d.comprobante?.vendedor ?? null,
+    /** Sólo se dibuja en la factura, y sólo si el cliente tiene plazo pactado de cuenta corriente. */
+    vence: d.comprobante?.vence ?? null,
+    dias_cta_cte: d.comprobante?.dias_cta_cte ?? null,
     fecha: d.comprobante?.fecha ?? new Date(),
     observaciones: d.comprobante?.observaciones ?? null,
     items: d.items ?? [],
