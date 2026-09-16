@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { promises as fsp } from 'node:fs';
+import axios from 'axios';
 import XLSX from 'xlsx';
 import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 import type { JwtPayload } from './auth.js';
@@ -8,6 +9,46 @@ import { invalidateAll as invalidateGoalsCache } from './goalsResponseCache.js';
 const DEFAULT_SHEET_NAME = 'mes actual';
 const SHEET_ID = '1k7B8Phi5QDn_6mFWiAfYBcqqisEWT6nqUwgmhE54Zy8';
 const SHEET_GID = '145678139';
+const SHEET_XLSX_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=xlsx`;
+
+// Pestaña de la que Amira (los avisos automáticos de cobranza) saca el plazo de
+// cuenta corriente: gid 2120998313 del mismo sheet. En SheetNames viene con un
+// espacio al final — se matchea con trim().
+const HOJA_PLAZOS = 'base de datos';
+const COND_PAGO_CC = new Set(['cc', 'cuenta cte', 'cta cte', 'cuenta corriente']);
+
+/**
+ * Valida lo que devolvió el export de Google y lo entrega como Buffer.
+ *
+ * 🪤 Si el sheet deja de estar compartido, Google NO contesta 401: contesta
+ * 200 con el HTML de la pantalla de login. Sin este chequeo, XLSX.read explota
+ * con un "Unsupported file" críptico y nadie ata ese error a un permiso.
+ */
+export function bufferDeDescargaSheet(contentType: string, data: ArrayBuffer | Uint8Array): Buffer {
+  if (/text\/html/i.test(String(contentType ?? ''))) {
+    throw new Error(
+      'El sheet Maestro Clientes no está compartido públicamente (Google devolvió la pantalla de login). '
+      + 'Compartilo como "cualquiera con el link puede ver" o subí el XLSX a mano.',
+    );
+  }
+  // Buffer extiende Uint8Array, así que esta rama cubre también lo que devuelve
+  // axios en Node; la otra es para un ArrayBuffer pelado.
+  return data instanceof Uint8Array ? Buffer.from(data) : Buffer.from(new Uint8Array(data));
+}
+
+/**
+ * Baja el Maestro Clientes del export público del sheet, sin pedir el archivo.
+ *
+ * Por qué: el import exigía descargar el sheet a mano y subirlo, y ese paso
+ * manual es justo donde la copia de client_operational se quedaba vieja.
+ * Mismo patrón que syncRebotes (axios + export?format=xlsx). Bajamos el libro
+ * entero — no una pestaña — para que siga andando el import histórico por hoja.
+ */
+async function bajarMaestroDelSheet(): Promise<Buffer> {
+  // 60s: el libro pesa ~1 MB (el de rebotes, que usa 30s, pesa 61 KB).
+  const resp = await axios.get(SHEET_XLSX_URL, { responseType: 'arraybuffer', timeout: 60000, maxRedirects: 10 });
+  return bufferDeDescargaSheet(String(resp.headers?.['content-type'] ?? ''), resp.data);
+}
 
 function toInt(v: any): number | null {
   if (v == null) return null;
@@ -92,6 +133,54 @@ export function buildFieldIndex(headerRow: any[]): Record<string, number> {
 const STR_FIELDS: string[] = ['razon_social', 'direccion', 'dia_visita', 'visita', 'frecuencia', 'localidad', 'hoja_ruta', 'repartidor', 'dia_entrega', 'cond_pago', 'tipo_abc'];
 const NUM_FIELDS: string[] = ['saldo_cta_cte', 'fact_prom_3m', 'fact_mes_pasado'];
 
+/**
+ * Plazo de cuenta corriente por cliente, con EL MISMO criterio que Amira:
+ * Cond Pago ∈ {cc, cuenta cte, cta cte, cuenta corriente} + columna VISITA en
+ * {7, 15}. El resto no tiene plazo pactado y queda afuera.
+ *
+ * Por qué se lee de otra hoja: la pestaña "mes actual" perdió los clientes de
+ * 7 días entre abril y mayo/2026 (abril tenía 64, de mayo en adelante ninguno),
+ * así que hoy deja 64 clientes de cta cte sin plazo. La hoja BASE DE DATOS es
+ * la que leía el script de cobranzas y mantiene el dato: 134 de 135. Cruzadas
+ * las dos no se contradicen en ningún cliente — a "mes actual" sólo le faltan.
+ *
+ * 🪤 "Frecuencia" NO es el plazo: usar esa columna mandó 6 avisos de cobranza
+ * indebidos el 02/07/2026. El plazo es "VISITA".
+ */
+export function plazosDeCuentaCorriente(rows: any[][]): Map<number, string> {
+  const H = (rows[0] || []).map(normHeader);
+  const iCod = H.indexOf('cod'), iCondPago = H.indexOf('cond pago'), iVisita = H.indexOf('visita');
+  const plazos = new Map<number, string>();
+  if (iCod === -1 || iCondPago === -1 || iVisita === -1) return plazos;
+  for (let i = 1; i < rows.length; i++) {
+    const r: any[] = rows[i] || [];
+    const cod = toInt(r[iCod]);
+    if (!cod) continue;
+    if (!COND_PAGO_CC.has(String(r[iCondPago] ?? '').trim().toLowerCase())) continue;
+    // El ".0" aparece cuando la celda viene como número flotante ("7.0").
+    const visita = String(r[iVisita] ?? '').trim().replace(/\.0$/, '');
+    if (visita === '7' || visita === '15') plazos.set(cod, visita);
+  }
+  return plazos;
+}
+
+/**
+ * Completa el plazo de las filas que la hoja principal dejó vacías. NO pisa lo
+ * que ya venía cargado: si "mes actual" dice algo, gana esa hoja. Devuelve
+ * cuántas filas se completaron.
+ */
+export function completarPlazosFaltantes(out: any[], plazos: Map<number, string>): number {
+  let completados = 0;
+  for (const row of out) {
+    if (row.visita) continue;
+    const plazo = plazos.get(row.cod_cliente);
+    if (!plazo) continue;
+    row.visita = plazo;
+    completados++;
+  }
+  return completados;
+}
+
 export interface BuiltMaestroRows {
   out: any[];
   descartadas: number;
@@ -167,7 +256,9 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
   if (!hasSupabase()) { res.status(500).json({ error: 'Supabase no configurado' }); return; }
   const user = req.user!;
   const file = req.file;
-  if (!file) { res.status(400).json({ error: 'Archivo XLSX requerido (campo "file")' }); return; }
+  // Sin archivo adjunto = "traer del sheet": bajamos el libro del export público
+  // en vez de exigir el paso manual descargar → subir.
+  const origen: 'archivo' | 'sheet' = file ? 'archivo' : 'sheet';
 
   const now = new Date();
   const year = req.body?.year ? Number(req.body.year) : now.getUTCFullYear();
@@ -182,13 +273,22 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
 
   let wb: XLSX.WorkBook;
   try {
-    // Multer ahora usa diskStorage: leer el XLSX del disco. El cleanup del
-    // archivo lo hace el middleware cleanupUploadedFile en server.ts.
-    const buf = file.buffer ?? (file.path ? await fsp.readFile(file.path) : null);
-    if (!buf) { res.status(400).json({ error: 'Archivo no disponible' }); return; }
+    let buf: Buffer | null;
+    if (file) {
+      // Multer ahora usa diskStorage: leer el XLSX del disco. El cleanup del
+      // archivo lo hace el middleware cleanupUploadedFile en server.ts.
+      buf = file.buffer ?? (file.path ? await fsp.readFile(file.path) : null);
+      if (!buf) { res.status(400).json({ error: 'Archivo no disponible' }); return; }
+    } else {
+      buf = await bajarMaestroDelSheet();
+    }
     wb = XLSX.read(buf, { type: 'buffer' });
   } catch (err: any) {
-    res.status(400).json({ error: `XLSX inválido: ${err?.message ?? err}` }); return;
+    const detalle = err?.message ?? err;
+    res.status(400).json({
+      error: origen === 'sheet' ? `No pude traer el sheet: ${detalle}` : `XLSX inválido: ${detalle}`,
+    });
+    return;
   }
 
   // Match case-insensitive de la hoja para tolerar "marzo" vs "Marzo" vs "MARZO".
@@ -235,6 +335,16 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
   const { out, descartadas, conObjetivo, dupCods } = buildMaestroRows(
     rows, fieldIdx, { tenantId: TENANT_ID, year, month, updatedAt },
   );
+
+  // Completar el plazo de cta cte desde la hoja BASE DE DATOS (la fuente de los
+  // avisos de cobranza). Sin esto, los clientes de 7 días quedan sin plazo y su
+  // factura sale sin fecha de vencimiento.
+  const hojaPlazos = wb.SheetNames.find(n => n.trim().toLowerCase() === HOJA_PLAZOS);
+  let plazosCompletados = 0;
+  if (hojaPlazos) {
+    const filasPlazos = XLSX.utils.sheet_to_json<any[]>(wb.Sheets[hojaPlazos], { header: 1, raw: true });
+    plazosCompletados = completarPlazosFaltantes(out, plazosDeCuentaCorriente(filasPlazos));
+  }
 
   // Upsert por batches a client_operational SOLO si es el mes actual.
   // En histórico, esa tabla NO debe tocarse: representa el snapshot vivo.
@@ -315,7 +425,14 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
       + `Importé la última fila de cada uno; limpiá las filas duplicadas en la hoja "${sheetKey}".`,
     );
   }
-  // 2) Muchos rows sin objetivo: el sheet probablemente perdió la columna o se desplazó.
+  // 2) Falta la hoja de plazos: las facturas de cta cte salen sin vencimiento.
+  if (!hojaPlazos) {
+    warnings.push(
+      `No encontré la hoja "BASE DE DATOS" en el sheet: los clientes de cuenta corriente `
+      + `sin VISITA en "${sheetKey}" quedan sin plazo y su factura sale sin fecha de vencimiento.`,
+    );
+  }
+  // 3) Muchos rows sin objetivo: el sheet probablemente perdió la columna o se desplazó.
   if (out.length > 0 && conObjetivo / out.length < 0.20) {
     warnings.push(
       `Sólo ${conObjetivo} de ${out.length} clientes tienen objetivo cargado en el sheet. `
@@ -327,6 +444,7 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
   res.json({
     ok: errores.length === 0,
     year, month,
+    origen,
     es_mes_actual: esMesActual,
     rows_leidas: rows.length - 1,
     rows_importadas: okCount,
@@ -335,6 +453,7 @@ export async function importMaestroClientes(req: Request & { user?: JwtPayload; 
     // invariante leidas = importadas + descartadas + duplicadas.
     rows_duplicadas: (rows.length - 1) - out.length - descartadas,
     rows_con_objetivo: conObjetivo,
+    plazos_completados: plazosCompletados,
     history_imported: historyOk,
     headers_detectados: Object.keys(fieldIdx),
     warning,

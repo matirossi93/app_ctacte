@@ -10,7 +10,7 @@ vi.mock('./supabase.js', () => ({
 }));
 vi.mock('./goalsResponseCache.js', () => ({ invalidateAll: vi.fn() }));
 
-import { buildFieldIndex, buildMaestroRows } from './sheetImport.js';
+import { buildFieldIndex, buildMaestroRows, bufferDeDescargaSheet, plazosDeCuentaCorriente, completarPlazosFaltantes } from './sheetImport.js';
 
 // Header real del Maestro Clientes (hoja "MES ACTUAL", 30/06/2026).
 const HEADER = ['Cod', 'Cod Vend', 'vendedor', 'Razon Social', 'Direccion', 'Dia de visita', 'VISITA', 'Frecuencia', 'Localidad', 'HR', 'Repartidor', 'Dia de Entrega', 'Cond Pago', 'Tipo', 'OBJETIVO OK', 'AVANCE', 'Falta'];
@@ -90,5 +90,93 @@ describe('buildMaestroRows', () => {
     expect(out[0]).toMatchObject({
       tenant_id: 'test-tenant', objetivo_year: 2026, objetivo_month: 7, objetivo_source: 'sheet',
     });
+  });
+});
+
+// Traer el Maestro directo del sheet (sin subir el XLSX a mano).
+describe('bufferDeDescargaSheet', () => {
+  it('rechaza el HTML de login que Google manda con 200 cuando el sheet no es público', () => {
+    // Google no contesta 401: devuelve la pantalla de login con status 200. Sin
+    // este chequeo el XLSX.read explota con "Unsupported file" y el error no se
+    // ata al permiso del sheet.
+    const html = Buffer.from('<!DOCTYPE html><html><head><title>Iniciar sesión</title>');
+    expect(() => bufferDeDescargaSheet('text/html; charset=utf-8', html))
+      .toThrow(/no está compartido públicamente/);
+  });
+
+  it('devuelve el buffer cuando Google manda el XLSX', () => {
+    const xlsx = new Uint8Array([0x50, 0x4b, 0x03, 0x04]);   // 'PK\x03\x04' = zip/xlsx
+    const buf = bufferDeDescargaSheet(
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      xlsx,
+    );
+    expect(Buffer.isBuffer(buf)).toBe(true);
+    expect([...buf]).toEqual([0x50, 0x4b, 0x03, 0x04]);
+  });
+});
+
+// Plazo de cta cte leído de la hoja BASE DE DATOS (la fuente de Amira).
+// Header real de esa pestaña (gid 2120998313, 16/09/2026).
+const HEADER_PLAZOS = ['Cod', 'Cod Vend', 'vendedor', 'Razon Social', 'Direccion', 'Dia de visita', 'VISITA', 'COD PAGO', 'Frecuencia', 'Localidad', 'HR', 'Repartidor', 'Dia de Entrega', 'Cond Pago', 'Tipo', ' Facturacion Promedio 3 meses'];
+function filaPlazo(cod: any, visita: any, condPago: any, frecuencia: any = 'SEMANAL'): any[] {
+  const r: any[] = new Array(HEADER_PLAZOS.length).fill(null);
+  r[0] = cod; r[6] = visita; r[8] = frecuencia; r[13] = condPago;
+  return r;
+}
+
+describe('plazosDeCuentaCorriente', () => {
+  it('toma VISITA 7/15 sólo de los clientes de cuenta corriente', () => {
+    const plazos = plazosDeCuentaCorriente([
+      HEADER_PLAZOS,
+      filaPlazo(34, '7', 'cc'),
+      filaPlazo(2, '15', 'cc'),
+      filaPlazo(99, '7', 'CONTADO'),    // no es cta cte → afuera
+      filaPlazo(421, '', 'cc'),         // cta cte sin plazo → afuera
+      filaPlazo(500, '30', 'cc'),       // valor que no es plazo pactado → afuera
+    ]);
+    expect(plazos.get(34)).toBe('7');
+    expect(plazos.get(2)).toBe('15');
+    expect(plazos.size).toBe(2);
+  });
+
+  it('acepta las variantes de Cond Pago que usaba el script de cobranzas', () => {
+    const plazos = plazosDeCuentaCorriente([
+      HEADER_PLAZOS,
+      filaPlazo(1, '7', 'Cuenta Cte'),
+      filaPlazo(2, '7', 'CTA CTE'),
+      filaPlazo(3, '7', ' cuenta corriente '),
+    ]);
+    expect([...plazos.keys()].sort((a, b) => a - b)).toEqual([1, 2, 3]);
+  });
+
+  it('normaliza el 7.0 que sale cuando la celda viene como número', () => {
+    const plazos = plazosDeCuentaCorriente([HEADER_PLAZOS, filaPlazo(34, '7.0', 'cc'), filaPlazo(35, 7, 'cc')]);
+    expect(plazos.get(34)).toBe('7');
+    expect(plazos.get(35)).toBe('7');
+  });
+
+  it('NO usa Frecuencia como plazo (incidente 02/07: 6 avisos de cobranza indebidos)', () => {
+    // Cliente SEMANAL pero sin VISITA: no tiene plazo pactado, no entra.
+    const plazos = plazosDeCuentaCorriente([HEADER_PLAZOS, filaPlazo(77, '', 'cc', 'SEMANAL')]);
+    expect(plazos.size).toBe(0);
+  });
+
+  it('devuelve vacío si la hoja no tiene las columnas esperadas', () => {
+    expect(plazosDeCuentaCorriente([['Cod', 'Razon Social'], [34, 'AMADO GRACIELA']]).size).toBe(0);
+  });
+});
+
+describe('completarPlazosFaltantes', () => {
+  it('completa sólo las filas sin plazo y no pisa las que ya lo traen', () => {
+    const out = [
+      { cod_cliente: 34, visita: null },     // BASE DE DATOS dice 7 → se completa
+      { cod_cliente: 2, visita: '15' },      // ya tiene → no se toca
+      { cod_cliente: 99, visita: null },     // no está en la hoja de plazos → queda sin plazo
+    ];
+    const plazos = new Map([[34, '7'], [2, '7']]);
+    expect(completarPlazosFaltantes(out, plazos)).toBe(1);
+    expect(out[0].visita).toBe('7');
+    expect(out[1].visita).toBe('15');
+    expect(out[2].visita).toBeNull();
   });
 });

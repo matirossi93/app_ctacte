@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { X, Upload, Loader2, Check, AlertCircle, FileSpreadsheet } from 'lucide-react';
+import { X, Upload, Download, Loader2, Check, AlertCircle, FileSpreadsheet } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
 import { mesEnCursoArgentina } from '../utils/hoyArgentina';
 import './ImportarSheet.css';
@@ -18,19 +18,21 @@ export const ImportarSheet = ({ onClose, onImported }: Props) => {
     const [file, setFile] = useState<File | null>(null);
     const [saving, setSaving] = useState(false);
     const [err, setErr] = useState<string | null>(null);
-    const [result, setResult] = useState<{ rows_importadas: number; rows_descartadas: number; rows_leidas: number; rows_duplicadas?: number; rows_con_objetivo?: number; history_imported?: number; warning?: string; headers_detectados?: string[] } | null>(null);
+    const [result, setResult] = useState<{ origen?: 'sheet' | 'archivo'; rows_importadas: number; rows_descartadas: number; rows_leidas: number; rows_duplicadas?: number; rows_con_objetivo?: number; plazos_completados?: number; history_imported?: number; warning?: string; headers_detectados?: string[] } | null>(null);
     // Modo histórico: permite elegir qué hoja del XLSX importar (ej. "ENERO" para
     // poblar el snapshot histórico del enero 2026). Si está off, usa "mes actual".
     const [modoHist, setModoHist] = useState(false);
     const [hoja, setHoja] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
 
+    // Sin archivo = el backend baja el sheet solo (export público). Con archivo,
+    // importa ese XLSX: sirve para versiones viejas o para cuando el sheet no
+    // está compartido.
     const submit = async () => {
-        if (!file) { setErr('Subí un archivo XLSX primero'); return; }
         setSaving(true); setErr(null);
         try {
             const fd = new FormData();
-            fd.append('file', file);
+            if (file) fd.append('file', file);
             fd.append('year', String(year));
             fd.append('month', String(month));
             if (modoHist && hoja.trim()) fd.append('hoja', hoja.trim());
@@ -81,10 +83,16 @@ export const ImportarSheet = ({ onClose, onImported }: Props) => {
                             {(result.rows_duplicadas ?? 0) > 0 && (
                                 <li><strong>{result.rows_duplicadas}</strong> filas duplicadas (se usó la última de cada código)</li>
                             )}
+                            {(result.plazos_completados ?? 0) > 0 && (
+                                <li><strong>{result.plazos_completados}</strong> clientes de cuenta corriente con el plazo completado desde la hoja BASE DE DATOS</li>
+                            )}
                             {result.history_imported != null && (
                                 <li><strong>{result.history_imported}</strong> snapshots guardados en histórico</li>
                             )}
                             <li>Total filas leídas: {result.rows_leidas}</li>
+                            {result.origen && (
+                                <li>Origen: {result.origen === 'sheet' ? 'sheet de Google (en vivo)' : 'archivo subido'}</li>
+                            )}
                         </ul>
                         {result.warning && (
                             <div className="is-warning"><AlertCircle size={14} /> {result.warning}</div>
@@ -96,7 +104,7 @@ export const ImportarSheet = ({ onClose, onImported }: Props) => {
                 ) : (
                     <>
                         <p className="is-intro">
-                            Descargá el sheet <strong>Maestro Clientes</strong> como <code>.xlsx</code> y subilo acá. Los objetivos y metadata operativa se actualizan para el mes seleccionado.
+                            Traigo el sheet <strong>Maestro Clientes</strong> directo de Google: no hace falta descargarlo ni subirlo. Los objetivos y la metadata operativa se actualizan para el mes seleccionado.
                         </p>
 
                         <div className="is-row">
@@ -141,7 +149,7 @@ export const ImportarSheet = ({ onClose, onImported }: Props) => {
                                 style={{ display: 'none' }} />
                             <button className="is-file-btn" onClick={() => inputRef.current?.click()}>
                                 <Upload size={16} />
-                                {file ? file.name : 'Elegir archivo XLSX'}
+                                {file ? file.name : 'Subir un XLSX en su lugar (opcional)'}
                             </button>
                             {file && <button className="is-file-clear" onClick={() => { setFile(null); if (inputRef.current) inputRef.current.value = ''; }}>Quitar</button>}
                         </div>
@@ -150,8 +158,12 @@ export const ImportarSheet = ({ onClose, onImported }: Props) => {
 
                         <div className="is-actions">
                             <button className="is-btn-sec" onClick={onClose} disabled={saving}>Cancelar</button>
-                            <button className="is-btn-primary" onClick={submit} disabled={saving || !file}>
-                                {saving ? <><Loader2 size={14} className="spin" /> Importando…</> : <><Upload size={14} /> Importar</>}
+                            <button className="is-btn-primary" onClick={submit} disabled={saving}>
+                                {saving
+                                    ? <><Loader2 size={14} className="spin" /> {file ? 'Importando…' : 'Trayendo del sheet…'}</>
+                                    : file
+                                        ? <><Upload size={14} /> Importar archivo</>
+                                        : <><Download size={14} /> Traer del sheet</>}
                             </button>
                         </div>
                     </>
