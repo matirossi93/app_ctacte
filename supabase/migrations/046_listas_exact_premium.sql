@@ -26,12 +26,12 @@ select 'EXACT PREMIUM', 'subrubro', 'Exact Premium', v.cod_lista, 'libre', null,
      and r.match_tipo = 'subrubro' and r.match_valor = 'Exact Premium' and r.cod_lista = v.cod_lista);
 
 -- ── 2. El 5% con L3, igual que Criadores ───────────────────────────────────────────────────────
-insert into descuentos_reglas (nombre, match_tipo, match_valor, desde_cantidad, ambito, porcentaje_max, requiere_lista, requiere_mejor_lista, activo, nota)
-select 'EXACT PREMIUM', 'subrubro', 'Exact Premium', 1, 'articulo', 5, 14, false, true,
-       'Mati 16/09/2026: "en el EXACT no se esta contemplando el descuento que esta habilitado" + "toda la linea exact tiene el mismo criterio". Identico al de EXACT CRIADORES. 21 renglones con L3+5% se marcaban mal entre el 01 y el 16/09.'
- where not exists (
-   select 1 from descuentos_reglas r where r.tenant_id = '00000000-0000-0000-0000-000000000001'
-     and r.match_tipo = 'subrubro' and r.match_valor = 'Exact Premium');
+-- 🪤 `descuentos_reglas` NO tiene columna `nota` (sí la tiene `listas_reglas`): el motivo del
+-- cambio vive en este comentario. Y se resuelve con `on conflict` sobre el único que ya existe
+-- —(tenant, tipo, valor, desde_cantidad, requiere_lista)— en vez de un `not exists`.
+insert into descuentos_reglas (nombre, match_tipo, match_valor, desde_cantidad, ambito, porcentaje_max, requiere_lista, requiere_mejor_lista, activo)
+values ('EXACT PREMIUM', 'subrubro', 'Exact Premium', 1, 'articulo', 5, 14, false, true)
+on conflict do nothing;
 
 -- ── 3. El nombre con el typo, para que las dos filas viejas queden junto a las nuevas ──────────
 update listas_reglas set nombre = 'EXACT PREMIUM', updated_at = now()
