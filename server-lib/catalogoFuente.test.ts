@@ -85,7 +85,20 @@ describe('fetchArticulosCatalogo — de dónde sale el catálogo', () => {
   });
 });
 
+/**
+ * 🪤 16/09/2026: este test venía pasando con un campo que IM NO manda. La fila de prueba decía
+ * `iva_por` —así se llama en los renglones de un comprobante— y el parseo leía lo mismo, así que
+ * los dos estaban de acuerdo y los dos equivocados. En `/articulos` el campo se llama `iva`:
+ * medido en producción, 0 de 1874 artículos traían alícuota. Un test escrito contra la respuesta
+ * inventada confirma el código, no la realidad.
+ */
 it('conserva IVA explícito y distingue ausencia de tasa cero sin otra descarga', async()=>{
-  const get=mockIM([[{...art(1,'A'),iva_por:'10.5'},art(2,'B'),{...art(3,'C'),iva_por:0}]]);
+  const get=mockIM([[{...art(1,'A'),iva:'10.5'},art(2,'B'),{...art(3,'C'),iva:0}]]);
   const cat=await fetchArticulosCatalogo(); expect(cat.get(1)?.iva_por).toBe(10.5);expect(cat.get(2)?.iva_por).toBeNull();expect(cat.get(3)?.iva_por).toBe(0);expect(get).toHaveBeenCalledTimes(1);
+});
+
+it('🔴 el nombre viejo ya no alcanza: si IM vuelve a mandar sólo `iva_por`, queda en "no sé"', async()=>{
+  // Sin esto, un rename de IM volvería a dejar el catálogo entero sin alícuota en silencio.
+  mockIM([[{...art(9,'X'),iva_por:21}]]);
+  expect((await fetchArticulosCatalogo()).get(9)?.iva_por).toBeNull();
 });

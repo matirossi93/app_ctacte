@@ -350,6 +350,39 @@ const ARTICULOS_TTL_MS = 60 * 60 * 1000;
 
 const lecturasCatalogo = new LecturasCompartidas<Map<number, ArticuloMini>>(ARTICULOS_TTL_MS, 1);
 export function fetchArticulosCatalogo(force = false) { return lecturasCatalogo.obtener('catalogo', () => leerArticulosCatalogo(), { actualizar: force }); }
+/**
+ * Una fila de `/articulos` como la usa la app. `null` = no va al catálogo.
+ *
+ * 🔴 De acá sale la ALÍCUOTA DE IVA de cualquier artículo que se agregue a un presupuesto o a una
+ * nota. El campo se llama `iva` — no `iva_por`, que es como se llama en los renglones de un
+ * comprobante. Leer el nombre equivocado dejó a los 1874 artículos sin alícuota (medido en
+ * producción el 16/09/2026) y por eso COSTO DE DISTRIBUCION (13819) no se podía agregar a ningún
+ * presupuesto: es el único que no está en ninguna lista de precios, así que era el único sin el
+ * camino alternativo que tapaba el problema.
+ *
+ * 🪤 `ivaExplicita` y no `Number(...)`: un campo vacío tiene que quedar en `null` —"no sé"— y no
+ * en 0. Convertirlo en cero emite comprobantes sin IVA sobre artículos que sí lo llevan.
+ */
+export function parseArticuloCatalogo(r: any): ArticuloMini | null {
+  const cod = Number(r?.cod_articulo ?? r?.cod ?? r?.codigo);
+  if (!Number.isFinite(cod)) return null;
+  // Un artículo dado de baja no se vende. Por el camino viejo se colaban 7.
+  if (r.habilitado != null && Number(r.habilitado) !== 1) return null;
+  const codRubroRaw = r.cod_rubro ?? r.codRubro ?? r.rubro_cod;
+  const codRubro = codRubroRaw != null ? Number(codRubroRaw) : null;
+  const precio = Number(r.precio_venta ?? r.precioVenta ?? r.precio ?? 0);
+  const eq = Number(r.equivalencia_um);
+  return {
+    cod_rubro: Number.isFinite(codRubro as number) ? codRubro : null,
+    iva_por: ivaExplicita(r.iva),
+    descripcion: String(r.descripcion ?? r.nombre ?? '').trim(),
+    precio_venta: Number.isFinite(precio) ? precio : 0,
+    subrubro: String(r.subrubro ?? '').trim(),
+    unidad_de_medida: r.unidad_de_medida != null ? String(r.unidad_de_medida) : null,
+    equivalencia_um: Number.isFinite(eq) ? eq : null,
+  };
+}
+
 async function leerArticulosCatalogo(): Promise<Map<number, ArticuloMini>> {
   const cli = await imClient();
   const map = new Map<number, ArticuloMini>();
@@ -370,24 +403,8 @@ async function leerArticulosCatalogo(): Promise<Map<number, ArticuloMini>> {
     const rows: any[] = data?.results ?? data?.articulos ?? (Array.isArray(data) ? data : []);
     primeraFila ??= rows[0] ?? null;
     for (const r of rows) {
-      const cod = Number(r.cod_articulo ?? r.cod ?? r.codigo);
-      if (!Number.isFinite(cod)) continue;
-      // Un artículo dado de baja no se vende. Por el camino viejo se colaban 7.
-      if (r.habilitado != null && Number(r.habilitado) !== 1) continue;
-      const codRubroRaw = r.cod_rubro ?? r.codRubro ?? r.rubro_cod;
-      const codRubro = codRubroRaw != null ? Number(codRubroRaw) : null;
-      const precioRaw = r.precio_venta ?? r.precioVenta ?? r.precio ?? 0;
-      const precio = Number(precioRaw);
-      const eq = Number(r.equivalencia_um);
-      map.set(cod, {
-        cod_rubro: Number.isFinite(codRubro as number) ? codRubro : null,
-        iva_por: r.iva_por != null && r.iva_por !== '' && Number.isFinite(Number(r.iva_por)) ? Number(r.iva_por) : null,
-        descripcion: String(r.descripcion ?? r.nombre ?? '').trim(),
-        precio_venta: Number.isFinite(precio) ? precio : 0,
-        subrubro: String(r.subrubro ?? '').trim(),
-        unidad_de_medida: r.unidad_de_medida != null ? String(r.unidad_de_medida) : null,
-        equivalencia_um: Number.isFinite(eq) ? eq : null,
-      });
+      const art = parseArticuloCatalogo(r);
+      if (art) map.set(Number(r.cod_articulo ?? r.cod ?? r.codigo), art);
     }
     if (rows.length < 1000) break;
     page += 1;
@@ -403,13 +420,13 @@ async function leerArticulosCatalogo(): Promise<Map<number, ArticuloMini>> {
   const conIva = [...map.values()].filter(a => a.iva_por != null).length;
   console.log(`[catálogo] ${map.size} artículos · ${conIva} con alícuota de IVA · ${map.size - conIva} sin ella`);
   /**
-   * 🪤 Si NINGUNO trae alícuota, el campo no se llama `iva_por` en este endpoint (en
-   * `/articulos/precio-ldp` se llama `iva`, no es la primera vez que difieren). Con los nombres
-   * de campo a la vista se arregla leyendo el log, sin tener que capturar una respuesta a mano.
-   * Sólo los NOMBRES: los valores del artículo no hacen falta para esto.
+   * 🪤 Si NINGUNO trae alícuota, IM le cambió el nombre al campo otra vez: el 16/09/2026 la app
+   * leía `iva_por` (así se llama en los renglones de un comprobante) y `/articulos` lo manda como
+   * `iva`. Con los nombres de campo a la vista se arregla leyendo el log, sin capturar una
+   * respuesta a mano. Sólo los NOMBRES: los valores del artículo no hacen falta para esto.
    */
   if (!conIva && primeraFila) {
-    console.warn(`[catálogo] ningún artículo trae 'iva_por'. Campos que manda /articulos: ${Object.keys(primeraFila).join(', ')}`);
+    console.warn(`[catálogo] ningún artículo trae la alícuota en 'iva'. Campos que manda /articulos: ${Object.keys(primeraFila).join(', ')}`);
   }
   return map;
 }
