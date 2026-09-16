@@ -599,7 +599,6 @@ export const VendorShell = ({ onLogout }: Props) => {
         return list;
     }, [clientsAgg, bucket, search]);
 
-    const totalSaldoCartera = clientsAgg.reduce((a, c) => a + c.totalSaldo, 0);
 
     return (
         <div className="vs-root" data-tab={tab}>
@@ -724,7 +723,6 @@ export const VendorShell = ({ onLogout }: Props) => {
                         search={search} setSearch={setSearch}
                         bucket={bucket} setBucket={setBucket}
                         buckets={buckets}
-                        totalSaldo={totalSaldoCartera}
                         totalClientes={clientsAgg.length}
                         onUploadPago={() => setShowRecibos(true)}
                         lastRefresh={lastRefresh}
@@ -1068,12 +1066,12 @@ function WidgetTopDeudores({ clients, onOpenClient, onGoToCobranzas }: { clients
 // ═══════════════════════════════════════════════════════════════════════════
 // COBRANZAS VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function CobranzasView({ clients, clientesConCredito, search, setSearch, bucket, setBucket, buckets, totalSaldo, totalClientes, onUploadPago, lastRefresh, loading, pendingOpenClient, onPendingOpenConsumed, viewPeriod, onPeriodoChange, codsCartera, veCartera, fechaLista, avisoFecha, cargandoFecha }:
+function CobranzasView({ clients, clientesConCredito, search, setSearch, bucket, setBucket, buckets, totalClientes, onUploadPago, lastRefresh, loading, pendingOpenClient, onPendingOpenConsumed, viewPeriod, onPeriodoChange, codsCartera, veCartera, fechaLista, avisoFecha, cargandoFecha }:
     {
         clients: ClientAgg[]; clientesConCredito: ClientAgg[]; search: string; setSearch: (s: string) => void;
         bucket: 'todos' | 'reciente' | 'medio' | 'vencido'; setBucket: (b: any) => void;
         buckets: { reciente: number; medio: number; vencido: number };
-        totalSaldo: number; totalClientes: number;
+        totalClientes: number;
         onUploadPago: () => void;
         lastRefresh: Date | null;
         loading: boolean;
@@ -1112,12 +1110,14 @@ function CobranzasView({ clients, clientesConCredito, search, setSearch, bucket,
         <div className="vs-view">
             <div className="vs-view-title">
                 <h1>Mis <em>Cobranzas</em></h1>
-                {/* 🪤 Este subtítulo NO es la cartera: es "mi lista" con las reglas de
-                    cobranzas (umbral de $2.000, sólo deudores, las cuentas internas adentro).
-                    La tarjeta de abajo usa las reglas de la conciliación. Nunca van a dar
-                    igual, así que se rotulan distinto a propósito. */}
+                {/* 🔑 Acá NO va la plata: la decide la tarjeta de abajo ("en la calle"), que
+                    es el número que la empresa mira. Este subtítulo contaba lo mismo con OTRA
+                    regla —sólo deudores, umbral de $2.000— y dos totales parecidos a tres
+                    centímetros hacían dudar de los dos (Mati, 16/09: "¿cuál es el real?").
+                    Queda a cuántos hay que ir a cobrar, que es lo que el vendedor usa la lista
+                    para hacer. */}
                 <p>
-                    <span className="dot" /> {formatMoney(totalSaldo)} en mi lista · {totalClientes} con deuda
+                    <span className="dot" /> {totalClientes} {totalClientes === 1 ? 'cliente para cobrar' : 'clientes para cobrar'}
                     {fechaLista
                         ? <> · al <b>{fechaLegible(fechaLista)}</b></>
                         : lastRefresh && ` · ${lastRefresh.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`}
