@@ -12,6 +12,7 @@ import {
 } from './comisionesShared.js';
 import { loadVendedorOverrides, resolveCodVendedor } from './comisionOverrides.js';
 import { usuariosPorCod } from './usuariosPorCod.js';
+import { estadoObjetivoCliente } from '../src/utils/estadoObjetivoCliente.js';
 
 function normLoc(s: string | null | undefined): string {
   if (!s) return '';
@@ -557,11 +558,8 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
       const pct = objetivo && objetivo > 0 ? avance / objetivo : null;
       const falta = objetivo != null ? Math.max(0, objetivo - avance) : null;
       const sobrante = objetivo != null && avance > objetivo ? avance - objetivo : 0;
-      const status = objetivo == null
-        ? 'sin_objetivo'
-        : avance >= objetivo ? 'completado'
-        : avance > 0 ? 'parcial'
-        : 'sin_compras';
+      // Ver `estadoObjetivoCliente`: un objetivo en CERO no es un objetivo cumplido.
+      const status = estadoObjetivoCliente(objetivo, avance);
       const locNorm = normLoc(c.localidad);
       return {
         cod_cliente: c.cod_cliente,
@@ -616,7 +614,9 @@ export async function listClientesObjetivo(req: Request & { user?: JwtPayload },
       if (filter === 'bajo_objetivo') return it.status === 'sin_compras' || it.status === 'parcial';
       if (filter === 'sin_compras') return it.status === 'sin_compras';
       if (filter === 'sin_objetivo') return it.status === 'sin_objetivo';
-      return true;
+      // "Todos" = todos los que TIENEN objetivo. Ver el comentario del front: los que no lo
+      // tienen llenaban la pantalla y encima salían como completados.
+      return it.status !== 'sin_objetivo';
     });
 
     // Localidades agregadas (basado en TODOS los clientes, no filtrados).
@@ -1161,11 +1161,8 @@ export async function getGoalsSnapshot(req: Request & { user?: JwtPayload }, res
       const pct = objetivo && objetivo > 0 ? avance / objetivo : null;
       const falta = objetivo != null ? Math.max(0, objetivo - avance) : null;
       const sobrante = objetivo != null && avance > objetivo ? avance - objetivo : 0;
-      const status = objetivo == null
-        ? 'sin_objetivo'
-        : avance >= objetivo ? 'completado'
-        : avance > 0 ? 'parcial'
-        : 'sin_compras';
+      // Ver `estadoObjetivoCliente`: un objetivo en CERO no es un objetivo cumplido.
+      const status = estadoObjetivoCliente(objetivo, avance);
       const locNorm = normLoc(c.localidad);
       return {
         cod_cliente: c.cod_cliente,

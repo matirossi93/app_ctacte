@@ -13,6 +13,7 @@ import { HistoricoObjetivos } from './HistoricoObjetivos';
 import { RecibosApp } from './RecibosApp';
 import { PedidosApp } from './PedidosApp';
 import { leerBorrador } from '../utils/borradorPedido';
+import { montoCorto } from '../utils/montoCorto';
 import { ConciliacionApp } from './ConciliacionApp';
 import { CambiarPassword } from './CambiarPassword';
 import { UsuariosAdmin } from './UsuariosAdmin';
@@ -837,7 +838,7 @@ function HoyView({ clientsAgg, user, isAdmin, selectedVendor, cods, onGoToTab, o
     }) {
     const [goal, setGoal] = useState<GoalData | null>(null);
     const [rankingItems, setRankingItems] = useState<any[]>([]);
-    const [teamTotales, setTeamTotales] = useState<{ target: number; avance: number; pct: number | null; proyeccion: number; diasRestantes: number } | null>(null);
+    const [teamTotales, setTeamTotales] = useState<{ target: number; avance: number; pct: number | null; proyeccion: number; diasRestantes: number; diasPct: number | null } | null>(null);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
 
@@ -871,6 +872,10 @@ function HoyView({ clientsAgg, user, isAdmin, selectedVendor, cods, onGoToTab, o
                     pct: sumTarget > 0 ? sumAvance / sumTarget : null,
                     proyeccion: sumProy,
                     diasRestantes: first?.dias_restantes ?? 0,
+                    // Cuánto del mes ya pasó: es contra esto que un 54% se lee bien o mal.
+                    diasPct: first?.dias_habiles_total > 0
+                        ? (first.dias_habiles_transcurridos / first.dias_habiles_total) * 100
+                        : null,
                 });
                 setGoal(null);
             } else {
@@ -893,11 +898,17 @@ function HoyView({ clientsAgg, user, isAdmin, selectedVendor, cods, onGoToTab, o
     }, [clientsAgg]);
 
     // Top 3 ranking equipo (admin)
+    /**
+     * 🪤 Esto era `.slice(0, 3)` — un podio. Con CUATRO vendedores, el último nunca aparecía:
+     * Mati vio el panel sin Sebastián (16/09/2026). Un ranking que esconde al que va último
+     * esconde justo al que hay que mirar. Se muestran todos; el tope de 6 es sólo para que el
+     * widget no crezca sin control si mañana el equipo se agranda.
+     */
     const top3 = useMemo(() => {
         return rankingItems
             .filter(i => i.activo !== false && i.target_neto && i.target_neto > 0)
             .sort((a, b) => (b.pct_cumplimiento ?? 0) - (a.pct_cumplimiento ?? 0))
-            .slice(0, 3);
+            .slice(0, 6);
     }, [rankingItems]);
 
     // Saludo por hora
@@ -984,23 +995,56 @@ function WidgetAvance({ goal, onGoTo }: { goal: GoalData | null; onGoTo: () => v
     );
 }
 
-function WidgetEquipo({ totales, top3, onGoTo }: { totales: { target: number; avance: number; pct: number | null; proyeccion: number; diasRestantes: number } | null; top3: any[]; onGoTo: () => void }) {
+function WidgetEquipo({ totales, top3, onGoTo }: { totales: { target: number; avance: number; pct: number | null; proyeccion: number; diasRestantes: number; diasPct: number | null } | null; top3: any[]; onGoTo: () => void }) {
     if (!totales) return null;
     const pct = totales.pct ?? 0;
     const pctPct = Math.min(200, pct * 100);
     const tone = pct >= 0.9 ? 'ok' : pct >= 0.5 ? 'mid' : 'low';
     const medals = ['🥇', '🥈', '🥉'];
+    /**
+     * 🔑 EL DATO QUE EL PANEL NO DABA: ¿se llega o no?
+     *
+     * Mati (16/09/2026), mirando el widget: *"me parece que está medio desaprovechado"*. Tenía
+     * tres cajas enormes con un número cada una —target, avance, cumplimiento— y para saber lo
+     * único que importa había que hacer la cuenta a mano: proyección $465,9M contra un target
+     * de $480M son $14,1M que faltan. Ahora eso está escrito.
+     */
+    const faltaParaCerrar = totales.target - totales.proyeccion;
+    const llega = faltaParaCerrar <= 0;
+    /** Dónde debería estar el avance hoy si el mes viniera parejo. Es lo que vuelve legible al %. */
+    const ritmo = totales.diasPct;
+    const atrasado = ritmo != null && pctPct < ritmo - 5;
     return (
-        <button className={`vs-widget vs-widget--avance vs-widget--${tone}`} onClick={onGoTo}>
+        <button className={`vs-widget vs-widget--equipo vs-widget--${tone}`} onClick={onGoTo}>
             <div className="vs-widget-head">
                 <h3>🎯 Equipo</h3>
                 <ChevronRight size={14} />
             </div>
-            <div className="vs-avance-figs" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-                <div><span className="k">Target</span><strong>{formatMoney(totales.target)}</strong></div>
-                <div><span className="k">Avance</span><strong className="gold">{formatMoney(totales.avance)}</strong></div>
-                <div><span className="k">Cumplimiento</span><strong>{Math.round(pctPct)}%</strong></div>
+
+            {/* Una sola línea para lo que antes ocupaba tres cajas estiradas. */}
+            <div className="vs-eq-cifra">
+                <strong>{formatMoney(totales.avance)}</strong>
+                <span>de {formatMoney(totales.target)}</span>
+                <b className={atrasado ? 'atras' : ''}>{Math.round(pctPct)}%</b>
             </div>
+
+            {/* La barra lleva la marca de por dónde debería ir el mes: un 54% en el día 5 y un
+                54% en el día 25 no son la misma noticia. */}
+            <div className="vs-eq-barra">
+                <div className="vs-eq-barra-fill" style={{ width: `${Math.min(100, pctPct)}%` }} />
+                {ritmo != null && (
+                    <div className="vs-eq-ritmo" style={{ left: `${Math.min(100, ritmo)}%` }} title={`El mes va por el ${Math.round(ritmo)}%`} />
+                )}
+            </div>
+
+            <div className={`vs-eq-veredicto ${llega ? 'ok' : 'falta'}`}>
+                {/* En corto para que entre en una línea también en el celular: el detalle
+                    exacto está a un toque, en la pantalla de objetivos. */}
+                {llega
+                    ? <>Proyectado <b>{montoCorto(totales.proyeccion)}</b> · supera el target por {montoCorto(-faltaParaCerrar)}</>
+                    : <>Proyectado <b>{montoCorto(totales.proyeccion)}</b> · faltan {montoCorto(faltaParaCerrar)}</>}
+            </div>
+
             {top3.length > 0 && (
                 <div className="vs-hoy-top3">
                     {top3.map((v, i) => {
@@ -1008,7 +1052,7 @@ function WidgetEquipo({ totales, top3, onGoTo }: { totales: { target: number; av
                         const barPct = Math.min(100, (v.pct_cumplimiento ?? 0) * 100);
                         return (
                             <div key={v.cod_vendedor} className="vs-hoy-top3-row">
-                                <span className="medal">{medals[i]}</span>
+                                <span className="medal">{medals[i] ?? <span className="puesto">{i + 1}</span>}</span>
                                 <strong>{v.nombre}</strong>
                                 <span className="pct">{vPct}%</span>
                                 <div className="bar"><div className="bar-fill" style={{ width: `${barPct}%` }} /></div>
@@ -1017,7 +1061,10 @@ function WidgetEquipo({ totales, top3, onGoTo }: { totales: { target: number; av
                     })}
                 </div>
             )}
-            <div className="vs-widget-foot">{totales.diasRestantes}d restantes · proyección {formatMoney(totales.proyeccion)}</div>
+            <div className="vs-widget-foot">
+                {totales.diasRestantes}d restantes
+                {ritmo != null && <> · el mes va por el {Math.round(ritmo)}%</>}
+            </div>
         </button>
     );
 }
@@ -1498,7 +1545,13 @@ function ObjetivosView({ user, selectedVendor, cods, isAdmin, showInactivos, rel
                     if (filter === 'bajo_objetivo') return it.status === 'sin_compras' || it.status === 'parcial';
                     if (filter === 'sin_compras') return it.status === 'sin_compras';
                     if (filter === 'sin_objetivo') return it.status === 'sin_objetivo';
-                    return true;
+                    /**
+                     * 🔑 "Todos" = todos los que TIENEN objetivo. Los que no lo tienen viven en
+                     * su propio chip. Mati (16/09/2026): *"aparece toda esta lista de clientes
+                     * al pedo"* — eran decenas sin objetivo cargado, que además salían con el
+                     * cartel verde de completado porque 0 >= 0.
+                     */
+                    return it.status !== 'sin_objetivo';
                 });
                 cr = {
                     ok: true,
@@ -1903,6 +1956,14 @@ function ObjetivosView({ user, selectedVendor, cods, isAdmin, showInactivos, rel
                         <span className="dot-b" style={{ background: '#A83E2B' }} />Sin compras
                         {clientesStats && <span className="count">{clientesStats.sin_compras}</span>}
                     </button>
+                    {/* Los que no tienen objetivo cargado: fuera de "Todos", pero a un toque.
+                        El número de acá es además el que dice cuánto falta por cargar. */}
+                    {clientesStats && clientesStats.sin_objetivo > 0 && (
+                        <button className={`vs-chip ${filter === 'sin_objetivo' ? 'is-active' : ''}`} onClick={() => setFilter('sin_objetivo')}>
+                            <span className="dot-b" style={{ background: '#6B7280' }} />Sin objetivo
+                            <span className="count">{clientesStats.sin_objetivo}</span>
+                        </button>
+                    )}
                 </div>
 
                 <div className="vs-search vs-search-obj">

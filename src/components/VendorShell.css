@@ -2118,3 +2118,52 @@ button.vs-widget:hover { transform: translateY(-2px); box-shadow: 0 4px 0 rgba(2
     cursor: pointer;
 }
 .vs-hist-btn.is-active { background: #06652F; border-color: #06652F; color: #fff }
+
+/* ── Widget Equipo ────────────────────────────────────────────────────────────
+   🪤 Antes usaba `.vs-avance-figs`, que en el widget del vendedor vive AL LADO del
+   anillo y por eso lleva `flex: 1` para tomar el ancho sobrante. Acá iba suelto en
+   una columna flex, así que ese mismo `flex: 1` lo estiraba en ALTURA: tres cajas de
+   150 px para mostrar una línea de texto cada una (Mati, 16/09: "está medio
+   desaprovechado"). El widget ahora tiene su propio layout, en una sola línea. */
+.vs-eq-cifra {
+    display: flex; align-items: baseline; gap: 6px;
+    margin-top: 2px;
+}
+.vs-eq-cifra strong {
+    font-size: 19px; font-weight: 800; letter-spacing: -.5px;
+    color: #06652F; font-variant-numeric: tabular-nums;
+}
+.vs-eq-cifra span { font-size: 11px; color: #6e7670; white-space: nowrap }
+.vs-eq-cifra b {
+    margin-left: auto;
+    font-size: 15px; font-weight: 800; color: #141814; font-variant-numeric: tabular-nums;
+}
+/* Atrasado contra el ritmo del mes: el número se tiñe, no aparece un cartel más. */
+.vs-eq-cifra b.atras { color: #A33B26 }
+
+.vs-eq-barra {
+    position: relative; height: 7px; margin: 7px 0 0;
+    background: rgba(20, 24, 20, .09); border-radius: 4px; overflow: hidden;
+}
+.vs-eq-barra-fill {
+    height: 100%; border-radius: 4px;
+    background: linear-gradient(90deg, #06652F, #0C8B41);
+    transition: width .9s cubic-bezier(.22,.61,.36,1);
+}
+/* La marca de por dónde debería ir el mes. Sin esto, un 54% no se puede leer. */
+.vs-eq-ritmo {
+    position: absolute; top: -2px; bottom: -2px; width: 2px;
+    background: #141814; opacity: .5; border-radius: 2px;
+}
+
+.vs-eq-veredicto {
+    margin-top: 7px; font-size: 11.5px; line-height: 1.35; color: #6e7670;
+}
+.vs-eq-veredicto b { font-weight: 800; font-variant-numeric: tabular-nums }
+.vs-eq-veredicto.ok { color: #1D6B39 }
+.vs-eq-veredicto.falta { color: #8A5A12 }
+/* Del 4º en adelante no hay medalla: va el puesto, sin castigarlo de más. */
+.vs-hoy-top3-row .puesto {
+    display: inline-block; width: 15px; text-align: center;
+    font-size: 10px; font-weight: 700; color: #9aa29b;
+}
