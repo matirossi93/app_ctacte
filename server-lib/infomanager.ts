@@ -1445,9 +1445,14 @@ export async function comprobantesVigentes(
     }));
   }
   if (faltan.length) {
+    // 🔑 CUÁLES. Medido el 16/09/2026: de 108 comprobantes cae UNO solo, y esa única consulta se
+    // lleva entre 0,9 y 6,7 s de la carga del tablero. Con el id y lo que contestó IM se sabe si
+    // es un comprobante viejo que hay que dejar de preguntar o una fila que quedó apuntando a
+    // algo que ya no está.
+    const detalle = faltan.slice(0, 5).map(id => `${id}=${salida.get(id) === true ? 'vigente' : salida.get(id) === false ? 'no existe/anulado' : 'no se sabe'}`).join(' ');
     console.log(`[comprobantesVigentes] ${unicos.length} comprobantes · ${unicos.length - faltan.length} salieron del listado `
       + `${rango?.desde ?? '-'}..${rango?.hasta ?? '-'} (${filasDelListado < 0 ? 'sin listado' : `${filasDelListado} filas`}) · `
-      + `${faltan.length} de a uno en ${Date.now() - t0} ms`);
+      + `${faltan.length} de a uno en ${Date.now() - t0} ms · ${detalle}${faltan.length > 5 ? ' …' : ''}`);
   }
   return salida;
 }
