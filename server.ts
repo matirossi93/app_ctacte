@@ -24,6 +24,7 @@ import { hasSupabase, sb, TENANT_ID } from './server-lib/supabase.js';
 import { syncVentasMesActual, syncVentasMeses } from './server-lib/syncVentas.js';
 import { getMonthlyVentasRaw, getMonthlyItemsRaw, snapshotCacheStats } from './server-lib/snapshotCache.js';
 import { fetchArticulosCatalogo, fetchStockPorDeposito, imGetRetry, fetchVendedores, imClient } from './server-lib/infomanager.js';
+import { enSegundoPlano } from './server-lib/lecturasCompartidas.js';
 import {
   uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, editarRecibo, cuentasDebug, cuentasRefresh, cuentasEfectivo,
   reverificarMP, elegirMatchMP, procesarColaMP, caducarRecibosPendientes, mpConfig
@@ -1576,7 +1577,11 @@ async function prewarmSnapshotCache() {
     }
     prewarmSnapshotEnCurso = true;
     try {
-        await prewarmSnapshotCacheInner();
+        // 🔴 Como trabajo de fondo: son 6 meses de ventas + items (35-105 s cada uno) y antes se
+        // comían los 4 lugares de lectura de InfoManager. El 16/09/2026, mientras corría al
+        // reiniciar el contenedor, la oficina facturó 4 pedidos: salieron las facturas y los
+        // remitos quedaron colgados. Ver `enSegundoPlano`: ahora usa uno solo de los 4.
+        await enSegundoPlano(() => prewarmSnapshotCacheInner());
     } finally {
         prewarmSnapshotEnCurso = false;
     }

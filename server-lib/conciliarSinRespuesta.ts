@@ -27,6 +27,36 @@ import { vigenciaSegunAnulada } from './vigenciaComprobante.js';
  * ausencia no destraba nada: deja el pedido como está y dice qué mirar.
  */
 
+/**
+ * QUÉ FILAS PUEDE MIRAR LA CONCILIACIÓN.
+ *
+ * `incierto` es "IM no contestó y no sabemos qué salió". Pero hay dos estados más que terminan
+ * igual de trabados: `factura_emitiendo` y `remito_emitiendo`, que son "lo estoy emitiendo".
+ * Si la emisión se corta en el medio —el pedido a IM queda colgado, el reverse-proxy corta la
+ * respuesta, el contenedor se reinicia— la fila se queda ahí y no la destraba nadie: la
+ * conciliación no la miraba, el checkbox de la pantalla está deshabilitado y "Liberar" sólo
+ * borra `rechazado`. Pasó el 16/09/2026 con PR 58680 (URUEÑA): la factura 50640 salió, el remito
+ * quedó a medias y el pedido no se podía tocar desde ningún lado.
+ *
+ * 🪤 Un `*_emitiendo` RECIÉN reclamado es alguien emitiendo AHORA. Tocarlo sería adoptar un
+ * comprobante mientras el proceso que lo emitió está por registrarlo. Por eso sólo entran los
+ * que llevan más del plazo del reclamo, y sin fecha de reclamo no entra ninguno: si no se sabe
+ * de cuándo es, no se toca.
+ */
+const EMITIENDO = ['factura_emitiendo', 'remito_emitiendo'];
+
+export function esConciliable(
+  fila: { estado_emision?: string | null; reclamado_at?: string | null },
+  ahora: number,
+  venceMs: number,
+): boolean {
+  const estado = String(fila.estado_emision ?? '');
+  if (estado === 'incierto') return true;
+  if (!EMITIENDO.includes(estado)) return false;
+  const reclamado = Date.parse(String(fila.reclamado_at ?? ''));
+  return Number.isFinite(reclamado) && ahora - reclamado >= venceMs;
+}
+
 export interface FilaIncierta {
   im_comprobante_id: string;
   im_numero?: number | null;

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 // La marca del remito sale de `facturarIM`, que al cargarse exige el secreto de InfoManager.
 // Se importa de ahí a propósito: duplicar el texto de la marca sería que dejen de coincidir.
 vi.hoisted(() => { process.env.INFOMANAGER_CLIENT_SECRET = 'test-secret'; });
-const { resolverSinRespuesta } = await import('./conciliarSinRespuesta.js');
+const { resolverSinRespuesta, esConciliable } = await import('./conciliarSinRespuesta.js');
 
 /**
  * 🔴 De acá salen ESCRITURAS sobre comprobantes fiscales ya emitidos. Adoptar el comprobante
@@ -111,6 +111,48 @@ describe('lo que no toca', () => {
     for (const falta of [{ cod_cliente: null }, { cod_empresa: null }]) {
       expect(resolverSinRespuesta({ ...conFactura, ...falta }, [RE], sin), JSON.stringify(falta))
         .toMatchObject({ accion: 'revisar' });
+    }
+  });
+});
+
+/**
+ * 🔴 QUÉ FILAS PUEDE MIRAR LA CONCILIACIÓN.
+ *
+ * 16/09/2026: PR 58680 (URUEÑA) quedó en `remito_emitiendo` con la factura 50640 ya emitida y el
+ * remito colgado. Ese estado no lo miraba nadie: la conciliación sólo buscaba `incierto`, el
+ * checkbox estaba deshabilitado y "Liberar" sólo borra `rechazado`. Callejón sin salida.
+ *
+ * 🪤 Pero un `*_emitiendo` RECIÉN reclamado es alguien emitiendo AHORA MISMO. Tocarlo sería
+ * adoptar un comprobante mientras el proceso que lo emitió está por registrarlo.
+ */
+const VENCE = 5 * 60_000;
+const AHORA = Date.parse('2026-09-16T14:40:00Z');
+const haceMinutos = (m: number) => new Date(AHORA - m * 60_000).toISOString();
+
+describe('qué filas entran a conciliarse', () => {
+  it('🔑 la que quedó en duda por un timeout, siempre', () => {
+    expect(esConciliable({ estado_emision: 'incierto', reclamado_at: haceMinutos(0) }, AHORA, VENCE)).toBe(true);
+  });
+
+  it('🔑 el remito colgado hace rato: PR 58680, la factura salió y el remito quedó a medias', () => {
+    expect(esConciliable({ estado_emision: 'remito_emitiendo', reclamado_at: haceMinutos(14) }, AHORA, VENCE)).toBe(true);
+    expect(esConciliable({ estado_emision: 'factura_emitiendo', reclamado_at: haceMinutos(14) }, AHORA, VENCE)).toBe(true);
+  });
+
+  it('🔴 pero NO el que se está emitiendo en este momento', () => {
+    expect(esConciliable({ estado_emision: 'remito_emitiendo', reclamado_at: haceMinutos(1) }, AHORA, VENCE)).toBe(false);
+    expect(esConciliable({ estado_emision: 'factura_emitiendo', reclamado_at: haceMinutos(4) }, AHORA, VENCE)).toBe(false);
+  });
+
+  it('🔴 ni un emitiendo sin fecha de reclamo: sin saber de cuándo es, no se toca', () => {
+    for (const reclamado_at of [null, undefined, '', 'cualquier cosa']) {
+      expect(esConciliable({ estado_emision: 'remito_emitiendo', reclamado_at }, AHORA, VENCE), String(reclamado_at)).toBe(false);
+    }
+  });
+
+  it('🔴 ni lo que ya está resuelto o anulado', () => {
+    for (const estado_emision of ['completo', 'remito_pendiente', 'anulado', 'rechazado', null]) {
+      expect(esConciliable({ estado_emision, reclamado_at: haceMinutos(60) }, AHORA, VENCE), String(estado_emision)).toBe(false);
     }
   });
 });

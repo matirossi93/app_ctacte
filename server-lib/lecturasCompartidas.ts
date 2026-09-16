@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 /** Cache de lecturas; una respuesta vieja nunca reemplaza otra generación. */
 export class LecturasCompartidas<T> {
   private generacion = 0;
@@ -26,21 +27,62 @@ export class LecturasCompartidas<T> {
 
 export class LecturaNoEnviada extends Error { readonly retryable = false; }
 let activas = 0;
+let activasDeFondo = 0;
 let pausaHasta = 0;
-const esperando: Array<() => void> = [];
+interface EnCola { fondo: boolean; entrar: () => void }
+const esperando: EnCola[] = [];
 const LIMITE = 4;
+/**
+ * 🔴 De los 4 lugares, el trabajo de fondo puede usar UNO. Los otros tres quedan siempre para
+ * quien está esperando una pantalla.
+ *
+ * 16/09/2026: al reiniciar el contenedor arranca el warm de 6 meses (ventas + items de cada uno,
+ * 35-105 s por mes) y se comía los 4 lugares. Mientras corría, la oficina facturó 4 pedidos por
+ * $1.042.470: las facturas salieron, los remitos quedaron colgados y la pantalla dijo "No se
+ * pudo facturar. No se sabe qué llegó a emitirse". Un cache que se llena solo no puede costar eso.
+ */
+const LIMITE_FONDO = 1;
+const ESPERA_MS = 5_000;
+/** El de fondo no tiene a nadie del otro lado: prefiere esperar a fallar y dejar el cache frío. */
+const ESPERA_FONDO_MS = 60_000;
+
+/**
+ * Marca lo que corre acá adentro como trabajo de fondo (warms y crons que llenan cache).
+ *
+ * Va por AsyncLocalStorage y no por parámetro porque entre el cron y `lecturaLimitada` hay media
+ * docena de capas (snapshotCache → infomanager → imGetRetry) que no tienen nada que ver con esto:
+ * pasarles un flag a todas sería tocar medio backend para una decisión de una sola función.
+ */
+const contexto = new AsyncLocalStorage<{ fondo: true }>();
+export function enSegundoPlano<T>(correr: () => Promise<T>): Promise<T> {
+  return contexto.run({ fondo: true }, correr);
+}
+
+const hayLugar = (fondo: boolean) => activas < LIMITE && (!fondo || activasDeFondo < LIMITE_FONDO);
+
+/**
+ * Despierta al PRIMERO DE LA COLA QUE PUEDA entrar. 🪤 No al primero a secas: un warm esperando
+ * lugar de fondo taparía al usuario que está detrás y sí tiene lugar.
+ */
+function despertar() {
+  const i = esperando.findIndex(e => hayLugar(e.fondo));
+  if (i >= 0) esperando.splice(i, 1)[0].entrar();
+}
+
 /** Se aplica a intentos GET, nunca a POST ni al tiempo entre reintentos. */
 export async function lecturaLimitada<T>(leer: () => Promise<T>): Promise<T> {
+  const fondo = contexto.getStore()?.fondo === true;
+  const plazo = fondo ? ESPERA_FONDO_MS : ESPERA_MS;
   await new Promise<void>((resolve, reject) => {
-    const vence = Date.now() + 5_000;
+    const vence = Date.now() + plazo;
     let terminado = false;
     const reloj = setTimeout(() => {
       if (terminado) return;
       terminado = true;
-      const idx = esperando.indexOf(entrar);
+      const idx = esperando.indexOf(cola);
       if (idx >= 0) esperando.splice(idx, 1);
       reject(new LecturaNoEnviada('InfoManager está ocupado. No se envió esta consulta.'));
-    }, 5_000);
+    }, plazo);
     const entrar = () => {
       if (terminado) return;
       if (Date.now() < pausaHasta) {
@@ -48,12 +90,13 @@ export async function lecturaLimitada<T>(leer: () => Promise<T>): Promise<T> {
         reject(new LecturaNoEnviada(`InfoManager pidió una pausa hasta ${new Date(pausaHasta).toISOString()}. No se consultó de nuevo.`)); return;
       }
       if (Date.now() >= vence) return;
-      if (activas >= LIMITE) { esperando.push(entrar); return; }
-      terminado = true; clearTimeout(reloj); activas++; resolve();
+      if (!hayLugar(fondo)) { esperando.push(cola); return; }
+      terminado = true; clearTimeout(reloj); activas++; if (fondo) activasDeFondo++; resolve();
     };
+    const cola: EnCola = { fondo, entrar };
     entrar();
   });
   try { return await leer(); }
-  finally { activas--; esperando.shift()?.(); }
+  finally { activas--; if (fondo) activasDeFondo--; despertar(); }
 }
 export function pausarLecturas(ms: number) { pausaHasta = Math.max(pausaHasta, Date.now() + Math.max(0, ms)); }

@@ -1,6 +1,6 @@
 import { actualizarImportesFacturas } from './importesFacturas.js';
 import { cabecerasCompartidas } from './cabecerasCompartidas.js';
-import { resolverSinRespuesta } from './conciliarSinRespuesta.js';
+import { resolverSinRespuesta, esConciliable } from './conciliarSinRespuesta.js';
 import { EVIDENCIA, compararPar } from './evidenciaComprobantes.js';
 import { textoControl } from './controlFacturaRemito.js';
 import { leerComprobante, invalidarIM } from './infomanager.js';
@@ -679,13 +679,18 @@ async function itemsDeLaFactura(idFactura: string, leidos?: any[]): Promise<Dato
  * resolvía y la fila quedaba trabada hasta que alguien tocara la base a mano (14/09/2026: FRENTE
  * NORTE con el remito, FIGUEROA con la factura).
  *
+ * También entran los que quedaron en `factura_emitiendo` / `remito_emitiendo` con el reclamo
+ * vencido: una emisión que se cortó en el medio deja la fila igual de trabada, y ésa nadie la
+ * miraba (16/09/2026, PR 58680: la factura 50640 salió y el remito quedó colgado). Ver
+ * `esConciliable`: lo reclamado hace un rato entra, lo que alguien está emitiendo ahora no.
+ *
  * Se resuelve con lo que IM ya devolvió en la MISMA lectura que la pantalla hace igual: ni un GET
  * extra. Y sólo con evidencia positiva —las marcas que esta app escribe al emitir—; la ausencia
  * nunca destraba nada, porque no encontrarlo no prueba que no exista.
  */
-async function conciliarInciertos(filas: any[], ventas?: any[]): Promise<Map<string, string>> {
+async function conciliarEmisionesEnDuda(filas: any[], ventas?: any[]): Promise<Map<string, string>> {
   const avisos = new Map<string, string>();
-  const inciertos = filas.filter(f => f.estado_emision === 'incierto');
+  const inciertos = filas.filter(f => esConciliable(f, Date.now(), RECLAMO_VENCE_MS));
   if (!inciertos.length || !ventas?.length) return avisos;
 
   // Lo que ya está registrado en las filas a la vista: un comprobante es de UN pedido.
@@ -720,9 +725,10 @@ async function conciliarInciertos(filas: any[], ventas?: any[]): Promise<Map<str
       ? { im_remito_id: r.id, im_remito_numero: r.numero, facturado_at: new Date().toISOString(), estado_emision: 'completo' }
       // La factura apareció, pero el remito sigue faltando: queda en el camino que ya existe.
       : { im_factura_id: r.id, im_factura_numero: r.numero, im_factura_tipo: r.tipo, estado_emision: 'remito_pendiente' };
-    // 🪤 Condicionado a que siga `incierto`: si alguien lo resolvió mientras tanto, no se pisa.
+    // 🪤 Condicionado a que el estado siga siendo el mismo: si alguien lo resolvió —o el proceso
+    // que estaba emitiendo despertó y lo registró— mientras tanto, no se pisa.
     const { data: guardado, error } = await sb().from('presupuestos_facturados').update(cambios)
-      .eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id).eq('estado_emision', 'incierto')
+      .eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id).eq('estado_emision', f.estado_emision)
       .select('im_comprobante_id');
     if (error || !guardado?.length) {
       avisos.set(id, `Encontré el ${r.que} ${r.numero ?? ''} pero no pude registrarlo${error ? `: ${error.message}` : ''}.`);
@@ -1280,14 +1286,14 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
      * 🔑 Y lo que quedó en duda por un timeout de IM: si el comprobante está, se registra y el
      * pedido se destraba solo. Usa el MISMO listado que se acaba de leer.
      */
-    const avisosInciertos = await conciliarInciertos(conId, ventasDelRango).catch((err: any) => {
-      console.warn('[tableroFacturacion] no pude conciliar los inciertos:', err?.message);
+    const avisosEnDuda = await conciliarEmisionesEnDuda(conId, ventasDelRango).catch((err: any) => {
+      console.warn('[tableroFacturacion] no pude conciliar las emisiones en duda:', err?.message);
       return new Map<string, string>();
     });
-    for (const [id, aviso] of avisosInciertos) avisosAnulados.set(id, aviso);
+    for (const [id, aviso] of avisosEnDuda) avisosAnulados.set(id, aviso);
     medir('anulados+inciertos');
     // `sincronizarAnulados` ya borró o limpió lo que hacía falta: se relee para no mostrar viejo.
-    const { data: alDia, error: errAlDia } = avisosAnulados.size || avisosInciertos.size
+    const { data: alDia, error: errAlDia } = avisosAnulados.size || avisosEnDuda.size
       ? await sb().from('presupuestos_facturados').select('*').eq('tenant_id', TENANT_ID)
           .in('im_comprobante_id', emitidos.map((e: any) => String(e.im_comprobante_id)))
       : { data: emitidos, error: null };
