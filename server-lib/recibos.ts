@@ -7,6 +7,7 @@ import { sb, TENANT_ID } from './supabase.js';
 import { ocrRecibo } from './ocrRecibo.js';
 import { crearRecibo, fetchComprobPendientes, fetchClientesIMCached, type ReciboPago, type ReciboComprobante } from './infomanager.js';
 import { getFormaPagoIM, isValidMedio, exigeFoto } from './mediosPago.js';
+import { rangoDeRecibos, MAX_FILAS } from './rangoRecibos.js';
 import { resolveCuentaCod, debugCuentasResolver, invalidateCuentasCache, listCuentasEfectivo } from './cuentasResolver.js';
 import { buscarPagoEnMP, todayISO_AR, mpConfigStatus, type MPMatch, type MPCuenta } from './mercadopago.js';
 import { ajustarImputacionIM, validarContraPendientes } from './recibosImputacion.js';
@@ -305,16 +306,18 @@ export async function listRecibos(req: Request & { user?: JwtPayload }, res: Res
     if (req.query.status) q = q.eq('status', String(req.query.status));
     if (req.query.cod_cliente) q = q.eq('cod_cliente', Number(req.query.cod_cliente));
     if (req.query.cod_vendedor && user.rol !== 'vendedor') q = q.eq('cod_vendedor', Number(req.query.cod_vendedor));
-    // Ventana temporal: por default el último mes (30 días). Antes se cortaba
-    // SOLO por cantidad (limit 200) y, al crecer el volumen de carga del equipo,
-    // eso terminó mostrando ~2 semanas. Filtramos por created_at para que la
-    // ventana sea estable en el tiempo sin importar cuántos se carguen.
-    // Parametrizable con ?dias= (1-120) por si se necesita ver más hacia atrás.
-    const dias = Math.min(Math.max(Number(req.query.dias) || 30, 1), 120);
-    const desde = new Date(Date.now() - dias * 24 * 60 * 60 * 1000).toISOString();
-    q = q.gte('created_at', desde);
-    // limit como tope de seguridad (un mes de carga entra holgado en 500).
-    const limit = Math.min(Number(req.query.limit) || 500, 500);
+    /**
+     * Ventana temporal. Por defecto el último mes; con `?mes=2026-07` se pide ESE mes y nada
+     * más, que es lo que permite mirar hacia atrás sin traerse el historial entero
+     * (Mati, 16/09/2026). Sigue andando el `?dias=` de antes.
+     */
+    const rango = rangoDeRecibos(req.query as any);
+    q = q.gte('created_at', rango.desde);
+    if (rango.hasta) q = q.lt('created_at', rango.hasta);
+    // 🔑 El tope era 500 y NO alcanzaba: julio de 2026 tuvo 536 recibos, o sea que ese mes se
+    // habría mostrado cortado sin que nadie se enterara. Ahora hay holgura, y si aun así se
+    // llega al tope la respuesta lo dice (`truncado`) para que la pantalla pueda avisar.
+    const limit = Math.min(Number(req.query.limit) || MAX_FILAS, MAX_FILAS);
     q = q.order('created_at', { ascending: false }).limit(limit);
     const { data, error } = await q;
     if (error) { res.status(500).json({ error: error.message }); return; }
@@ -327,7 +330,13 @@ export async function listRecibos(req: Request & { user?: JwtPayload }, res: Res
       foto_signed_url: r.foto_url ? (urlMap.get(r.foto_url) ?? null) : null,
     }));
 
-    res.json({ ok: true, recibos: withUrls });
+    res.json({
+      ok: true,
+      recibos: withUrls,
+      periodo: rango.etiqueta,
+      // Se llegó al tope: hay más recibos en ese período de los que entraron en la respuesta.
+      truncado: rows.length >= limit,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err?.message ?? 'error' });
   }

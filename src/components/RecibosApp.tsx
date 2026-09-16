@@ -275,19 +275,41 @@ function RecibosList({ isBackoffice, viewAll, clientNameByCod, onOpenDetail, onU
     const [vendorFilter, setVendorFilter] = useState<'all' | string>('all');
     const [search, setSearch] = useState('');
     const [err, setErr] = useState<string | null>(null);
+    /**
+     * Qué período se pide. `''` = los últimos 30 días, que es lo que se mostraba siempre.
+     *
+     * Mati (16/09/2026): *"a veces necesitamos ver el historial de recibos de más de 1 mes;
+     * capaz que podemos poner un selector de fecha para cuidar las consultas"*. Por eso se pide
+     * UN MES por vez y no un rango libre: la consulta queda acotada sola.
+     */
+    const [mes, setMes] = useState<string>('');
+    const [truncado, setTruncado] = useState(false);
+    /** Los últimos 12 meses, armados en el momento: no hay lista que mantener. */
+    const mesesDisponibles = useMemo(() => {
+        const hoy = new Date();
+        return Array.from({ length: 12 }, (_, i) => {
+            const d = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
+            const valor = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            const texto = d.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+            return { valor, texto: texto.charAt(0).toUpperCase() + texto.slice(1) };
+        });
+    }, []);
 
     const load = async () => {
         setLoading(true); setErr(null);
         try {
-            const q = filter === 'todos' ? '' : `?status=${filter}`;
-            const res = await fetch(`/api/recibos${q}`, { headers: authHeaders() });
+            const sp = new URLSearchParams();
+            if (filter !== 'todos') sp.set('status', filter);
+            if (mes) sp.set('mes', mes);
+            const res = await fetch(`/api/recibos${sp.toString() ? `?${sp}` : ''}`, { headers: authHeaders() });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             setItems(data.recibos || []);
+            setTruncado(Boolean(data.truncado));
         } catch (e: any) { setErr(e.message); }
         finally { setLoading(false); }
     };
-    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter]);
+    useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, mes]);
 
     // Vendedores únicos del set actual (derivados, no hardcoded), ordenados por nombre.
     const uniqueVendors = useMemo(() => {
@@ -326,7 +348,25 @@ function RecibosList({ isBackoffice, viewAll, clientNameByCod, onOpenDetail, onU
                     </button>
                 ))}
                 <button className="rec-chip" onClick={load} title="Refrescar"><RefreshCw size={14} /></button>
+                {/* Un mes por vez: mirar hacia atrás sin traerse todo el historial. */}
+                <select
+                    className="rec-periodo"
+                    value={mes}
+                    onChange={e => setMes(e.target.value)}
+                    title="Qué período mostrar"
+                >
+                    <option value="">Últimos 30 días</option>
+                    {mesesDisponibles.map(m => <option key={m.valor} value={m.valor}>{m.texto}</option>)}
+                </select>
             </div>
+            {truncado && (
+                /* La lista llegó al tope: decirlo, porque una lista cortada en silencio se lee
+                   como "no hay más" y ahí se toman decisiones. */
+                <div className="rec-truncado">
+                    <AlertCircle size={14} />
+                    <span>Hay más recibos en este período de los que entran en la lista. Filtrá por estado o elegí un mes puntual.</span>
+                </div>
+            )}
 
             {/* Filtro vendedor — visible para quien ve la lista completa (backoffice
                 y repartidor) y si hay >1 vendedor en el set */}

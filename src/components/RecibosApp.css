@@ -608,3 +608,23 @@
 
 /* Aclaración bajo el ícono de la cámara cuando la foto no hace falta (efectivo). */
 .rec-upload-hint { font-size: 12px; color: var(--color-text-muted, #6e7670); margin-top: 2px; max-width: 34ch }
+
+/* Selector de período de la lista de recibos. */
+.rec-periodo {
+    margin-left: auto;
+    padding: 5px 10px;
+    border: 1px solid var(--color-border, rgba(20,24,20,.14));
+    border-radius: 20px;
+    background: #fff; color: inherit;
+    font-family: inherit; font-size: 12px; font-weight: 600;
+    min-height: 30px; cursor: pointer;
+}
+/* Aviso de lista cortada: no es un error, pero no puede pasar desapercibido. */
+.rec-truncado {
+    display: flex; align-items: center; gap: 6px;
+    margin: 8px 0 0; padding: 8px 12px;
+    border-radius: 10px;
+    background: var(--color-warning-bg, #fdf1dc);
+    color: var(--color-warning, #8A5A12);
+    font-size: 12px; line-height: 1.35;
+}
