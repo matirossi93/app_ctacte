@@ -362,11 +362,13 @@ async function leerArticulosCatalogo(): Promise<Map<number, ArticuloMini>> {
   // Lista 1 — COMINO PURO entre ellos.
   // `/articulos` pagina, así que son 2 llamadas en vez de 1. Se paga una vez por hora (cache).
   let page = 1;
+  let primeraFila: any = null;
   const TOPE_PAGINAS = 20;   // 20.000 artículos; si algún día se pasa, avisa en el log.
   while (page <= TOPE_PAGINAS) {
     const { data } = await imGetRetry(
       () => cli.get('/articulos', { params: { page, limit: 1000 } }), `articulos p${page}`);
     const rows: any[] = data?.results ?? data?.articulos ?? (Array.isArray(data) ? data : []);
+    primeraFila ??= rows[0] ?? null;
     for (const r of rows) {
       const cod = Number(r.cod_articulo ?? r.cod ?? r.codigo);
       if (!Number.isFinite(cod)) continue;
@@ -400,6 +402,15 @@ async function leerArticulosCatalogo(): Promise<Map<number, ArticuloMini>> {
    */
   const conIva = [...map.values()].filter(a => a.iva_por != null).length;
   console.log(`[catálogo] ${map.size} artículos · ${conIva} con alícuota de IVA · ${map.size - conIva} sin ella`);
+  /**
+   * 🪤 Si NINGUNO trae alícuota, el campo no se llama `iva_por` en este endpoint (en
+   * `/articulos/precio-ldp` se llama `iva`, no es la primera vez que difieren). Con los nombres
+   * de campo a la vista se arregla leyendo el log, sin tener que capturar una respuesta a mano.
+   * Sólo los NOMBRES: los valores del artículo no hacen falta para esto.
+   */
+  if (!conIva && primeraFila) {
+    console.warn(`[catálogo] ningún artículo trae 'iva_por'. Campos que manda /articulos: ${Object.keys(primeraFila).join(', ')}`);
+  }
   return map;
 }
 
