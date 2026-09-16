@@ -70,14 +70,20 @@ vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSup
 
 vi.mock('./versionPresupuesto.js', async original => ({ ...(await original<any>()), exigirHuella: vi.fn() }));
 
-const { facturarSeleccion, previsualizarFacturacion, tableroFacturacion, liberarReclamo, prepararFacturacion, articulosSinStockDelError } = await import('./facturarPresupuestos.js');
+const { facturarSeleccion, previsualizarFacturacion, tableroFacturacion, liberarReclamo, habilitarRemitoPendiente, registrarRemitoExistente, prepararFacturacion, articulosSinStockDelError } = await import('./facturarPresupuestos.js');
 
 let tablas: Record<string, any> = {};
+/** Lo que contesta `maybeSingle`, que lee UNA fila: sin esto choca con las lecturas de lista. */
+let tablasSingle: Record<string, any> = {};
 let escrituras: Array<{ tabla: string; op: string; valor: any }> = [];
 /** Si está seteado, TODA escritura contesta este error (Supabase no tira: devuelve `{error}`). */
 let errorAlEscribir: any = null;
 /** Si está seteado, el reclamo previo a emitir choca: otro usuario lo tomó primero. */
 let errorAlReclamar: any = null;
+/** Lo que el update dice haber tocado; [] = ninguna fila cumplió las condiciones. */
+let filasDelUpdate: any[] = [{ im_comprobante_id: '10' }];
+/** Los filtros con los que se pidió el update: ahí viven las condiciones de seguridad. */
+let filtrosDelUpdate: any[][] = [];
 let lecturasEmitidos = 0;
 let fallaRelecturaEmitidos = false;
 
@@ -89,7 +95,7 @@ function fakeSb() {
       const q: any = {
         then: (r: any, j: any) => Promise.resolve(t === 'presupuestos_facturados' && ++lecturasEmitidos >= 3 && fallaRelecturaEmitidos
           ? {data:null,error:{message:'relectura interrumpida'}} : res).then(r, j),
-        maybeSingle: () => Promise.resolve(res),
+        maybeSingle: () => Promise.resolve(tablasSingle[t] ?? res),
         upsert: (v: any) => {
           escrituras.push({ tabla: t, op: 'upsert', valor: v });
           return errorAlEscribir
@@ -104,7 +110,7 @@ function fakeSb() {
             ? { ...q, then: (r: any, j: any) => Promise.resolve({ data: null, error: errorAlReclamar }).then(r, j) }
             : q;
         },
-        update: (v: any) => { escrituras.push({ tabla: t, op: 'update', valor: v }); const w: any = { ...q, select: () => Promise.resolve({ data: errorAlEscribir ? null : [{im_comprobante_id:'10'}], error: errorAlEscribir }) }; for (const k of ['eq','is','in']) w[k]=()=>w; return w; },
+        update: (v: any) => { escrituras.push({ tabla: t, op: 'update', valor: v }); const w: any = { ...q, select: () => Promise.resolve({ data: errorAlEscribir ? null : filasDelUpdate, error: errorAlEscribir }) }; for (const k of ['eq','is','in','not','lt','gte','lte']) w[k]=(...args: any[])=>{ filtrosDelUpdate.push([k, ...args]); return w; }; return w; },
         delete: () => { escrituras.push({ tabla: t, op: 'delete', valor: null }); return q; },
       };
       for (const k of ['select', 'eq', 'in', 'order', 'limit', 'is', 'not', 'or', 'gte', 'lte']) q[k] = () => q;
@@ -113,7 +119,7 @@ function fakeSb() {
   }));
 }
 
-function llamar(fn: any, { rol = 'administrativo', body = {}, query = {}, method = 'POST' } = {}) {
+function llamar(fn: any, { rol = 'administrativo', body = {}, query = {}, params = {}, method = 'POST' }: any = {}) {
   let status = 200; let out: any;
   /**
    * La pantalla manda SIEMPRE la versión de cada presupuesto que tenía a la vista: es lo que el
@@ -124,7 +130,7 @@ function llamar(fn: any, { rol = 'administrativo', body = {}, query = {}, method
   const conHuellas = Array.isArray(ids) && (body as any).huellas === undefined
     ? { ...body, huellas: Object.fromEntries(ids.map((id: string) => [String(id), 'fixture'])) }
     : body;
-  const req: any = { user: { rol, sub: 'u1' }, params: {}, body: conHuellas, query, method };
+  const req: any = { user: { rol, sub: 'u1' }, params, body: conHuellas, query, method };
   const res: any = { status: (s: number) => { status = s; return res; }, json: (b: any) => { out = b; } };
   return fn(req, res).then(() => ({ status, body: out }));
 }
@@ -149,7 +155,8 @@ const RENGLON = { id_comprobante: '10', cod_articulo: 661, cantidad: 1, precio: 
 const RENGLON_FA = { ...RENGLON, id_comprobante: 'f1' };
 
 beforeEach(() => {
-  tablas = {}; escrituras = []; errorAlEscribir = null; errorAlReclamar = null;
+  tablas = {}; tablasSingle = {}; escrituras = []; errorAlEscribir = null; errorAlReclamar = null;
+  filasDelUpdate = [{ im_comprobante_id: '10' }]; filtrosDelUpdate = [];
   lecturasEmitidos = 0; fallaRelecturaEmitidos = false;
   vi.clearAllMocks();
   fakeSb();
@@ -1159,3 +1166,157 @@ describe('numeración por serie', () => {
     expect(JSON.stringify(r.body)).toMatch(/Casa Central/i);
   });
 });
+
+/**
+ * 🔴 EL REMITO QUE QUEDÓ COLGADO Y NO ESTÁ EN INFOMANAGER.
+ *
+ * 16/09/2026, PR 58680 (URUEÑA): la factura 50640 salió y el remito quedó en `remito_emitiendo`
+ * porque el pedido a IM nunca volvió. La conciliación automática fue a buscarlo por la marca y no
+ * lo encontró, pero la ausencia no prueba nada. Alguien mira InfoManager y, si de verdad no está,
+ * aprieta esto: el pedido vuelve al camino normal de "falta el remito" — NO se emite nada acá.
+ */
+describe('destrabar el remito que quedó colgado', () => {
+  const params = { comprobanteId: '58866294' };
+
+  it('🔴 la facturación la hace administración, no un vendedor', async () => {
+    const r = await llamar(habilitarRemitoPendiente, { rol: 'vendedor', params });
+    expect(r.status).toBe(403);
+    expect(escrituras).toHaveLength(0);
+  });
+
+  it('🔑 devuelve el pedido a "falta el remito" y suelta el reclamo, sin emitir nada', async () => {
+    const r = await llamar(habilitarRemitoPendiente, { params });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ ok: true, comprobante: '58866294' });
+    expect(escrituras).toEqual([{ tabla: 'presupuestos_facturados', op: 'update',
+      valor: { estado_emision: 'remito_pendiente', claim_token: null } }]);
+    // 🔴 Esto NO es un atajo para emitir: el remito sale por el camino de siempre.
+    expect(m.emitirRemito).not.toHaveBeenCalled();
+    expect(m.emitirRemitoMasivo).not.toHaveBeenCalled();
+    expect(m.emitirFactura).not.toHaveBeenCalled();
+  });
+
+  it('🔴 nunca toca una fila sin factura, con remito ya registrado, ya facturada, en otro estado o recién reclamada', async () => {
+    await llamar(habilitarRemitoPendiente, { params });
+    const filtro = (op: string, campo: string) => filtrosDelUpdate.find(f => f[0] === op && f[1] === campo);
+    // La factura tiene que estar y el remito no: así no puede habilitar una segunda factura.
+    expect(filtro('not', 'im_factura_id')).toEqual(['not', 'im_factura_id', 'is', null]);
+    expect(filtro('is', 'im_remito_id')).toEqual(['is', 'im_remito_id', null]);
+    expect(filtro('is', 'facturado_at')).toEqual(['is', 'facturado_at', null]);
+    // Sólo desde los dos estados en los que no se sabe qué pasó con el remito.
+    expect(filtro('in', 'estado_emision')?.[2]).toEqual(['remito_emitiendo', 'incierto']);
+    // 🪤 Y sólo si el reclamo venció: si alguien lo está emitiendo ahora, habilitar otro remito
+    // sería descontar la mercadería dos veces.
+    const lt = filtro('lt', 'reclamado_at');
+    expect(lt).toBeTruthy();
+    expect(Date.now() - Date.parse(String(lt![2]))).toBeGreaterThanOrEqual(5 * 60_000);
+  });
+
+  it('🔴 si ninguna fila cumple, lo dice: no contesta que salió bien', async () => {
+    filasDelUpdate = [];
+    const r = await llamar(habilitarRemitoPendiente, { params });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/ya no está esperando un remito|alguien en este momento/i);
+    expect(r.body.ok).toBeUndefined();
+  });
+
+  it('🔴 un error de la base no se traga: 500 con el motivo', async () => {
+    errorAlEscribir = { message: 'conexión caída' };
+    const r = await llamar(habilitarRemitoPendiente, { params });
+    expect(r.status).toBe(500);
+    expect(r.body.error).toMatch(/conexión caída/);
+  });
+});
+
+/**
+ * 🔴 EL REMITO QUE SE HIZO A MANO EN INFOMANAGER.
+ *
+ * La app sólo reconoce sola los remitos que llevan su marca `[Remito Automático -FA:<id>]`. Uno
+ * tipeado en IM no la tiene, así que el pedido se queda en "emisión por verificar" para siempre
+ * (16/09/2026, PR 58680 de URUEÑA). Acá la persona dice el número y la app lo VERIFICA contra
+ * InfoManager antes de registrarlo: atar el remito equivocado es darle a un cliente la mercadería
+ * de otro.
+ */
+describe('registrar un remito que se hizo a mano en InfoManager', () => {
+  const params = { comprobanteId: '58866294' };
+  const FILA = {
+    im_comprobante_id: '58866294', im_numero: 58680, cod_cliente: 1093, cod_empresa: 1,
+    fecha: '2026-09-08', im_factura_id: 'f1', im_factura_numero: 50640,
+    im_remito_id: null, facturado_at: null, estado_emision: 'remito_emitiendo',
+  };
+  const RE_IM = { id: 'r9', numero: 77600, tipo_comprobante: 'RE', cod_cliente: 1093, cod_empresa: 1, anulada: 'N' };
+
+  beforeEach(() => {
+    tablasSingle['presupuestos_facturados'] = { data: FILA, error: null };
+    m.fetchVentas.mockResolvedValue([RE_IM]);
+  });
+
+  it('🔑 lo busca en InfoManager y lo registra: el pedido queda completo', async () => {
+    const r = await llamar(registrarRemitoExistente, { params, body: { numero: 77600 } });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ ok: true, remito: 77600, remito_id: 'r9' });
+    const update = escrituras.find(e => e.op === 'update');
+    expect(update?.valor).toMatchObject({ im_remito_id: 'r9', im_remito_numero: 77600, estado_emision: 'completo' });
+    expect(update?.valor.facturado_at).toBeTruthy();
+    // 🔴 Registrar no es emitir.
+    expect(m.emitirRemito).not.toHaveBeenCalled();
+    expect(m.emitirRemitoMasivo).not.toHaveBeenCalled();
+  });
+
+  it('🔴 no registra un remito de OTRO cliente', async () => {
+    m.fetchVentas.mockResolvedValue([{ ...RE_IM, cod_cliente: 999 }]);
+    const r = await llamar(registrarRemitoExistente, { params, body: { numero: 77600 } });
+    expect(r.status).toBe(404);
+    expect(escrituras.filter(e => e.op === 'update')).toHaveLength(0);
+  });
+
+  it('🔴 ni uno anulado, ni una factura en vez de un remito', async () => {
+    for (const roto of [{ ...RE_IM, anulada: 'S' }, { ...RE_IM, tipo_comprobante: 'FA' }]) {
+      escrituras = [];
+      m.fetchVentas.mockResolvedValue([roto]);
+      const r = await llamar(registrarRemitoExistente, { params, body: { numero: 77600 } });
+      expect(r.status, JSON.stringify(roto)).toBe(404);
+      expect(escrituras.filter(e => e.op === 'update')).toHaveLength(0);
+    }
+  });
+
+  it('🔴 ni uno que ya está registrado en otro pedido: la mercadería se contaría dos veces', async () => {
+    tablas['presupuestos_facturados'] = { data: [{ im_comprobante_id: 'otro', im_numero: 58111 }], error: null };
+    const r = await llamar(registrarRemitoExistente, { params, body: { numero: 77600 } });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/PR 58111/);
+    expect(escrituras.filter(e => e.op === 'update')).toHaveLength(0);
+  });
+
+  it('🔴 si el pedido ya tiene su remito, no lo pisa', async () => {
+    tablasSingle['presupuestos_facturados'] = { data: { ...FILA, im_remito_id: 'r1' }, error: null };
+    const r = await llamar(registrarRemitoExistente, { params, body: { numero: 77600 } });
+    expect(r.status).toBe(409);
+    expect(m.fetchVentas).not.toHaveBeenCalled();
+  });
+
+  it('🔴 y sin la factura registrada tampoco: el remito se ata a una factura', async () => {
+    tablasSingle['presupuestos_facturados'] = { data: { ...FILA, im_factura_id: null }, error: null };
+    expect((await llamar(registrarRemitoExistente, { params, body: { numero: 77600 } })).status).toBe(409);
+  });
+
+  it('🔴 un número que no es número no se intenta siquiera', async () => {
+    for (const numero of [undefined, '', 'abc', 0, -5, 1.5]) {
+      const r = await llamar(registrarRemitoExistente, { params, body: { numero } });
+      expect(r.status, String(numero)).toBe(400);
+    }
+    expect(m.fetchVentas).not.toHaveBeenCalled();
+  });
+
+  it('🔴 la facturación la hace administración', async () => {
+    expect((await llamar(registrarRemitoExistente, { rol: 'vendedor', params, body: { numero: 77600 } })).status).toBe(403);
+  });
+
+  it('🪤 si InfoManager no contesta, NO registra nada a ciegas', async () => {
+    m.fetchVentas.mockRejectedValue(new Error('IM no contesta'));
+    const r = await llamar(registrarRemitoExistente, { params, body: { numero: 77600 } });
+    expect(r.status).toBe(502);
+    expect(escrituras.filter(e => e.op === 'update')).toHaveLength(0);
+  });
+});
+

@@ -1,6 +1,6 @@
 import { actualizarImportesFacturas } from './importesFacturas.js';
 import { cabecerasCompartidas } from './cabecerasCompartidas.js';
-import { resolverSinRespuesta, esConciliable } from './conciliarSinRespuesta.js';
+import { resolverSinRespuesta, esConciliable, esDeLaEntrega } from './conciliarSinRespuesta.js';
 import { EVIDENCIA, compararPar } from './evidenciaComprobantes.js';
 import { textoControl } from './controlFacturaRemito.js';
 import { leerComprobante, invalidarIM } from './infomanager.js';
@@ -632,6 +632,134 @@ export async function liberarReclamo(req: Request & { user?: JwtPayload }, res: 
     return;
   }
   res.json({ ok: true, liberado: id });
+}
+
+/**
+ * POST /api/facturacion/remito-pendiente/:comprobanteId — el remito quedó colgado y NO está en IM.
+ *
+ * 🔴 LO APRIETA UNA PERSONA DESPUÉS DE MIRAR INFOMANAGER. La conciliación automática ya buscó el
+ * remito por la marca que lleva de su factura y avisó que no lo encuentra, pero eso no lo prueba:
+ * las observaciones se cortan en 500 caracteres y el comprobante puede tener otra fecha. Si el
+ * remito existía y se emite otro, la mercadería sale descontada dos veces.
+ *
+ * Por eso esto NO emite nada: sólo devuelve el pedido al camino normal de "falta el remito", donde
+ * apretar Facturar hace únicamente el remito. La factura ya emitida no se toca nunca.
+ *
+ * 🪤 Sólo sobre reclamos VENCIDOS: si alguien está emitiendo ahora mismo, destrabarlo sería
+ * habilitar un segundo remito mientras el primero está en vuelo.
+ */
+export async function habilitarRemitoPendiente(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  const id = String(req.params.comprobanteId);
+  const vencido = new Date(Date.now() - RECLAMO_VENCE_MS).toISOString();
+  const { data, error } = await sb().from('presupuestos_facturados')
+    .update({ estado_emision: 'remito_pendiente', claim_token: null })
+    .eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id)
+    // La factura tiene que estar registrada y el remito NO: esto nunca habilita otra factura.
+    .not('im_factura_id', 'is', null).is('im_remito_id', null).is('facturado_at', null)
+    .in('estado_emision', ['remito_emitiendo', 'incierto'])
+    .lt('reclamado_at', vencido)
+    .select('im_comprobante_id, im_factura_numero');
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (!(data ?? []).length) {
+    res.status(409).json({
+      error: 'Ese pedido ya no está esperando un remito, o se lo está emitiendo alguien en este momento. Actualizá la pantalla.',
+    });
+    return;
+  }
+  res.json({ ok: true, comprobante: id, factura: data![0].im_factura_numero ?? null });
+}
+
+/** Los días en los que puede estar un remito hecho a mano: el del pedido y el de hoy, con un día de aire. */
+function ventanaDelRemito(fecha: unknown): { desde: string; hasta: string } {
+  const dia = /^\d{4}-\d{2}-\d{2}$/.test(String(fecha ?? '').slice(0, 10)) ? String(fecha).slice(0, 10) : fechaArgentina();
+  const hoy = fechaArgentina();
+  const corrida = (f: string, dias: number) => new Date(Date.parse(`${f}T12:00:00Z`) + dias * 864e5).toISOString().slice(0, 10);
+  return { desde: corrida(dia < hoy ? dia : hoy, -1), hasta: corrida(dia > hoy ? dia : hoy, 1) };
+}
+
+/**
+ * POST /api/facturacion/remito-existente/:comprobanteId — body { numero }
+ *
+ * EL REMITO SE HIZO A MANO EN INFOMANAGER. La app no lo puede reconocer sola: sólo sabe encontrar
+ * los que llevan su marca `[Remito Automático -FA:<id>]`, y uno tipeado en IM no la tiene. Pasó el
+ * 16/09/2026 con PR 58680 (URUEÑA): se emitió el remito en IM y el pedido seguía diciendo
+ * "emisión por verificar" para siempre.
+ *
+ * 🔴 No se registra a ciegas por más que lo pidan: el remito tiene que EXISTIR en InfoManager, ser
+ * del mismo cliente y de la misma empresa que el pedido, estar vigente, y no estar ya registrado
+ * en otro. Atar el remito equivocado es darle a un cliente la mercadería de otro.
+ */
+export async function registrarRemitoExistente(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  const id = String(req.params.comprobanteId);
+  const numero = Number(req.body?.numero);
+  if (!Number.isInteger(numero) || numero <= 0) {
+    res.status(400).json({ error: 'Decime el número del remito que emitiste en InfoManager.' }); return;
+  }
+
+  const { data: fila, error: errFila } = await sb().from('presupuestos_facturados')
+    .select('im_comprobante_id, im_numero, cod_cliente, cod_empresa, fecha, im_factura_id, im_factura_numero, im_remito_id, facturado_at, estado_emision')
+    .eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id).maybeSingle();
+  if (errFila) { res.status(500).json({ error: errFila.message }); return; }
+  if (!fila) { res.status(404).json({ error: 'Ese pedido no tiene una emisión registrada.' }); return; }
+  if (!fila.im_factura_id) {
+    res.status(409).json({ error: 'Este pedido todavía no tiene la factura registrada: el remito se ata a una factura.' }); return;
+  }
+  if (fila.im_remito_id || fila.facturado_at) {
+    res.status(409).json({ error: 'Este pedido ya tiene su remito registrado. Actualizá la pantalla.' }); return;
+  }
+
+  // Se relee de IM sin cache: el remito puede haberse emitido hace un minuto.
+  const { desde, hasta } = ventanaDelRemito(fila.fecha);
+  let ventas: any[];
+  try {
+    ventas = await fetchVentas(desde, hasta, { sinCache: true });
+  } catch (e: any) {
+    res.status(502).json({ error: `No pude leer los comprobantes de InfoManager para verificarlo: ${e?.message ?? e}` }); return;
+  }
+  const candidatos = ventas.filter(v =>
+    String(v.tipo_comprobante ?? '').trim().toUpperCase() === 'RE'
+    && Number(v.numero) === numero
+    && esDeLaEntrega(v, { im_comprobante_id: id, cod_cliente: fila.cod_cliente, cod_empresa: fila.cod_empresa }));
+  if (!candidatos.length) {
+    res.status(404).json({
+      error: `No encontré el remito ${numero} de este cliente en InfoManager entre el ${desde} y el ${hasta}. `
+        + 'Verificá el número, y que el remito sea del mismo cliente y no esté anulado.',
+    });
+    return;
+  }
+  if (candidatos.length > 1) {
+    res.status(409).json({ error: `Hay ${candidatos.length} remitos ${numero} de este cliente en InfoManager. Resolvelo ahí antes de registrarlo.` });
+    return;
+  }
+  const remito = candidatos[0];
+  const remitoId = String(remito.id ?? '').trim();
+  if (!remitoId) { res.status(502).json({ error: 'InfoManager devolvió ese remito sin identificador.' }); return; }
+
+  // 🔴 Un remito es de UN pedido: si ya está en otro, atarlo acá contaría la mercadería dos veces.
+  const { data: yaEsta, error: errUsado } = await sb().from('presupuestos_facturados')
+    .select('im_comprobante_id, im_numero').eq('tenant_id', TENANT_ID).eq('im_remito_id', remitoId).limit(5);
+  if (errUsado) { res.status(500).json({ error: `No pude verificar si ese remito ya está registrado: ${errUsado.message}` }); return; }
+  const enOtro = (yaEsta ?? []).find((x: any) => String(x.im_comprobante_id) !== id);
+  if (enOtro) {
+    res.status(409).json({ error: `El remito ${numero} ya está registrado en el pedido PR ${enOtro.im_numero ?? enOtro.im_comprobante_id}.` });
+    return;
+  }
+
+  const { data: guardado, error } = await sb().from('presupuestos_facturados').update({
+    im_remito_id: remitoId, im_remito_numero: numero,
+    facturado_at: new Date().toISOString(), estado_emision: 'completo', claim_token: null,
+  }).eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id)
+    .is('im_remito_id', null).is('facturado_at', null)
+    .select('im_comprobante_id');
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  if (!(guardado ?? []).length) {
+    res.status(409).json({ error: 'Alguien lo resolvió mientras tanto. Actualizá la pantalla.' }); return;
+  }
+  // La pantalla de hojas de ruta tiene que ver el remito ya mismo.
+  invalidarRemitos();
+  res.json({ ok: true, comprobante: id, remito: numero, remito_id: remitoId });
 }
 
 /**

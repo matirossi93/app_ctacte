@@ -89,7 +89,7 @@ const entero = (v: unknown): number | null => {
 };
 
 /** Del mismo cliente y de la misma empresa, y vigente: cualquier duda descarta. */
-function esDeLaEntrega(v: VentaIM, fila: FilaIncierta): boolean {
+export function esDeLaEntrega(v: VentaIM, fila: FilaIncierta): boolean {
   if (vigenciaSegunAnulada(v.anulada) !== true) return false;
   const cliente = entero(fila.cod_cliente), empresa = entero(fila.cod_empresa);
   if (cliente === null || empresa === null) return false;

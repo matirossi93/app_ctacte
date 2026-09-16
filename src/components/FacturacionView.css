@@ -189,3 +189,14 @@
 .fc-control .fc-btn.chico { font-size: 0.78rem; padding: 0.25rem 0.5rem; }
 .fc-imprimir.fc-comparar.e-diferencias { border-color: #a33b26; color: #a33b26; }
 .fc-imprimir.fc-comparar.e-coinciden { border-color: rgba(6, 101, 47, 0.4); color: #06652F; }
+
+/* Las dos salidas del remito colgado: chiquitas, debajo del badge, para que no compitan con el
+   resto de la fila pero estén a mano cuando hace falta. */
+.fc-destrabar { display: flex; gap: 0.3rem; margin-top: 0.25rem; }
+.fc-destrabar button {
+    background: none; border: 1px solid #d98b7a; border-radius: 999px;
+    padding: 0.05rem 0.45rem; font-size: 0.68rem; font-weight: 600;
+    color: #a33b26; cursor: pointer; white-space: nowrap;
+}
+.fc-destrabar button:hover:not(:disabled) { background: #fbe9e7; }
+.fc-destrabar button:disabled { opacity: 0.5; cursor: default; }

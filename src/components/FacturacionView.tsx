@@ -197,6 +197,9 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
         return c === 'cargando' ? 'cargando' : (c ?? p.control_fa_re ?? null);
     };
 
+    /** El pedido cuyo remito se está destrabando: bloquea el botón para que no se apriete dos veces. */
+    const [destrabando, setDestrabando] = useState<string | null>(null);
+
     const cargar = useCallback(async (refrescar = false, conservarDuranteLectura = false) => {
         const lectura = iniciarLectura(refrescar); if (!lectura) return;
         // 🪤 Lo comparado a pedido habla de los comprobantes que había: si se recarga, ya no
@@ -235,6 +238,52 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
     // 🔴 La más sensible de las tres: emitir sobre datos viejos factura lo que ya no es.
 
     const avisarRecarga = useRecargarAlVolver(() => { void cargar(true); });
+
+    /**
+     * 🔴 EL REMITO QUE QUEDÓ COLGADO. La factura salió y el remito no se pudo registrar, así que
+     * el pedido no lo puede tocar nadie. Hay dos salidas y las dos las decide una persona después
+     * de mirar InfoManager, porque la app ya buscó y no puede afirmar nada:
+     *  · el remito ESTÁ (lo hicieron a mano) → se registra, verificándolo contra IM;
+     *  · el remito NO está → vuelve a "falta el remito" y Facturar emite sólo eso.
+     * Emitir un segundo remito descuenta la mercadería dos veces: por eso ninguna es automática.
+     */
+    const remitoColgado = (p: Fila) =>
+        ['remito_emitiendo', 'incierto'].includes(p.estado_emision ?? '')
+        && !!p.im_factura_numero && !p.im_remito_numero && !p.facturado_at;
+
+    const destrabarRemito = async (p: Fila, url: string, body?: unknown) => {
+        setDestrabando(p.im_comprobante_id); setError(null);
+        try {
+            const r = await fetch(url, {
+                method: 'POST',
+                headers: { ...authHeaders(), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+                ...(body ? { body: JSON.stringify(body) } : {}),
+            });
+            const d = await r.json().catch(() => null);
+            if (!r.ok || !d?.ok) throw new Error(d?.error ?? `No se pudo (HTTP ${r.status})`);
+            await cargar(true);
+        } catch (e: any) { setError(e?.message ?? 'Error de conexión'); }
+        finally { setDestrabando(null); }
+    };
+
+    const registrarRemitoHecho = (p: Fila) => {
+        const escrito = window.prompt(
+            `¿Con qué número salió el remito de la factura ${p.im_factura_numero} de ${p.cliente_nombre}?\n\n`
+            + 'Lo voy a buscar en InfoManager y sólo lo registro si existe, es de este cliente y no está anulado.');
+        if (escrito == null) return;
+        const numero = Number(String(escrito).replace(/[^\d]/g, ''));
+        if (!Number.isInteger(numero) || numero <= 0) { setError('Ese no es un número de remito.'); return; }
+        void destrabarRemito(p, `/api/facturacion/remito-existente/${encodeURIComponent(p.im_comprobante_id)}`, { numero });
+    };
+
+    const marcarRemitoFaltante = (p: Fila) => {
+        if (!window.confirm(
+            `La factura ${p.im_factura_numero} de ${p.cliente_nombre} YA SE EMITIÓ. Sólo falta el remito.\n\n`
+            + 'Antes de seguir, buscá en InfoManager si el remito de esa factura existe.\n\n'
+            + 'Si NO está: aceptá y el pedido vuelve a "falta el remito" — con Facturar sale sólo el remito.\n'
+            + 'Si SÍ está: cancelá y usá "Ya lo hice en IM". Emitir otro descuenta la mercadería dos veces.')) return;
+        void destrabarRemito(p, `/api/facturacion/remito-pendiente/${encodeURIComponent(p.im_comprobante_id)}`);
+    };
 
     /**
      * 🔑 ¿EL REMITO SALE CON IMPORTES O SIN ELLOS?
@@ -362,7 +411,23 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                 <td className="n">{money(p.total)}</td>
                                 <td>
                                     {requiereConciliar(p)
-                                        ? <span className="fc-badge grave">{p.estado_emision === 'anulado' ? 'factura anulada · requiere conciliación' : 'emisión por verificar'}</span>
+                                        ? <>
+                                            <span className="fc-badge grave">{p.estado_emision === 'anulado' ? 'factura anulada · requiere conciliación' : 'emisión por verificar'}</span>
+                                            {remitoColgado(p) && (
+                                                <span className="fc-destrabar">
+                                                    <button disabled={destrabando === p.im_comprobante_id}
+                                                            onClick={() => registrarRemitoHecho(p)}
+                                                            title={`Si ya emitiste el remito de la factura ${p.im_factura_numero} en InfoManager, decime el número y lo registro.`}>
+                                                        Ya lo hice en IM
+                                                    </button>
+                                                    <button disabled={destrabando === p.im_comprobante_id}
+                                                            onClick={() => marcarRemitoFaltante(p)}
+                                                            title="Si el remito no está en InfoManager, el pedido vuelve a «falta el remito» y Facturar emite sólo eso.">
+                                                        No está en IM
+                                                    </button>
+                                                </span>
+                                            )}
+                                        </>
                                         : p.falta_remito
                                         ? <span className="fc-badge grave">falta el remito (FA {p.im_factura_numero})</span>
                                         : <span className="fc-badge">listo</span>}
