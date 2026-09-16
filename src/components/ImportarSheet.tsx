@@ -66,7 +66,7 @@ export const ImportarSheet = ({ onClose, onImported }: Props) => {
         <div className="is-backdrop" onClick={onClose}>
             <div className="is-modal" onClick={e => e.stopPropagation()}>
                 <header>
-                    <div className="is-head-l"><FileSpreadsheet size={18} /> <h3>Actualizar objetivos del mes</h3></div>
+                    <div className="is-head-l"><FileSpreadsheet size={18} /> <h3>Actualizar maestro de clientes</h3></div>
                     <button onClick={onClose} aria-label="Cerrar"><X size={18} /></button>
                 </header>
 

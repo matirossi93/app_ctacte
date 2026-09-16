@@ -648,7 +648,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                                     </button>
                                     {isAdmin && (
                                         <button onClick={() => { setAvatarMenu(false); setShowImportSheet(true); }}>
-                                            <FileSpreadsheet size={14} /> Actualizar objetivos del mes
+                                            <FileSpreadsheet size={14} /> Actualizar maestro de clientes
                                         </button>
                                     )}
                                     {isAdmin && (
