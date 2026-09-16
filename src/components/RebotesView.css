@@ -1,6 +1,8 @@
 /* Rebotes de reparto — mismo lenguaje visual que el resto del shell
    (cards radius 22 con sombra suave, headers 18px/800, filas tintadas).
-   La vista se lee en 3 bloques titulados: Resumen → Recargo 3% → Detalle. */
+   La vista se lee en 2 bloques: cuánto y de quién fue la culpa → quién rebotó.
+   Un mes son ~150 renglones del sheet: se agrupan por cliente (rb-g) y el
+   detalle renglón por renglón (rb-r) vive adentro del desplegable. */
 
 .rb-wrap { display: flex; flex-direction: column; gap: 14px; padding-bottom: 8px }
 
@@ -43,12 +45,23 @@
 .rb-card-head p { margin: 4px 0 0; font-size: 12px; color: #6e7670; line-height: 1.5 }
 .rb-card-head p b { color: #141814 }
 
-/* ── 1. Resumen ── */
+/* ── 1. Cuánto rebotó ── */
 .rb-hero { display: flex; flex-direction: column; gap: 2px }
+.rb-hero-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap }
 .rb-hero-num { font-size: 26px; font-weight: 800; letter-spacing: -.5px }
 .rb-hero-label { font-size: 12px; color: #6e7670 }
+.rb-hero-vs { font-size: 11.5px; color: rgba(20,24,20,.42) }
 
-/* Tiles "de quién fue la culpa" — también funcionan de filtro del detalle */
+/* Contra el mes pasado, mismo tramo: sin esto el total no dice si vamos bien */
+.rb-delta {
+    display: inline-flex; align-items: center; gap: 3px;
+    font-size: 12.5px; font-weight: 800; padding: 3px 9px; border-radius: 999px;
+    font-variant-numeric: tabular-nums;
+}
+.rb-delta.is-baja { background: rgba(31,138,76,.12); color: #1F8A4C }
+.rb-delta.is-sube { background: rgba(220,68,68,.12); color: #b3372f }
+
+/* Tiles "de quién fue la culpa" — también funcionan de filtro de la lista */
 .rb-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 8px }
 .rb-tile {
     display: flex; flex-direction: column; gap: 2px; text-align: left;
@@ -75,7 +88,15 @@
 }
 .rb-warn--soft { background: rgba(20,24,20,.06); color: rgba(20,24,20,.6); font-weight: 500 }
 
-/* ── Filtro por vendedor (admin, dentro del Detalle) ── */
+/* ── 2. Nota del 3% al cliente: la regla, sin repetir la lista de clientes ── */
+.rb-nota {
+    font-size: 12px; line-height: 1.55; color: #4a3d6b;
+    background: rgba(124,77,255,.07); border: 1px solid rgba(124,77,255,.22);
+    border-radius: 14px; padding: 10px 12px;
+}
+.rb-nota b { color: #6a3fd8 }
+
+/* ── Filtro por vendedor (admin) ── */
 .rb-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px }
 .rb-chips-label { font-size: 11.5px; font-weight: 700; color: #6e7670; margin-right: 2px }
 .rb-chip {
@@ -92,24 +113,75 @@
 }
 .rb-empty--inline { border-radius: 14px; padding: 18px 12px }
 
-/* ── 3. Detalle: lista renglón por renglón ── */
-.rb-list { display: flex; flex-direction: column; gap: 8px }
-.rb-row {
-    background: #FCFBF7; border: 1px solid rgba(20,24,20,.08); border-radius: 14px;
-    padding: 10px 12px; display: flex; flex-direction: column; gap: 4px;
+/* ── 3. Un cliente por línea; los renglones, adentro ── */
+.rb-groups { display: flex; flex-direction: column; gap: 6px }
+
+.rb-g {
+    background: #FCFBF7; border: 1px solid rgba(20,24,20,.08);
+    border-radius: 14px; overflow: hidden;
 }
-.rb-row-top { display: flex; align-items: center; gap: 8px; min-width: 0 }
-.rb-row-fecha { font-size: 12px; font-weight: 700; color: rgba(20,24,20,.45); flex: 0 0 auto }
-.rb-row-cliente {
+.rb-g[open] { background: #fff; border-color: rgba(20,24,20,.18) }
+.rb-g-head {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 10px 12px; cursor: pointer; list-style: none;
+}
+.rb-g-head::-webkit-details-marker { display: none }
+.rb-g-head:hover { background: rgba(20,24,20,.02) }
+.rb-g-chev { flex: 0 0 auto; margin-top: 3px; color: rgba(20,24,20,.3); transition: transform .15s ease }
+.rb-g[open] .rb-g-chev { transform: rotate(90deg) }
+
+.rb-g-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px }
+.rb-g-line { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0 }
+.rb-g-cliente {
     font-size: 13.5px; font-weight: 700; flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.rb-g-total { font-size: 14px; font-weight: 800; flex: 0 0 auto; font-variant-numeric: tabular-nums }
+.rb-g-meta { align-items: center }
+/* Todo en una línea: lo que no entra se recorta (el badge y el recargo nunca,
+   que son lo que se lee de un vistazo) */
+.rb-g-tags { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; overflow: hidden }
+.rb-g-fecha {
+    font-size: 11px; color: rgba(20,24,20,.45); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+}
+.rb-g-vend { text-transform: capitalize }
+.rb-g-recargo {
+    font-size: 11.5px; font-weight: 800; color: #6a3fd8;
+    background: rgba(124,77,255,.1); padding: 2px 7px; border-radius: 999px; white-space: nowrap;
+}
+/* "+1": el cliente tiene rebotes de más de un responsable (se ven al desplegar) */
+.rb-mas {
+    font-size: 10.5px; font-weight: 700; color: rgba(20,24,20,.5);
+    background: rgba(20,24,20,.06); padding: 3px 6px; border-radius: 999px; flex: 0 0 auto;
+}
+
+/* Repitió en el mes: es el dato que dispara la llamada al cliente */
+.rb-veces {
+    font-size: 10.5px; font-weight: 800; color: #b3372f;
+    background: rgba(220,68,68,.1); padding: 3px 7px; border-radius: 999px; white-space: nowrap;
+}
+
 .rb-dot { color: #d98324; margin-left: 5px; font-size: 9px; vertical-align: 2px }
-.rb-row-bottom { display: flex; align-items: baseline; justify-content: space-between; gap: 10px }
-.rb-row-art { font-size: 12.5px; color: rgba(20,24,20,.65); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.rb-row-art em { font-style: normal; font-weight: 700 }
-.rb-row-total { font-size: 13.5px; font-weight: 800; flex: 0 0 auto }
-.rb-row-vend { font-size: 11px; color: rgba(20,24,20,.45); font-weight: 600; text-transform: capitalize }
+
+/* Renglones de un cliente (lo que volvió, artículo por artículo) */
+.rb-g-rows {
+    border-top: 1px dashed rgba(20,24,20,.12);
+    padding: 4px 12px 8px; display: flex; flex-direction: column;
+}
+.rb-r {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 0; font-size: 12px; min-width: 0;
+    border-bottom: 1px solid rgba(20,24,20,.05);
+}
+.rb-r:last-child { border-bottom: none }
+.rb-r-fecha { font-size: 11px; font-weight: 700; color: rgba(20,24,20,.4); flex: 0 0 auto }
+.rb-r-art {
+    flex: 1; min-width: 0; color: rgba(20,24,20,.7);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rb-r-art em { font-style: normal; font-weight: 700; color: #141814 }
+.rb-r-total { font-weight: 700; flex: 0 0 auto; font-variant-numeric: tabular-nums }
 
 .rb-badge {
     flex: 0 0 auto; font-size: 10.5px; font-weight: 700; letter-spacing: .2px;
@@ -122,41 +194,29 @@
 .rb-badge--empresa { background: rgba(20,24,20,.07); color: rgba(20,24,20,.6) }
 .rb-badge--otro { background: transparent; border: 1px dashed rgba(20,24,20,.3); color: rgba(20,24,20,.55) }
 
+/* La cola larga: el 20% de la plata repartido en la mitad de los clientes */
+.rb-more {
+    width: 100%; padding: 10px; border-radius: 12px;
+    border: 1px dashed rgba(20,24,20,.2); background: transparent;
+    font-family: inherit; font-size: 12.5px; font-weight: 600;
+    color: rgba(20,24,20,.6); cursor: pointer;
+}
+.rb-more:hover { background: rgba(20,24,20,.03); color: #141814 }
+
 .rb-foot { font-size: 11px; color: rgba(20,24,20,.4); text-align: center; padding-top: 2px }
 
-/* Desktop: lista un poco más respirada */
+/* Desktop: más aire y el detalle en columnas parejas */
+/* Celular: 2 tiles por fila y el impar a lo ancho (si no, queda un hueco) */
+@media (max-width: 899px) {
+    .rb-tiles { grid-template-columns: 1fr 1fr }
+    .rb-tile:last-child:nth-child(odd) { grid-column: 1 / -1 }
+}
+
 @media (min-width: 900px) {
     .rb-tiles { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)) }
-    .rb-row { flex-direction: row; align-items: center; gap: 12px }
-    .rb-row-top { flex: 1 }
-    .rb-row-bottom { flex: 1; justify-content: flex-end; gap: 24px }
-    .rb-row-vend { flex: 0 0 90px; text-align: right }
+    .rb-g-rows { padding-left: 34px }
+    .rb-g-head { padding: 12px 14px }
+    .rb-r { gap: 14px }
+    .rb-r-fecha { flex: 0 0 38px }
+    .rb-r-total { flex: 0 0 110px; text-align: right }
 }
-
-/* ── 2. Recargos 3% a clientes (rige desde julio 2026) ── */
-.rb-card--recargos { border-color: rgba(124,77,255,.3) }
-.rb-card--recargos .rb-card-head h3 { color: #6a3fd8 }
-.rb-recargos-total {
-    display: inline-block; margin-top: 8px;
-    font-size: 12px; font-weight: 800; color: #6a3fd8;
-    background: rgba(124,77,255,.1); padding: 4px 10px; border-radius: 999px;
-}
-.rb-recargos-list { display: flex; flex-direction: column; gap: 6px }
-
-.rb-ev {
-    border: 1px solid rgba(124,77,255,.35); border-radius: 12px;
-    background: rgba(124,77,255,.04);
-    padding: 8px 10px; display: flex; flex-direction: column; gap: 3px;
-}
-.rb-ev-top { display: flex; align-items: center; gap: 8px; min-width: 0 }
-.rb-ev-cliente {
-    font-size: 13px; font-weight: 700; flex: 1; min-width: 0;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.rb-ev-reinc {
-    margin-left: 6px; font-size: 10px; font-weight: 800; color: #b3372f;
-    background: rgba(220,68,68,.1); padding: 2px 6px; border-radius: 999px;
-}
-.rb-ev-bottom { display: flex; align-items: baseline; justify-content: space-between; gap: 10px }
-.rb-ev-det { font-size: 11.5px; color: rgba(20,24,20,.6) }
-.rb-ev-recargo { font-size: 13.5px; font-weight: 800; color: #6a3fd8; flex: 0 0 auto }

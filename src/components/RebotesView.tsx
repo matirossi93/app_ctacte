@@ -1,52 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
-import { PackageX, Loader2, AlertCircle, RefreshCw, DownloadCloud } from 'lucide-react';
+import { PackageX, Loader2, AlertCircle, RefreshCw, DownloadCloud, ChevronRight, TrendingDown, TrendingUp } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
+import { hoyArgentinaPartes } from '../utils/hoyArgentina';
+import {
+    agruparPorCliente, corteRelevante, claveCliente, grupoDeMotivo, mesAnterior,
+    totalHastaDia, variacionPorc, MOTIVO_META, GRUPO_ORDER,
+    type GrupoResponsable, type GrupoCliente, type RebotePlano,
+} from '../utils/agruparRebotes';
 import type { ViewPeriod } from './PeriodSelector';
 import './RebotesView.css';
 
 const MONTH_NAMES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
-// Espejo de MotivoRebote en server-lib/rebotesParser.ts.
-// grupo: quién causó el rebote — es el eje de TODA la vista (tiles + badges):
-//   vendedor → fase 2 le descuenta 3% de comisión (M.C. VENDEDOR)
-//   cliente  → fase 3 le recarga 3% si rebotó el pedido completo
-type Grupo = 'vendedor' | 'cliente' | 'empresa' | 'otro';
-const MOTIVO_META: Record<string, { label: string; grupo: Grupo }> = {
-    mc_vendedor: { label: 'M.C. Vendedor', grupo: 'vendedor' },
-    devolucion: { label: 'Devolución', grupo: 'cliente' },
-    sin_dinero: { label: 'Sin dinero', grupo: 'cliente' },
-    cerrado: { label: 'Cerrado', grupo: 'cliente' },
-    mc_deposito: { label: 'M.C. Depósito', grupo: 'empresa' },
-    falto: { label: 'Faltó', grupo: 'empresa' },
-    sin_stock: { label: 'Sin stock', grupo: 'empresa' },
-    error_adm: { label: 'Error adm.', grupo: 'empresa' },
-    logistica: { label: 'Logística', grupo: 'empresa' },
-    error_sistema: { label: 'Error sistema', grupo: 'empresa' },
-    sin_clasificar: { label: 'Sin clasificar', grupo: 'otro' },
-};
-const grupoDe = (motivo: string): Grupo => MOTIVO_META[motivo]?.grupo ?? 'otro';
-
-const GRUPO_ORDER: Grupo[] = ['vendedor', 'cliente', 'empresa', 'otro'];
-const GRUPO_META: Record<Grupo, { label: string; sub: string }> = {
-    vendedor: { label: 'Error del vendedor', sub: '3% menos de comisión' },
-    cliente: { label: 'Culpa del cliente', sub: '3% de recargo si rebotó el pedido completo' },
-    empresa: { label: 'Empresa / depósito', sub: 'sin cargo' },
-    otro: { label: 'Sin clasificar', sub: 'revisar en la planilla' },
+// La taxonomía de motivos (quién causó el rebote) vive en utils/agruparRebotes:
+// la necesitan tanto la vista como la agrupación. Acá quedan solo los textos.
+const GRUPO_META: Record<GrupoResponsable, { label: string; corto: string; sub: string }> = {
+    vendedor: { label: 'Error del vendedor', corto: 'Vendedor', sub: '3% menos de comisión' },
+    cliente: { label: 'Culpa del cliente', corto: 'Cliente', sub: '3% de recargo' },
+    empresa: { label: 'Empresa / depósito', corto: 'Depósito', sub: 'sin cargo' },
+    otro: { label: 'Sin clasificar', corto: 'Sin clasificar', sub: 'revisar en la planilla' },
 };
 
-interface RebotesRow {
-    fila: number;
-    fecha: string | null;
-    cliente_raw: string;
-    cod_cliente: number | null;
-    vendedor_raw: string | null;
-    cod_vendedor: number | null;
+interface RebotesRow extends RebotePlano {
     cod_articulo: number | null;
-    articulo: string | null;
-    motivo: string;
-    motivo_raw: string | null;
-    cantidad: number | null;
-    total: number | null;
 }
 
 interface RebotesResponse {
@@ -103,14 +79,19 @@ const fmtFecha = (iso: string | null) => {
     return `${d}/${m}`;
 };
 
+/** 3% de comisión que se le descuenta al vendedor por lo que rebotó por su error. */
+const PCT_CARGO = 0.03;
+
 export const RebotesView = ({ isAdmin, viewPeriod }: Props) => {
     const [data, setData] = useState<RebotesResponse | null>(null);
     const [recargos, setRecargos] = useState<RecargosResponse | null>(null);
+    const [prevRows, setPrevRows] = useState<RebotesRow[] | null>(null);
     const [loading, setLoading] = useState(false);
     const [syncing, setSyncing] = useState(false);
     const [err, setErr] = useState<string | null>(null);
-    const [filtroGrupo, setFiltroGrupo] = useState<Grupo | null>(null);
+    const [filtroGrupo, setFiltroGrupo] = useState<GrupoResponsable | null>(null);
     const [filtroVendedor, setFiltroVendedor] = useState<number | null>(null);
+    const [verTodos, setVerTodos] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
 
     const load = async () => {
@@ -137,6 +118,16 @@ export const RebotesView = ({ isAdmin, viewPeriod }: Props) => {
                 const j2 = await res2.json();
                 setRecargos(res2.ok && j2.ok ? j2 : null);
             } catch { setRecargos(null); }
+            // Mes anterior, solo para el "vs.": un total suelto no dice si el mes
+            // viene bien o mal. Best-effort — si falla, se muestra sin comparación.
+            try {
+                const prev = mesAnterior(viewPeriod.year, viewPeriod.month);
+                const res3 = await fetch(`/api/rebotes?year=${prev.year}&month=${prev.month}`, {
+                    headers: authHeaders(), signal: ctrl.signal,
+                });
+                const j3 = await res3.json();
+                setPrevRows(res3.ok && j3.ok ? j3.rows : null);
+            } catch { setPrevRows(null); }
         } catch (e: any) {
             if (e.name === 'AbortError') return;
             setErr(e.message);
@@ -148,6 +139,10 @@ export const RebotesView = ({ isAdmin, viewPeriod }: Props) => {
         return () => { if (abortRef.current) abortRef.current.abort(); };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [viewPeriod.year, viewPeriod.month]);
+
+    // Cambiar de filtro o de mes vuelve a esconder la cola larga: si no, una
+    // lista de 60 clientes reaparece sola cuando cambiás de vendedor.
+    useEffect(() => { setVerTodos(false); }, [filtroGrupo, filtroVendedor, viewPeriod.year, viewPeriod.month]);
 
     const syncNow = async () => {
         setSyncing(true); setErr(null);
@@ -181,24 +176,62 @@ export const RebotesView = ({ isAdmin, viewPeriod }: Props) => {
     }
 
     // base = mes completo con corte de fecha y vendedor aplicados. Sobre esto
-    // se calculan el total del resumen y los tiles; el tile activo filtra el
-    // detalle de abajo.
+    // se calculan el total del resumen y los tiles; el tile activo filtra la
+    // lista de clientes de abajo.
     const base = rows.filter(r =>
         (filtroVendedor == null || (r.cod_vendedor ?? -1) === filtroVendedor)
         && (asOfIso == null || r.fecha == null || r.fecha <= asOfIso),
     );
-    const visibles = filtroGrupo == null ? base : base.filter(r => grupoDe(r.motivo) === filtroGrupo);
+    const visibles = filtroGrupo == null ? base : base.filter(r => grupoDeMotivo(r.motivo) === filtroGrupo);
 
     const totalBase = Math.round(base.reduce((a, r) => a + (Number(r.total) || 0), 0) * 100) / 100;
     const totalVisible = Math.round(visibles.reduce((a, r) => a + (Number(r.total) || 0), 0) * 100) / 100;
 
-    const porGrupo = new Map<Grupo, { filas: number; total: number }>();
+    const porGrupo = new Map<GrupoResponsable, { filas: number; total: number }>();
     for (const r of base) {
-        const g = grupoDe(r.motivo);
+        const g = grupoDeMotivo(r.motivo);
         const s = porGrupo.get(g) ?? { filas: 0, total: 0 };
         s.filas += 1; s.total += Number(r.total) || 0;
         porGrupo.set(g, s);
     }
+
+    // ── Comparación con el mes pasado, mismo tramo ──
+    // Si el mes es el actual, el mes anterior se corta al día de hoy: comparar
+    // 16 días contra 31 diría "bajó a la mitad" cuando no bajó nada.
+    const hoy = hoyArgentinaPartes();
+    const esMesEnCurso = viewPeriod.year === hoy.year && viewPeriod.month === hoy.month;
+    const diaCorte = viewPeriod.asOfDay ?? (esMesEnCurso ? hoy.day : null);
+    const prev = mesAnterior(viewPeriod.year, viewPeriod.month);
+    const totalPrev = prevRows == null ? null : totalHastaDia(
+        prevRows.filter(r => filtroVendedor == null || (r.cod_vendedor ?? -1) === filtroVendedor),
+        prev.year, prev.month, diaCorte,
+    );
+    const variacion = totalPrev == null ? null : variacionPorc(totalBase, totalPrev);
+
+    // ── Agrupación por cliente ──
+    // El recargo del 3% sale de los eventos que calcula el backend (no se
+    // recalcula acá) y se pega al cliente por la misma clave que usa allá.
+    const recargoPorCliente = new Map<string, number>();
+    for (const e of recargos?.eventos ?? []) {
+        if (asOfIso != null && e.fecha && e.fecha > asOfIso) continue;
+        if (filtroVendedor != null && (e.cod_vendedor ?? -1) !== filtroVendedor) continue;
+        const k = claveCliente(e.cod_cliente, e.cliente_raw);
+        recargoPorCliente.set(k, Math.round(((recargoPorCliente.get(k) ?? 0) + e.recargo) * 100) / 100);
+    }
+
+    const grupos = agruparPorCliente(visibles, recargoPorCliente);
+    const corte = corteRelevante(grupos);
+    const enPantalla = verTodos ? grupos : corte.visibles;
+    // Clientes del mes, sin el filtro del tile: el número grande de arriba es
+    // el total del mes, así que su "de N clientes" también tiene que serlo.
+    const clientesBase = new Set(base.map(r => claveCliente(r.cod_cliente, r.cliente_raw))).size;
+
+    // El recargo pertenece al cliente por lo que rebotó POR SU CULPA: mostrarlo
+    // mientras se está filtrando por "empresa" confundiría más de lo que aporta.
+    const mostrarRecargo = (recargos?.rige ?? false) && (filtroGrupo == null || filtroGrupo === 'cliente');
+    const descuentoVendedor = (recargos?.rige ?? false)
+        ? Math.round((porGrupo.get('vendedor')?.total ?? 0) * PCT_CARGO * 100) / 100
+        : 0;
 
     return (
         <div className="rb-wrap">
@@ -237,29 +270,48 @@ export const RebotesView = ({ isAdmin, viewPeriod }: Props) => {
 
             {data && rows.length > 0 && (
                 <>
-                    {/* ── 1. Resumen: cuánto rebotó y de quién fue la culpa ── */}
+                    {/* ── 1. Cuánto rebotó, contra el mes pasado, y de quién fue la culpa ── */}
                     <div className="rb-card">
                         <div className="rb-hero">
-                            <span className="rb-hero-num">{fmtMoney(totalBase)}</span>
+                            <div className="rb-hero-line">
+                                <span className="rb-hero-num">{fmtMoney(totalBase)}</span>
+                                {variacion != null && (
+                                    <span className={`rb-delta ${variacion <= 0 ? 'is-baja' : 'is-sube'}`}>
+                                        {variacion <= 0 ? <TrendingDown size={13} /> : <TrendingUp size={13} />}
+                                        {variacion > 0 ? '+' : ''}{variacion}%
+                                    </span>
+                                )}
+                            </div>
                             <span className="rb-hero-label">
-                                rebotado ({base.length} renglones{asOfIso ? ` al día ${viewPeriod.asOfDay}` : ''})
+                                rebotado · {base.length} renglones de {clientesBase} cliente{clientesBase === 1 ? '' : 's'}
+                                {asOfIso ? ` · al día ${viewPeriod.asOfDay}` : ''}
                             </span>
+                            {variacion != null && totalPrev != null && (
+                                <span className="rb-hero-vs">
+                                    {MONTH_NAMES[prev.month - 1]}{diaCorte != null ? ` al día ${diaCorte}` : ''} había {fmtMoney(totalPrev)}
+                                </span>
+                            )}
                         </div>
                         <div className="rb-tiles">
                             {GRUPO_ORDER.map(g => {
                                 const s = porGrupo.get(g);
                                 if (!s) return null;
                                 const meta = GRUPO_META[g];
+                                const plata = g === 'vendedor' && descuentoVendedor > 0
+                                    ? `−${fmtMoney(descuentoVendedor)} de comisión`
+                                    : g === 'cliente' && (recargos?.resumen.recargo_total ?? 0) > 0
+                                        ? `+${fmtMoney(recargos!.resumen.recargo_total)} de recargo`
+                                        : meta.sub;
                                 return (
                                     <button
                                         key={g}
                                         className={`rb-tile rb-tile--${g} ${filtroGrupo === g ? 'is-active' : ''}`}
                                         onClick={() => setFiltroGrupo(filtroGrupo === g ? null : g)}
-                                        title="Tocá para ver solo estos rebotes en el detalle"
+                                        title="Tocá para ver solo estos rebotes"
                                     >
                                         <span className="rb-tile-label">{meta.label}</span>
                                         <span className="rb-tile-num">{fmtMoney(s.total)}</span>
-                                        <span className="rb-tile-sub">{s.filas} renglones · {meta.sub}</span>
+                                        <span className="rb-tile-sub">{s.filas} renglones · {plata}</span>
                                     </button>
                                 );
                             })}
@@ -277,53 +329,28 @@ export const RebotesView = ({ isAdmin, viewPeriod }: Props) => {
                         </div>
                     )}
 
-                    {/* ── 2. Recargo 3% al cliente (todo lo que rebota por su culpa) ── */}
-                    {recargos?.rige && recargos.eventos.length > 0 && (
-                        <div className="rb-card rb-card--recargos">
-                            <div className="rb-card-head">
-                                <h3>Costo del rebote para el cliente (3%)</h3>
-                                <p>
-                                    Todo lo que el cliente rebota por su culpa (devolución, sin dinero o cerrado) representa un
-                                    <b> 3%</b> extra, sea el pedido completo o solo una parte. Por ahora es <b>solo un aviso</b> —todavía
-                                    no se cobra—:{' '}
-                                    {isAdmin
-                                        ? 'cuando arranque el cobro se factura a mano en InfoManager.'
-                                        : 'mostrale el número a cada cliente para que entre todos bajemos los rebotes.'}
-                                </p>
-                                {recargos.resumen.recargo_total > 0 && (
-                                    <span className="rb-recargos-total">
-                                        {recargos.resumen.eventos} rebote(s) · 3% = {fmtMoney(recargos.resumen.recargo_total)}
-                                    </span>
-                                )}
-                            </div>
-                            <div className="rb-recargos-list">
-                                {recargos.eventos.map((e, i) => (
-                                    <div key={i} className="rb-ev">
-                                        <div className="rb-ev-top">
-                                            <span className="rb-row-fecha">{fmtFecha(e.fecha || null)}</span>
-                                            <span className="rb-ev-cliente">
-                                                {e.cliente_raw}
-                                                {e.reincidencia > 1 && <span className="rb-ev-reinc" title="Rebotes de este cliente en el mes">{e.reincidencia}ª vez</span>}
-                                            </span>
-                                        </div>
-                                        <div className="rb-ev-bottom">
-                                            <span className="rb-ev-det">{fmtMoney(e.total_rebotado)} rebotado ({e.renglones} renglones)</span>
-                                            <span className="rb-ev-recargo">+{fmtMoney(e.recargo)}</span>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
+                    {/* ── 2. El 3% al cliente: la regla, sin repetir la lista ──
+                        Cada cliente lleva su recargo en su propia fila, abajo. */}
+                    {recargos?.rige && recargos.resumen.recargo_total > 0 && (
+                        <div className="rb-nota">
+                            <b>+{fmtMoney(recargos.resumen.recargo_total)}</b> en recargos del 3% ({recargos.resumen.eventos} rebote
+                            {recargos.resumen.eventos === 1 ? '' : 's'} por culpa del cliente
+                            {recargos.resumen.reincidentes > 0 ? `, ${recargos.resumen.reincidentes} repetido${recargos.resumen.reincidentes === 1 ? '' : 's'}` : ''}).
+                            {' '}Por ahora es <b>solo un aviso</b>:{' '}
+                            {isAdmin
+                                ? 'cuando arranque el cobro se factura a mano en InfoManager.'
+                                : 'mostrale el número a cada cliente para que entre todos bajemos los rebotes.'}
                         </div>
                     )}
 
-                    {/* ── 3. Detalle renglón por renglón ── */}
+                    {/* ── 3. Un renglón por cliente, del que más costó al que menos ── */}
                     <div className="rb-card">
                         <div className="rb-card-head">
-                            <h3>Detalle</h3>
+                            <h3>Quién rebotó</h3>
                             <p>
                                 {filtroGrupo == null
-                                    ? `Todos los rebotes de ${monthLabel}, renglón por renglón.`
-                                    : <>Mostrando solo <b>{GRUPO_META[filtroGrupo].label.toLowerCase()}</b> ({visibles.length} renglones · {fmtMoney(totalVisible)}) — tocá el recuadro de arriba para ver todo.</>}
+                                    ? <>Un cliente por línea, del que más plata devolvió al que menos. Tocá para ver qué volvió.</>
+                                    : <>Solo <b>{GRUPO_META[filtroGrupo].label.toLowerCase()}</b>: {visibles.length} renglones · {fmtMoney(totalVisible)} — tocá el recuadro de arriba para ver todo.</>}
                             </p>
                         </div>
 
@@ -342,36 +369,28 @@ export const RebotesView = ({ isAdmin, viewPeriod }: Props) => {
                             </div>
                         )}
 
-                        {visibles.length === 0 ? (
+                        {enPantalla.length === 0 ? (
                             <div className="rb-empty rb-empty--inline">Nada que mostrar con estos filtros.</div>
                         ) : (
-                            <div className="rb-list">
-                                {visibles.map(r => {
-                                    const meta = MOTIVO_META[r.motivo] ?? { label: r.motivo_raw ?? r.motivo, grupo: 'otro' as const };
-                                    return (
-                                        <div key={`${r.fila}`} className="rb-row">
-                                            <div className="rb-row-top">
-                                                <span className="rb-row-fecha">{fmtFecha(r.fecha)}</span>
-                                                <span className="rb-row-cliente">
-                                                    {r.cliente_raw}
-                                                    {isAdmin && r.cod_cliente == null && <span className="rb-dot" title="Sin match con maestro IM">●</span>}
-                                                </span>
-                                                <span className={`rb-badge rb-badge--${meta.grupo}`}>{meta.label}</span>
-                                            </div>
-                                            <div className="rb-row-bottom">
-                                                <span className="rb-row-art">
-                                                    {r.articulo}
-                                                    {r.cantidad != null && <em> ×{r.cantidad}</em>}
-                                                </span>
-                                                <span className="rb-row-total">{r.total != null ? fmtMoney(r.total) : '—'}</span>
-                                            </div>
-                                            {isAdmin && r.vendedor_raw && vendedores.size > 1 && filtroVendedor == null && (
-                                                <div className="rb-row-vend">{r.vendedor_raw}</div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
+                            <div className="rb-groups">
+                                {enPantalla.map(g => (
+                                    <GrupoRow
+                                        key={g.clave}
+                                        g={g}
+                                        isAdmin={isAdmin}
+                                        mostrarRecargo={mostrarRecargo}
+                                        mostrarVendedor={vendedores.size > 1 && filtroVendedor == null}
+                                    />
+                                ))}
                             </div>
+                        )}
+
+                        {corte.ocultos.length > 0 && (
+                            <button className="rb-more" onClick={() => setVerTodos(v => !v)}>
+                                {verTodos
+                                    ? 'Mostrar solo los que explican el 80%'
+                                    : `Ver los otros ${corte.ocultos.length} clientes · ${fmtMoney(corte.totalOculto)}`}
+                            </button>
                         )}
                     </div>
                 </>
@@ -383,5 +402,71 @@ export const RebotesView = ({ isAdmin, viewPeriod }: Props) => {
                 </div>
             )}
         </div>
+    );
+};
+
+/** Un cliente colapsado: cuánto, cuántas veces y de quién fue. Se abre al tocarlo. */
+const GrupoRow = ({ g, isAdmin, mostrarRecargo, mostrarVendedor }: {
+    g: GrupoCliente;
+    isAdmin: boolean;
+    mostrarRecargo: boolean;
+    mostrarVendedor: boolean;
+}) => {
+    const veces = g.dias.length;
+    return (
+        <details className="rb-g">
+            <summary className="rb-g-head">
+                <ChevronRight size={14} className="rb-g-chev" />
+                <div className="rb-g-main">
+                    <div className="rb-g-line">
+                        <span className="rb-g-cliente">
+                            {g.cliente}
+                            {isAdmin && g.cod_cliente == null && <span className="rb-dot" title="Sin match con maestro IM">●</span>}
+                        </span>
+                        <span className="rb-g-total">{fmtMoney(g.total)}</span>
+                    </div>
+                    <div className="rb-g-line rb-g-meta">
+                        <span className="rb-g-tags">
+                            {veces > 1 && <span className="rb-veces" title="Días distintos con rebote en el mes">{veces} rebotes</span>}
+                            {/* Solo el responsable que explica más plata: dos o tres badges
+                                comen la línea entera y tapan la fecha. El resto, al desplegar. */}
+                            <span className={`rb-badge rb-badge--${g.responsables[0]}`} title={GRUPO_META[g.responsables[0]].label}>
+                                {GRUPO_META[g.responsables[0]].corto}
+                            </span>
+                            {g.responsables.length > 1 && (
+                                <span className="rb-mas" title={`También: ${g.responsables.slice(1).map(r => GRUPO_META[r].label).join(', ')}`}>
+                                    +{g.responsables.length - 1}
+                                </span>
+                            )}
+                            <span className="rb-g-fecha">
+                                {g.renglones.length} reng. · {fmtFecha(g.ultimaFecha)}
+                                {mostrarVendedor && g.vendedores.length > 0 && (
+                                    <> · <span className="rb-g-vend">{g.vendedores.join('/').toLowerCase()}</span></>
+                                )}
+                            </span>
+                        </span>
+                        {mostrarRecargo && g.recargo > 0 && (
+                            <span className="rb-g-recargo">+{fmtMoney(g.recargo)}</span>
+                        )}
+                    </div>
+                </div>
+            </summary>
+            <div className="rb-g-rows">
+                {g.renglones.map(r => {
+                    const meta = MOTIVO_META[r.motivo] ?? { label: r.motivo_raw ?? r.motivo, grupo: 'otro' as const };
+                    return (
+                        <div key={r.fila} className="rb-r">
+                            <span className="rb-r-fecha">{fmtFecha(r.fecha)}</span>
+                            <span className="rb-r-art" title={r.articulo ?? ''}>
+                                {r.articulo}
+                                {r.cantidad != null && <em> ×{r.cantidad}</em>}
+                            </span>
+                            <span className={`rb-badge rb-badge--${meta.grupo}`}>{meta.label}</span>
+                            <span className="rb-r-total">{r.total != null ? fmtMoney(r.total) : '—'}</span>
+                        </div>
+                    );
+                })}
+            </div>
+        </details>
     );
 };
