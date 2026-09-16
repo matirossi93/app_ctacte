@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { X, Camera, Upload, Check, AlertCircle, ChevronLeft, Loader2, Search, Clock, FileText, RefreshCw, ZoomIn, ZoomOut, Download, ExternalLink, LogOut } from 'lucide-react';
+import { X, Camera, Upload, Check, AlertCircle, ChevronLeft, Loader2, Search, Clock, FileText, RefreshCw, ZoomIn, ZoomOut, Download, ExternalLink, LogOut, Share2 } from 'lucide-react';
 import { authHeaders, getUser } from '../utils/auth';
 import { buscarClientes } from '../utils/buscarClientes';
 import { formatCurrency, formatCurrency2 } from '../utils/formatters';
@@ -236,6 +236,40 @@ const vendorLabel = (cod: number): string => VENDOR_NAMES[cod] ?? `Vendedor #${c
 
 function RecibosList({ isBackoffice, viewAll, clientNameByCod, onOpenDetail, onUpload }: { isBackoffice: boolean; viewAll: boolean; clientNameByCod: Map<string, string>; onOpenDetail: (id: string) => void; onUpload: () => void }) {
     const [items, setItems] = useState<ReciboRow[]>([]);
+    /**
+     * El recibo en PDF para mandarle al cliente por WhatsApp.
+     *
+     * Mati (16/09/2026): *"un botón para poder compartir el recibo que crean ellos, para
+     * reemplazar el recibo manual que actualmente están escribiendo los vendedores"*.
+     *
+     * El import va acá adentro: jsPDF son ~600 kB y no tienen por qué viajar en el bundle de
+     * la primera pantalla. Mismo criterio que el PDF del presupuesto.
+     */
+    const [compartiendo, setCompartiendo] = useState<string | null>(null);
+    async function compartir(r: ReciboRow) {
+        setCompartiendo(r.id);
+        try {
+            const { compartirReciboPdf } = await import('../utils/pdfRecibo');
+            await compartirReciboPdf({
+                // Sin número de InfoManager el PDF se rotula como constancia provisoria: hasta
+                // que la oficina lo imputa, respalda que el vendedor recibió la plata.
+                numero: r.infomanager_recibo_id ?? null,
+                cliente: clientNameByCod.get(String(r.cod_cliente)) ?? `Cliente ${r.cod_cliente}`,
+                cod_cliente: r.cod_cliente,
+                fecha: r.fecha_comprobante ?? r.created_at,
+                monto: Number(r.monto) || 0,
+                medio_pago: MEDIOS_PAGO_UI.find(m => m.value === normalizeMedioUI(r.medio_pago))?.label ?? r.medio_pago,
+                banco_origen: r.banco_origen,
+                referencia: r.referencia,
+                observaciones: r.observaciones,
+                vendedor: vendorLabel(r.cod_vendedor),
+            });
+        } catch (e: any) {
+            alert(`No se pudo armar el recibo: ${e?.message ?? 'error'}`);
+        } finally {
+            setCompartiendo(null);
+        }
+    }
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState<'pendiente_revision' | 'todos' | 'imputado' | 'rechazado' | 'aprobado'>(isBackoffice ? 'pendiente_revision' : 'todos');
     const [vendorFilter, setVendorFilter] = useState<'all' | string>('all');
@@ -378,6 +412,18 @@ function RecibosList({ isBackoffice, viewAll, clientNameByCod, onOpenDetail, onU
                                 <span>{timeAgo(r.created_at)}</span>
                                 {viewAll && <span className="rec-vendor-tag">{vendorLabel(r.cod_vendedor)}</span>}
                                 {r.ocr_confidence != null && <span className="rec-ocr-badge">OCR {Math.round(r.ocr_confidence * 100)}%</span>}
+                                {/* 🪤 stopPropagation: la fila entera abre el detalle. */}
+                                {r.status !== 'rechazado' && (
+                                    <button
+                                        className="rec-compartir"
+                                        disabled={compartiendo === r.id}
+                                        onClick={e => { e.stopPropagation(); compartir(r); }}
+                                        title="Mandarle el recibo al cliente"
+                                    >
+                                        {compartiendo === r.id ? <Loader2 size={12} className="spin" /> : <Share2 size={12} />}
+                                        <span>Compartir</span>
+                                    </button>
+                                )}
                             </div>
                         </div>
                     </li>
