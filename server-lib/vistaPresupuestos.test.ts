@@ -430,3 +430,58 @@ describe('la evidencia para comparar factura y remito', () => {
     expect(ev.renglones.size).toBe(0);
   });
 });
+
+/**
+ * 🔴 EL BOTÓN ACTUALIZAR ES LO CARO. Medido en producción el 14/09/2026 sobre 20 cargas reales
+ * del tablero: con los caches calientes la vista tarda 0,6 s; forzada, entre 4 y 16 s. Y dentro
+ * de la vista, casi todo es espera de InfoManager.
+ *
+ * Pedir las ventas para recién ahí saber qué días tienen pedidos SUMA las dos esperas. En un
+ * rango corto —1 a 3 días en todas las cargas medidas— los renglones se piden en paralelo.
+ */
+describe('los renglones se piden sin esperar a las ventas', () => {
+  /** Deja `fetchVentas` colgada hasta que se la suelta, para ver qué pasó mientras tanto. */
+  function ventasDemoradas() {
+    let soltar!: () => void;
+    const puerta = new Promise<void>(r => { soltar = r; });
+    m.fetchVentas.mockImplementation(async () => { await puerta; return [PR]; });
+    return soltar;
+  }
+
+  it('🔑 con un rango corto, los renglones ya están en vuelo antes de que lleguen las ventas', async () => {
+    const soltar = ventasDemoradas();
+    m.fetchVentasItems.mockResolvedValue(renglon(12));
+    const vista = vistaDeRango('2026-09-09', '2026-09-09', true);
+    // Un respiro para que arranque todo lo que no depende de las ventas.
+    await new Promise(r => setTimeout(r, 5));
+    expect(m.fetchVentasItems, 'los renglones esperaron a las ventas').toHaveBeenCalled();
+    soltar();
+    await vista;
+  });
+
+  it('🔑 y no se piden dos veces: se consume la lectura que ya estaba en vuelo', async () => {
+    m.fetchVentasItems.mockResolvedValue(renglon(12));
+    await vistaDeRango('2026-09-09', '2026-09-09', true);
+    const porDia = m.fetchVentasItems.mock.calls.filter(c => c[0] === '2026-09-09');
+    expect(porDia, `se pidió ${porDia.length} veces el mismo día`).toHaveLength(1);
+  });
+
+  /** 🪤 En un rango largo esto pediría renglones de días sin un solo presupuesto. */
+  it('🔴 con un rango largo se sigue esperando a las ventas', async () => {
+    const soltar = ventasDemoradas();
+    m.fetchVentasItems.mockResolvedValue(renglon(12));
+    const vista = vistaDeRango('2026-09-01', '2026-09-20', true);
+    await new Promise(r => setTimeout(r, 5));
+    expect(m.fetchVentasItems, 'pidió renglones de días que quizá no tienen pedidos').not.toHaveBeenCalled();
+    soltar();
+    await vista;
+  });
+
+  it('si la lectura adelantada falla, el día se reintenta por el camino de siempre', async () => {
+    m.fetchVentasItems.mockRejectedValueOnce(new Error('IM sin respuesta')).mockResolvedValue(renglon(12));
+    const v = await vistaDeRango('2026-09-09', '2026-09-09', true);
+    expect(m.fetchVentasItems.mock.calls.length).toBeGreaterThanOrEqual(2);
+    // Y el pedido sale con sus renglones, no con 0 kg.
+    expect(v.pendientes[0]?.kg).toBeGreaterThan(0);
+  });
+});

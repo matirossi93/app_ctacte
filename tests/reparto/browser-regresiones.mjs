@@ -38,48 +38,62 @@ try {
       await page.screenshot({path:`${out}/detalle-correcto.png`,fullPage:true});
     } finally { await ctx.close(); }
   });
-  await test('Aprobar usa la versión del detalle visible y bloquea borradores sin guardar',async()=>{
+  /** 🔄 15/09/2026: se eliminó Aprobar. Lo que queda es Observar, que usa el mismo camino. */
+  await test('Observar usa la versión del detalle visible, no la del listado',async()=>{
     const {page,ctx}=await setup();
     try {
-      let enviado=null,calls=0;
+      let enviado=null;
       await page.route('**/api/presupuestos/101',r=>reply(r,{items:[item(11,'PRODUCTO REVISADO')],comprobante:{im_comprobante_id:'101',numero:101,cod_cliente:101,fecha:'2026-09-10',huella:'detalle-actual'}}));
-      await page.route('**/api/presupuestos/101/revision',r=>{calls++;enviado=r.request().postDataJSON();return reply(r,{error:'Conflicto simulado'},409);});
+      await page.route('**/api/presupuestos/101/revision',r=>{enviado=r.request().postDataJSON();return reply(r,{error:'Conflicto simulado'},409);});
       await page.locator('.pr-abrir').nth(0).click();
       await page.locator('.ed-tabla tbody tr').filter({hasText:'PRODUCTO REVISADO'}).waitFor();
-      await page.getByRole('button',{name:'Aprobar',exact:true}).nth(0).click();
+      await page.getByRole('button',{name:'Observar',exact:true}).nth(0).click();
+      await page.locator('.pr-observar input').fill('falta stock');
+      await page.locator('.pr-observar').getByRole('button',{name:'Guardar',exact:true}).click();
       await page.getByText('Conflicto simulado',{exact:true}).waitFor();
       assert(enviado?.huella==='detalle-actual','Se envió la versión vieja del listado');
-      await page.locator('.pr-detalle .ed-cant').fill('3');
-      await page.getByRole('button',{name:'Aprobar',exact:true}).nth(0).click();
-      await page.getByText('Guardá o descartá los cambios de este presupuesto antes de aprobarlo.',{exact:true}).waitFor();
-      assert(calls===1,'Se aprobó con cambios pendientes sin guardar');
+      assert(enviado?.estado==='observado',`Mandó otro estado: ${JSON.stringify(enviado)}`);
+    } finally {await ctx.close();}
+  });
+
+  /**
+   * 🔴 YA NO HAY QUE APROBAR PARA FACTURAR. Mati (15/09/2026): *"eliminar el paso donde se
+   * aprueban los presupuestos... una vez que se editan, directamente se pueda facturar"*.
+   */
+  await test('No hay paso de aprobar: el presupuesto se puede facturar sin visto bueno', async()=>{
+    const {page,ctx}=await setup();
+    try {
+      assert(await page.getByRole('button',{name:'Aprobar',exact:true}).count()===0,'Sigue estando el botón Aprobar');
+      // Y el que queda es el freno, no la confirmación.
+      assert(await page.getByRole('button',{name:'Observar',exact:true}).count()>0,'Se perdió el botón Observar');
     } finally {await ctx.close();}
   });
   /**
    * 🔴 Mati (11/09/2026), después de aprobar un presupuesto: *"¿qué es borrador?"*.
    *
    * El cartel de abajo salía por tener el detalle abierto y fuera del filtro, sin mirar si había
-   * cambios. Como aprobar saca al presupuesto de "sin revisar", abrir uno para mirarlo y
-   * aprobarlo ya lo disparaba. Y en ese camino nunca puede ser cierto: `revisar()` frena la
-   * aprobación cuando hay un borrador vivo.
+   * cambios. Como marcarlo lo saca del filtro por defecto, abrir uno para mirarlo y marcarlo ya
+   * lo disparaba.
    */
-  await test('Aprobar un PR abierto sin editar NO lo llama borrador', async()=>{
+  await test('Observar un PR abierto sin editar NO lo llama borrador', async()=>{
     const {page,ctx}=await setup();
     try {
       await page.route('**/api/presupuestos/101',r=>reply(r,{items:[item(11,'PRODUCTO LIMPIO')],comprobante:{im_comprobante_id:'101',numero:101,cod_cliente:101,fecha:'2026-09-10',huella:'v101'}}));
       await page.route('**/api/presupuestos/101/revision',r=>reply(r,{ok:true}));
       await page.locator('.pr-abrir').nth(0).click();
       await page.locator('.ed-tabla tbody tr').filter({hasText:'PRODUCTO LIMPIO'}).waitFor();
-      // Aprobar lo saca de "sin revisar", que es el filtro por defecto: el panel de abajo aparece.
-      await page.getByRole('button',{name:'Aprobar',exact:true}).nth(0).click();
+      // Marcarlo lo saca de "Para facturar", que es el filtro por defecto: el panel de abajo aparece.
+      await page.getByRole('button',{name:'Observar',exact:true}).nth(0).click();
+      await page.locator('.pr-observar input').fill('falta stock');
+      await page.locator('.pr-observar').getByRole('button',{name:'Guardar',exact:true}).click();
       await page.locator('.pr-detalle').waitFor();
       const texto = await page.locator('.pr-detalle-motivo').innerText();
       assert(!/borrador/i.test(texto), `Sigue diciendo borrador sin cambios: "${texto}"`);
       assert(/fuera del filtro/i.test(texto), `Perdió la explicación de por qué está abajo: "${texto}"`);
       // Y el aviso de borradores REALES de arriba no se inventa ninguno.
       assert(await page.getByText('Borradores sin guardar:').count()===0,'Inventó un borrador sin guardar');
-      // 🔑 Se aprobó de verdad: está en Aprobados, no sólo ausente de la palabra.
-      await page.getByRole('button',{name:/^Aprobados/}).click();
+      // 🔑 Se marcó de verdad: está en "Con problema", no sólo ausente de la palabra.
+      await page.getByRole('button',{name:/^Con problema/}).click();
       await page.locator('.pr-fila').filter({hasText:'CLIENTE ALFA'}).waitFor();
     } finally {await ctx.close();}
   });
@@ -97,7 +111,9 @@ try {
       await page.locator('.pr-abrir').nth(0).click();
       await page.locator('.pr-detalle .ed-cant').waitFor();
       const original = await page.locator('.pr-detalle .ed-cant').inputValue();
-      await page.getByRole('button',{name:'Aprobar',exact:true}).nth(0).click();
+      await page.getByRole('button',{name:'Observar',exact:true}).nth(0).click();
+      await page.locator('.pr-observar input').fill('falta stock');
+      await page.locator('.pr-observar').getByRole('button',{name:'Guardar',exact:true}).click();
       await page.locator('.pr-detalle-motivo').waitFor();
       assert(!/borrador/i.test(await page.locator('.pr-detalle-motivo').innerText()),'Arranca diciendo borrador');
 

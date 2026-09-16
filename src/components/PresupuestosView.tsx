@@ -209,8 +209,9 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
         if (!coincide(busqueda, [p.cliente_nombre, p.im_numero, p.cod_cliente])) return false;
         if (filtro === 'todos') return true;
         if (p.factura?.origen === 'nuestra') return false;
-        if (filtro === 'sin_revisar') return !p.revision;
-        if (filtro === 'aprobados') return p.revision?.estado === 'aprobado';
+        // 🔄 "Para facturar" es todo lo que no está frenado, no sólo lo que nadie miró.
+        if (filtro === 'sin_revisar') return p.revision?.estado !== 'observado';
+        if (filtro === 'aprobados') return p.revision?.estado === 'aprobado';   // enlaces viejos
         return p.revision?.estado === 'observado';
     }), [filas, filtro, busqueda]);
 
@@ -219,10 +220,15 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
         setFilas(fs => fs.map(f => f.im_comprobante_id === id ? { ...f, revision } : f));
     }
 
+    /**
+     * 🔄 15/09/2026: sólo se usa para OBSERVAR. El estado sigue siendo un parámetro porque el
+     * backend acepta los dos y hay marcas de "aprobado" viejas que se siguen leyendo.
+     *
+     * 🪤 Se fue la guarda de "guardá los cambios antes de aprobar": marcar un pedido como
+     * problemático no lo modifica, y justamente cuando hay algo a medio editar es cuando más
+     * sentido tiene frenarlo.
+     */
     async function revisar(p: Presupuesto, estado: 'aprobado' | 'observado', observacion?: string) {
-        if (estado === 'aprobado' && reparto.borradores.has(`base:${p.im_comprobante_id}`)) {
-            setAviso('Guardá o descartá los cambios de este presupuesto antes de aprobarlo.'); return;
-        }
         if (!operacion.comenzar()) return;
         setTrabajando(p.im_comprobante_id); setAviso(null);
         try {
@@ -382,9 +388,10 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
             {/* El filtro por estado es la pantalla: lo que importa es qué FALTA revisar. */}
             <div className="pr-filtros">
                 {([
-                    ['sin_revisar', 'Sin revisar', filas.filter(f => f.factura?.origen !== 'nuestra' && !f.revision).length],
-                    ['aprobados', 'Aprobados', filas.filter(f => f.factura?.origen !== 'nuestra' && f.revision?.estado === 'aprobado').length],
-                    ['observados', 'Observados', filas.filter(f => f.factura?.origen !== 'nuestra' && f.revision?.estado === 'observado').length],
+                    // 🔄 Se fue el filtro "Aprobados": sin el paso de aprobar, lo que importa es
+                    // qué está frenado y qué no. Las marcas viejas siguen viéndose en la fila.
+                    ['sin_revisar', 'Para facturar', filas.filter(f => f.factura?.origen !== 'nuestra' && f.revision?.estado !== 'observado').length],
+                    ['observados', 'Con problema', filas.filter(f => f.factura?.origen !== 'nuestra' && f.revision?.estado === 'observado').length],
                     ['todos', 'Todos', filas.length],
                 ] as Array<[Filtro, string, number]>).map(([k, txt, n]) => (
                     <button key={k} className={filtro === k ? 'on' : ''} onClick={() => setFiltro(k)}>
@@ -431,30 +438,38 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                                 {p.factura.origen === 'deducida' && ' ?'}
                                             </span>
                                         )}
-                                        {p.gravedad?.pierde_margen > 0 && (
-                                            <span className="pr-badge grave"><AlertTriangle size={11} /> por debajo de lista</span>
-                                        )}
-                                        {/* Y lo que queda sin clasificar sigue siendo "mirá esto": son los
-                                            descuentos fuera de tope, que sí son un problema. */}
-                                        {p.gravedad?.pierde_margen === 0 && p.avisos.length > 0 && (
-                                            <span className="pr-badge aviso">revisar</span>
-                                        )}
-                                        {p.hermanos?.length > 0 && (
-                                            <span className="pr-badge grave"
-                                                  title={`Este cliente tiene otro pedido vigente del mismo día: ${p.hermanos.map(h => `PR ${h.im_numero ?? '—'} (${money(h.total)})`).join(', ')}. Mirá cuál va antes de facturar: si es una edición que quedó a medias, anulá el que no corresponde.`}>
-                                                <AlertTriangle size={11} /> otro pedido igual
-                                            </span>
-                                        )}
-                                        {p.avisos_cantidad?.length > 0 && (
-                                            <span className="pr-badge grave" title={p.avisos_cantidad.join(' · ')}>
-                                                <AlertTriangle size={11} /> cantidad
-                                            </span>
-                                        )}
-                                        {p.faltantes?.length > 0 && (
-                                            <span className="pr-badge aviso" title={p.faltantes.map(f => `${f.descripcion}: piden ${f.pedido}, hay ${f.disponible}`).join(' · ')}>
-                                                sin stock ({p.faltantes.length})
-                                            </span>
-                                        )}
+                                        {/**
+                                          * 🔑 UN badge para todo lo que hay que revisar, no cinco.
+                                          *
+                                          * Con cinco chips pegados la fila deja de leerse: el que
+                                          * avisa que se pierde plata queda al lado del que dice que
+                                          * faltan dos bolsas, y ninguno se distingue. Acá se muestra
+                                          * la peor severidad y CUÁNTOS son; el detalle completo está
+                                          * abajo, al abrir la fila, y en el título mientras tanto.
+                                          *
+                                          * 🪤 No se borra información: con un solo problema se sigue
+                                          * viendo su nombre, como antes.
+                                          */}
+                                        {(() => {
+                                            const problemas = [
+                                                p.gravedad?.pierde_margen > 0 && { grave: true, texto: 'por debajo de lista', detalle: p.avisos.join(' · ') },
+                                                // Lo que queda sin clasificar sigue siendo "mirá esto": son
+                                                // los descuentos fuera de tope, que sí son un problema.
+                                                p.gravedad?.pierde_margen === 0 && p.avisos.length > 0 && { grave: false, texto: 'revisar', detalle: p.avisos.join(' · ') },
+                                                p.hermanos?.length > 0 && { grave: true, texto: 'otro pedido igual', detalle: `Este cliente tiene otro pedido vigente del mismo día: ${p.hermanos.map(h => `PR ${h.im_numero ?? '—'} (${money(h.total)})`).join(', ')}. Mirá cuál va antes de facturar: si es una edición que quedó a medias, anulá el que no corresponde.` },
+                                                p.avisos_cantidad?.length > 0 && { grave: true, texto: 'cantidad', detalle: p.avisos_cantidad.join(' · ') },
+                                                p.faltantes?.length > 0 && { grave: false, texto: `sin stock (${p.faltantes.length})`, detalle: p.faltantes.map(f => `${f.descripcion}: piden ${f.pedido}, hay ${f.disponible}`).join(' · ') },
+                                            ].filter(Boolean) as Array<{ grave: boolean; texto: string; detalle: string }>;
+                                            if (!problemas.length) return null;
+                                            const grave = problemas.some(x => x.grave);
+                                            return (
+                                                <span className={`pr-badge ${grave ? 'grave' : 'aviso'}`}
+                                                      title={problemas.map(x => `${x.texto}: ${x.detalle}`).join('\n')}>
+                                                    <AlertTriangle size={11} />
+                                                    {problemas.length === 1 ? problemas[0].texto : `${problemas.length} para revisar`}
+                                                </span>
+                                            );
+                                        })()}
                                         {rev?.estado === 'aprobado' && <span className="pr-badge ok"><Check size={11} /> aprobado</span>}
                                         {rev?.estado === 'observado' && <span className="pr-badge obs"><CircleAlert size={11} /> observado</span>}
                                         {p.hoja_id && <span className="pr-badge tenue">en una hoja</span>}
@@ -478,16 +493,23 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                             </button>
 
                             <div className="pr-acciones">
+                                {/**
+                                  * 🔄 15/09/2026: se fue el botón de APROBAR. Mati: *"eliminar el
+                                  * paso donde se aprueban los presupuestos, porque estamos viendo
+                                  * que está medio al pedo... una vez que se editan, directamente se
+                                  * pueda facturar"*.
+                                  *
+                                  * 🔑 Queda OBSERVAR, que es lo contrario: marcar el pedido que
+                                  * tiene un problema para que NO se facture hasta resolverlo. Ya no
+                                  * hay que confirmar lo que está bien, sólo señalar lo que no.
+                                  */}
                                 {rev
-                                    ? <button className="pr-btn ghost chico" onClick={() => void desmarcar(p)} disabled={trabajando === p.im_comprobante_id}>Deshacer</button>
-                                    : <>
-                                        <button className="pr-btn ok chico" onClick={() => void revisar(p, 'aprobado')} disabled={trabajando === p.im_comprobante_id}>
-                                            <Check size={14} /> Aprobar
-                                        </button>
-                                        <button className="pr-btn ghost chico" onClick={() => { setObservando(p.im_comprobante_id); setMotivo(''); }} disabled={trabajando === p.im_comprobante_id}>
-                                            Observar
-                                        </button>
-                                    </>}
+                                    ? <button className="pr-btn ghost chico" onClick={() => void desmarcar(p)} disabled={trabajando === p.im_comprobante_id}>
+                                        {rev.estado === 'observado' ? 'Sacar la marca' : 'Deshacer'}
+                                      </button>
+                                    : <button className="pr-btn ghost chico" onClick={() => { setObservando(p.im_comprobante_id); setMotivo(''); }} disabled={trabajando === p.im_comprobante_id}>
+                                        <AlertTriangle size={14} /> Observar
+                                      </button>}
                                 {/**
                                  * 🔑 Imprimir está SIEMPRE, revisado o no. Estos botones vivían
                                  * dentro del bloque de "sin revisar", así que al aprobar un
@@ -532,11 +554,17 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
 
                         {abiertoEste && (
                             <div className="pr-detalle">
-                                {/* El texto completo del control de listas: en la fila sólo entra el badge,
-                                    y sin el detalle no se sabe QUÉ renglón está mal ni por qué. */}
-                                {!items && !!p.avisos.length && (
-                                    <div className="pr-avisos">
-                                        {p.avisos.map((a, i) => <div key={i}>· {a}</div>)}
+                                {/**
+                                  * Acá está el texto completo de lo que el badge resume. Es el único
+                                  * lugar donde se lee QUÉ renglón está mal y por qué.
+                                  *
+                                  * 🪤 El control de listas sólo mientras cargan los renglones: una vez
+                                  * que están, el editor los marca renglón por renglón y repetirlos
+                                  * arriba obliga a leer dos veces la misma observación.
+                                  */}
+                                {!!p.hermanos?.length && (
+                                    <div className="pr-avisos grave">
+                                        <div>· Este cliente tiene otro pedido vigente del mismo día: {p.hermanos.map(h => `PR ${h.im_numero ?? '—'} (${money(h.total)})`).join(', ')}. Mirá cuál va antes de facturar.</div>
                                     </div>
                                 )}
                                 {/* La cantidad que no cierra con el formato: es el control que más
@@ -544,6 +572,11 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                 {!!p.avisos_cantidad?.length && (
                                     <div className="pr-avisos grave">
                                         {p.avisos_cantidad.map((a, i) => <div key={i}>· {a}</div>)}
+                                    </div>
+                                )}
+                                {!items && !!p.avisos.length && (
+                                    <div className="pr-avisos">
+                                        {p.avisos.map((a, i) => <div key={i}>· {a}</div>)}
                                     </div>
                                 )}
                                 {!!p.faltantes?.length && (

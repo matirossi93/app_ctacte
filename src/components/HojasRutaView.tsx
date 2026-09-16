@@ -41,7 +41,9 @@ interface Pendiente {
     cod_zona: number | null;
     zona: string;
     zona_origen: 'im' | 'nombre' | 'ninguno';
-    total: number;
+    /** 🪤 `null` cuando no se pudo verificar contra InfoManager: NO es cero. */
+    total: number | null;
+    importe_error?: string | null;
     bultos: number;
     kg: number;
     renglones_sin_peso: number; peso_completo?: boolean;
@@ -79,6 +81,12 @@ interface HojaPedido {
 
 interface Hoja {
     version: number;
+    /**
+     * 🔑 El rótulo escrito a mano. Mati (14/09/2026): *"para poder escribirle la zona para que
+     * ayude a identificarla"*. No es `cod_zona` —el código de IM— porque justo las hojas mixtas,
+     * que son las que más necesitan un nombre, lo tienen vacío.
+     */
+    nombre?: string | null;
     id: string; numero: number; turno: string | null; transporte: string | null;
     /**
      * 🔑 EL DÍA EN QUE SALE EL CAMIÓN. Mati (10/09/2026): *"las hojas de ruta tienen que poder
@@ -112,6 +120,32 @@ const kilos = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 
  * rango"*. Antes esta pantalla tenía su propio selector de UN día y su propio `?dias=N` para
  * estirar hacia atrás, así que el rango que elegía la oficina arriba no llegaba hasta acá.
  */
+/**
+ * Varios avisos de contexto, en UNA línea.
+ *
+ * 🔑 Apilados empujan la pantalla hacia abajo: con tres banners arriba, la hoja que se vino a
+ * mirar queda fuera de la vista y el operador scrollea antes de poder trabajar. Acá se dice
+ * cuántos hay y se abren cuando se los quiere leer.
+ *
+ * 🪤 No se borra ninguno, y con uno solo se muestra abierto: esconder un aviso único detrás de un
+ * clic es peor que el banner que reemplaza.
+ */
+function AvisosDeContexto({ avisos }: { avisos: React.ReactNode[] }) {
+    const items = avisos.filter(Boolean);
+    const [abierto, setAbierto] = useState(false);
+    if (!items.length) return null;
+    if (items.length === 1) return <div className="hr-aviso"><AlertTriangle size={15} /><span>{items[0]}</span></div>;
+    return (
+        <div className="hr-aviso">
+            <AlertTriangle size={15} />
+            {abierto
+                ? <div className="hr-avisos-lista">{items.map((a, i) => <div key={i}>· {a}</div>)}</div>
+                : <span>Hay <b>{items.length} avisos</b> sobre estos días.</span>}
+            <button onClick={() => setAbierto(v => !v)}>{abierto ? 'Ocultar' : 'Ver'}</button>
+        </div>
+    );
+}
+
 export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }) {
     /**
      * 🔑 CON QUÉ FECHA SE CREA UNA HOJA NUEVA. Mati (09/09/2026): *"las hojas de ruta tendrían que
@@ -162,6 +196,8 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
      * abierta: así una hoja nueva aparece abierta, que es lo que uno quiere al crearla.
      */
     const [plegadas, setPlegadas] = useState<Set<string>>(new Set());
+    /** Lo tipeado que todavía no se guardó, por hoja. Se suelta al confirmar o al desistir. */
+    const [nombres, setNombres] = useState<Record<string, string>>({});
     /**
      * 🔑 *"tener una sección donde podamos ver el histórico de todas las hojas de ruta, si no
      * desaparecen con el filtro de fecha y es difícil encontrarlas"*.
@@ -182,6 +218,8 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
     const { iniciar: iniciarArrastre } = useLecturaVigente(`${desde}|${hasta}`);
     const { iniciar: iniciarChoferes } = useLecturaVigente('choferes');
     const [conflictosAsignacion, setConflictosAsignacion] = useState<any[]>([]);
+    /** Si la base todavía no tiene la 044, el rótulo ni se ofrece: guardarlo sería un error. */
+    const [puedeNombrar, setPuedeNombrar] = useState(false);
     const cargarHojas = useCallback(async (antes?: number, forzar = true) => {
         const lectura = iniciarHojas(forzar); if (!lectura) return;
         setCargandoHojas(true); setErrorHojas(null);
@@ -194,7 +232,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
             if (!h.ok) throw new Error(d?.error ?? 'No se pudieron consultar las hojas');
             for (const hoja of d?.hojas ?? []) versionesHoja.current.set(hoja.id, hoja.version);
             setHojas(previas => antes ? [...previas, ...(d?.hojas ?? [])] : d?.hojas ?? []);
-            setSiguienteHoja(d?.siguiente ?? null); lectura.confirmar();
+            setSiguienteHoja(d?.siguiente ?? null); setPuedeNombrar(d?.capacidades?.nombre === true); lectura.confirmar();
         } catch (e: any) { if (lectura.vigente()) setErrorHojas(e?.message ?? 'No se pudieron consultar las hojas'); }
         finally { if (lectura.vigente()) setCargandoHojas(false); }
     }, [desde, hasta, historico, iniciarHojas]);
@@ -238,7 +276,10 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
             // calculaba y nadie lo leía (auditoría del 08/09/2026).
             setDiasSinPeso(Array.isArray(dp.dias_sin_items) ? dp.dias_sin_items : []);
             setConflictosAsignacion(dp.conflictos_asignacion ?? []);
-            setSel(s => new Set([...s].filter(id => (dp.pendientes ?? []).some((p: Pendiente) => p.im_comprobante_id === id))));
+            // 🪤 Y se suelta lo que dejó de poder elegirse: una fila ya seleccionada cuya factura
+            // pasó a no verificarse no puede quedar marcada esperando entrar a una hoja.
+            setSel(s => new Set([...s].filter(id =>
+                (dp.pendientes ?? []).some((p: Pendiente) => p.im_comprobante_id === id && !p.importe_error))));
             lectura.confirmar();
         } catch (e: any) {
             if (lectura.vigente()) setError(e?.message ?? 'Error de conexión');
@@ -298,7 +339,9 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
         });
     }, [pendientes, busqueda]);
 
-    const seleccionados = useMemo(() => pendientes.filter(p => sel.has(p.im_comprobante_id)), [pendientes, sel]);
+    // 🪤 Filtra también por elegible: defensa contra una selección vieja que sobrevivió a un
+    // refresco en el que esa fila pasó a no tener importe acreditado.
+    const seleccionados = useMemo(() => pendientes.filter(p => sel.has(p.im_comprobante_id) && !p.importe_error), [pendientes, sel]);
     const kgSel = seleccionados.reduce((s, p) => s + p.kg, 0);
     // 🔑 Separados a propósito: "36 para revisar" sobre 59 no dice nada y se deja de mirar.
     // Uno es plata que la empresa pierde, el otro es un cliente al que le cobran de más.
@@ -310,14 +353,27 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
     const sinFactura = pendientes.filter(p => p.im_factura_numero == null).length;
     const facturaDeducida = pendientes.filter(p => p.factura_origen === 'elegida').length;
 
+    /**
+     * 🔴 UNA FILA SIN IMPORTE ACREDITADO NO SE PUEDE ELEGIR.
+     *
+     * Su factura no se pudo verificar en InfoManager, así que no se sabe cuánto se le cobra al
+     * cliente. Mandarla a una hoja la haría viajar con un importe que nadie confirmó — y el
+     * backend la rechaza igual, pero recién después de intentar armar la hoja.
+     */
+    const elegible = (p: Pendiente) => !p.importe_error;
+
     function toggle(id: string) {
+        const fila = pendientes.find(p => p.im_comprobante_id === id);
+        if (fila && !elegible(fila)) return;
         setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
     }
     function abrirCerrarZona(k: string) {
         setZonasAbiertas(s => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
     }
     function toggleZona(filas: Pendiente[]) {
-        const ids = filas.map(f => f.im_comprobante_id);
+        // 🪤 Sólo las elegibles: si no, la zona quedaría en indeterminado para siempre.
+        const ids = filas.filter(elegible).map(f => f.im_comprobante_id);
+        if (!ids.length) return;
         const todos = ids.every(i => sel.has(i));
         setSel(s => {
             const n = new Set(s);
@@ -431,14 +487,16 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
         } finally { setTrabajando(false); operacion.terminar(); }
     }
 
-    async function editarHoja(hojaId: string, cambios: Record<string, unknown>, siFalla: string) {
-        if (!operacion.comenzar()) return;
+    /** Devuelve si el cambio entró: quien escribió algo a mano necesita saberlo para no perderlo. */
+    async function editarHoja(hojaId: string, cambios: Record<string, unknown>, siFalla: string): Promise<boolean> {
+        if (!operacion.comenzar()) return false;
         setTrabajando(true); setAviso(null);
         try {
-            await pedir(`/api/hojas-ruta/${hojaId}`, {
+            const ok = await pedir(`/api/hojas-ruta/${hojaId}`, {
                 method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...cambios, version_esperada: versionesHoja.current.get(hojaId) }),
             }, siFalla);
             await cargarHojas();   // el camión o el turno viven en nuestra base: no hace falta ir a IM
+            return ok;
         } finally { setTrabajando(false); operacion.terminar(); }
     }
 
@@ -567,28 +625,21 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                 </div>
             </div>
 
-            {!!arrastre && (
-                <div className="hr-aviso">
-                    <AlertTriangle size={15} />
-                    <span>
-                        Hay <b>{arrastre}</b> pedidos anteriores al {desde.slice(8, 10)}/{desde.slice(5, 7)} que
-                        siguen sin salir. Estirá el <b>Desde</b> de arriba para verlos.
-                    </span>
-                </div>
-            )}
-            {aviso && <div className="hr-aviso"><AlertTriangle size={15} /><span>{aviso}</span><button onClick={() => setAviso(null)}><X size={14} /></button></div>}
             {/* 🔴 Los kilos mienten POR ABAJO: una hoja puede parecer que entra en el camión y no
                 entrar. Es lo único que no se puede deducir mirando la pantalla. */}
-            {diasSinPeso.length > 0 && (
-                <div className="hr-aviso">
-                    <AlertTriangle size={15} />
-                    <span>
-                        No se pudieron traer los renglones de {diasSinPeso.length} día(s)
-                        ({diasSinPeso.join(', ')}): esos remitos van con <b>0 kg</b>, así que el peso
-                        del camión está calculado <b>de menos</b>. Probá con menos días o volvé a actualizar.
-                    </span>
-                </div>
-            )}
+            <AvisosDeContexto avisos={[
+                !!arrastre && <>
+                    Hay <b>{arrastre}</b> pedidos anteriores al {desde.slice(8, 10)}/{desde.slice(5, 7)} que
+                    siguen sin salir. Estirá el <b>Desde</b> de arriba para verlos.
+                </>,
+                diasSinPeso.length > 0 && <>
+                    No se pudieron traer los renglones de {diasSinPeso.length} día(s)
+                    ({diasSinPeso.join(', ')}): esos remitos van con <b>0 kg</b>, así que el peso
+                    del camión está calculado <b>de menos</b>. Probá con menos días o volvé a actualizar.
+                </>,
+            ]} />
+            {/* Éste sí va suelto: es la respuesta a algo que la persona acaba de hacer. */}
+            {aviso && <div className="hr-aviso"><AlertTriangle size={15} /><span>{aviso}</span><button onClick={() => setAviso(null)}><X size={14} /></button></div>}
 
             {error && <div className="hr-aviso error"><AlertTriangle size={15} /><span>{error}</span></div>}
 
@@ -625,16 +676,19 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                     {porZona.map(g => {
                         const k = String(g.cod_zona ?? 'sin');
                         const abierta = zonasAbiertas.has(k) || !!busqueda.trim();
-                        const elegidos = g.filas.filter(f => sel.has(f.im_comprobante_id)).length;
+                        const elegibles = g.filas.filter(elegible);
+                        const elegidos = elegibles.filter(f => sel.has(f.im_comprobante_id)).length;
                         const conAviso = g.filas.filter(f => f.im_factura_numero == null).length;
+                        const sinVerificar = g.filas.length - elegibles.length;
                         return (
                         <div className={`hr-zona${abierta ? ' abierta' : ''}`} key={k}>
                             <div className="hr-zona-head">
                                 {/* El checkbox elige la zona entera sin tener que desplegarla. */}
                                 <input
                                     type="checkbox" title="Elegir toda la zona"
-                                    checked={elegidos === g.filas.length && !!g.filas.length}
-                                    ref={el => { if (el) el.indeterminate = elegidos > 0 && elegidos < g.filas.length; }}
+                                    checked={elegidos === elegibles.length && !!elegibles.length}
+                                    disabled={!elegibles.length}
+                                    ref={el => { if (el) el.indeterminate = elegidos > 0 && elegidos < elegibles.length; }}
                                     onChange={() => toggleZona(g.filas)}
                                 />
                                 <button className="hr-zona-abrir" onClick={() => abrirCerrarZona(k)}>
@@ -643,13 +697,16 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                     <span className="hr-zona-meta">
                                         {g.filas.length} ped · {kilos(g.kg)}
                                         {conAviso > 0 && <span className="hr-zona-alerta" title="Pedidos por debajo de la lista que corresponde"> · {conAviso} ⚠</span>}
+                                        {sinVerificar > 0 && <span className="hr-zona-pendiente" title="No se pudo verificar su importe en InfoManager: no se pueden elegir"> · {sinVerificar} sin verificar</span>}
                                         {elegidos > 0 && <span className="hr-zona-elegidos"> · {elegidos} elegidos</span>}
                                     </span>
                                 </button>
                             </div>
                             {abierta && g.filas.map(p => (
-                                <label className={`hr-ped${sel.has(p.im_comprobante_id) ? ' sel' : ''}`} key={p.im_comprobante_id}>
-                                    <input type="checkbox" checked={sel.has(p.im_comprobante_id)} onChange={() => toggle(p.im_comprobante_id)} />
+                                <label className={`hr-ped${sel.has(p.im_comprobante_id) ? ' sel' : ''}${p.importe_error ? ' sin-verificar' : ''}`} key={p.im_comprobante_id}>
+                                    <input type="checkbox" checked={sel.has(p.im_comprobante_id)} disabled={!elegible(p)}
+                                           title={p.importe_error ? 'No se puede elegir: falta verificar su importe' : undefined}
+                                           onChange={() => toggle(p.im_comprobante_id)} />
                                     <div className="hr-ped-info">
                                         <div className="hr-ped-cli">
                                             <span>{p.cliente_nombre}</span>
@@ -677,13 +734,17 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                             {p.zona_origen === 'nombre' && <span className="hr-badge tenue" title="La zona se dedujo del nombre del cliente, no está cargada en InfoManager">zona estimada</span>}
                                         </div>
                                         <div className="hr-ped-meta">
-                                            RE {p.im_numero ?? '—'} · {money(p.total)} · {p.bultos} bultos
+                                            RE {p.im_numero ?? '—'} · {p.importe_error
+                                                ? <b className="hr-sin-importe">importe sin verificar</b>
+                                                : money(Number(p.total))} · {p.bultos} bultos
                                             {(!p.peso_completo || p.renglones_sin_peso > 0) && (
                                                 <span className="hr-sinpeso" title="Estos renglones no tienen peso cargado en el catálogo: los kilos de este pedido son un mínimo, puede pesar más">
                                                     · {p.renglones_sin_peso} sin peso
                                                 </span>
                                             )}
                                         </div>
+                                        {/* 🔑 Por qué no se puede elegir. Se lee, no se adivina de un tooltip. */}
+                                        {p.importe_error && <div className="hr-sinpeso" role="status">{p.importe_error}</div>}
                                         {/* 🔑 Lo que escribió el vendedor. Acá decide en qué camión va y en
                                             qué orden, y ahí puede decir "entregar el jueves temprano" o
                                             "avisar antes de ir" (Mati, 08/09/2026). */}
@@ -752,12 +813,49 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                     {plegada ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
                                 </button>
                                 <span className="hr-hoja-num">Hoja {h.numero}</span>
+                                {/**
+                                  * 🔑 El rótulo de la hoja, al lado del número. Con cuatro hojas
+                                  * del mismo día sobre el escritorio, "3405" no dice cuál es: el
+                                  * nombre es lo que la identifica de un vistazo.
+                                  *
+                                  * 🪤 Guarda al SALIR del campo, no en cada tecla: cada cambio es
+                                  * un POST con la versión de la hoja, y tipeando se dispararían
+                                  * diez seguidos que se pisarían entre sí.
+                                  */}
+                                {puedeNombrar && (
+                                    <input
+                                        className="hr-hoja-nombre"
+                                        value={nombres[h.id] ?? h.nombre ?? ''}
+                                        placeholder="Nombre o zona…"
+                                        maxLength={60}
+                                        // Con 60 caracteres el campo no alcanza para mostrarlo entero: el
+                                        // título lo deja leer sin tener que entrar a editarlo.
+                                        title={h.nombre || 'Un nombre para identificar la hoja: la zona, el recorrido, lo que sirva'}
+                                        aria-label={`Nombre de la hoja ${h.numero}`}
+                                        disabled={trabajando || cerrada}
+                                        onChange={e => setNombres(n => ({ ...n, [h.id]: e.target.value }))}
+                                        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                        onBlur={async e => {
+                                            const valor = e.target.value.replace(/\s+/g, ' ').trim();
+                                            const soltar = () => setNombres(n => { const { [h.id]: _, ...resto } = n; return resto; });
+                                            if (valor === (h.nombre ?? '')) { soltar(); return; }
+                                            /**
+                                             * 🪤 El borrador se suelta sólo si el cambio ENTRÓ. Soltarlo
+                                             * siempre hacía que un rechazo —la hoja cambió, se cerró— le
+                                             * borrara de la pantalla lo que acababa de escribir, y hubiera
+                                             * tenido que tipearlo de nuevo para enterarse de qué pasó.
+                                             */
+                                            if (await editarHoja(h.id, { nombre: valor }, 'No se pudo cambiar el nombre de la hoja')) soltar();
+                                        }}
+                                    />
+                                )}
                                 <button className="hr-btn ghost chico" aria-label={`Copiar enlace a hoja ${h.numero}`} onClick={async () => {
                                     const u = new URL(location.href); u.searchParams.set('etapa', 'hojas'); u.searchParams.set('hoja', h.id); u.searchParams.set('desde', h.fecha); u.searchParams.set('hasta', h.fecha);
                                     try { await navigator.clipboard.writeText(u.toString()); setAviso(`Enlace a hoja ${h.numero} copiado.`); } catch { setAviso(`Enlace: ${u.toString()}`); }
                                 }}>Enlace</button>
                                 {plegada && (
                                     <span className="hr-plegada-resumen">
+                                        {h.nombre ? <b>{h.nombre} · </b> : null}
                                         {String(h.fecha ?? '').slice(0, 10)} · {h.pedidos.length} pedido{h.pedidos.length === 1 ? '' : 's'}
                                         {h.camion ? ` · ${h.camion}` : ''}
                                     </span>
@@ -906,7 +1004,9 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                             {!!h.pedidos.length && (
                                 <div className="hr-hoja-pie">
                                     <button className="hr-btn ghost chico" onClick={() => setAjustando(h)} disabled={trabajando}>
-                                        <FileMinus size={14} /> Diferencias
+                                        {/* 🔑 Lo que se hace acá es registrar notas: "Diferencias" no
+                                            decía de qué. Con la hoja cerrada es sólo lectura. */}
+                                        <FileMinus size={14} /> {cerrada ? 'Ver notas NC/ND' : 'Vincular NC/ND'}
                                     </button>
                                     <button className="hr-btn chico" onClick={() => void cerrarHoja(h)} disabled={trabajando || (!cerrada && h.pedidos.some(p => p.importe_error))}>
                                         {cerrada ? <><Unlock size={14} /> Reabrir</> : <><Lock size={14} /> Cerrar hoja</>}
@@ -922,7 +1022,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
 
             {imprimiendo && <ImprimirHoja hojaId={imprimiendo} onClose={() => setImprimiendo(null)} />}
 
-            {/* Lo que volvió del reparto: las notas de crédito y el número final de la hoja. */}
+            {/* Lo que volvió del reparto: las notas NC/ND y el número final de la hoja. */}
             {ajustando && (() => {
                 const h = ajustando;
                 return (

@@ -1,10 +1,11 @@
 import { actualizarImportesFacturas } from './importesFacturas.js';
 import { cabecerasCompartidas } from './cabecerasCompartidas.js';
+import { resolverSinRespuesta } from './conciliarSinRespuesta.js';
 import { EVIDENCIA, compararPar } from './evidenciaComprobantes.js';
 import { textoControl } from './controlFacturaRemito.js';
 import { leerComprobante, invalidarIM } from './infomanager.js';
 /**
- * ETAPA 2 DEL CIRCUITO: facturar los presupuestos aprobados.
+ * ETAPA 2 DEL CIRCUITO: facturar los presupuestos del rango.
  *
  * Mati (08/09/2026): *"una vez que los presupuestos ya están ok, recién ahí entra la parte de
  * facturación y de ahí, con la factura y el remito hecho, se arma la hoja de ruta (es el último
@@ -22,7 +23,9 @@ import { leerComprobante, invalidarIM } from './infomanager.js';
  *  · **`sinRespuesta` FRENA TODO**: si IM no contestó, no se sabe si la factura salió, y
  *    reintentar es facturarle dos veces al mismo cliente.
  *  · **Con la factura ya emitida y el remito no, se hace SÓLO el remito.**
- *  · **Sólo se factura lo aprobado** en la etapa 1.
+ *  · **No se factura lo OBSERVADO**: es la marca de que ese pedido tiene un problema. El paso de
+ *    aprobar uno por uno se eliminó el 15/09/2026 por pedido de Mati — lo que garantiza que se
+ *    factura lo que se vio es la huella del presupuesto, no un visto bueno manual.
  *
  * 🪤 Facturar por API NO vincula el comprobante con el presupuesto en InfoManager (probado el
  * 07/09/2026): la relación la guardamos nosotros en `presupuestos_facturados`, y al final se
@@ -491,6 +494,22 @@ function rango(req: Request): { desde: string; hasta: string } {
  */
 const MAX_POR_TANDA = 300;
 
+/**
+ * Las versiones que la pantalla tenía a la vista al elegir qué facturar, por comprobante.
+ *
+ * 🪤 Condición, nunca fuente: lo que se factura sale de leer el presupuesto bajo lock. Esto sólo
+ * responde "¿sigue siendo el que se vio?".
+ */
+function huellasDe(req: Request): Map<string, string> {
+  const raw = (req.method === 'GET' ? req.query : req.body)?.huellas;
+  const salida = new Map<string, string>();
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return salida;
+  for (const [id, h] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof h === 'string' && h.trim()) salida.set(String(id).trim(), h.trim());
+  }
+  return salida;
+}
+
 function idsDe(req: Request): string[] {
   const q = req.method === 'GET' ? req.query : req.body;
   const raw = q?.ids ?? q?.im_comprobante_ids;
@@ -653,6 +672,71 @@ async function itemsDeLaFactura(idFactura: string, leidos?: any[]): Promise<Dato
 }
 
 /**
+ * 🔴 LO QUE QUEDÓ EN DUDA PORQUE INFOMANAGER NO CONTESTÓ.
+ *
+ * Con un timeout la app corta sin saber si el comprobante salió y marca el pedido `incierto`, que
+ * lo FRENA: reintentar a ciegas puede facturar dos veces. El agujero era que después nadie lo
+ * resolvía y la fila quedaba trabada hasta que alguien tocara la base a mano (14/09/2026: FRENTE
+ * NORTE con el remito, FIGUEROA con la factura).
+ *
+ * Se resuelve con lo que IM ya devolvió en la MISMA lectura que la pantalla hace igual: ni un GET
+ * extra. Y sólo con evidencia positiva —las marcas que esta app escribe al emitir—; la ausencia
+ * nunca destraba nada, porque no encontrarlo no prueba que no exista.
+ */
+async function conciliarInciertos(filas: any[], ventas?: any[]): Promise<Map<string, string>> {
+  const avisos = new Map<string, string>();
+  const inciertos = filas.filter(f => f.estado_emision === 'incierto');
+  if (!inciertos.length || !ventas?.length) return avisos;
+
+  // Lo que ya está registrado en las filas a la vista: un comprobante es de UN pedido.
+  const usados = new Set<string>(filas.flatMap(f => [f.im_factura_id, f.im_remito_id].filter(Boolean).map(String)));
+
+  for (const f of inciertos) {
+    const id = String(f.im_comprobante_id);
+    const r = resolverSinRespuesta({
+      im_comprobante_id: id, im_numero: f.im_numero,
+      im_factura_id: f.im_factura_id, im_remito_id: f.im_remito_id,
+      cod_cliente: f.cod_cliente, cod_empresa: f.cod_empresa,
+    }, ventas, usados);
+    if (r.accion !== 'adoptar') { avisos.set(id, r.motivo); continue; }
+
+    /**
+     * 🔴 Segunda comprobación contra la BASE, no contra lo que hay en memoria: las filas a la
+     * vista son sólo las del rango, y este comprobante podría estar registrado en un pedido de
+     * otra fecha. Adoptarlo ahí lo contaría dos veces.
+     */
+    const { data: yaEsta, error: errUsado } = await sb().from('presupuestos_facturados')
+      .select('im_comprobante_id').eq('tenant_id', TENANT_ID)
+      .or(`im_factura_id.eq.${r.id},im_remito_id.eq.${r.id}`).limit(5);
+    // 🪤 Fallar abierto acá sería registrar dos veces el mismo comprobante porque la consulta se cayó.
+    if (errUsado) { avisos.set(id, `No pude verificar si ese comprobante ya está registrado: ${errUsado.message}`); continue; }
+    // "En OTRO pedido": la propia fila puede aparecer si ya tiene el otro comprobante del par.
+    if ((yaEsta ?? []).some((x: any) => String(x.im_comprobante_id) !== id)) {
+      avisos.set(id, `El ${r.que} ${r.numero ?? r.id} ya está registrado en otro pedido. Revisalo en InfoManager.`);
+      continue;
+    }
+
+    const cambios = r.que === 'remito'
+      ? { im_remito_id: r.id, im_remito_numero: r.numero, facturado_at: new Date().toISOString(), estado_emision: 'completo' }
+      // La factura apareció, pero el remito sigue faltando: queda en el camino que ya existe.
+      : { im_factura_id: r.id, im_factura_numero: r.numero, im_factura_tipo: r.tipo, estado_emision: 'remito_pendiente' };
+    // 🪤 Condicionado a que siga `incierto`: si alguien lo resolvió mientras tanto, no se pisa.
+    const { data: guardado, error } = await sb().from('presupuestos_facturados').update(cambios)
+      .eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id).eq('estado_emision', 'incierto')
+      .select('im_comprobante_id');
+    if (error || !guardado?.length) {
+      avisos.set(id, `Encontré el ${r.que} ${r.numero ?? ''} pero no pude registrarlo${error ? `: ${error.message}` : ''}.`);
+      continue;
+    }
+    Object.assign(f, cambios);
+    avisos.set(id, r.que === 'remito'
+      ? `Se encontró el remito ${r.numero ?? ''} en InfoManager: la emisión estaba completa y quedó registrada.`
+      : `Se encontró la factura ${r.numero ?? ''} en InfoManager. Falta emitir el remito.`);
+  }
+  return avisos;
+}
+
+/**
  * 🔴 LO QUE SE ANULÓ EN INFOMANAGER TIENE QUE DEJAR DE FIGURAR COMO EMITIDO.
  *
  * Mati (10/09/2026): *"un cliente rechazó un pedido y tuvimos que anular una factura, lo hicimos
@@ -729,6 +813,7 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
   if (frenaSiNoPuede(req, res)) return;
   try {
     const ids = idsDe(req);
+    const huellasVistas = huellasDe(req);
     if (!ids.length) { res.status(400).json({ error: 'No elegiste ningún presupuesto.' }); return; }
     if (ids.length > MAX_POR_TANDA) {
       res.status(400).json({ error: `Elegiste ${ids.length} pedidos y el máximo por tanda es ${MAX_POR_TANDA}. Hacelo en varias tandas.` });
@@ -744,12 +829,18 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
       return;
     }
 
-    // 🔴 Sólo lo aprobado en la etapa 1: facturar sin revisar es justo lo que este panel vino a
-    // evitar. Lo que ya se facturó pasa igual (se saltea más abajo).
-    const sinAprobar = filas.filter((f: any) => !f.facturado_at && f._revision?.estado !== 'aprobado');
-    if (sinAprobar.length) {
+    /**
+     * 🔄 15/09/2026: ya no hace falta aprobar. Mati: *"necesitamos eliminar el paso donde se
+     * aprueban los presupuestos, porque estamos viendo que está medio al pedo... una vez que se
+     * editan, directamente se pueda facturar"*.
+     *
+     * 🔴 Lo que SÍ frena es lo OBSERVADO: es la marca deliberada de "este tiene un problema".
+     * Se conserva porque es la única forma de decir "no factures éste todavía".
+     */
+    const observados = filas.filter((f: any) => !f.facturado_at && f._revision?.estado === 'observado');
+    if (observados.length) {
       res.status(409).json({
-        error: `Hay ${sinAprobar.length} presupuesto(s) que no están aprobados: ${sinAprobar.map((f: any) => f.im_numero ?? f.im_comprobante_id).join(', ')}. Aprobalos en Presupuestos antes de facturar.`,
+        error: `Hay ${observados.length} presupuesto(s) marcados con un problema: ${observados.map((f: any) => f.im_numero ?? f.im_comprobante_id).join(', ')}. Resolvelos en Presupuestos o sacales la marca antes de facturar.`,
       });
       return;
     }
@@ -838,15 +929,24 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
       /** El id interno en IM de la factura: es lo que marca el remito como suyo. */
       let facturaId: string | null = f.im_factura_id ?? null;
       if (!f.im_factura_id) {
-        const { data: revision, error: errRevision } = await sb().from('presupuestos_revision')
-          .select('estado, huella').eq('tenant_id', TENANT_ID).eq('im_comprobante_id', String(f.im_comprobante_id)).maybeSingle();
-        if (errRevision || revision?.estado !== 'aprobado') { fallados.push(`${quien}: no pude verificar una aprobación vigente.`); continue; }
+        /**
+         * 🔴 QUE NO HAYA CAMBIADO DESDE QUE SE LO VIO EN PANTALLA.
+         *
+         * Esto lo daba la aprobación: quedaba atada a una huella del presupuesto y caducaba si
+         * alguien lo editaba. Sacado ese paso, la huella la manda la pantalla que eligió qué
+         * facturar — es el mismo control sin pedirle a nadie que confirme uno por uno.
+         *
+         * 🪤 Si no viene, no se factura: el caso peligroso —el presupuesto cambió— es justo el
+         * que no mandaría el dato.
+         */
+        const vista = huellasVistas.get(String(f.im_comprobante_id));
+        if (!vista) { fallados.push(`${quien}: falta la versión del presupuesto que se vio en pantalla. Actualizá y volvé a intentar.`); continue; }
         const { cabecera: cabActual, items: itemsActuales } = await leerComprobante(f.im_comprobante_id);
         try {
           exigirTipoEmpresa(cabActual, 'PR');
           if (cabActual.existe !== true || cabActual.anulada !== false) throw new Error('No pude verificar el presupuesto vigente.');
-          exigirHuella(revision.huella, huellaPresupuesto(String(f.im_comprobante_id), cabActual, itemsActuales));
-          // La aprobación y el payload parten de la misma lectura puntual bajo lock.
+          exigirHuella(vista, huellaPresupuesto(String(f.im_comprobante_id), cabActual, itemsActuales));
+          // La huella y el payload parten de la misma lectura puntual bajo lock.
           const sinArticuloConImporte = itemsActuales.some(it => !(Number(it.cod_articulo) > 0) && Math.abs(Number(it.precio) * Number(it.cantidad)) >= 0.005);
           if (sinArticuloConImporte) throw new Error('Hay renglones sin artículo con importe: corregilos antes de facturar.');
           const renglones = itemsActuales.filter(it => Number(it.cod_articulo) > 0).map(it => {
@@ -1097,13 +1197,26 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
 /**
  * GET /api/facturacion?desde=&hasta= — el tablero de la etapa 2.
  *
- * Los presupuestos aprobados del rango, separados en lo que falta facturar y lo ya emitido.
+ * Los presupuestos del rango, separados en lo que falta facturar y lo ya emitido.
  */
 export async function tableroFacturacion(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
   try {
     const { desde, hasta } = rango(req);
     const refrescar = req.query.refrescar === '1';
+    /**
+     * 🔑 DÓNDE SE VA EL TIEMPO DE ESTA PANTALLA. Mati (14/09/2026): *"está lento la parte donde
+     * se factura el presupuesto, está demorando bastante"*.
+     *
+     * `vistaDeRango` ya se medía solo y decía que el 93% era espera de InfoManager, pero esta
+     * ruta hace bastante más después: leer lo emitido, comprobar anulados, actualizar importes,
+     * traer las notas y comparar cada factura con su remito. Sin el desglose, optimizar es
+     * adivinar cuál de esos cinco pesa.
+     */
+    const t0 = Date.now();
+    const etapas: Array<[string, number]> = [];
+    let marca = t0;
+    const medir = (que: string) => { const ahora = Date.now(); etapas.push([que, ahora - marca]); marca = ahora; };
     /**
      * 🔑 EL LISTADO DEL RANGO SE LEE UNA VEZ Y SE COMPARTE EN ESTA PETICIÓN.
      *
@@ -1126,8 +1239,13 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
     // Acá sí se espera: los dos usos que siguen la necesitan resuelta. Ya está en vuelo desde
     // arriba, así que normalmente no cuesta nada.
     const ventasDelRango = await ventasPendientes;
+    medir('vista');
     const todos = [...vista.pendientes, ...vista.asignados];
-    const aprobados = todos.filter((p: any) => p.revision?.estado === 'aprobado');
+    /**
+     * 🔄 15/09/2026: se eliminó el paso de aprobar. Lo que llega acá es todo lo vigente del
+     * rango menos lo OBSERVADO, que es la marca de "este tiene un problema y no va".
+     */
+    const aprobados = todos.filter((p: any) => p.revision?.estado !== 'observado');
 
     // La aprobación habilita una emisión NUEVA. Nunca decide si una factura ya emitida
     // aparece: un stock incompleto o un PR retirado de la vista no borra su historia.
@@ -1138,6 +1256,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
         .eq('cod_empresa', Number(process.env.PEDIDO_EMPRESA_DEFAULT || 1))
         .gte('fecha', desde).lte('fecha', hasta).not('im_factura_id', 'is', null),
     ]);
+    medir('emitidos');
     const errEmitidos = lecturas.find(r => r.error)?.error;
     if (errEmitidos) { res.status(502).json({ error: `No pude leer qué se facturó ya: ${errEmitidos.message}` }); return; }
     const emitidos = [...new Map(lecturas.flatMap(r => r.data ?? [])
@@ -1147,8 +1266,9 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
      * Mati (10/09/2026): un cliente rechazó un pedido, anularon la factura en IM y en la app
      * seguía apareciendo como vigente.
      */
+    const conId = (emitidos ?? []).map((e: any) => ({ ...e, im_comprobante_id: String(e.im_comprobante_id) }));
     const avisosAnulados = await sincronizarAnulados(
-      (emitidos ?? []).map((e: any) => ({ ...e, im_comprobante_id: String(e.im_comprobante_id) })),
+      conId,
       // Las facturas del rango que se está mirando salen del listado, sin un GET por cada una.
       { desde, hasta, ventas: ventasDelRango },
       leerCabecera,
@@ -1156,13 +1276,24 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
       console.warn('[tableroFacturacion] no pude chequear anulados:', err?.message);
       return new Map<string, string>();
     });
+    /**
+     * 🔑 Y lo que quedó en duda por un timeout de IM: si el comprobante está, se registra y el
+     * pedido se destraba solo. Usa el MISMO listado que se acaba de leer.
+     */
+    const avisosInciertos = await conciliarInciertos(conId, ventasDelRango).catch((err: any) => {
+      console.warn('[tableroFacturacion] no pude conciliar los inciertos:', err?.message);
+      return new Map<string, string>();
+    });
+    for (const [id, aviso] of avisosInciertos) avisosAnulados.set(id, aviso);
+    medir('anulados+inciertos');
     // `sincronizarAnulados` ya borró o limpió lo que hacía falta: se relee para no mostrar viejo.
-    const { data: alDia, error: errAlDia } = avisosAnulados.size
+    const { data: alDia, error: errAlDia } = avisosAnulados.size || avisosInciertos.size
       ? await sb().from('presupuestos_facturados').select('*').eq('tenant_id', TENANT_ID)
           .in('im_comprobante_id', emitidos.map((e: any) => String(e.im_comprobante_id)))
       : { data: emitidos, error: null };
     if (errAlDia) { res.status(502).json({ error: `No pude releer las facturas actualizadas: ${errAlDia.message}` }); return; }
     const actuales = await actualizarImportesFacturas(alDia ?? [], { ventas: ventasDelRango ?? await fetchVentas(desde, hasta), actualizar: refrescar, leerCabecera });
+    medir('importes');
     const porId = new Map(actuales.map((e: any) => [String(e.im_comprobante_id), e]));
 
     /**
@@ -1257,8 +1388,11 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
         con_diferencias: filas.filter(f => f.control_fa_re?.estado === 'diferencias').length,
       },
       // Lo que todavía no se aprobó, para que se vea por qué no está en la lista.
-      sin_aprobar: todos.filter((p: any) => p.revision?.estado !== 'aprobado' && !porId.get(String(p.im_comprobante_id))?.im_factura_id).length,
+      // Los que alguien marcó con un problema: no se facturan hasta resolverlos.
+      observados: todos.filter((p: any) => p.revision?.estado === 'observado' && !porId.get(String(p.im_comprobante_id))?.im_factura_id).length,
     });
+    medir('armado');
+    console.log(`[tableroFacturacion] ${desde}..${hasta}: ${Date.now() - t0} ms (${etapas.map(([q, ms]) => `${q} ${ms}`).join(' · ')}) · ${filas.length} filas${refrescar ? ' · forzado' : ''}`);
   } catch (err: any) {
     console.error('[tableroFacturacion]', err?.message);
     res.status(502).json({ error: `No se pudo armar el tablero de facturación: ${err?.message ?? 'sin respuesta de IM'}` });

@@ -258,7 +258,17 @@ async function armarVistaRemitos(desde: string, hasta: string, forzar = false) {
     };
   });
 
-  const filas = await actualizarImportesFacturas(bases, { ventas, actualizar: forzar });
+  /**
+   * 🔴 Tolerancia POR FILA: una factura que no se puede verificar no deja sin pantalla al resto.
+   *
+   * 🪤 Tolerar no es inventar. Esa fila vuelve con `total: null`, `importe_fuente:
+   * 'no_verificado'` y el motivo en `importe_error`; el importe viejo queda aparte en
+   * `total_snapshot` y NO se usa como total, ni se pone en cero. El vínculo con la factura se
+   * conserva aunque esté anulada o borrada.
+   */
+  const filas = await actualizarImportesFacturas(bases, { ventas, actualizar: forzar, tolerarErrores: true });
+  const sinVerificar = filas.filter((f: any) => !!f.importe_error);
+  const verificadas = filas.filter((f: any) => !f.importe_error);
   const datos = {
     pendientes: filas.filter(f => !f.hoja_id && !f.en_retiro && !f.asignacion_ambigua),
     conflictos_asignacion: filas.filter(f => f.asignacion_ambigua),
@@ -266,9 +276,16 @@ async function armarVistaRemitos(desde: string, hasta: string, forzar = false) {
     en_retiro: filas.filter(f => f.en_retiro).length,
     totales: {
       remitos: filas.length,
-      importe: Math.round(filas.reduce((s, f) => s + f.total, 0) * 100) / 100,
+      /**
+       * 🪤 Con alguna fila sin verificar el total es `null`: un número que ignora lo que falta se
+       * lee como el total real. Lo sumado de las verificadas va aparte y explícito.
+       */
+      importe: sinVerificar.length ? null : Math.round(filas.reduce((s, f) => s + f.total, 0) * 100) / 100,
+      importe_parcial: sinVerificar.length ? Math.round(verificadas.reduce((s, f) => s + f.total, 0) * 100) / 100 : null,
       kg: Math.round(filas.reduce((s, f) => s + f.kg, 0) * 100) / 100,
     },
+    /** Cuántas no se pudieron verificar. La pantalla las marca y no deja elegirlas. */
+    sin_verificar: sinVerificar.length,
     // Para que la pantalla pueda avisar en vez de mostrar un número que miente por abajo.
     sin_zona: filas.filter(f => f.cod_zona == null).length,
     sin_factura: filas.filter(f => f.im_factura_numero == null).length,

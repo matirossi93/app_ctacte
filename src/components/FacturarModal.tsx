@@ -72,8 +72,17 @@ const money = (n: number) =>
     '$' + new Intl.NumberFormat('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 
 export function FacturarModal(
-    { ids, desde, hasta, onClose }:
-    { ids: string[]; desde: string; hasta: string; onClose: (huboCambios: boolean) => void },
+    { ids, huellas, desde, hasta, onClose }:
+    {
+        ids: string[];
+        /**
+         * 🔴 La versión de cada presupuesto que estaba a la vista al elegirlo. El server la coteja
+         * bajo lock contra lo que hay en InfoManager AHORA: si alguien lo editó en el medio, ese
+         * pedido no se factura y avisa. Es el control que antes daba la aprobación.
+         */
+        huellas: Record<string, string>;
+        desde: string; hasta: string; onClose: (huboCambios: boolean) => void
+    },
 ) {
     const query = `ids=${ids.join(',')}&desde=${desde}&hasta=${hasta}`;
     const operacionGlobal = useOperacionReparto('FacturarModal');
@@ -126,7 +135,7 @@ export function FacturarModal(
         try {
             const r = await fetch('/api/facturacion', {
                 method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ids, desde, hasta, fecha_emision: fechaEmision }),
+                body: JSON.stringify({ ids, huellas, desde, hasta, fecha_emision: fechaEmision }),
             });
             const d = await r.json().catch(() => null);
             if (!r.ok) throw new Error(d?.error ?? 'No se pudo facturar');

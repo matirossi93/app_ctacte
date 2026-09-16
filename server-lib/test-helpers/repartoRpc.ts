@@ -3,6 +3,14 @@ export function respuestaReparto(datosTablas: () => Record<string, any>, registr
   return async (_rpc: string, p: any) => {
     const d = p.p_datos, accion = p.p_accion;
     const tablas = datosTablas();
+    // Vincular una nota existente tiene función propia: no lleva `p_accion`.
+    if (_rpc === 'vincular_nota_existente') {
+      const falla = tablas['hojas_ruta_ajustes']?.error;
+      if (falla) return { data: null, error: falla };
+      const fila = { id: 'aj1', ...p.p_ajuste, emitido_at: '2026-09-11' };
+      registrar('hojas_ruta_ajustes', 'insert', fila, []);
+      return { data: { ok: true, filas: fila, version: 2, factura: p.p_factura_esperada }, error: null };
+    }
     const tabla = accion.startsWith('ajuste') ? 'hojas_ruta_ajustes' : accion.startsWith('retiro') ? 'retiros_sucursal' : ['asignar','quitar'].includes(accion) ? 'hojas_ruta_pedidos' : 'hojas_ruta';
     const falla = tablas[tabla]?.error;
     if (falla) return { data: null, error: { ...falla, message: falla.code === '23505' ? (accion==='hoja_crear' ? `Ya existe la hoja ${d.numero}` : 'La nota ya está vinculada') : falla.message } };
