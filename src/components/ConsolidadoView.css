@@ -95,3 +95,19 @@
 /* Una cantidad que no cierra con el formato del producto ("30 bolsas de 30 kg" = 900 kg):
    infla el total del artículo y se lleva casi todo el reparto. */
 .co-dudosa { color: #a33b26; font-weight: 700; }
+
+/* El buscador de productos: mismo aire que el de las otras listas del panel. */
+.co-buscar {
+    display: flex; align-items: center; gap: 6px; min-width: 0;
+    padding: 3px 8px; border: 1px solid #d9c9ae; border-radius: 7px; background: #fff; color: #6b5a45;
+}
+.co-buscar input {
+    border: none; outline: none; background: transparent; font: inherit; color: #3a2d1c;
+    min-width: 0; width: 200px;
+}
+.co-buscar input::-webkit-search-cancel-button { display: none; }
+.co-buscar button {
+    border: none; background: transparent; color: #8a7f6f; cursor: pointer; display: flex; padding: 2px;
+}
+.co-buscar:focus-within { border-color: #06652F; }
+@media (max-width: 640px) { .co-buscar { width: 100%; } .co-buscar input { width: 100%; } }

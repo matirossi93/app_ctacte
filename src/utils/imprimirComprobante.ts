@@ -38,6 +38,14 @@ export async function imprimirComprobante(
     // Para el que reparte: a dónde va y a quién llamar si no encuentra el domicilio.
     domicilio: d.comprobante?.domicilio ?? null,
     telefono: d.comprobante?.telefono ?? null,
+    /**
+     * 🔑 Quién lo vendió. Mati (16/09/2026): *"en el formato de impresión del presupuesto y la
+     * factura debería figurar también el nombre del vendedor relacionado"*.
+     *
+     * El PDF ya sabía dibujarlo —lo usa la app de los vendedores— y esta pantalla no se lo
+     * pasaba: el papel de la oficina salía sin ese dato.
+     */
+    vendedor: d.comprobante?.vendedor ?? null,
     fecha: d.comprobante?.fecha ?? new Date(),
     observaciones: d.comprobante?.observaciones ?? null,
     items: d.items ?? [],

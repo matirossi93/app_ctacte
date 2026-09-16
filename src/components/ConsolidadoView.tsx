@@ -1,7 +1,8 @@
 import { useLecturaVigente } from '../utils/useLecturaVigente';
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, AlertTriangle, Boxes, ChevronRight, RefreshCw } from 'lucide-react';
+import { Loader2, AlertTriangle, Boxes, ChevronRight, RefreshCw, Search, X } from 'lucide-react';
 import { authHeaders } from '../utils/auth';
+import { coincide } from '../utils/buscar';
 import './ConsolidadoView.css';
 
 /**
@@ -54,6 +55,14 @@ export function ConsolidadoView({ desde, hasta }: { desde: string; hasta: string
     const [error, setError] = useState<string | null>(null);
     /** Sólo lo que no alcanza: es lo único que hay que resolver hoy. */
     const [soloFaltantes, setSoloFaltantes] = useState(true);
+    /**
+     * 🔑 Buscar un producto puntual. Mati (16/09/2026): *"deberíamos incluir también un buscador
+     * para que podamos filtrar por productos cuando necesitemos buscar algo"*.
+     *
+     * Filtra sobre lo que YA está en pantalla: la vista trae el rango entero de una y una
+     * consulta por tecla la volvería inusable. Mismo criterio que las otras tres listas.
+     */
+    const [busqueda, setBusqueda] = useState('');
     const [abierto, setAbierto] = useState<number | null>(null);
 
     const { iniciar: iniciarLectura } = useLecturaVigente(`${desde}|${hasta}`);
@@ -82,7 +91,10 @@ export function ConsolidadoView({ desde, hasta }: { desde: string; hasta: string
 
     useEffect(() => { void cargar(); }, [cargar]);
 
-    const visibles = soloFaltantes ? articulos.filter(a => (a.falta ?? 0) > 0) : articulos;
+    const visibles = articulos
+        .filter(a => !soloFaltantes || (a.falta ?? 0) > 0)
+        // Por descripción y por código: la oficina busca por las dos cosas.
+        .filter(a => coincide(busqueda, [a.descripcion, a.cod_articulo]));
 
     return (
         <div className="co-root">
@@ -90,6 +102,16 @@ export function ConsolidadoView({ desde, hasta }: { desde: string; hasta: string
                 <button className="co-btn ghost" onClick={() => void cargar(true)} disabled={cargando}>
                     <RefreshCw size={15} className={cargando ? 'co-girando' : ''} /> Actualizar
                 </button>
+                <label className="co-buscar">
+                    <Search size={14} />
+                    <input
+                        type="search" value={busqueda} placeholder="Buscar producto o código…"
+                        onChange={e => setBusqueda(e.target.value)} aria-label="Buscar producto"
+                    />
+                    {!!busqueda && (
+                        <button onClick={() => setBusqueda('')} aria-label="Limpiar la búsqueda"><X size={13} /></button>
+                    )}
+                </label>
                 <label className="co-check">
                     <input type="checkbox" checked={soloFaltantes} onChange={e => setSoloFaltantes(e.target.checked)} />
                     Sólo lo que no alcanza

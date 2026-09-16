@@ -40,6 +40,7 @@ import { invalidarVista } from './vistaPresupuestos.js';
 import { huellaPresupuesto, exigirHuella, exigirTipoEmpresa, bloquearPresupuesto, desbloquearPresupuesto, invalidarAprobacion, rechazoEdicionConfirmado, ErrorVersion } from './versionPresupuesto.js';
 import { invalidarRemitos } from './vistaRemitos.js';
 import { verificarPreciosEditados } from './verificarPrecioEditado.js';
+import { usuariosPorCod } from './usuariosPorCod.js';
 
 function frenaSiNoPuede(req: Request & { user?: JwtPayload }, res: Response): boolean {
   if (!puedeArmarHojasDeRuta(String(req.user?.rol ?? ''))) {
@@ -431,7 +432,23 @@ export async function comprobanteParaImprimir(req: Request & { user?: JwtPayload
     if (cab.existe !== true) { res.status(502).json({ error: 'No pude leer el comprobante en InfoManager.' }); return; }
 
     // Con el código del cliente en la mano: si es uno recién creado y no está cacheado, se busca.
-    const clientes = await fetchClientesIMCon([cab.cod_cliente ?? 0]).catch(() => [] as any[]);
+    const [clientes, vendedores] = await Promise.all([
+      fetchClientesIMCon([cab.cod_cliente ?? 0]).catch(() => [] as any[]),
+      /**
+       * 🔑 EL VENDEDOR VA EN EL PAPEL. Mati (16/09/2026): *"en el formato de impresión del
+       * presupuesto y la factura debería figurar también el nombre del vendedor relacionado"*.
+       *
+       * 🪤 El nombre sale de `usuarios`, que NO tiene un único por `cod_vendedor`: se elige con
+       * el mismo criterio que el resto del panel (ver `usuariosPorCod`), si no el papel podría
+       * salir con el nombre de un usuario de prueba que comparta el código.
+       */
+      Number(cab.cod_vendedor) > 0
+        ? Promise.resolve(sb().from('usuarios').select('id, nombre, cod_vendedor, activo, created_at')
+            .eq('tenant_id', TENANT_ID).eq('cod_vendedor', Number(cab.cod_vendedor)))
+            .then((r: any) => r.data ?? []).catch(() => [] as any[])
+        : Promise.resolve([] as any[]),
+    ]);
+    const vendedor = usuariosPorCod(vendedores as any[]).byCod.get(Number(cab.cod_vendedor))?.nombre ?? null;
 
     const cliente = (clientes as any[]).find(c => Number(c.cod_cliente) === Number(cab.cod_cliente));
     /**
@@ -450,6 +467,7 @@ export async function comprobanteParaImprimir(req: Request & { user?: JwtPayload
         anulada: cab.anulada, cod_cliente: cab.cod_cliente,
         cliente: cliente?.razon_social ?? cliente?.nombre ?? `Cliente ${cab.cod_cliente ?? ''}`,
         domicilio, telefono,
+        cod_vendedor: cab.cod_vendedor ?? null, vendedor,
       },
       items: (items as any[]).map(it => {
         const art = cat.get(Number(it.cod_articulo));
