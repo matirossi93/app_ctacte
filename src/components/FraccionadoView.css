@@ -122,3 +122,15 @@
 /* El filtro de qué mostrar: se lee como una pregunta, no como un tilde suelto. */
 .fr-check-tit { font-size: 0.78rem; color: #6b5a45; margin-right: 0.35rem; }
 .fr-check select { font: inherit; padding: 2px 6px; border: 1px solid #d9c9ae; border-radius: 5px; background: #fff; }
+
+/* Lo que hay que producir: su propia tabla, separada de los paquetes a fraccionar. */
+.fr-produccion { margin-top: 1.4rem; }
+.fr-produccion h3 {
+    margin: 0 0 0.5rem; font-size: 0.92rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: #06652F; border-bottom: 2px solid #06652F; padding-bottom: 0.25rem;
+}
+@media print {
+    /* Que no quede partida entre dos hojas: el sector la lee entera o no la lee. */
+    .fr-produccion { break-inside: avoid; page-break-inside: avoid; margin-top: 6mm !important; }
+    .fr-produccion h3 { font-size: 10pt !important; }
+}

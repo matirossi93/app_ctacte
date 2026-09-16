@@ -27,6 +27,12 @@ interface Linea {
     formato_bolsa: number | null;
 }
 
+/** Lo que se fabrica acá: balanceados propios y maíz quebrado. No se fracciona, se produce. */
+interface LineaProduccion {
+    cod_articulo: number; descripcion: string; subrubro: string;
+    bolsas: number; kg: number | null;
+}
+
 const num = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 2 });
 const fechaCorta = (iso: string) => (iso ? iso.slice(0, 10).split('-').reverse().join('/') : '');
 
@@ -43,6 +49,9 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
      */
     const [estado, setEstado] = useState<'pendientes' | 'facturados' | 'todos'>('pendientes');
     const [cuenta, setCuenta] = useState<{ pendientes: number; facturados: number } | null>(null);
+    /** Balanceados propios y maíz quebrado: no se fraccionan, se fabrican. */
+    const [produccion, setProduccion] = useState<LineaProduccion[]>([]);
+    const [totalesProduccion, setTotalesProduccion] = useState<{ productos: number; bolsas: number; kg: number } | null>(null);
     const [cargando, setCargando] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -67,9 +76,11 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
             setTotales(d.totales ?? null);
             setComprobantes(d.comprobantes ?? 0);
             setCuenta(d.cuenta ?? null);
+            setProduccion(d.produccion ?? []);
+            setTotalesProduccion(d.totales_produccion ?? null);
         } catch (e: any) {
             if (!lectura.vigente()) return;
-            setCuenta(null);
+            setCuenta(null); setProduccion([]); setTotalesProduccion(null);
             setError(e?.message ?? 'Error de conexión');
         } finally {
             if (lectura.vigente()) setCargando(false);
@@ -168,6 +179,40 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
                             ))}
                         </tbody>
                     </table></div>
+
+                    {/**
+                      * 🔑 LO QUE HAY QUE PRODUCIR, en su propia tabla.
+                      *
+                      * Mati (16/09/2026): *"necesitamos saber también para que produzcan la gente
+                      * de producción"*. Son balanceados propios y maíz quebrado: bolsas cerradas
+                      * que no se fraccionan, así que van aparte y no mezcladas con los paquetes
+                      * —el sector de fraccionamiento no tiene nada que hacer con ellas—.
+                      */}
+                    {!!produccion.length && (
+                        <div className="fr-produccion">
+                            <h3>Para producir</h3>
+                            <div className="fr-datos">
+                                <span><b>Productos</b> {totalesProduccion?.productos ?? 0}</span>
+                                <span><b>Bolsas</b> {num(totalesProduccion?.bolsas ?? 0)}</span>
+                                {!!totalesProduccion?.kg && <span><b>Kilos</b> {num(totalesProduccion.kg)}</span>}
+                            </div>
+                            <div className="fr-tabla-scroll"><table className="fr-tabla">
+                                <thead>
+                                    <tr><th>Código</th><th>Producto</th><th className="n">Bolsas</th><th className="n">Kilos</th></tr>
+                                </thead>
+                                <tbody>
+                                    {produccion.map(l => (
+                                        <tr key={l.cod_articulo}>
+                                            <td>{l.cod_articulo || '—'}</td>
+                                            <td className="fr-prod">{l.descripcion}</td>
+                                            <td className="n"><b>{num(l.bolsas)}</b></td>
+                                            <td className="n">{l.kg == null ? '—' : num(l.kg)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table></div>
+                        </div>
+                    )}
                 </div>
             )}
         </div>

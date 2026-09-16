@@ -31,6 +31,22 @@ const MIN_RENGLONES = 20;
 /** Y mínimo de veces que tiene que repetirse la cantidad candidata. */
 const MIN_REPETICIONES = 3;
 
+/**
+ * 🔑 LOS QUE SABEMOS DE MEMORIA, que mandan sobre lo deducido.
+ *
+ * La deducción necesita 20 renglones del artículo en 30 días; un producto que se vende poco no
+ * llega nunca a esa muestra y termina fraccionado en paquetes de 10 kg. Mati (16/09/2026):
+ * *"está mal el fraccionado en el girasol pelado, la bolsa viene por 25 kg y en la app se está
+ * fraccionando en cantidades más chicas"*.
+ *
+ * 🪤 Esto va acá y no en InfoManager porque IM no tiene el dato: un granel sale con
+ * `unidad_de_medida: Kilos` y `equivalencia_um: 1`. Si la lista crece, conviene una pantalla para
+ * cargarlos; con dos o tres, una constante a la vista es más fácil de auditar que una tabla.
+ */
+export const FORMATOS_CONOCIDOS = new Map<number, number>([
+  [459, 25],   // GIRASOL PELADO — bolsa de 25 kg (Mati, 16/09/2026)
+]);
+
 let _formatos: Map<number, number> = new Map();
 let _at = 0;
 let _ultimoIntento = 0;
@@ -97,7 +113,8 @@ export function formatosDeBolsa(): Map<number, number> {
       .catch((e: any) => { console.warn('[formatosBolsa] no pude calcular los formatos:', e?.message); })
       .finally(() => { _calculando = null; });
   }
-  return _formatos;
+  // Lo que sabemos pisa lo deducido: la muestra puede estar incompleta, el dato de la oficina no.
+  return FORMATOS_CONOCIDOS.size ? new Map([..._formatos, ...FORMATOS_CONOCIDOS]) : _formatos;
 }
 
 /** Para los tests y para forzar un recálculo después de tocar el catálogo. */

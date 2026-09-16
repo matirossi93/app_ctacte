@@ -25,6 +25,57 @@ export interface RenglonFraccionable {
 export interface ArticuloFraccionado {
   descripcion: string;
   unidad_de_medida?: string | null;
+  subrubro?: string | null;
+}
+
+/**
+ * 🔑 LO QUE SE FABRICA ACÁ, no se fracciona.
+ *
+ * Mati (16/09/2026): *"necesito que incluyamos también en el reporte de fraccionados los
+ * balanceados de producción propia y el maíz quebrado, es mercadería que producimos y necesitamos
+ * saber también para que produzcan la gente de producción"*.
+ *
+ * Son bolsas cerradas —"CERDO X 40 KG", "MAIZ QUEBRADO FINO X 30 KG"— así que el fraccionado las
+ * deja afuera con razón: no hay nada que pesar. Pero el sector de producción necesita el número
+ * igual, y sale de los mismos pedidos.
+ */
+export const SUBRUBROS_PRODUCCION = ['semillero', 'quebrados'];
+
+export interface LineaProduccion {
+  cod_articulo: number;
+  descripcion: string;
+  subrubro: string;
+  /** Bolsas a producir. Es la cantidad pedida: estos artículos se venden por bolsa. */
+  bolsas: number;
+  /** Kilos, cuando la presentación los declara ("X 40 KG"). */
+  kg: number | null;
+}
+
+/** Qué hay que producir, por artículo, con el mismo criterio que arma el fraccionado. */
+export function armarProduccion(
+  renglones: RenglonFraccionable[],
+  catalogo: Map<number, ArticuloFraccionado>,
+): LineaProduccion[] {
+  const por = new Map<number, LineaProduccion>();
+  for (const r of renglones ?? []) {
+    const cod = Number(r.cod_articulo);
+    const art = catalogo.get(cod);
+    const cant = Number(r.cantidad);
+    if (!art || !(cant > 0)) continue;
+    const sub = String(art.subrubro ?? '').trim().toLowerCase();
+    if (!SUBRUBROS_PRODUCCION.includes(sub)) continue;
+    // Los kilos por bolsa salen de la presentación, que es donde IM los declara de verdad.
+    const m = /X\s*(\d+(?:[.,]\d+)?)\s*(?:KG|KILOS?|K)\b/i.exec(String(art.descripcion ?? ''));
+    const kgPorBolsa = m ? Number(String(m[1]).replace(',', '.')) : null;
+    const prev = por.get(cod);
+    const bolsas = (prev?.bolsas ?? 0) + cant;
+    por.set(cod, {
+      cod_articulo: cod, descripcion: art.descripcion, subrubro: String(art.subrubro ?? '').trim(),
+      bolsas, kg: kgPorBolsa ? dos(bolsas * kgPorBolsa) : null,
+    });
+  }
+  return [...por.values()].sort((a, b) =>
+    a.subrubro.localeCompare(b.subrubro) || a.descripcion.localeCompare(b.descripcion));
 }
 
 export interface LineaFraccionado {

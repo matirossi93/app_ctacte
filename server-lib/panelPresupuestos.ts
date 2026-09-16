@@ -27,7 +27,7 @@ import {
 } from './infomanager.js';
 import { vistaDeRango, invalidarVista } from './vistaPresupuestos.js';
 import { nombreListaLargo } from './listas.js';
-import { armarFraccionado, totalesFraccionado } from './fraccionado.js';
+import { armarFraccionado, totalesFraccionado, armarProduccion } from './fraccionado.js';
 import { huellaPresupuesto, exigirHuella, exigirTipoEmpresa, bloquearPresupuesto, desbloquearPresupuesto, invalidarAprobacion, rechazoEdicionConfirmado, ErrorVersion } from './versionPresupuesto.js';
 import { formatosDeBolsa } from './formatosBolsa.js';
 
@@ -401,7 +401,8 @@ export async function fraccionadoDelRango(req: Request & { user?: JwtPayload }, 
     };
 
     if (!ids.size) {
-      res.json({ ok: true, desde, hasta, estado, cuenta, comprobantes: 0, fraccionado: [], totales: { productos: 0, paquetes: 0, kg: 0 } });
+      res.json({ ok: true, desde, hasta, estado, cuenta, comprobantes: 0, fraccionado: [], produccion: [],
+        totales: { productos: 0, paquetes: 0, kg: 0 }, totales_produccion: { productos: 0, bolsas: 0, kg: 0 } });
       return;
     }
 
@@ -414,13 +415,25 @@ export async function fraccionadoDelRango(req: Request & { user?: JwtPayload }, 
     // 🔑 Los formatos de bolsa: sin ellos no se puede saber si 60 kg son 2 bolsas cerradas o
     // 6 paquetes de 10 (Mati, 09/09/2026). Se usa lo que haya cacheado, sin esperar.
     const fraccionado = armarFraccionado(renglones, cat, formatosDeBolsa());
+    /**
+     * 🔑 Y lo que hay que PRODUCIR: balanceados propios y maíz quebrado. Son bolsas cerradas, así
+     * que el fraccionado las deja afuera con razón —no hay nada que pesar— pero el sector de
+     * producción necesita el número igual. Sale de los mismos renglones, sin una consulta más.
+     */
+    const produccion = armarProduccion(renglones, cat);
     res.json({
       ok: true, desde, hasta,
       estado, cuenta,
       completo: detalle.completo && sinItems.length === 0, dias_faltantes: detalle.dias_faltantes, comprobantes_sin_items: sinItems,
       comprobantes: ids.size,
       fraccionado,
+      produccion,
       totales: totalesFraccionado(fraccionado),
+      totales_produccion: {
+        productos: produccion.length,
+        bolsas: Math.round(produccion.reduce((s, l) => s + l.bolsas, 0) * 100) / 100,
+        kg: Math.round(produccion.reduce((s, l) => s + (l.kg ?? 0), 0) * 100) / 100,
+      },
     });
   } catch (err: any) {
     console.error('[fraccionadoDelRango]', err?.message);
