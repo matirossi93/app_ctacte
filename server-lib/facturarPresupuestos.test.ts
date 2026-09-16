@@ -70,7 +70,7 @@ vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSup
 
 vi.mock('./versionPresupuesto.js', async original => ({ ...(await original<any>()), exigirHuella: vi.fn() }));
 
-const { facturarSeleccion, previsualizarFacturacion, tableroFacturacion, liberarReclamo, habilitarRemitoPendiente, registrarRemitoExistente, prepararFacturacion, articulosSinStockDelError } = await import('./facturarPresupuestos.js');
+const { facturarSeleccion, previsualizarFacturacion, tableroFacturacion, liberarReclamo, habilitarRemitoPendiente, registrarRemitoExistente, prepararFacturacion, articulosSinStockDelError, hayQueVerificarVigencia } = await import('./facturarPresupuestos.js');
 
 let tablas: Record<string, any> = {};
 /** Lo que contesta `maybeSingle`, que lee UNA fila: sin esto choca con las lecturas de lista. */
@@ -1317,6 +1317,35 @@ describe('registrar un remito que se hizo a mano en InfoManager', () => {
     const r = await llamar(registrarRemitoExistente, { params, body: { numero: 77600 } });
     expect(r.status).toBe(502);
     expect(escrituras.filter(e => e.op === 'update')).toHaveLength(0);
+  });
+});
+
+/**
+ * 🔑 A QUIÉN SE LE PREGUNTA SI SIGUE VIGENTE.
+ *
+ * Medido en producción el 16/09/2026: de 108 comprobantes del tablero, 107 se resuelven gratis
+ * del listado del rango y cae UNO —el 58849410, que ya no está en InfoManager—. Esa única
+ * consulta se lleva entre 0,9 y 6,7 s de CADA carga de Facturación, la mayor parte esperando
+ * turno en el pool de lecturas.
+ *
+ * Y no servía para nada: la fila ya quedó en `anulado`, y la escritura que actúa sobre un anulado
+ * está condicionada a `completo`/`remito_pendiente`, así que no volvía a hacer nada. Un
+ * comprobante anulado o borrado no vuelve a existir: preguntar de nuevo es tiempo regalado.
+ */
+describe('a quién se le pregunta si sigue vigente', () => {
+  it('🔑 a los que tienen comprobante y siguen en juego', () => {
+    expect(hayQueVerificarVigencia({ im_factura_id: 'f1', estado_emision: 'completo' })).toBe(true);
+    expect(hayQueVerificarVigencia({ im_remito_id: 'r1', estado_emision: 'remito_pendiente' })).toBe(true);
+  });
+
+  it('🔴 NO al que ya quedó anulado: no vuelve a existir y la consulta cuesta segundos', () => {
+    expect(hayQueVerificarVigencia({ im_factura_id: '58849410', estado_emision: 'anulado' })).toBe(false);
+    expect(hayQueVerificarVigencia({ im_factura_id: 'f1', im_remito_id: 'r1', estado_emision: 'anulado' })).toBe(false);
+  });
+
+  it('🔴 ni al que no tiene ningún comprobante todavía', () => {
+    expect(hayQueVerificarVigencia({ estado_emision: 'factura_emitiendo' })).toBe(false);
+    expect(hayQueVerificarVigencia({ im_factura_id: null, im_remito_id: null, estado_emision: null })).toBe(false);
   });
 });
 

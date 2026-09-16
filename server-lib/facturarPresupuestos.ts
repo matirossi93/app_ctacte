@@ -886,9 +886,24 @@ async function conciliarEmisionesEnDuda(filas: any[], ventas?: any[]): Promise<M
  *
  * Devuelve los avisos para mostrar, y de paso deja las filas al día.
  */
+/**
+ * ¿Hay que ir a preguntarle a InfoManager si los comprobantes de esta fila siguen vigentes?
+ *
+ * 🪤 Un pedido que ya quedó `anulado` NO: un comprobante anulado o borrado en IM no vuelve a
+ * existir, y la escritura que actúa sobre él está condicionada a `completo`/`remito_pendiente`,
+ * así que la respuesta ya no cambia nada. Medido el 16/09/2026: el comprobante 58849410, muerto
+ * en IM, se preguntaba en CADA carga del tablero y costaba entre 0,9 y 6,7 s —la mayor parte
+ * esperando turno en el pool de lecturas—. De 108 comprobantes era el único que no salía gratis
+ * del listado del rango.
+ */
+export function hayQueVerificarVigencia(f: { im_factura_id?: unknown; im_remito_id?: unknown; estado_emision?: unknown }): boolean {
+  if (!f.im_factura_id && !f.im_remito_id) return false;
+  return f.estado_emision !== 'anulado';
+}
+
 async function sincronizarAnulados(filas: any[], rango?: { desde: string; hasta: string; ventas?: any[] }, leerCabecera?: any): Promise<Map<string, string>> {
   const avisos = new Map<string, string>();
-  const conComprobante = filas.filter(f => f.im_factura_id || f.im_remito_id);
+  const conComprobante = filas.filter(hayQueVerificarVigencia);
   if (!conComprobante.length) return avisos;
 
   /**
