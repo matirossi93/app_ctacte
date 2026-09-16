@@ -12,6 +12,7 @@ import { mesEnCursoArgentina, hoyArgentinaPartes } from '../utils/hoyArgentina';
 import { HistoricoObjetivos } from './HistoricoObjetivos';
 import { RecibosApp } from './RecibosApp';
 import { PedidosApp } from './PedidosApp';
+import { leerBorrador } from '../utils/borradorPedido';
 import { ConciliacionApp } from './ConciliacionApp';
 import { CambiarPassword } from './CambiarPassword';
 import { UsuariosAdmin } from './UsuariosAdmin';
@@ -270,6 +271,21 @@ export const VendorShell = ({ onLogout }: Props) => {
     }, [tab]);
     const [showRecibos, setShowRecibos] = useState(false);
     const [showPedidos, setShowPedidos] = useState(false);
+    /**
+     * Cuántos productos tiene el pedido que quedó a medio cargar, para mostrarlo en el botón.
+     *
+     * Mati (16/09/2026): *"que ellos puedan estar cargando un pedido, capaz que necesitan
+     * consultar otra cosa de la aplicación, y que puedan salir y que el pedido quede como en
+     * reposo — no que se vaya o que tengan que cerrarlo"*. El borrador ya se guardaba solo en
+     * el teléfono; lo que faltaba era que se VIERA, porque al salir no quedaba ninguna señal
+     * de que había algo a medias y el vendedor no tenía forma de saber que podía volver.
+     */
+    const [pedidoEnPausa, setPedidoEnPausa] = useState(0);
+    const mirarBorrador = () => {
+        try { setPedidoEnPausa(leerBorrador(getUser()?.email ?? '')?.cart.length ?? 0); }
+        catch { setPedidoEnPausa(0); }
+    };
+    useEffect(() => { mirarBorrador(); }, []);
     const [bucket, setBucket] = useState<'todos' | 'reciente' | 'medio' | 'vencido'>('todos');
     const [search, setSearch] = useState('');
     // Pendiente de crear actividad (disparado desde CobranzasView)
@@ -758,9 +774,14 @@ export const VendorShell = ({ onLogout }: Props) => {
                 </button>
             </nav>
 
-            {/* FAB: nuevo pedido (apilado arriba del de pago) */}
-            <button className="vs-fab vs-fab-ped" onClick={() => setShowPedidos(true)} title="Nuevo pedido">
+            {/* FAB: pedidos. Con un pedido a medias muestra cuántos productos lleva. */}
+            <button
+                className={`vs-fab vs-fab-ped${pedidoEnPausa ? ' tiene-pedido' : ''}`}
+                onClick={() => setShowPedidos(true)}
+                title={pedidoEnPausa ? `Seguir el pedido (${pedidoEnPausa} ${pedidoEnPausa === 1 ? 'producto' : 'productos'})` : 'Nuevo pedido'}
+            >
                 <ShoppingCart size={22} />
+                {pedidoEnPausa > 0 && <span className="vs-fab-badge">{pedidoEnPausa}</span>}
             </button>
             {/* FAB global: cargar pago */}
             <button className="vs-fab" onClick={() => setShowRecibos(true)} title="Cargar pago">
@@ -771,7 +792,9 @@ export const VendorShell = ({ onLogout }: Props) => {
                 <RecibosApp onClose={() => setShowRecibos(false)} clients={clientsAgg.map(c => ({ cod: c.cod, name: c.name, localidad: c.localidad }))} />
             )}
             {showPedidos && (
-                <PedidosApp onClose={() => setShowPedidos(false)} clients={clientsAgg.map(c => ({ cod: c.cod, name: c.name, localidad: c.localidad }))} />
+                <PedidosApp
+                    onClose={() => { setShowPedidos(false); mirarBorrador(); }}
+                    clients={clientsAgg.map(c => ({ cod: c.cod, name: c.name, localidad: c.localidad }))} />
             )}
             {showCambiarPass && <CambiarPassword onClose={() => setShowCambiarPass(false)} />}
             {showUsuariosAdmin && <UsuariosAdmin onClose={() => setShowUsuariosAdmin(false)} />}

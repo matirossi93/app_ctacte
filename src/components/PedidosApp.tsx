@@ -8,7 +8,7 @@ import { authHeaders, getUser } from '../utils/auth';
 import { borrarBorrador, cuandoSeGuardo, guardarBorrador, leerBorrador } from '../utils/borradorPedido';
 import { buscarClientes } from '../utils/buscarClientes';
 import { ultimoArriba } from '../utils/carrito';
-import { hayPedidoEnCurso } from '../utils/pedidoEnCurso';
+import { avisoAlAbrirPedido, huellaCarrito } from '../utils/avisoAlAbrirPedido';
 import { aplicarPrecioDeLista } from '../utils/precioDeLista';
 import { mensajeSinPrecio } from '../utils/mensajeSinPrecio';
 import './PedidosApp.css';
@@ -241,6 +241,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
         if (!cliente || !cart.length) { borrarBorrador(emailUsuario); return; }
         guardarBorrador({
             email: emailUsuario, cliente, listaCliente, cart, obs, editando,
+            huellaAlAbrir: huellaAlAbrir.current,
             idempotencyKey: idempotencyKey.current,
         });
     }, [cart, cliente, obs, listaCliente, editando, emailUsuario]);
@@ -483,8 +484,12 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
     const controlVigente = control?.firma === firmaCarrito ? control : null;
     const avisoDe = (idx: number) => { const a = controlVigente?.avisos?.[idx]; return a?.mensaje ? a : undefined; };
     const descDe = (idx: number) => controlVigente?.avisos?.[idx];
-    const sugerencias = controlVigente?.avisos.filter(a => a.severidad === 'cliente' && a.lista_sugerida != null) ?? [];
-    const notasDescuento = [...new Set(controlVigente?.avisos.filter(a => !a.mensaje_descuento).map(a => a.nota_descuento).filter(Boolean) ?? [])];
+    // 🪤 `?.avisos.filter()` protege el control pero NO la lista: si la respuesta llega sin
+    // `avisos`, esto tira "Cannot read properties of undefined (reading 'filter')" y el error
+    // se lleva puesta la pantalla entera — el vendedor ve "Algo salió mal" y pierde el pedido
+    // que estaba cargando. Dos líneas más arriba ya se usa `?.avisos?.[idx]`; acá faltaba.
+    const sugerencias = controlVigente?.avisos?.filter(a => a.severidad === 'cliente' && a.lista_sugerida != null) ?? [];
+    const notasDescuento = [...new Set(controlVigente?.avisos?.filter(a => !a.mensaje_descuento).map(a => a.nota_descuento).filter(Boolean) ?? [])];
     /** ¿El pedido lleva algo que hoy no hay en el depósito? Avisa, no frena. */
     const hayRenglonesSinStock = cart.some(i => i.sinStock);
     // El control AVISA, no frena (Mati lo dio de baja el 27/08 mientras la parametrización
@@ -501,16 +506,22 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
 
     // ── Editar un pedido ya cargado ─────────────────────────────────────────
     const [abriendo, setAbriendo] = useState<string | null>(null);
+    /**
+     * Cómo estaba el carrito cuando se abrió el pedido para editar. Es lo que permite saber si
+     * el vendedor le tocó algo: sin esto, cualquier pedido abierto contaba como "trabajo sin
+     * guardar" y le salía un cartel que lo dejaba trabado (16/09/2026).
+     */
+    const huellaAlAbrir = useRef<string | null>(borrador?.huellaAlAbrir ?? null);
     async function editarPedido(p: Pedido) {
         // 🪤 Abrir un pedido para editar PISA el carrito en curso, y desde que el pedido se
-        // guarda en el teléfono también pisa el borrador: sin esta pregunta, mirar «Mis
-        // pedidos» y tocar Editar se lleva puesto el pedido que estaba armando.
-        // 🔑 `hayPedidoEnCurso` y no `cart.length`: un pedido ya enviado deja sus renglones en
-        // el carrito y no es trabajo pendiente. Preguntar ahí traba al vendedor (caso Brian,
-        // 31/08). El carrito ahora se limpia al enviar, y esto lo sostiene igual.
-        if (hayPedidoEnCurso(cart, resultado) && !confirm(
-            `Tenés un pedido a medio cargar (${cart.length} ${cart.length === 1 ? 'producto' : 'productos'}). Si abrís este otro, ese se pierde.\n\n¿Seguir igual?`
-        )) return;
+        // guarda en el teléfono también pisa el borrador. Pero sólo hay que preguntar cuando
+        // de verdad se pierde algo: ver `avisoAlAbrirPedido`, que compara el carrito contra la
+        // huella con la que se abrió el pedido. Preguntar de más traba al vendedor, porque la
+        // opción prudente —Cancelar— es la que no lo deja hacer nada.
+        const aviso = avisoAlAbrirPedido({
+            cart, resultado, editando, aAbrir: p.id, huellaAlAbrir: huellaAlAbrir.current,
+        });
+        if (aviso && !confirm(aviso)) return;
         setAbriendo(p.id);
         try {
             const r = await fetch(`/api/pedidos/${p.id}`, { headers: authHeaders() });
@@ -519,7 +530,7 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
             // 🪤 El `uid` va SI O SI. Sin el, los renglones rearmados quedaban todos con
             // uid undefined y volvia el bug entero justo aca, que es el unico camino por el
             // que hoy entran renglones repetidos (la tabla no tiene indice unico).
-            setCart((d.items ?? []).map((i: any): CartItem => ({
+            const renglones = (d.items ?? []).map((i: any): CartItem => ({
                 uid: crypto.randomUUID(),
                 cod_articulo: Number(i.cod_articulo),
                 descripcion: String(i.descripcion ?? `Artículo ${i.cod_articulo}`),
@@ -527,7 +538,10 @@ export const PedidosApp = ({ onClose, clients = [] }: Props) => {
                 precio: Number(i.precio_unit),
                 cod_lista: Number(i.cod_lista_precios) || LISTA_DEFECTO,
                 descuento: Number(i.descuento_porc) || 0,
-            })));
+            }));
+            setCart(renglones);
+            // La foto de cómo vino: contra esto se compara para saber si le tocó algo.
+            huellaAlAbrir.current = huellaCarrito(renglones);
             // La lista del pedido, no la del último cliente que se miró: el buscador cotiza
             // con esto y el vendedor puede agregarle un producto más al pedido abierto.
             setListaCliente(Number(d.pedido?.cod_lista_precios) || LISTA_DEFECTO);
@@ -765,6 +779,7 @@ Se anula también en InfoManager. No se puede deshacer.`)) return;
         setStep('cliente'); setCliente(null); setCredito(null); setCart([]); setObs(''); setListaCliente(LISTA_DEFECTO);
         setClienteSearch(''); setCatQuery(''); setCatResults([]); setResultado(null); setEditando(null);
         setFallo(null); setAvisoBorrador(false);
+        huellaAlAbrir.current = null;
         borrarBorrador(emailUsuario);
         // Pedido nuevo, clave nueva: si se reusara la del anterior, InfoManager devolvería
         // aquel pedido en vez de crear este.

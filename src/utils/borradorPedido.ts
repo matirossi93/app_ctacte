@@ -62,6 +62,12 @@ export interface Borrador {
     /** id del pedido que se estaba editando. null = pedido nuevo. */
     editando: string | null;
     /**
+     * Cómo estaba el carrito cuando se abrió ese pedido para editar. Permite saber, al volver,
+     * si el vendedor le llegó a tocar algo: sin esto, recuperar un borrador de una edición
+     * sin cambios le preguntaba igual si quería perder el trabajo (16/09/2026).
+     */
+    huellaAlAbrir: string | null;
+    /**
      * 🔑 La MISMA clave con la que ya se intentó enviar, no una nueva.
      *
      * Si la red se cortó después de que el POST salió, el pedido pudo haber entrado a
@@ -132,6 +138,7 @@ export function parsearBorrador(raw: string | null, email: string): Borrador | n
         },
         listaCliente: b.listaCliente,
         cart: b.cart,
+        huellaAlAbrir: textoOk(b.huellaAlAbrir) ? b.huellaAlAbrir : null,
         obs: typeof b.obs === 'string' ? b.obs : '',
         editando: textoOk(b.editando) ? b.editando : null,
         idempotencyKey: b.idempotencyKey,

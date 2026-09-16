@@ -711,6 +711,22 @@
 /* FAB Pedidos: apilado arriba del de pago, en dorado para distinguirlo. */
 .vs-fab-ped { bottom: 156px; background: linear-gradient(145deg, #E59B33 0%, #C9781F 100%); color: #fff }
 .vs-root[data-tab="actividad"] .vs-fab-ped { display: none }
+/* Con un pedido a medio cargar el botón lo dice: late despacio y muestra cuántos productos
+   lleva, así el vendedor sabe que puede irse a consultar otra cosa y volver. */
+.vs-fab-ped.tiene-pedido { animation: vsLatido 2.4s ease-in-out infinite }
+.vs-fab-badge {
+    position: absolute; top: -5px; right: -5px;
+    min-width: 20px; height: 20px; padding: 0 5px;
+    border-radius: 10px; background: #06652F; color: #EEC045;
+    font-size: 11px; font-weight: 700; line-height: 20px; text-align: center;
+    border: 2px solid #F4ECD8;
+}
+.vs-fab-ped { position: absolute }
+@keyframes vsLatido {
+    0%, 100% { box-shadow: 0 12px 28px -8px rgba(229,155,51,.55), inset 0 1px 0 rgba(255,255,255,.15) }
+    50%      { box-shadow: 0 12px 34px -6px rgba(229,155,51,.95), inset 0 1px 0 rgba(255,255,255,.15) }
+}
+@media (prefers-reduced-motion: reduce) { .vs-fab-ped.tiene-pedido { animation: none } }
 
 /* Bottom nav */
 .vs-nav {

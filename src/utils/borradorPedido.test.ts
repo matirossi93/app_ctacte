@@ -38,6 +38,7 @@ const BORRADOR: BorradorNuevo = {
     cart: [RENGLON],
     obs: 'entregar el jueves',
     editando: null,
+    huellaAlAbrir: null,
     idempotencyKey: 'key-abc',
 };
 const guardado = (extra: Record<string, unknown> = {}) =>
@@ -195,5 +196,26 @@ describe('cuandoSeGuardo', () => {
     it('sin fecha no inventa una', () => {
         expect(cuandoSeGuardo(0)).toBe('');
         expect(cuandoSeGuardo(NaN)).toBe('');
+    });
+});
+
+describe('la huella con la que se abrió el pedido viaja en el borrador', () => {
+    // Sin esto, el vendedor que sale de una edición y vuelve recibe un cartel preguntándole si
+    // quiere perder un trabajo que nunca hizo (16/09/2026).
+    it('🔴 se guarda y se recupera', () => {
+        guardarBorrador({ ...BORRADOR, editando: 'ped-1', huellaAlAbrir: '4030|10|13|0' });
+        expect(leerBorrador(BORRADOR.email)?.huellaAlAbrir).toBe('4030|10|13|0');
+    });
+
+    it('un borrador viejo, sin el campo, se lee igual', () => {
+        // Los que ya estaban guardados en el teléfono no se tiran a la basura.
+        guardarBorrador(BORRADOR);
+        const clave = `${CLAVE_BORRADOR}:${BORRADOR.email}`;
+        const crudo = JSON.parse(localStorage.getItem(clave)!);
+        delete crudo.huellaAlAbrir;
+        localStorage.setItem(clave, JSON.stringify(crudo));
+        const leido = leerBorrador(BORRADOR.email);
+        expect(leido).not.toBeNull();
+        expect(leido?.huellaAlAbrir).toBeNull();
     });
 });
