@@ -139,7 +139,8 @@ export function seFracciona(
 
 export type PaquetesRenglon =
   | { fracciona: false; bolsas: number; formato: number }
-  | { fracciona: true; paquetes: number[] };
+  /** Con `bolsas`, el renglón es MIXTO: bolsas cerradas del depósito + el resto a pesar. */
+  | { fracciona: true; paquetes: number[]; bolsas?: number; formato?: number };
 
 /**
  * En cuántos paquetes se parte un renglón.
@@ -154,22 +155,34 @@ export type PaquetesRenglon =
  */
 export function paquetesDelRenglon(cantidad: number, formatoBolsa: number | null): PaquetesRenglon {
   const q = dos(Number(cantidad));
+  let enteras = 0;
   if (formatoBolsa && formatoBolsa > 0) {
     const bolsas = q / formatoBolsa;
     // 🪤 Con decimales, `q % formato === 0` falla por punto flotante: se compara redondeando.
     if (bolsas >= 1 && Math.abs(bolsas - Math.round(bolsas)) < 1e-9) {
       return { fracciona: false, bolsas: Math.round(bolsas), formato: formatoBolsa };
     }
+    /**
+     * 🔑 LAS BOLSAS ENTERAS SE AGARRAN DEL DEPÓSITO; SÓLO EL RESTO SE PESA.
+     *
+     * Mati (16/09/2026), sobre los kilos que exceden la bolsa: *"veníamos facturando esos kg
+     * extra fraccionados"*. Antes, una cantidad que no fuera múltiplo exacto se fraccionaba
+     * ENTERA: 30 kg de mijo con bolsa de 25 salían como tres paquetes de 10 en vez de una bolsa
+     * cerrada más 5 kg. Medido sobre 16 días, eran 86 renglones de trabajo de más.
+     */
+    enteras = Math.floor(bolsas + 1e-9);
   }
   const paquetes: number[] = [];
-  let resta = q;
+  let resta = enteras > 0 && formatoBolsa ? dos(q - enteras * formatoBolsa) : q;
   while (resta > MAX_FRACCION_KG + 1e-9) {
     paquetes.push(MAX_FRACCION_KG);
     resta = dos(resta - MAX_FRACCION_KG);
   }
   // 🪤 Sin el redondeo aparecían paquetes de 0.00000001 al final de una resta con decimales.
   if (resta > 1e-9) paquetes.push(dos(resta));
-  return { fracciona: true, paquetes };
+  return enteras > 0 && formatoBolsa
+    ? { fracciona: true, paquetes, bolsas: enteras, formato: formatoBolsa }
+    : { fracciona: true, paquetes };
 }
 
 export function armarFraccionado(
@@ -197,8 +210,11 @@ export function armarFraccionado(
      * menos (Mati, 09/09/2026).
      */
     const p = paquetesDelRenglon(cant, formato);
-    if (p.fracciona) acc.paquetes.push(...p.paquetes);
-    else acc.bolsas += p.bolsas;
+    if (p.fracciona) {
+      acc.paquetes.push(...p.paquetes);
+      // Un renglón mixto aporta las dos cosas: bolsas cerradas y paquetes a pesar.
+      acc.bolsas += p.bolsas ?? 0;
+    } else acc.bolsas += p.bolsas;
   }
   return [...porProducto.entries()]
     .sort((a, b) => a[1].descripcion.localeCompare(b[1].descripcion) || a[0] - b[0])

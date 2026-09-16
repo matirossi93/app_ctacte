@@ -41,10 +41,20 @@ const MIN_REPETICIONES = 3;
  *
  * 🪤 Esto va acá y no en InfoManager porque IM no tiene el dato: un granel sale con
  * `unidad_de_medida: Kilos` y `equivalencia_um: 1`. Si la lista crece, conviene una pantalla para
- * cargarlos; con dos o tres, una constante a la vista es más fácil de auditar que una tabla.
+ * cargarlos; con siete, una constante a la vista es más fácil de auditar que una tabla.
+ *
+ * 🪤 Los datos de venta NO sirven para verificarlos, y por eso se cargan a mano: lo más pedido de
+ * alpiste es 30 kg y la bolsa es de 25 porque *"veníamos facturando esos kg extra fraccionados"*
+ * (Mati, 16/09/2026) — o sea que el 30 es una bolsa más 5 sueltos, no el formato.
  */
 export const FORMATOS_CONOCIDOS = new Map<number, number>([
-  [459, 25],   // GIRASOL PELADO — bolsa de 25 kg (Mati, 16/09/2026)
+  [459, 25],   // GIRASOL PELADO
+  [400, 25],   // ALPISTE
+  [402, 25],   // MIJO
+  [401, 40],   // LINO
+  [723, 30],   // POROTO ALUBIA
+  [703, 30],   // AVENA ARROLLADA
+  [704, 30],   // AVENA INSTANTANEA
 ]);
 
 let _formatos: Map<number, number> = new Map();

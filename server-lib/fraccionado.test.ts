@@ -173,11 +173,46 @@ describe('el formato de bolsa conocido', () => {
     const { FORMATOS_CONOCIDOS } = await import('./formatosBolsa.js');
     const { paquetesDelRenglon } = await import('./fraccionado.js');
     expect(FORMATOS_CONOCIDOS.get(459)).toBe(25);
+    // Los que confirmó Mati el 16/09: alpiste y mijo 25, lino 40, alubia 30, las avenas 30.
+    expect([...FORMATOS_CONOCIDOS.entries()].sort((a, b) => a[0] - b[0]))
+      .toEqual([[400, 25], [401, 40], [402, 25], [459, 25], [703, 30], [704, 30], [723, 30]]);
     // 25 kg justos: una bolsa cerrada, nada que fraccionar.
     expect(paquetesDelRenglon(25, 25)).toMatchObject({ fracciona: false, bolsas: 1 });
     // 50 son dos bolsas; 30 no es múltiplo y sí se fracciona.
     expect(paquetesDelRenglon(50, 25)).toMatchObject({ fracciona: false, bolsas: 2 });
     expect(paquetesDelRenglon(30, 25)).toMatchObject({ fracciona: true });
+  });
+
+  /**
+   * 🔴 LAS BOLSAS ENTERAS NO SE ABREN. Mati (16/09/2026), sobre los kilos que exceden la bolsa:
+   * *"veníamos facturando esos kg extra fraccionados"*.
+   *
+   * Antes, una cantidad que no fuera múltiplo exacto se fraccionaba ENTERA: 30 kg de mijo con
+   * bolsa de 25 salían como tres paquetes de 10 en vez de una bolsa cerrada más 5 kg. Medido
+   * sobre 16 días de pedidos reales, eran 86 renglones de trabajo de más.
+   */
+  it('🔑 lo que pasa la bolsa se parte solo: bolsa cerrada + el resto', async () => {
+    const { paquetesDelRenglon } = await import('./fraccionado.js');
+    // MIJO, bolsa de 25: una cerrada y 5 kg a pesar.
+    expect(paquetesDelRenglon(30, 25)).toEqual({ fracciona: true, paquetes: [5], bolsas: 1, formato: 25 });
+    // 60 con bolsa de 25: dos cerradas y 10 kg.
+    expect(paquetesDelRenglon(60, 25)).toEqual({ fracciona: true, paquetes: [10], bolsas: 2, formato: 25 });
+    // 40 con bolsa de 30: una cerrada y 10 kg.
+    expect(paquetesDelRenglon(40, 30)).toEqual({ fracciona: true, paquetes: [10], bolsas: 1, formato: 30 });
+    // 🪤 El resto grande sigue partiéndose de a 10 como máximo: 55 con bolsa 40 son 1 + [10, 5].
+    expect(paquetesDelRenglon(55, 40)).toEqual({ fracciona: true, paquetes: [10, 5], bolsas: 1, formato: 40 });
+  });
+
+  it('🪤 y menos de una bolsa se fracciona entero, como siempre', async () => {
+    const { paquetesDelRenglon } = await import('./fraccionado.js');
+    expect(paquetesDelRenglon(20, 25)).toEqual({ fracciona: true, paquetes: [10, 10] });
+  });
+
+  it('🔑 el listado suma las dos cosas del mismo renglón', async () => {
+    const { armarFraccionado } = await import('./fraccionado.js');
+    const cat = new Map([[402, { descripcion: 'MIJO', unidad_de_medida: 'Kilos' }]]);
+    const r = armarFraccionado([{ cod_articulo: 402, cantidad: 30 }], cat as any, new Map([[402, 25]]));
+    expect(r[0]).toMatchObject({ descripcion: 'MIJO', cantidades: [5], paquetes: 1, bolsas_enteras: 1, formato_bolsa: 25 });
   });
 
   it('🪤 sin el formato, 25 kg se partían en paquetes de 10: eso era el problema', async () => {

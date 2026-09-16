@@ -11,6 +11,11 @@ import { paquetesDelRenglon, seFracciona } from './fraccionado.js';
  *
  * Sin esto el listado mandaba a fraccionar 60 kg sueltos donde el sector sólo tiene que agarrar
  * dos bolsas del depósito.
+ *
+ * 🔄 16/09/2026: lo que PASA la bolsa ya no fracciona el renglón entero. Mati, sobre los kilos
+ * que exceden: *"veníamos facturando esos kg extra fraccionados"*. Antes, 50 kg con bolsa de 30
+ * salían como cinco paquetes de 10; ahora son una bolsa cerrada y 20 kg a pesar. Medido sobre 16
+ * días de pedidos, eran 86 renglones de trabajo de más.
  */
 describe('en cuántos paquetes se parte un renglón', () => {
   it('🔑 múltiplo de la bolsa: NO se fracciona (60 kg = 2 bolsas de 30)', () => {
@@ -19,9 +24,11 @@ describe('en cuántos paquetes se parte un renglón', () => {
     expect(paquetesDelRenglon(30, 30)).toEqual({ fracciona: false, bolsas: 1, formato: 30 });
   });
 
-  it('🔑 lo que no es múltiplo va en paquetes de 10 o menos', () => {
-    expect((paquetesDelRenglon(100, 30) as any).paquetes).toEqual([10, 10, 10, 10, 10, 10, 10, 10, 10, 10]);
-    expect((paquetesDelRenglon(50, 30) as any).paquetes).toEqual([10, 10, 10, 10, 10]);
+  it('🔑 lo que PASA la bolsa: las cerradas se agarran y sólo el resto se pesa', () => {
+    // 100 con bolsa de 30: tres cerradas y 10 kg a fraccionar.
+    expect(paquetesDelRenglon(100, 30)).toEqual({ fracciona: true, paquetes: [10], bolsas: 3, formato: 30 });
+    // 50 con bolsa de 30: una cerrada y 20 kg, que van de a 10.
+    expect(paquetesDelRenglon(50, 30)).toEqual({ fracciona: true, paquetes: [10, 10], bolsas: 1, formato: 30 });
   });
 
   it('🔑 el resto va en su propio paquete: 15 kg = uno de 10 y uno de 5', () => {
@@ -32,7 +39,7 @@ describe('en cuántos paquetes se parte un renglón', () => {
 
   it('🪤 con decimales no aparecen paquetes fantasma de 0,0000001', () => {
     // 30,5 en punto flotante no es exacto y esto se pesa en una balanza.
-    expect((paquetesDelRenglon(30.5, 30) as any).paquetes).toEqual([10, 10, 10, 0.5]);
+    expect(paquetesDelRenglon(30.5, 30)).toEqual({ fracciona: true, paquetes: [0.5], bolsas: 1, formato: 30 });
     expect((paquetesDelRenglon(20.1, 30) as any).paquetes).toEqual([10, 10, 0.1]);
   });
 
