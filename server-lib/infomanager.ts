@@ -510,7 +510,7 @@ export function stockPuntualDelDeposito(data: any, deposito: number): number | n
   const valor = delDeposito[0].stock;
   return valor != null && String(valor).trim() !== '' && Number.isFinite(Number(valor)) ? Number(valor) : null;
 }
-export function invalidarIM() { invalidarCacheVentas(); invalidarCacheItems(); lecturasStock.invalidar(); lecturasStockArticulo.invalidar(); lecturasSaldos.invalidar(); invalidarCacheNumeracion(); }
+export function invalidarIM() { invalidarCacheVentas(); invalidarCacheItems(); lecturasStock.invalidar(); lecturasStockArticulo.invalidar(); lecturasSaldos.invalidar(); invalidarCacheNumeracion(); invalidarVigenciaComprobantes(); }
 async function leerStockPorDeposito(codDeposito: number): Promise<Map<number, number>> {
   const cli = await imClient();
   const { data } = await imGetRetry(
@@ -1379,6 +1379,23 @@ export async function buscarPresupuestoPorCompatibilidad(
  * PREGUNTAR. El `null` es el que importa: quien llama no puede tratarlo como "anulada", porque
  * borraría el registro de una factura que existe sólo porque IM no contestó.
  */
+/**
+ * 🔑 LA VIGENCIA QUE NO SALIÓ DEL LISTADO, GUARDADA LA MISMA VENTANA QUE EL LISTADO.
+ *
+ * El tablero de Facturación resuelve casi todos los comprobantes con el listado del rango, que ya
+ * viene de un cache de 90 s. Los pocos que caen afuera —facturas emitidas con fecha adelantada,
+ * sobre todo— se preguntan de a uno, y eso costaba 4 s en cada carga (10 de 68, medido el
+ * 16/09/2026). Se gastaban segundos en tener un dato MÁS fresco para esos pocos que el que la
+ * pantalla ya tiene para los otros 58.
+ *
+ * 🪤 Un `null` no se guarda: es "no pude preguntar", no una respuesta. Cachearlo convertiría una
+ * falla de red en un "no se sabe" firme durante minuto y medio, y de un "no se sabe" nadie borra
+ * nada — pero tampoco se enteraría de una anulación.
+ */
+const VIGENCIA_TTL_MS = 90_000;
+const _vigenciaCache = new Map<string, { vig: boolean; at: number }>();
+export function invalidarVigenciaComprobantes(): void { _vigenciaCache.clear(); }
+
 export async function comprobantesVigentes(
   ids: Iterable<string | number>,
   /**
@@ -1392,7 +1409,11 @@ export async function comprobantesVigentes(
    * Los que no aparezcan en el rango se preguntan de a uno, como antes: puede ser una factura
    * vieja o una que ya no está.
    */
-  rango?: { desde: string; hasta: string; ventas?: VentaRaw[] },
+  rango?: {
+    desde: string; hasta: string; ventas?: VentaRaw[];
+    /** Apretaron Actualizar: la respuesta tiene que salir de IM, no de lo guardado. */
+    actualizar?: boolean;
+  },
   /** Lector compartido por petición: sin esto, una FA fuera del rango se pide dos veces. */
   leerCabecera: (id: string) => Promise<CabeceraComprobante> = cabeceraComprobante,
 ): Promise<Map<string, boolean | null>> {
@@ -1430,6 +1451,17 @@ export async function comprobantesVigentes(
    * del rango no los trae, esto pasa a ser el grueso de la carga del tablero. Sin el número no se
    * puede saber si el problema es el rango que se consulta o los comprobantes que caen afuera.
    */
+  // Lo que ya se preguntó hace poco: la misma ventana que el listado del que salieron los demás.
+  if (!rango?.actualizar && faltan.length) {
+    const ahora = Date.now();
+    faltan = faltan.filter(id => {
+      const hit = _vigenciaCache.get(id);
+      if (!hit || ahora - hit.at >= VIGENCIA_TTL_MS) return true;
+      salida.set(id, hit.vig);
+      return false;
+    });
+  }
+
   const t0 = Date.now();
   // De a 10: son un GET cada uno y la pantalla espera.
   for (let i = 0; i < faltan.length; i += 10) {
@@ -1438,7 +1470,10 @@ export async function comprobantesVigentes(
         const c = await leerCabecera(id);
         // 🔴 Tres estados: vigente / anulado / no se sabe. Un "no sé" leído como "anulado" marca
         // la factura anulada o limpia el remito de un pedido ya despachado.
-        salida.set(id, vigenciaDeCabecera(c));
+        const vig = vigenciaDeCabecera(c);
+        salida.set(id, vig);
+        // Sólo lo definitivo: un "no se sabe" hay que volver a preguntarlo.
+        if (vig !== null) _vigenciaCache.set(id, { vig, at: Date.now() });
       } catch {
         salida.set(id, null);
       }

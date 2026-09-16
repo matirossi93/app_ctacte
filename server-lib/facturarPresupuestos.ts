@@ -901,7 +901,7 @@ export function hayQueVerificarVigencia(f: { im_factura_id?: unknown; im_remito_
   return f.estado_emision !== 'anulado';
 }
 
-async function sincronizarAnulados(filas: any[], rango?: { desde: string; hasta: string; ventas?: any[] }, leerCabecera?: any): Promise<Map<string, string>> {
+async function sincronizarAnulados(filas: any[], rango?: { desde: string; hasta: string; ventas?: any[]; actualizar?: boolean }, leerCabecera?: any): Promise<Map<string, string>> {
   const avisos = new Map<string, string>();
   const conComprobante = filas.filter(hayQueVerificarVigencia);
   if (!conComprobante.length) return avisos;
@@ -1419,7 +1419,8 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
     const avisosAnulados = await sincronizarAnulados(
       conId,
       // Las facturas del rango que se está mirando salen del listado, sin un GET por cada una.
-      { desde, hasta, ventas: ventasDelRango },
+      // `actualizar`: con Actualizar apretado, la vigencia sale de IM y no de lo guardado.
+      { desde, hasta, ventas: ventasDelRango, actualizar: refrescar },
       leerCabecera,
     ).catch((err: any) => {
       console.warn('[tableroFacturacion] no pude chequear anulados:', err?.message);
