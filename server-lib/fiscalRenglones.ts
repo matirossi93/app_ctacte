@@ -33,7 +33,24 @@ export async function conIVAConfiable<T extends { cod_articulo: number; cod_list
       const r = tareas[siguiente++];
       const p = r.cod_lista_precios ? await getPrecioLista(r.cod_articulo, r.cod_lista_precios) : null;
       const iva = p && Number(p.cod_articulo) === r.cod_articulo ? ivaExplicita(p.iva_verificada) : null;
-      if (iva == null) throw new ErrorFiscal(`No pude verificar el IVA del artículo nuevo ${r.cod_articulo}. Revisá su ficha/lista en InfoManager.`);
+      if (iva == null) {
+        /**
+         * 🔑 QUÉ HAY QUE IR A CORREGIR. "No pude verificar el IVA del 13819" no le dice a nadie
+         * qué hacer, y el 16/09/2026 frenó el costo de distribución de EL CEBILAR tres veces.
+         *
+         * 🪤 Los dos caminos al IVA pueden fallar por motivos distintos: que la ficha del
+         * artículo no tenga la alícuota cargada, o que el artículo no esté en esa lista de
+         * precios —el 13819 no está en NINGUNA, verificado contra IM el 09/09/2026—. El log
+         * distingue cuál de los dos fue; el mensaje dice qué cargar.
+         */
+        const ficha = catalogo?.get(r.cod_articulo);
+        console.warn(`[conIVAConfiable] artículo ${r.cod_articulo} sin IVA verificable · `
+          + `en catálogo: ${ficha ? 'sí' : 'NO'} · iva_por de la ficha: ${JSON.stringify(ficha?.iva_por ?? null)} · `
+          + `lista pedida: ${r.cod_lista_precios ?? 'ninguna'} · precio-ldp: ${p ? 'respondió' : 'sin dato'}`);
+        throw new ErrorFiscal(
+          `No pude verificar el IVA del artículo ${r.cod_articulo}${ficha?.descripcion ? ` (${ficha.descripcion})` : ''}. `
+          + 'Cargale la alícuota de IVA en su ficha de InfoManager y volvé a intentar.');
+      }
       if (porCodigo.has(r.cod_articulo) && porCodigo.get(r.cod_articulo) !== iva) throw new ErrorFiscal(`IVA discordante para el artículo ${r.cod_articulo}.`);
       porCodigo.set(r.cod_articulo, iva);
     }
