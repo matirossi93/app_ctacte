@@ -1,6 +1,7 @@
 import { invalidarImportesFacturas } from './cacheImportesFacturas.js';
 import { parsearPendientesCliente } from './respuestaPendientesCliente.js';
 import { LecturasCompartidas, lecturaLimitada, pausarLecturas } from './lecturasCompartidas.js';
+import { fueNuestraCola } from './fallosDeLectura.js';
 import axios, { AxiosInstance } from 'axios';
 import { idIM, ivaExplicita } from './identidadIM.js';
 import { interpretarActualizacionIM } from './respuestaActualizacionIM.js';
@@ -1362,12 +1363,14 @@ export async function comprobantesVigentes(
   const salida = new Map<string, boolean | null>();
 
   let faltan = unicos;
+  let filasDelListado = -1;
   if (rango && unicos.length) {
     try {
       // 🔑 `rango.ventas` es el listado que quien llama YA leyó en esta misma petición. Sin eso
       // el tablero pide el mismo rango tres veces, y por encima de 10 días no hay cache que las
       // una: son tres lecturas completas.
       const listado = rango.ventas ?? await fetchVentas(rango.desde, rango.hasta);
+      filasDelListado = listado.length;
       const porId = new Map(listado.map(v => [String(v.id), v]));
       faltan = [];
       for (const id of unicos) {
@@ -1385,6 +1388,12 @@ export async function comprobantesVigentes(
     }
   }
 
+  /**
+   * 🔑 DÓNDE SE VA EL TIEMPO. Cada uno de estos es un GET y la pantalla los espera: si el listado
+   * del rango no los trae, esto pasa a ser el grueso de la carga del tablero. Sin el número no se
+   * puede saber si el problema es el rango que se consulta o los comprobantes que caen afuera.
+   */
+  const t0 = Date.now();
   // De a 10: son un GET cada uno y la pantalla espera.
   for (let i = 0; i < faltan.length; i += 10) {
     await Promise.all(faltan.slice(i, i + 10).map(async (id) => {
@@ -1397,6 +1406,11 @@ export async function comprobantesVigentes(
         salida.set(id, null);
       }
     }));
+  }
+  if (faltan.length) {
+    console.log(`[comprobantesVigentes] ${unicos.length} comprobantes · ${unicos.length - faltan.length} salieron del listado `
+      + `${rango?.desde ?? '-'}..${rango?.hasta ?? '-'} (${filasDelListado < 0 ? 'sin listado' : `${filasDelListado} filas`}) · `
+      + `${faltan.length} de a uno en ${Date.now() - t0} ms`);
   }
   return salida;
 }
@@ -1645,7 +1659,15 @@ export async function fetchPreciosDeLista(codLista: number): Promise<Map<number,
       // reintentos de imGetRetry antes de mostrar resultados, y encima le pega a IM justo
       // cuando está en problemas. Se cachea el fallo un ratito corto: el buscador contesta
       // al toque y en un minuto vuelve a intentar solo.
-      _listaPreciosCache.set(codLista, { precios: new Map(), fetchedAt: Date.now() - LISTA_PRECIOS_TTL_MS + FALLO_REINTENTO_MS });
+      //
+      // 🔴 PERO SÓLO SI EL QUE FALLÓ FUE IM. Si el "no" salió de nuestra propia cola de
+      // lecturas —el caso del 16/09: el pre-warm de arranque tenía los cuatro cupos y la
+      // consulta del vendedor se rechazó con "InfoManager está ocupado"— recordar ese fallo
+      // deja al vendedor un minuto entero sin precios por una decisión nuestra, y el próximo
+      // intento casi seguro funciona.
+      if (!fueNuestraCola(e)) {
+        _listaPreciosCache.set(codLista, { precios: new Map(), fetchedAt: Date.now() - LISTA_PRECIOS_TTL_MS + FALLO_REINTENTO_MS });
+      }
       return new Map<number, number>();
     }
   })().finally(() => { _listaPreciosPending.delete(codLista); });
