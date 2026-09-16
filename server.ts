@@ -1528,7 +1528,20 @@ cron.schedule('*/8 * * * *', async () => {
 // si el contenedor muere durante el arranque (ej. OOM). Los caches se ganan
 // on-demand igual, solo que el primer request de cada cosa es más lento.
 const PREWARM_BOOT = process.env.PREWARM_BOOT !== 'off';
-if (PREWARM_BOOT) setTimeout(() => {
+/**
+ * 🔴 TODO ESTO VA EN SEGUNDO PLANO, Y NO ES UN DETALLE.
+ *
+ * El 16/09/2026 un vendedor buscó un producto a las 12:13 y los tres resultados le salieron
+ * con "precio no disponible", aunque tenían precio en su lista. El contenedor había arrancado
+ * a las 12:14: estas cuatro tareas salían a InfoManager EN PARALELO y sin ceder prioridad, se
+ * quedaban con los cuatro cupos de lectura, y la consulta de la lista de precios del vendedor
+ * se rechazaba con "InfoManager está ocupado".
+ *
+ * `enSegundoPlano` las baja a un solo cupo (LIMITE_FONDO), así el pre-warm tarda un poco más
+ * pero deja tres libres para quien está esperando del otro lado. Es el mismo trato que ya
+ * tenía el pre-warm del snapshot.
+ */
+if (PREWARM_BOOT) setTimeout(() => enSegundoPlano(async () => {
     fetchData(true)
         .then(() => console.log('[pre-warm on start] /api/data cache listo'))
         .catch(err => console.warn('[pre-warm on start] fallo:', err?.message));
@@ -1558,7 +1571,7 @@ if (PREWARM_BOOT) setTimeout(() => {
     fetchStockPorDeposito(Number(process.env.PEDIDO_DEPOSITO || 1))
         .then(m => console.log(`[pre-warm on start] stock: ${m.size} artículos en ${Date.now() - tStock}ms`))
         .catch(err => console.warn('[pre-warm stock] fallo:', err?.message ?? err));
-}, 3000);
+}), 3000);
 else console.log('Pre-warm de boot DESACTIVADO (PREWARM_BOOT=off)');
 console.log('Cron pre-warm /api/data: */8 * * * *');
 

@@ -12,7 +12,13 @@
 .ped-modal {
     background: var(--color-bg);
     color: var(--color-text);
-    width: 100%; max-width: 560px; height: 92vh; max-height: 92vh;
+    /* 🪤 16/09/2026: en el celular la barra de estado del sistema —la hora, la señal, la
+       batería— se montaba encima de la cabecera y tapaba "Pedidos" y la X de cerrar. Pasaba
+       sólo acá: RecibosApp y ConciliacionApp ya descontaban el `safe-area-inset-top` y este
+       módulo no. Con `dvh` además no salta cuando el navegador esconde su propia barra. */
+    width: 100%; max-width: 560px;
+    height: min(92dvh, calc(100dvh - env(safe-area-inset-top)));
+    max-height: calc(100dvh - env(safe-area-inset-top));
     border-radius: var(--radius-xl) var(--radius-xl) 0 0;
     display: flex; flex-direction: column; overflow: hidden;
     box-shadow: var(--shadow-lg);
@@ -22,7 +28,10 @@
 
 .ped-header {
     display: flex; align-items: center; gap: 0.5rem;
-    padding: 0.85rem 1rem; border-bottom: 1px solid var(--color-border);
+    /* El mismo criterio que .recibos-header: el aire de arriba nunca es menor que la zona
+       que se reserva el sistema para su barra. */
+    padding: max(0.85rem, env(safe-area-inset-top)) 1rem 0.85rem;
+    border-bottom: 1px solid var(--color-border);
     background: var(--color-surface);
 }
 .ped-title { display: flex; align-items: center; gap: 0.45rem; font-weight: 700; color: var(--color-primary); }
