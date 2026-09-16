@@ -52,3 +52,27 @@ describe('sumarVendedores — filtrar sin volver a preguntarle al server', () =>
         expect(r!.saldo_im).toBe(0.3);
     });
 });
+
+describe('el filtro de la pantalla tiene que llegar entero a la cartera', () => {
+    /**
+     * 🔴 16/09/2026 — Mati: *"el saldo total de cuenta en la calle está dos veces en el panel,
+     * ¿cuál es el real?"*. Con UN vendedor elegido, VendorShell manda `cod_vendedor` a la lista
+     * pero a la tarjeta le pasa `cods`, que en ese caso está VACÍO: la lista quedaba filtrada
+     * por ese vendedor y la tarjeta seguía mostrando el total de toda la empresa, uno al lado
+     * del otro.
+     */
+    const POR_VENDEDOR = [
+        { cod_vendedor: 4, saldo_im: 100074906, en_transito: 0, ajustado: 100074906, n_clientes: 182 },
+        { cod_vendedor: 3, saldo_im: 90000000, en_transito: 0, ajustado: 90000000, n_clientes: 92 },
+    ];
+
+    it('🔴 sin códigos no filtra nada: devuelve el total', () => {
+        expect(sumarVendedores(POR_VENDEDOR, '')).toBeNull();
+    });
+
+    it('con el vendedor elegido devuelve SÓLO lo suyo', () => {
+        const r = sumarVendedores(POR_VENDEDOR, '4');
+        expect(r?.saldo_im).toBe(100074906);
+        expect(r?.n_clientes).toBe(182);
+    });
+});

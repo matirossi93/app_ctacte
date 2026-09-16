@@ -396,6 +396,16 @@ export const VendorShell = ({ onLogout }: Props) => {
         ? (user?.cod_vendedor ?? null)
         : (selectedCods.size === 1 ? [...selectedCods][0] : null);
     const codsQs = (isAdmin && selectedVendor == null && selectedCods.size > 0) ? [...selectedCods].join(',') : '';
+    /**
+     * El filtro de vendedores tal como lo tiene que ver la cartera.
+     *
+     * 🪤 16/09/2026: a la tarjeta se le pasaba `codsQs` a secas, y `codsQs` queda VACÍO
+     * justo cuando hay UN vendedor elegido (ahí el filtro viaja por `selectedVendor`). O sea
+     * que al mirar un vendedor la lista quedaba filtrada y "en la calle" seguía mostrando el
+     * total de toda la empresa, uno al lado del otro — Mati: *"está dos veces en el panel,
+     * ¿cuál es el real?"*. Los dos números tienen que responder al mismo filtro.
+     */
+    const codsCartera = selectedVendor != null ? String(selectedVendor) : codsQs;
 
     const loadData = async (force = false) => {
         setLoading(true); setErr(null);
@@ -723,7 +733,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                         onPendingOpenConsumed={() => setPendingCobClient(null)}
                         viewPeriod={viewPeriod}
                         onPeriodoChange={setViewPeriod}
-                        codsQs={codsQs}
+                        codsCartera={codsCartera}
                         veCartera={veCartera}
                         fechaLista={invoicesFecha ? fechaCorteLista : ''}
                         avisoFecha={avisoFecha}
@@ -1058,7 +1068,7 @@ function WidgetTopDeudores({ clients, onOpenClient, onGoToCobranzas }: { clients
 // ═══════════════════════════════════════════════════════════════════════════
 // COBRANZAS VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function CobranzasView({ clients, clientesConCredito, search, setSearch, bucket, setBucket, buckets, totalSaldo, totalClientes, onUploadPago, lastRefresh, loading, pendingOpenClient, onPendingOpenConsumed, viewPeriod, onPeriodoChange, codsQs, veCartera, fechaLista, avisoFecha, cargandoFecha }:
+function CobranzasView({ clients, clientesConCredito, search, setSearch, bucket, setBucket, buckets, totalSaldo, totalClientes, onUploadPago, lastRefresh, loading, pendingOpenClient, onPendingOpenConsumed, viewPeriod, onPeriodoChange, codsCartera, veCartera, fechaLista, avisoFecha, cargandoFecha }:
     {
         clients: ClientAgg[]; clientesConCredito: ClientAgg[]; search: string; setSearch: (s: string) => void;
         bucket: 'todos' | 'reciente' | 'medio' | 'vencido'; setBucket: (b: any) => void;
@@ -1072,7 +1082,8 @@ function CobranzasView({ clients, clientesConCredito, search, setSearch, bucket,
         viewPeriod: ViewPeriod;
         /** El calendario de la cartera mueve el período de toda la pantalla. */
         onPeriodoChange: (p: ViewPeriod) => void;
-        codsQs: string;
+        /** El filtro de vendedores YA resuelto: incluye el caso de UNO solo elegido. */
+        codsCartera: string;
         /** "Cuánto hay en calle" es plata de la empresa: solo admin, gerente y socio. */
         veCartera: boolean;
         /** Fecha de corte de la lista de abajo. '' = la de hoy. */
@@ -1106,14 +1117,14 @@ function CobranzasView({ clients, clientesConCredito, search, setSearch, bucket,
                     La tarjeta de abajo usa las reglas de la conciliación. Nunca van a dar
                     igual, así que se rotulan distinto a propósito. */}
                 <p>
-                    <span className="dot" /> {formatMoney(totalSaldo)} en mi lista · {totalClientes} clientes
+                    <span className="dot" /> {formatMoney(totalSaldo)} en mi lista · {totalClientes} con deuda
                     {fechaLista
                         ? <> · al <b>{fechaLegible(fechaLista)}</b></>
                         : lastRefresh && ` · ${lastRefresh.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`}
                 </p>
             </div>
 
-            {veCartera && <CarteraCard periodo={viewPeriod} cods={codsQs} onPeriodoChange={onPeriodoChange} />}
+            {veCartera && <CarteraCard periodo={viewPeriod} cods={codsCartera} onPeriodoChange={onPeriodoChange} />}
 
             {/* Desde el 31/08/2026 la lista SÍ acompaña a la fecha (sale de la misma foto que
                 el total). El cartel de antes decía que era siempre la de hoy: dejarlo sería
