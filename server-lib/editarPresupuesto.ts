@@ -191,7 +191,26 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
      * borrarle una nota sin avisar.
      */
     const notasIM = imItems.filter(i => !(i.cod_articulo > 0));
-    const mismoSurtido = firmaDelSurtido(items) === firmaDelSurtido(imItems.filter(i => i.cod_articulo > 0));
+    /**
+     * 🔑 CAMBIAR EL CLIENTE. Mati (17/09/2026): *"necesitamos poder cambiar el cliente en el
+     * presupuesto"*. El caso es haberlo cargado al cliente equivocado.
+     *
+     * 🪤 El cliente vive en la CABECERA y el PUT de cantidades no la toca: hay que rehacer el
+     * presupuesto aunque la mercadería sea idéntica. Por el camino barato la pantalla diría
+     * "guardado" y en InfoManager seguiría el cliente de antes.
+     */
+    const clientePedido = req.body?.cod_cliente;
+    let clienteNuevo: number | null = null;
+    if (clientePedido != null) {
+      const n = Number(clientePedido);
+      if (!Number.isInteger(n) || n <= 0) {
+        res.status(400).json({ error: 'El cliente elegido no es válido.' }); return;
+      }
+      clienteNuevo = n;
+    }
+    const cambiaCliente = clienteNuevo != null && clienteNuevo !== Number(cab.cod_cliente);
+    const mismoSurtido = !cambiaCliente
+      && firmaDelSurtido(items) === firmaDelSurtido(imItems.filter(i => i.cod_articulo > 0));
     /**
      * 🔑 Las observaciones son el campo que la oficina lee justo antes de facturar ("facturar a
      * nombre de la SRL", "entregar el jueves"). Mati (09/09/2026) pidió poder escribirlas desde
@@ -297,12 +316,33 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
      * pedido y en InfoManager no queda nada para facturar. De los dos pasos, el que no se puede
      * deshacer es la anulación.
      */
+    /**
+     * 🔴 El cliente nuevo tiene que EXISTIR en InfoManager. Un código inventado crea el
+     * presupuesto a nombre de nadie —o lo rechaza después de haber anulado el original—, y para
+     * ese momento el pedido ya se perdió.
+     */
+    let nombreClienteNuevo: string | null = null;
+    if (cambiaCliente) {
+      const encontrado = (await fetchClientesIMCon([clienteNuevo!]).catch(() => [] as any[]))
+        .find((c: any) => Number(c.cod_cliente) === clienteNuevo);
+      if (!encontrado) {
+        res.status(409).json({ error: `No encontré el cliente ${clienteNuevo} en InfoManager. No cambié nada.` });
+        return;
+      }
+      nombreClienteNuevo = String((encontrado as any).razon_social ?? (encontrado as any).nombre ?? '').trim() || null;
+    }
+
     const itemsFiscales = await conIVAConfiable(items, imItems);
     await invalidarAprobacion(id);
     resultadoConocido = false;
     const creado = await crearPresupuesto({
       cod_empresa: cab.cod_empresa,
-      cod_cliente: cab.cod_cliente,
+      cod_cliente: clienteNuevo ?? cab.cod_cliente,
+      /**
+       * 🔑 El vendedor y los precios NO se mudan con el cliente (decisión de Mati, 17/09/2026):
+       * corregir a quién va el pedido no es rehacer la cotización ni mover una comisión. Si la
+       * lista no le corresponde al cliente nuevo, el control de listas lo marca — para eso está.
+       */
       cod_vendedor: cab.cod_vendedor ?? 0,
       cod_lista_precios: cab.cod_lista_precios ?? items[0].cod_lista_precios,
       usuario: cab.usuario || String(req.body?.usuario_im ?? 'jorgelina'),
@@ -356,7 +396,12 @@ export async function editarPresupuesto(req: Request & { user?: JwtPayload }, re
      * los dos facturables (Mati: *"nos están saliendo los dos presupuestos"*).
      */
     const { error: errPedido } = await sb().from('pedidos_vendedor')
-      .update({ im_presupuesto_id: String(creado.id), im_numero: creado.numero ?? null })
+      .update({
+        im_presupuesto_id: String(creado.id), im_numero: creado.numero ?? null,
+        // 🔑 Y el cliente, si cambió: dejar el pedido apuntando a otro cliente que su presupuesto
+        // es la misma clase de desfase que arriba, con la lista del vendedor mintiendo.
+        ...(cambiaCliente ? { cod_cliente: clienteNuevo, cliente_nombre: nombreClienteNuevo } : {}),
+      })
       .eq('tenant_id', TENANT_ID).eq('im_presupuesto_id', id);
     if (errPedido) {
       // No se puede deshacer lo de IM, así que se avisa: es el aviso que evita el duplicado.

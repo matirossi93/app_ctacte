@@ -150,7 +150,7 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
     const [trabajando, setTrabajando] = useState<string | null>(null);
     /** Qué presupuesto tiene el detalle abierto, y sus renglones. */
     const [abierto, setAbierto] = useState<string | null>(null);
-    const [detalle, setDetalle] = useState<{ id: string; huella: string; numero: number | null; cliente: string; fecha: string | null; observaciones: string; items: ItemDetalle[] } | null>(null);
+    const [detalle, setDetalle] = useState<{ id: string; huella: string; numero: number | null; cliente: string; cod_cliente: number | null; fecha: string | null; observaciones: string; items: ItemDetalle[] } | null>(null);
     const abiertoRef = useRef<string | null>(null);
     const controlDetalle = useRef(new LecturaVigente());
     const detalleRef = useRef(detalle); detalleRef.current = detalle;
@@ -273,7 +273,7 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
             if (!d?.comprobante?.huella || (d.comprobante.im_comprobante_id != null && String(d.comprobante.im_comprobante_id) !== id)) throw new Error('El detalle no identifica el presupuesto. Actualizá antes de editar.');
             const previo = reparto.borradores.get(`base:${id}`);
             if (previo && previo.huella !== d.comprobante.huella) setAviso("El presupuesto cambió desde el borrador. Se conserva su versión original; descartá los cambios para revisar la versión actual.");
-            setDetalle(previo ?? { id, huella: d.comprobante.huella, numero: d.comprobante.numero ?? d.comprobante.im_numero ?? null, cliente: d.comprobante.cliente_nombre || `Cliente ${d.comprobante.cod_cliente ?? "sin identificar"}`, fecha: d.comprobante.fecha, observaciones: d.comprobante.observaciones ?? '', items: d.items ?? [] });
+            setDetalle(previo ?? { id, huella: d.comprobante.huella, numero: d.comprobante.numero ?? d.comprobante.im_numero ?? null, cliente: d.comprobante.cliente_nombre || `Cliente ${d.comprobante.cod_cliente ?? "sin identificar"}`, cod_cliente: d.comprobante.cod_cliente ?? null, fecha: d.comprobante.fecha, observaciones: d.comprobante.observaciones ?? '', items: d.items ?? [] });
         } catch (e: any) {
             if (!lectura.vigente()) return;
             setAviso(e?.message ?? 'Error al traer el detalle'); cerrarDetalle();
@@ -303,6 +303,7 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
                                             numero={base.numero}
                                             observacionesOriginales={base.observaciones}
                                             fechaOriginal={base.fecha}
+                                            clienteOriginal={base.cod_cliente != null ? { cod: base.cod_cliente, nombre: base.cliente } : null}
                                             itemsOriginales={base.items.map(it => ({
                                                 id: it.id,
                                                 cod_articulo: it.cod_articulo,

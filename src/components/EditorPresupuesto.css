@@ -126,3 +126,8 @@
     font-family: inherit; font-size: 0.83rem; padding: 0.25rem 0.4rem; border-radius: var(--radius-sm);
 }
 .ed-movida { color: var(--color-accent); margin-left: 0.3rem; }
+
+/* El cliente del pedido, al lado de la fecha: cambiarlo rehace el comprobante. */
+.ed-cliente { display: flex; flex-direction: column; gap: 0.2rem; min-width: 220px; flex: 1 1 260px; }
+.ed-cliente > span { font-size: 0.72rem; color: var(--color-text-muted); }
+.ed-cliente select { padding: 0.3rem 0.4rem; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-bg); font-size: 0.85rem; }

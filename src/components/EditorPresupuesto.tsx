@@ -66,11 +66,17 @@ const money = (n: number) => '$' + Math.round(n).toLocaleString('es-AR');
 const firma = (rs: ItemEditable[]) =>
     rs.map(r => `${r.cod_articulo}:${Number(r.cod_lista_precios)}:${Number(r.descuento_porc) || 0}:${Number(r.precio) || 0}`).join('|');
 
-export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, itemsOriginales, observacionesOriginales, fechaOriginal, onGuardado, onCancelar, onBorrador }: {
+export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, itemsOriginales, observacionesOriginales, fechaOriginal, clienteOriginal, onGuardado, onCancelar, onBorrador }: {
     comprobanteId: string;
     huellaOriginal: string | null;
     numero: number | null;
     itemsOriginales: ItemEditable[];
+    /**
+     * 🔑 A quién va el pedido. Mati (17/09/2026): *"necesitamos poder cambiar el cliente en el
+     * presupuesto"* — el caso es haberlo cargado al equivocado. Cambiarlo obliga a rehacer el
+     * comprobante: el cliente vive en la cabecera y el PUT de cantidades no la toca.
+     */
+    clienteOriginal: { cod: number; nombre: string } | null;
     /** Lo que escribió el vendedor en InfoManager. Es lo que la oficina lee antes de facturar. */
     observacionesOriginales: string | null;
     /** La fecha del comprobante: es la que decide en qué día de reparto entra el pedido. */
@@ -87,6 +93,24 @@ export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, items
     const [items, setItems] = useState<ItemEditable[]>(() => (previo?.items ?? itemsOriginales).map((i: ItemEditable) => ({ ...i, uid: i.uid ?? crypto.randomUUID() })));
     const [observaciones, setObservaciones] = useState<string>(previo?.observaciones ?? observacionesOriginales ?? '');
     const [fecha, setFecha] = useState<string>(previo?.fecha ?? fechaOriginal ?? '');
+    const [codCliente, setCodCliente] = useState<number | null>(clienteOriginal?.cod ?? null);
+    const [clientes, setClientes] = useState<Array<{ cod: number; nombre: string; localidad: string }>>([]);
+    const cambiaCliente = clienteOriginal != null && codCliente != null && codCliente !== clienteOriginal.cod;
+    // El listado sólo hace falta si van a cambiar el cliente: se pide una vez al abrir el editor.
+    useEffect(() => {
+        let vivo = true;
+        fetch('/api/clientes/lookup', { headers: authHeaders() })
+            .then(r => r.json()).then(d => {
+                if (!vivo || !Array.isArray(d?.items)) return;
+                setClientes(d.items.map((c: any) => ({
+                    cod: Number(c.cod ?? c.cod_cliente),
+                    nombre: String(c.name ?? c.razon_social ?? c.nombre ?? ''),
+                    localidad: String(c.localidad ?? ''),
+                })).filter((c: any) => c.cod > 0).sort((a: any, b: any) => a.nombre.localeCompare(b.nombre)));
+            })
+            .catch(() => { /* sin listado no se puede cambiar el cliente, el resto del editor sigue */ });
+        return () => { vivo = false; };
+    }, []);
     const [busqueda, setBusqueda] = useState('');
     const [resultados, setResultados] = useState<ArticuloBuscado[] | null>(null);
     const [buscando, setBuscando] = useState(false);
@@ -126,7 +150,9 @@ export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, items
      * 🔑 Si cambia el surtido, la lista o un descuento, el presupuesto se rehace y CAMBIA DE
      * NÚMERO. Se avisa antes, no después: la oficina anota ese número.
      */
-    const seRecrea = firma(items) !== firma(itemsOriginales);
+    // 🪤 Cambiar el cliente rehace el comprobante aunque la mercadería sea idéntica: vive en la
+    // cabecera y el PUT de cantidades no la toca.
+    const seRecrea = cambiaCliente || firma(items) !== firma(itemsOriginales);
     const cambiaObs = observaciones.trim() !== (observacionesOriginales ?? '').trim();
     const cambiaFecha = !!fecha && fecha !== (fechaOriginal ?? '');
     const hayCambios = seRecrea || cambiaObs || cambiaFecha
@@ -191,8 +217,11 @@ export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, items
         // 🪤 Sin precio InfoManager graba el renglón en $0 — no lo busca en la lista.
         const sinPrecio = items.find(i => !(Number(i.precio) > 0));
         if (sinPrecio) { setError(`"${sinPrecio.descripcion}" no tiene precio. Ponelo antes de guardar: InfoManager lo grabaría en $0.`); return; }
+        const nombreNuevo = clientes.find(c => c.cod === codCliente)?.nombre ?? `cliente ${codCliente}`;
         if (seRecrea && !confirm(
-            `Este cambio no se puede hacer sobre el mismo presupuesto: InfoManager sólo deja corregir cantidades.\n\n` +
+            (cambiaCliente
+                ? `El pedido pasa de ${clienteOriginal?.nombre} a ${nombreNuevo}.\n\nLos precios y el vendedor quedan como están.\n\n`
+                : `Este cambio no se puede hacer sobre el mismo presupuesto: InfoManager sólo deja corregir cantidades.\n\n`) +
             `Se va a crear un presupuesto NUEVO con estos datos y se va a anular el ${numero ?? ''}.\n\n` +
             `El número cambia. ¿Seguimos?`)) return;
 
@@ -206,6 +235,8 @@ export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, items
                     huella: huellaOriginal,
                     observaciones,
                     fecha,
+                    // Sólo si de verdad cambió: mandarlo igual haría rehacer el comprobante al pedo.
+                    ...(cambiaCliente ? { cod_cliente: codCliente } : {}),
                     items: items.map(i => ({
                         cod_articulo: i.cod_articulo,
                         cantidad: Number(i.cantidad),
@@ -359,6 +390,22 @@ export function EditorPresupuesto({ comprobanteId, numero, huellaOriginal, items
                 {/* 🔑 La fecha decide en qué día de reparto entra el pedido. Mati (09/09/2026):
                     *"poder editar la fecha apenas llegan al panel, así lo redireccionamos a otra
                     fecha"*. */}
+                {clienteOriginal && (
+                    <label className="ed-cliente">
+                        <span>Cliente {cambiaCliente && <b className="ed-movida">cambia · se rehace el presupuesto</b>}</span>
+                        <select value={codCliente ?? ''} onChange={e => setCodCliente(Number(e.target.value) || null)}
+                                disabled={!clientes.length}>
+                            {/* El original siempre en la lista, aunque el lookup no lo traiga. */}
+                            {!clientes.some(c => c.cod === clienteOriginal.cod) && (
+                                <option value={clienteOriginal.cod}>{clienteOriginal.nombre}</option>
+                            )}
+                            {clientes.map(c => (
+                                <option key={c.cod} value={c.cod}>{c.nombre}{c.localidad ? ` · ${c.localidad}` : ''}</option>
+                            ))}
+                        </select>
+                    </label>
+                )}
+
                 <label className="ed-fecha">
                     <span>Fecha del pedido {cambiaFecha && <b className="ed-movida">se mueve de día</b>}</span>
                     <input type="date" value={fecha} onChange={e => setFecha(e.target.value)} />

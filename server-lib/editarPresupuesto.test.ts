@@ -28,6 +28,8 @@ vi.mock('./infomanager.js', () => { const fuente = {
   crearPresupuesto: m.crearPresupuesto,
   anularComprobante: m.anularComprobante,
   actualizarCabecera: m.actualizarCabecera,
+  // El maestro de IM: cambiar el cliente exige comprobar que exista antes de rehacer nada.
+  fetchClientesIMCon: vi.fn(async (cods: number[]) => cods.filter(c => c !== 999).map(c => ({ cod_cliente: c, razon_social: `CLIENTE ${c}` }))),
   fetchArticulosCatalogo: vi.fn(async () => new Map([[1, { descripcion: 'ALPISTE X 30 KG', iva_por:0 }],[3,{iva_por:0}],[13819,{iva_por:0}]])),
   getPrecioLista: vi.fn(async(cod:number) => ({cod_articulo:cod,precio_vta:100,iva:0,iva_verificada:0})),
   fechaArgentina: () => '2026-09-09',
@@ -612,3 +614,66 @@ describe('la cabecera llega sin fecha', () => {
     expect(r.body.aviso).toBeNull();
   });
 });
+
+/**
+ * 🔑 CAMBIAR EL CLIENTE DE UN PRESUPUESTO.
+ *
+ * Mati (17/09/2026): *"necesitamos poder cambiar el cliente en el presupuesto"*. El caso es
+ * haberlo cargado al cliente equivocado.
+ *
+ * 🪤 El cliente vive en la CABECERA, y el PUT de cantidades no la toca: hay que rehacer el
+ * presupuesto (crear uno nuevo con el cliente nuevo y anular el viejo), aunque la mercadería sea
+ * exactamente la misma. Si se tomara el camino barato, la pantalla diría "guardado" y en
+ * InfoManager seguiría estando el cliente de antes.
+ */
+describe('cambiar el cliente', () => {
+  const MISMOS = ITEMS_IM.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista_precios: 13, descuento_porc: 0, precio: i.precio }));
+
+  it('🔴 con el MISMO surtido igual recrea: el cliente no se puede cambiar con un PUT', async () => {
+    const r = await llamar({ items: MISMOS, cod_cliente: 812 });
+    expect(r.body.modo).toBe('recreado');
+    expect(m.actualizarPresupuestoCantidades).not.toHaveBeenCalled();
+    expect(m.crearPresupuesto.mock.calls[0][0].cod_cliente).toBe(812);
+  });
+
+  it('🔑 el presupuesto viejo se anula: no pueden quedar los dos vivos', async () => {
+    await llamar({ items: MISMOS, cod_cliente: 812 });
+    expect(m.anularComprobante).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔑 mandar el MISMO cliente no cambia nada: sigue el camino barato', async () => {
+    const r = await llamar({ items: MISMOS, cod_cliente: 297 });
+    expect(r.body.modo).toBe('cantidades');
+    expect(m.crearPresupuesto).not.toHaveBeenCalled();
+  });
+
+  it('🔴 los precios NO se recalculan: cambiar de cliente no mueve la plata', async () => {
+    // Mati eligió esto el 17/09: corregir a quién va el pedido no es rehacer la cotización.
+    await llamar({ items: MISMOS, cod_cliente: 812 });
+    expect(m.crearPresupuesto.mock.calls[0][0].items.map((i: any) => i.precio)).toEqual([100, 200]);
+  });
+
+  it('🔴 y el vendedor tampoco: la comisión no se muda sola', async () => {
+    await llamar({ items: MISMOS, cod_cliente: 812 });
+    expect(m.crearPresupuesto.mock.calls[0][0].cod_vendedor).toBe('2');
+  });
+
+  it('🔴 un cliente que no es un número no se acepta', async () => {
+    for (const cod_cliente of [0, -3, 'x', 1.5, {}]) {
+      const r = await llamar({ items: MISMOS, cod_cliente });
+      expect(r.status, JSON.stringify(cod_cliente)).toBe(400);
+    }
+    expect(m.crearPresupuesto).not.toHaveBeenCalled();
+  });
+});
+
+it('🔴 un cliente que InfoManager no conoce frena ANTES de anular el original', async () => {
+  const r = await llamar({
+    items: ITEMS_IM.map(i => ({ cod_articulo: i.cod_articulo, cantidad: i.cantidad, cod_lista_precios: 13, descuento_porc: 0, precio: i.precio })),
+    cod_cliente: 999,
+  });
+  expect(r.status).toBe(409);
+  expect(m.crearPresupuesto).not.toHaveBeenCalled();
+  expect(m.anularComprobante).not.toHaveBeenCalled();
+});
+
