@@ -3,12 +3,12 @@ import { useLecturaVigente } from '../utils/useLecturaVigente';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     AlertTriangle, Loader2, RefreshCw, Receipt, CheckCircle2, X, FileWarning, Printer, Pencil, Search, CalendarDays,
-    DollarSign, Scale,
+    DollarSign, Scale, Share2,
 } from 'lucide-react';
 import { authHeaders, getToken, getUser } from '../utils/auth';
 import { FronteraSesion } from '../utils/fronteraSesion';
 import { coincide } from '../utils/buscar';
-import { imprimirComprobante } from '../utils/imprimirComprobante';
+import { imprimirComprobante, compartirComprobante } from '../utils/imprimirComprobante';
 import { useRecargarAlVolver } from '../utils/recargarAlVolver';
 import { FacturarModal } from './FacturarModal';
 import { CorregirFacturaModal } from './CorregirFacturaModal';
@@ -199,6 +199,15 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
 
     /** El pedido cuyo remito se está destrabando: bloquea el botón para que no se apriete dos veces. */
     const [destrabando, setDestrabando] = useState<string | null>(null);
+    /** Qué presupuesto se está compartiendo: el PDF tarda un momento en armarse. */
+    const [compartiendo, setCompartiendo] = useState<string | null>(null);
+
+    async function compartir(id: string) {
+        setCompartiendo(id); setError(null);
+        try { await compartirComprobante(id, 'Presupuesto'); }
+        catch (e: any) { setError(e?.message ?? 'No se pudo compartir el presupuesto'); }
+        finally { setCompartiendo(null); }
+    }
 
     const cargar = useCallback(async (refrescar = false, conservarDuranteLectura = false) => {
         const lectura = iniciarLectura(refrescar); if (!lectura) return;
@@ -434,11 +443,23 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                 </td>
                                 {/* 🔑 Imprimir desde acá también: el circuito entero tiene que poder
                                     sacar el papel sin volver a Presupuestos (Mati, 09/09/2026). */}
-                                <td className="c">
+                                {/* 🪤 `fc-imprimir-celda`, no `.c`: esa clase fija 34 px y con dos
+                                    botones se desbordan TAPANDO la columna de importe (pasó el
+                                    10/09/2026 en la fila de las facturas). */}
+                                <td className="fc-imprimir-celda">
                                     <button className="fc-imprimir" title="Imprimir el presupuesto"
                                             onClick={() => imprimirComprobante(p.im_comprobante_id, 'Presupuesto')
                                                 .catch(e => setError(e?.message ?? 'No se pudo imprimir'))}>
                                         <Printer size={14} />
+                                    </button>
+                                    {/* 🔑 Mati (17/09/2026): *"que Jorgelina pueda compartir o a algún
+                                        cliente o a los mismos vendedores el presupuesto desde la ventana
+                                        de facturación"*. Mismo PDF que manda el vendedor desde su app. */}
+                                    <button className="fc-imprimir" title="Compartir el presupuesto (WhatsApp, mail…)"
+                                            disabled={compartiendo === p.im_comprobante_id}
+                                            onClick={() => compartir(p.im_comprobante_id)}>
+                                        {compartiendo === p.im_comprobante_id
+                                            ? <Loader2 size={14} className="spin" /> : <Share2 size={14} />}
                                     </button>
                                 </td>
                             </tr>
