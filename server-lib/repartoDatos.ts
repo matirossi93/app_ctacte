@@ -1,6 +1,6 @@
 import { actualizarImportesFacturas } from './importesFacturas.js';
 import { sb, TENANT_ID } from './supabase.js';
-import { pesoDeRenglones } from './pesoComprobante.js';
+import { pesoDeRenglones, type RenglonPesable } from './pesoComprobante.js';
 import { itemsPorFechas } from './itemsRango.js';
 import { aparearFacturas } from './aparearFactura.js';
 import { fetchVentas, fetchArticulosCatalogo, fetchClientesIMCached } from './infomanager.js';
@@ -182,6 +182,68 @@ export function notasUnicas(notas: NotaEntrega[], donde = 'esta entrega') {
 export function netoNotas(notas: NotaEntrega[], donde = 'esta entrega') {
   return Math.round(notasUnicas(notas, donde).reduce((s, n) => s + signoNota(n)! * Math.abs(Number(n.total)), 0) * 100) / 100;
 }
+/**
+ * 🔴 LOS KILOS DE UNA ENTREGA ABIERTA SIGUEN A INFOMANAGER.
+ *
+ * Mati (17/09/2026): *"cuando editamos una factura desde IM no se están modificando los kg que
+ * tiene esa factura en la app... los kg nunca se modifican"*.
+ *
+ * El peso se recalculaba contra IM sólo al ASIGNAR el pedido a la hoja y ahí quedaba congelado en
+ * `hojas_ruta_pedidos`. Si después editaban el comprobante en InfoManager —que es como se corrige
+ * hoy, porque desde la app todavía no se puede— la hoja seguía diciendo los kilos viejos. Y los
+ * kilos son los que deciden en qué camión entra la mercadería.
+ *
+ * 🪤 Un comprobante del que no se leyó ningún renglón NO pesa 0: puede ser que IM no haya
+ * contestado ese día. Poner cero hace que la hoja parezca entrar en el camión y eso se descubre
+ * en el galpón, cargando. Sin renglones se conserva el respaldo y no se toca nada.
+ */
+export function conPesoDeIM<T extends Record<string, any>>(
+  filas: T[], renglones: Map<string, RenglonPesable[]>,
+): Array<T & { bultos_snapshot?: number; kg_snapshot?: number }> {
+  return filas.map(f => {
+    // El remito es el que viaja: sus renglones pueden estar bajo su propio id.
+    const rs = renglones.get(String(f.im_comprobante_id)) ?? (f.im_remito_id ? renglones.get(String(f.im_remito_id)) : undefined);
+    if (!rs?.length) return f;
+    const peso = pesoDeRenglones(rs);
+    return {
+      ...f,
+      bultos: peso.bultos, kg: peso.kg,
+      peso_completo: peso.renglones_sin_peso === 0,
+      renglones_sin_peso: peso.renglones_sin_peso,
+      // Con qué se había armado la hoja: sirve para explicar un camión que cambió de carga.
+      bultos_snapshot: f.bultos, kg_snapshot: f.kg,
+    };
+  });
+}
+
+/**
+ * Los renglones de hoy de estas entregas, por comprobante. Devuelve un mapa vacío si IM no
+ * contesta: quien llama conserva el respaldo en vez de quedarse sin hoja.
+ */
+async function renglonesDeEntregas(filas: any[], actualizar: boolean): Promise<Map<string, RenglonPesable[]>> {
+  const porComprobante = new Map<string, RenglonPesable[]>();
+  const dias = [...new Set(filas.map(f => String(f.fecha ?? '').slice(0, 10)).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)))];
+  // Cada día es una consulta a IM. Con demasiados, el respaldo sale más barato que la espera.
+  if (!dias.length || dias.length > MAX_DIAS_PESO) return porComprobante;
+  try {
+    const [detalle, cat] = await Promise.all([itemsPorFechas(dias, actualizar), fetchArticulosCatalogo()]);
+    for (const it of detalle.items) {
+      const k = String((it as any).id_comprobante);
+      if (!porComprobante.has(k)) porComprobante.set(k, []);
+      porComprobante.get(k)!.push({
+        cantidad: (it as any).cantidad,
+        equivalencia_um: cat.get(Number((it as any).cod_articulo))?.equivalencia_um,
+      });
+    }
+  } catch (e: any) {
+    console.warn('[enriquecerEntregas] no pude releer el peso, uso el de la hoja:', e?.message);
+    return new Map();
+  }
+  return porComprobante;
+}
+/** Tope de días de renglones por lectura: más que esto es una espera que no vale el refresco. */
+const MAX_DIAS_PESO = 16;
+
 /** Misma fuente base para impresión, retiro y liquidación; el snapshot original no se pisa. */
 export async function enriquecerEntregas(filas: any[], actualizar = false, consultarImportes = true, tolerarErrores = false) {
   const emitidos = await emitidosDe(filas.map(f => String(f.im_comprobante_id)));
@@ -210,7 +272,10 @@ export async function enriquecerEntregas(filas: any[], actualizar = false, consu
       tipo_comprobante: f.tipo_comprobante ?? (String(f.im_comprobante_id) === String(e?.im_remito_id ?? f.im_remito_id) ? 'RE' : null),
     };
   });
-  return consultarImportes ? actualizarImportesFacturas(enriquecidas, { actualizar, tolerarErrores }) : enriquecidas;
+  // Una hoja cerrada conserva su base histórica: ni el importe ni el peso se vuelven a mirar.
+  if (!consultarImportes) return enriquecidas;
+  const conPeso = conPesoDeIM(enriquecidas, await renglonesDeEntregas(enriquecidas, actualizar));
+  return actualizarImportesFacturas(conPeso, { actualizar, tolerarErrores });
 }
 
 /**
