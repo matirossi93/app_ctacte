@@ -36,11 +36,18 @@ interface Articulo {
     unidad_de_medida: string | null;
     equivalencia_um: number | null;
     pedido: number;
+    /**
+     * 🔑 Lo que ya se facturó en el rango. Mati (17/09/2026): *"Jorgelina ya facturó mercadería y
+     * nos dijeron que había cierto número de stock, y necesitamos ver qué cantidad ya está
+     * facturada"*. Va aparte de `pedido`: su remito ya descontó el stock.
+     */
+    facturado: number;
     /** null = no se pudo consultar el stock. NO es "no hay". */
     stock: number | null;
     falta: number | null;
     pedidos: number;
     quienes: Quien[];
+    quienes_facturados: Quien[];
 }
 
 const num = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 2 });
@@ -118,7 +125,7 @@ export function ConsolidadoView({ desde, hasta }: { desde: string; hasta: string
                 </label>
                 {totales && (
                     <div className="co-resumen">
-                        <span><b>{totales.articulos}</b> artículos pedidos</span>
+                        <span><b>{totales.articulos}</b> artículos en el rango</span>
                         {totales.faltantes > 0 && (
                             <span className="co-chip grave"><AlertTriangle size={13} /> {totales.faltantes} sin stock suficiente</span>
                         )}
@@ -186,11 +193,19 @@ export function ConsolidadoView({ desde, hasta }: { desde: string; hasta: string
                             <div className="co-art-nom">
                                 <span>{a.descripcion}</span>
                                 <small>
-                                    {a.pedidos} pedido{a.pedidos === 1 ? '' : 's'}
+                                    {a.pedidos} pedido{a.pedidos === 1 ? '' : 's'} por despachar
+                                    {a.quienes_facturados.length > 0 && ` · ${a.quienes_facturados.length} ya facturado${a.quienes_facturados.length === 1 ? '' : 's'}`}
                                     {a.equivalencia_um != null && a.equivalencia_um !== 1 && ` · ${a.equivalencia_um} kg c/u`}
                                 </small>
                             </div>
                             <div className="co-num"><span>Pedido</span><b>{num(a.pedido)}</b></div>
+                            {/* 🔑 Lo ya facturado NO compite por el stock —su remito ya lo descontó—
+                                pero hay que poder verlo: el número que informa el depósito es de
+                                DESPUÉS de esas facturas. */}
+                            <div className={`co-num${a.facturado > 0 ? ' co-fact' : ' tenue'}`}
+                                 title="Ya facturado en este rango: esta mercadería ya descontó stock">
+                                <span>Facturado</span><b>{a.facturado > 0 ? num(a.facturado) : '—'}</b>
+                            </div>
                             <div className="co-num"><span>Hay</span><b>{a.stock != null ? num(a.stock) : '—'}</b></div>
                             {/* 🪤 Tres estados, no dos: sin saber cuánto hay NO se puede decir que
                                 alcanza. Con `falta: null` la pantalla decía "Alcanza ✓" al lado de
@@ -237,6 +252,28 @@ export function ConsolidadoView({ desde, hasta }: { desde: string; hasta: string
                                         ))}
                                     </tbody>
                                 </table>
+                                {a.quienes_facturados.length > 0 && (
+                                    <>
+                                        <p className="co-ayuda">
+                                            Ya facturado: esta mercadería <b>ya salió del depósito</b> y su remito ya
+                                            descontó el stock, así que no entra en el reparto de lo que queda.
+                                        </p>
+                                        <table>
+                                            <thead><tr><th>Cliente</th><th className="n">Se llevó</th></tr></thead>
+                                            <tbody>
+                                                {a.quienes_facturados.map(q => (
+                                                    <tr key={`f-${q.im_comprobante_id}`}>
+                                                        <td>
+                                                            {q.cliente_nombre}
+                                                            <small className="co-pr"> · PR {q.im_numero ?? '—'}</small>
+                                                        </td>
+                                                        <td className="n">{num(q.cantidad)}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </>
+                                )}
                             </div>
                         )}
                     </div>

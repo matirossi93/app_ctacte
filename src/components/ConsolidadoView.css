@@ -63,6 +63,9 @@
 .co-num b { font-size: 0.95rem; }
 .co-num.falta b { color: #a33b26; }
 .co-num.ok b { color: var(--color-success); }
+/* Lo ya facturado: presente pero en segundo plano — no es lo que hay que resolver hoy. */
+.co-num.co-fact b { color: var(--color-text-muted); }
+.co-num.tenue span, .co-num.tenue b { color: var(--color-text-muted); opacity: 0.55; }
 
 .co-quienes { padding: 0.2rem 0.7rem 0.7rem; border-top: 1px solid var(--color-border); }
 .co-ayuda { margin: 0.5rem 0; font-size: 0.8rem; color: var(--color-text-muted); }

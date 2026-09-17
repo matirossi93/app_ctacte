@@ -74,6 +74,15 @@ export interface FilaConsolidado {
   equivalencia_um: number | null;
   /** La suma de todo lo pedido en el rango, entre los pedidos que todavía no salieron. */
   pedido: number;
+  /**
+   * 🔑 Lo que ya se facturó y salió del depósito en este rango. Mati (17/09/2026): *"Jorgelina
+   * ya facturó mercadería y nos dijeron que había cierto número de stock, y necesitamos ver qué
+   * cantidad ya está facturada"*.
+   *
+   * 🪤 Va aparte y NO se suma a `pedido`: su remito ya descontó el stock, así que sumarlo haría
+   * que el faltante salga al doble — el error que este consolidado vino a arreglar.
+   */
+  facturado: number;
   /** Lo que hay en el depósito. `null` = no se pudo consultar (≠ "no hay"). */
   stock: number | null;
   /** Cuánto falta para cubrir todo lo pedido. 0 si alcanza, null si no se sabe. */
@@ -81,6 +90,8 @@ export interface FilaConsolidado {
   /** En cuántos pedidos aparece. */
   pedidos: number;
   quienes: QuienPidio[];
+  /** Quiénes ya se la llevaron. Su `sugerido` no aplica: esa mercadería ya se entregó. */
+  quienes_facturados: QuienPidio[];
 }
 
 const redondear = (n: number) => Math.round(n * 100) / 100;
@@ -103,7 +114,7 @@ export function armarConsolidado(
     sin_renglones: number; con_cantidad_dudosa: number;
   };
 } {
-  const porArticulo = new Map<number, { pedido: number; quienes: QuienPidio[] }>();
+  const porArticulo = new Map<number, { pedido: number; quienes: QuienPidio[]; facturado: number; facturados: QuienPidio[] }>();
   /**
    * 🔴 Cuántos pedidos quedaron sin renglones. No es cosmético: `vistaDeRango` sólo trae los
    * renglones de los últimos 12 días con pedidos (23,7 s para 15 días contra IM) y acepta rangos
@@ -114,10 +125,10 @@ export function armarConsolidado(
   let sinRenglones = 0;
 
   for (const p of pedidos) {
-    // Lo que ya salió del depósito no compite por el stock que queda: ya está descontado.
-    if (p.ya_salio) continue;
     const rs = renglonesPorComprobante.get(String(p.im_comprobante_id));
-    if (!rs?.length) { sinRenglones += 1; continue; }
+    // 🪤 Sólo se cuenta como "sin renglones" lo que todavía compite: de lo ya facturado no se
+    // decide nada, así que no ensucia el aviso de que el total está incompleto.
+    if (!rs?.length) { if (!p.ya_salio) sinRenglones += 1; continue; }
     // 🪤 El mismo artículo puede venir en DOS renglones del mismo presupuesto (el vendedor parte
     // la cantidad). Se acumula por pedido antes de listarlo, o el cliente aparecería dos veces y
     // el reparto sugerido saldría mal.
@@ -129,10 +140,9 @@ export function armarConsolidado(
       suyo.set(cod, (suyo.get(cod) ?? 0) + cant);
     }
     for (const [cod, cant] of suyo) {
-      if (!porArticulo.has(cod)) porArticulo.set(cod, { pedido: 0, quienes: [] });
+      if (!porArticulo.has(cod)) porArticulo.set(cod, { pedido: 0, quienes: [], facturado: 0, facturados: [] });
       const acc = porArticulo.get(cod)!;
-      acc.pedido += cant;
-      acc.quienes.push({
+      const quien: QuienPidio = {
         im_comprobante_id: p.im_comprobante_id,
         im_numero: p.im_numero,
         cod_cliente: p.cod_cliente,
@@ -141,7 +151,11 @@ export function armarConsolidado(
         revision_estado: p.revision_estado,
         cantidad_dudosa: p.cantidad_dudosa === true,
         sugerido: 0,     // se calcula abajo, cuando ya se sabe el total del artículo
-      });
+      };
+      // Lo que ya salió del depósito no compite por el stock que queda: ya está descontado.
+      if (p.ya_salio) { acc.facturado += cant; acc.facturados.push({ ...quien, sugerido: redondear(cant) }); continue; }
+      acc.pedido += cant;
+      acc.quienes.push(quien);
     }
   }
 
@@ -184,8 +198,10 @@ export function armarConsolidado(
       pedido,
       stock: hay == null ? null : redondear(hay),
       falta,
+      facturado: redondear(acc.facturado),
       pedidos: quienes.length,
       quienes,
+      quienes_facturados: acc.facturados.sort((a, b) => b.cantidad - a.cantidad),
     });
   }
 

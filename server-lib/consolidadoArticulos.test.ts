@@ -178,3 +178,66 @@ describe('consolidado de artículos', () => {
     expect(r.totales).toMatchObject({ articulos: 0, faltantes: 0 });
   });
 });
+
+/**
+ * 🔑 LO QUE YA SE FACTURÓ TAMBIÉN SE TIENE QUE VER.
+ *
+ * Mati (17/09/2026): *"nos acaba de pasar que Jorgelina ya facturó mercadería y nos dijeron que
+ * había cierto número de stock de un producto, y necesitamos ver qué cantidad ya está
+ * facturada"*.
+ *
+ * 🪤 Sin cambiar lo que `pedido` significa: lo facturado YA descontó stock en InfoManager y no
+ * compite por lo que queda. Sumarlo a `pedido` haría que el faltante salga al doble, que es el
+ * error que este consolidado vino a arreglar. Va en su propia columna.
+ */
+describe('lo ya facturado, al lado de lo que falta despachar', () => {
+  it('🔑 se informa aparte, sin tocar lo pedido ni el faltante', () => {
+    const r = armarConsolidado(
+      [pedido({ ya_salio: true }), pedido({ im_comprobante_id: 'c2', cod_cliente: 2, cliente_nombre: 'MORELLI' })],
+      new Map([['c1', [{ cod_articulo: 1, cantidad: 300 }]], ['c2', [{ cod_articulo: 1, cantidad: 100 }]]]),
+      CAT, new Map([[1, 100]]),
+    );
+    expect(r.articulos[0]).toMatchObject({ pedido: 100, facturado: 300, falta: 0 });
+  });
+
+  it('🔑 un artículo que SÓLO está facturado igual aparece: antes desaparecía de la pantalla', () => {
+    const r = armarConsolidado(
+      [pedido({ ya_salio: true })],
+      new Map([['c1', [{ cod_articulo: 1, cantidad: 300 }]]]),
+      CAT, new Map([[1, 50]]),
+    );
+    expect(r.articulos).toHaveLength(1);
+    expect(r.articulos[0]).toMatchObject({ cod_articulo: 1, pedido: 0, facturado: 300, falta: 0 });
+  });
+
+  it('🔑 y se ve quién se la llevó', () => {
+    const r = armarConsolidado(
+      [pedido({ ya_salio: true })],
+      new Map([['c1', [{ cod_articulo: 1, cantidad: 300 }]]]),
+      CAT, new Map([[1, 50]]),
+    );
+    expect(r.articulos[0].quienes_facturados).toMatchObject([{ cliente_nombre: 'ARON', cantidad: 300 }]);
+    // 🔴 No se mezcla con los que todavía compiten por el stock.
+    expect(r.articulos[0].quienes).toHaveLength(0);
+    expect(r.articulos[0].pedidos).toBe(0);
+  });
+
+  it('🔴 lo facturado NO entra en el reparto sugerido: esa mercadería ya se entregó', () => {
+    const r = armarConsolidado(
+      [pedido({ ya_salio: true }), pedido({ im_comprobante_id: 'c2', cod_cliente: 2, cliente_nombre: 'MORELLI' })],
+      new Map([['c1', [{ cod_articulo: 1, cantidad: 300 }]], ['c2', [{ cod_articulo: 1, cantidad: 200 }]]]),
+      CAT, new Map([[1, 100]]),
+    );
+    // Hay 100 y MORELLI pide 200: le tocan los 100, no una parte de 500.
+    expect(r.articulos[0].quienes[0].sugerido).toBe(100);
+  });
+
+  it('un artículo sin nada facturado lo dice en cero, no en null', () => {
+    const r = armarConsolidado(
+      [pedido()], new Map([['c1', [{ cod_articulo: 1, cantidad: 80 }]]]), CAT, new Map([[1, 100]]),
+    );
+    expect(r.articulos[0].facturado).toBe(0);
+    expect(r.articulos[0].quienes_facturados).toEqual([]);
+  });
+});
+
