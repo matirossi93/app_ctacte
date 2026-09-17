@@ -46,6 +46,11 @@ const MIN_REPETICIONES = 3;
  * 🪤 Los datos de venta NO sirven para verificarlos, y por eso se cargan a mano: lo más pedido de
  * alpiste es 30 kg y la bolsa es de 25 porque *"veníamos facturando esos kg extra fraccionados"*
  * (Mati, 16/09/2026) — o sea que el 30 es una bolsa más 5 sueltos, no el formato.
+ *
+ * 🔴 ESTO NO ALCANZA Y SE SABE. Mati (17/09/2026): *"van cambiando los kilajes de las bolsas, no
+ * son siempre iguales"*. Un formato escrito en el código envejece en silencio: el 16/09 acá decía
+ * que la AVENA INSTANTANEA venía por 30 y venía por 20, y el SORGO no estaba. Mientras el kilaje
+ * no se pueda cambiar desde la pantalla, cada cambio de proveedor necesita un deploy.
  */
 export const FORMATOS_CONOCIDOS = new Map<number, number>([
   [459, 25],   // GIRASOL PELADO
@@ -54,7 +59,8 @@ export const FORMATOS_CONOCIDOS = new Map<number, number>([
   [401, 40],   // LINO
   [723, 30],   // POROTO ALUBIA
   [703, 30],   // AVENA ARROLLADA
-  [704, 30],   // AVENA INSTANTANEA
+  [704, 20],   // AVENA INSTANTANEA
+  [403, 40],   // SORGO
 ]);
 
 let _formatos: Map<number, number> = new Map();

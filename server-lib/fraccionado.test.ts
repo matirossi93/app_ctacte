@@ -173,9 +173,16 @@ describe('el formato de bolsa conocido', () => {
     const { FORMATOS_CONOCIDOS } = await import('./formatosBolsa.js');
     const { paquetesDelRenglon } = await import('./fraccionado.js');
     expect(FORMATOS_CONOCIDOS.get(459)).toBe(25);
-    // Los que confirmó Mati el 16/09: alpiste y mijo 25, lino 40, alubia 30, las avenas 30.
+    /**
+     * Los que confirmó Mati: alpiste y mijo 25, lino 40, alubia 30 (16/09) · avena ARROLLADA 30,
+     * avena INSTANTANEA 20 y sorgo 40 (17/09).
+     *
+     * 🪤 El 16/09 acá decía que la instantánea venía por 30 —*"las bolsas de avena son de 30"*
+     * era la regla de PRECIOS, no el formato— y salió fraccionada mal. Y el sorgo no estaba, así
+     * que se partía en paquetes de 10. Los kilajes cambian: esta lista envejece sola.
+     */
     expect([...FORMATOS_CONOCIDOS.entries()].sort((a, b) => a[0] - b[0]))
-      .toEqual([[400, 25], [401, 40], [402, 25], [459, 25], [703, 30], [704, 30], [723, 30]]);
+      .toEqual([[400, 25], [401, 40], [402, 25], [403, 40], [459, 25], [703, 30], [704, 20], [723, 30]]);
     // 25 kg justos: una bolsa cerrada, nada que fraccionar.
     expect(paquetesDelRenglon(25, 25)).toMatchObject({ fracciona: false, bolsas: 1 });
     // 50 son dos bolsas; 30 no es múltiplo y sí se fracciona.
