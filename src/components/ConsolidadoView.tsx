@@ -52,6 +52,23 @@ interface Articulo {
 
 const num = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 2 });
 
+/**
+ * 🪤 18/09/2026. La columna "Facturado" (17/09) agregó `facturado` y `quienes_facturados`, y
+ * el render los usaba derecho: `a.quienes_facturados.length`. Una sola respuesta sin esos campos
+ * —un servidor todavía sin desplegar, una respuesta guardada de antes— no rompía la columna:
+ * rompía la PANTALLA ENTERA con "Algo salió mal", porque el error sube hasta el ErrorBoundary.
+ *
+ * Lo cazó el test de navegador, que arma sus artículos sin esos campos; el CI quedó en rojo desde
+ * ese commit y con él se frenaron cuatro despliegues. Se normaliza UNA vez, al recibir, y de ahí
+ * para abajo el render puede confiar.
+ */
+const normalizarArticulo = (a: any): Articulo => ({
+    ...a,
+    facturado: Number(a?.facturado) || 0,
+    quienes: a?.quienes ?? [],
+    quienes_facturados: a?.quienes_facturados ?? [],
+});
+
 export function ConsolidadoView({ desde, hasta }: { desde: string; hasta: string }) {
     const [articulos, setArticulos] = useState<Articulo[]>([]);
     const [totales, setTotales] = useState<{
@@ -85,7 +102,7 @@ export function ConsolidadoView({ desde, hasta }: { desde: string; hasta: string
             const d = await r.json().catch(() => null);
             if (!lectura.vigente()) return;
             if (!r.ok) throw new Error(d?.error ?? 'No se pudo armar el consolidado');
-            setArticulos(d.articulos ?? []);
+            setArticulos((d.articulos ?? []).map(normalizarArticulo));
             setTotales(d.totales ?? null);
             lectura.confirmar();
         } catch (e: any) {
