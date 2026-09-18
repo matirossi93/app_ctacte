@@ -1,7 +1,7 @@
 import { contextoReparto, rangoValido } from '../utils/contextoReparto';
 import { Activity, useEffect, useState } from 'react';
-import { Truck, LogOut, ChevronDown, ClipboardCheck, Scissors, Receipt } from 'lucide-react';
-import { clearToken, getUser } from '../utils/auth';
+import { Truck, LogOut, ChevronDown, ClipboardCheck, Scissors, Receipt, RefreshCw } from 'lucide-react';
+import { authHeaders, clearToken, getUser } from '../utils/auth';
 import { EntregasView } from './EntregasView';
 import { PresupuestosShell } from './PresupuestosShell';
 import { FraccionadoView } from './FraccionadoView';
@@ -38,6 +38,27 @@ function OficinaContenido() {
     const user = getUser();
     const [tab, setTab] = useState<Tab>(inicial.etapa);
     const [menuAbierto, setMenuAbierto] = useState(false);
+    /**
+     * "Actualizar productos": vuelve a bajar el catálogo de InfoManager sin esperar los 15
+     * minutos del cache. Mati (18/09/2026) corrigió la descripción de un artículo en IM y el
+     * presupuesto seguía saliendo con la anterior.
+     *
+     * El aviso va en el texto del propio botón: es una acción de dos segundos y el menú se
+     * queda abierto mirándola, no hace falta una barra de mensajes para esto.
+     */
+    const [catalogo, setCatalogo] = useState<'listo' | 'yendo' | { error: string } | { ok: number }>('listo');
+    async function actualizarCatalogo() {
+        setCatalogo('yendo');
+        try {
+            const r = await fetch('/api/articulos/refrescar', { method: 'POST', headers: authHeaders() });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok || d?.ok === false) throw new Error(d?.error || 'No pude actualizar los productos');
+            setCatalogo({ ok: Number(d.articulos) || 0 });
+        } catch (e: any) {
+            setCatalogo({ error: e?.message || 'No pude actualizar los productos' });
+        }
+    }
+
     /**
      * El rango de días, compartido por Presupuestos, Fraccionado y Facturación.
      *
@@ -98,12 +119,19 @@ function OficinaContenido() {
                 </nav>
 
                 <div className="of-user">
-                    <button className="of-user-btn" onClick={() => setMenuAbierto(v => !v)}>
+                    <button className="of-user-btn" onClick={() => { if (!menuAbierto) setCatalogo('listo'); setMenuAbierto(v => !v); }}>
                         <span>{user?.nombre ?? user?.email ?? 'Usuario'}</span>
                         <ChevronDown size={15} />
                     </button>
                     {menuAbierto && (
                         <div className="of-user-menu" role="menu">
+                            <button disabled={catalogo === 'yendo'} onClick={() => void actualizarCatalogo()}>
+                                <RefreshCw size={15} className={catalogo === 'yendo' ? 'spin' : undefined} />
+                                {catalogo === 'yendo' ? 'Actualizando productos…'
+                                    : typeof catalogo === 'object' && 'ok' in catalogo ? `Productos al día (${catalogo.ok})`
+                                        : typeof catalogo === 'object' ? catalogo.error
+                                            : 'Actualizar productos'}
+                            </button>
                             <button disabled={ocupado} onClick={() => { if (!puedeNavegar()) return; borradores.clear(); for (const k of Object.keys(sessionStorage)) if (k.startsWith('reparto:') || k.startsWith('correccion:') || k.startsWith('correccion-pendiente-')) sessionStorage.removeItem(k); clearToken(); location.reload(); }}>
                                 <LogOut size={15} /> Cerrar sesión
                             </button>

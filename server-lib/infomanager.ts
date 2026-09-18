@@ -346,7 +346,19 @@ interface ArticuloMini {
   subrubro: string; unidad_de_medida: string | null; equivalencia_um: number | null;
 }
 
-const ARTICULOS_TTL_MS = 60 * 60 * 1000;
+/**
+ * Cuánto puede mentir la pantalla sobre la ficha de un artículo.
+ *
+ * 🪤 18/09/2026. Era UNA HORA. Mati cambió una descripción en InfoManager, fue a
+ * presupuestar y el buscador seguía mostrando la vieja: nada invalida este cache —`invalidarIM()`
+ * limpia ventas, stock, saldos y numeración, pero no el catálogo— así que la única salida era
+ * esperar a que venciera. En los logs de producción de ese día las recargas iban 07:35 y 08:37.
+ *
+ * No se puede bajar mucho más: el buscador de productos consulta esto en cada tecla y re-bajarlo
+ * son dos GET paginados a `/articulos` (~3 s medidos). A 15 minutos son 4 recargas por hora en
+ * vez de 1, y el que no quiere esperar tiene el botón (POST /api/articulos/refrescar).
+ */
+const ARTICULOS_TTL_MS = 15 * 60 * 1000;
 
 const lecturasCatalogo = new LecturasCompartidas<Map<number, ArticuloMini>>(ARTICULOS_TTL_MS, 1);
 export function fetchArticulosCatalogo(force = false) { return lecturasCatalogo.obtener('catalogo', () => leerArticulosCatalogo(), { actualizar: force }); }
@@ -1751,6 +1763,18 @@ export async function fetchPreciosDeLista(codLista: number): Promise<Map<number,
 
   _listaPreciosPending.set(codLista, p);
   return p;
+}
+
+/**
+ * Olvida los precios/descripciones cacheados de los artículos (renglón y lista entera).
+ *
+ * Los usa el botón "Actualizar productos": el que lo aprieta acaba de tocar una ficha en
+ * InfoManager y espera ver TODO nuevo, no la descripción sí y el precio no. No cuesta ninguna
+ * llamada: se vuelven a pedir cuando alguien los necesita.
+ */
+export function invalidarPreciosDeArticulos(): void {
+  _precioCache.clear();
+  _listaPreciosCache.clear();
 }
 
 export interface DisponibleCliente {

@@ -102,3 +102,31 @@ it('🔴 el nombre viejo ya no alcanza: si IM vuelve a mandar sólo `iva_por`, q
   mockIM([[{...art(9,'X'),iva_por:21}]]);
   expect((await fetchArticulosCatalogo()).get(9)?.iva_por).toBeNull();
 });
+
+/**
+ * 🪤 18/09/2026. Mati cambió la descripción de un artículo en InfoManager, fue a presupuestarlo
+ * y la app seguía mostrando la vieja. El catálogo se cachea para no pegarle a IM en cada tecla
+ * del buscador —IM se satura y cuando se satura se cae la facturación—, pero el TTL era de UNA
+ * HORA. Verificado en los logs de producción de ese día: las recargas iban 07:35, 08:37, o sea
+ * que un cambio hecho a las 08:40 recién se veía a las 09:37.
+ *
+ * 15 minutos es el techo de cuánto puede mentir la pantalla. Cuesta dos GET a `/articulos`
+ * (~3 s medidos) cuatro veces por hora en vez de una.
+ */
+it('🔴 el catálogo no puede quedar viejo una hora: a los 15 minutos se vuelve a bajar', async () => {
+  vi.useFakeTimers();
+  try {
+    const get = mockIM([[art(704, 'AVENA INSTANTANEA')]]);
+    expect((await fetchArticulosCatalogo()).get(704)!.descripcion).toBe('AVENA INSTANTANEA');
+
+    // Adentro del TTL no se le vuelve a preguntar a IM: de eso se trata el cache.
+    vi.advanceTimersByTime(14 * 60_000);
+    await fetchArticulosCatalogo();
+    expect(get).toHaveBeenCalledTimes(1);
+
+    // Pasados los 15, el cambio de ficha tiene que llegar solo.
+    vi.advanceTimersByTime(2 * 60_000);
+    mockIM([[art(704, 'AVENA INSTANTANEA X 20 KG')]]);
+    expect((await fetchArticulosCatalogo()).get(704)!.descripcion).toBe('AVENA INSTANTANEA X 20 KG');
+  } finally { vi.useRealTimers(); }
+});

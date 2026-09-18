@@ -106,6 +106,12 @@
     cursor: pointer;
 }
 .of-user-menu button:hover { background: var(--color-surface-hover); }
+.of-user-menu button:disabled { opacity: .6; cursor: default; }
+.of-user-menu button { max-width: 280px; text-align: left; }
+/* Propia y no heredada de otra vista: el menú no tiene por qué depender de que el CSS de
+   Facturación esté en el bundle para que gire el ícono. */
+.of-user-menu .spin { animation: ofSpin 1s linear infinite; }
+@keyframes ofSpin { to { transform: rotate(360deg); } }
 
 .of-body {
     flex: 1;

@@ -381,6 +381,7 @@ export const VendorShell = ({ onLogout }: Props) => {
     const [err, setErr] = useState<string | null>(null);
     const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
     const [refrescandoContactos, setRefrescandoContactos] = useState(false);
+    const [refrescandoCatalogo, setRefrescandoCatalogo] = useState(false);
     // Aviso cuando los datos NO vienen frescos de InfoManager (incidente 31/07/2026).
     const [avisoDatos, setAvisoDatos] = useState<string | null>(null);
     const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
@@ -500,6 +501,29 @@ export const VendorShell = ({ onLogout }: Props) => {
             setFlash({ ok: false, text: e.message || 'No se pudo refrescar contactos.' });
         } finally {
             setRefrescandoContactos(false);
+            window.setTimeout(() => setFlash(null), 4500);
+        }
+    };
+
+    /**
+     * Vuelve a bajar el catálogo de artículos de InfoManager (descripciones, IVA, precios).
+     *
+     * Mati (18/09/2026): cambiaron la descripción de un artículo en IM y el buscador seguía
+     * mostrando la vieja. El catálogo se cachea 15 minutos para no consultar IM en cada tecla;
+     * esto es para el que no puede esperarlos.
+     */
+    const refrescarCatalogo = async () => {
+        setRefrescandoCatalogo(true); setFlash(null);
+        try {
+            const res = await fetch('/api/articulos/refrescar', { method: 'POST', headers: authHeaders() });
+            if (res.status === 401) { onLogout(); return; }
+            const d = await res.json();
+            if (!res.ok || d.error || d.ok === false) throw new Error(d.error || 'No se pudo actualizar el catálogo');
+            setFlash({ ok: true, text: `Productos actualizados desde InfoManager (${d.articulos} artículos).` });
+        } catch (e: any) {
+            setFlash({ ok: false, text: e.message || 'No se pudo actualizar el catálogo.' });
+        } finally {
+            setRefrescandoCatalogo(false);
             window.setTimeout(() => setFlash(null), 4500);
         }
     };
@@ -646,6 +670,9 @@ export const VendorShell = ({ onLogout }: Props) => {
                                     </div>
                                     <button onClick={() => { setAvatarMenu(false); setShowCambiarPass(true); }}>
                                         <Lock size={14} /> Cambiar mi contraseña
+                                    </button>
+                                    <button onClick={() => { setAvatarMenu(false); refrescarCatalogo(); }} disabled={refrescandoCatalogo}>
+                                        <RefreshCw size={14} /> Actualizar productos (descripciones y precios)
                                     </button>
                                     {isAdmin && (
                                         <button onClick={() => { setAvatarMenu(false); setShowImportSheet(true); }}>

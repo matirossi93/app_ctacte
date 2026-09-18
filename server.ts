@@ -23,7 +23,7 @@ import {
 import { hasSupabase, sb, TENANT_ID } from './server-lib/supabase.js';
 import { syncVentasMesActual, syncVentasMeses } from './server-lib/syncVentas.js';
 import { getMonthlyVentasRaw, getMonthlyItemsRaw, snapshotCacheStats } from './server-lib/snapshotCache.js';
-import { fetchArticulosCatalogo, fetchStockPorDeposito, imGetRetry, fetchVendedores, imClient } from './server-lib/infomanager.js';
+import { fetchArticulosCatalogo, fetchStockPorDeposito, imGetRetry, fetchVendedores, imClient, invalidarPreciosDeArticulos } from './server-lib/infomanager.js';
 import { enSegundoPlano } from './server-lib/lecturasCompartidas.js';
 import {
   uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, editarRecibo, cuentasDebug, cuentasRefresh, cuentasEfectivo,
@@ -864,6 +864,29 @@ app.post('/api/clientes/refresh-contactos', requireJwt, requireAdmin, async (_re
     } catch (err: any) {
         console.error('[refresh-contactos]', err?.message ?? err);
         res.status(500).json({ error: err?.message ?? 'Error refrescando contactos desde InfoManager' });
+    }
+});
+
+/**
+ * POST /api/articulos/refrescar — vuelve a bajar el catálogo de InfoManager AHORA.
+ *
+ * Mati (18/09/2026): *"cambiamos la descrip de un articulo y lo quisimos presupuestar en la app
+ * y seguia saliendo con la desc vieja"*. El catálogo se cachea 15 minutos (ver ARTICULOS_TTL_MS)
+ * porque el buscador de productos lo consulta en cada tecla. Esto es la salida para el que no
+ * puede esperar esos minutos.
+ *
+ * 🔑 Sin requireAdmin a propósito: el que ve el nombre viejo es el que está cargando el
+ * pedido, no el admin. El costo está acotado solo — `LecturasCompartidas` deduplica las lecturas
+ * en vuelo, así que diez clicks seguidos son UNA sola bajada de IM.
+ */
+app.post('/api/articulos/refrescar', requireJwt, async (_req: any, res) => {
+    try {
+        invalidarPreciosDeArticulos();
+        const cat = await fetchArticulosCatalogo(true);
+        res.json({ ok: true, articulos: cat.size, refreshedAt: new Date().toISOString() });
+    } catch (err: any) {
+        console.error('[articulos/refrescar]', err?.message ?? err);
+        res.status(502).json({ error: `No pude traer el catálogo de InfoManager: ${err?.message ?? 'sin respuesta'}` });
     }
 });
 
