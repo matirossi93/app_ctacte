@@ -435,7 +435,7 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
     const diasFraccionado = [...new Set(pedidos.map(p => String(p.fecha ?? '').slice(0, 10)).filter(Boolean))];
     const detalleFraccionado = await itemsPorFechas(diasFraccionado);
     const sinItemsFraccionado = pedidos.filter(p => !detalleFraccionado.items.some(it => String(it.id_comprobante) === String(p.im_comprobante_id)));
-    const fraccionado = armarFraccionado(detalleFraccionado.items.filter(it => idsFraccionado.has(String(it.id_comprobante))).map(it => ({ cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad) })), cat, formatosDeBolsa());
+    const fraccionado = armarFraccionado(detalleFraccionado.items.filter(it => idsFraccionado.has(String(it.id_comprobante))).map(it => ({ cod_articulo: Number(it.cod_articulo), cantidad: Number(it.cantidad) })), cat, await formatosDeBolsa());
 
     const totales = pedidos.reduce((acc: any, p: any) => ({
       bultos: acc.bultos + Number(p.bultos ?? 0),

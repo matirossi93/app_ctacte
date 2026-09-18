@@ -43,9 +43,11 @@ describe('en cuántos paquetes se parte un renglón', () => {
     expect((paquetesDelRenglon(20.1, 30) as any).paquetes).toEqual([10, 10, 0.1]);
   });
 
-  it('sin formato de bolsa conocido se fracciona igual, en paquetes de 10', () => {
-    // No se puede saber si son bolsas enteras, pero el tope de 10 kg vale igual.
-    expect((paquetesDelRenglon(45, null) as any).paquetes).toEqual([10, 10, 10, 10, 5]);
+  it('🔄 sin formato ya NO se parte en 10: eso inventaba trabajo (cambió el 18/09/2026)', () => {
+    // Hasta hoy decía [10,10,10,10,5]: el tope de 10 kg se aplicaba igual sin saber la bolsa.
+    // Con el sorgo se vio el costo —bolsa de 40 partida en cuatro— y ahora la cantidad va como
+    // vino. Ver el describe del final: el kilaje se carga desde la pantalla.
+    expect(paquetesDelRenglon(45, null)).toEqual({ fracciona: true, paquetes: [45], sin_formato: true });
   });
 
   it('una bolsa de otro formato también se respeta: 50 kg de lenteja son 2 bolsas de 25', () => {
@@ -85,5 +87,34 @@ describe('qué productos entran al listado', () => {
 
   it('un producto con formato de bolsa conocido entra, aunque IM no diga nada', () => {
     expect(seFracciona({ descripcion: 'MEZCLA GALLO SAN JUAN', unidad_de_medida: '', equivalencia_um: 0 }, 30)).toBe(true);
+  });
+});
+
+/**
+ * 🔴 18/09/2026. SIN KILAJE DE BOLSA NO SE INVENTA NADA.
+ *
+ * Mati (17/09/2026): *"el sorgo no se está contemplando la bolsa... quizás acá sea mejor que
+ * directamente se ponga las cantidades textual como está en el pedido"*, y sobre por qué no
+ * alcanza con cargarlos una vez: *"van cambiando los kilajes de las bolsas, no son siempre
+ * iguales"*.
+ *
+ * Un producto sin formato se partía igual en paquetes de 10 kg. Eso no es "no sé": es afirmar
+ * que hay que abrir la bolsa y pesar cuatro paquetes, y con el sorgo —bolsa de 40— era trabajo
+ * inventado sobre mercadería que ya venía preparada. Sin el dato, la cantidad va como vino y la
+ * pantalla pide que le carguen el kilaje.
+ */
+describe('sin formato de bolsa cargado', () => {
+  it('🔴 no se parte en paquetes de 10: va la cantidad tal cual, marcada', () => {
+    expect(paquetesDelRenglon(40, null)).toEqual({ fracciona: true, paquetes: [40], sin_formato: true });
+    expect(paquetesDelRenglon(100, null)).toEqual({ fracciona: true, paquetes: [100], sin_formato: true });
+  });
+
+  it('una cantidad chica tampoco cambia: 7 kg sigue siendo un paquete de 7', () => {
+    expect(paquetesDelRenglon(7, null)).toEqual({ fracciona: true, paquetes: [7], sin_formato: true });
+  });
+
+  it('🔑 con el kilaje cargado vuelve la regla de siempre', () => {
+    // Es el caso del sorgo: cargarle 40 lo convierte en una bolsa cerrada, no en 4 paquetes.
+    expect(paquetesDelRenglon(40, 40)).toEqual({ fracciona: false, bolsas: 1, formato: 40 });
   });
 });

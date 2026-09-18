@@ -92,6 +92,17 @@ export interface LineaFraccionado {
    */
   bolsas_enteras: number;
   formato_bolsa: number | null;
+  /**
+   * 🔴 No hay kilaje de bolsa cargado para este producto. La pantalla lo marca y ofrece
+   * cargarlo: sin el dato las cantidades van enteras, sin partir (ver `paquetesDelRenglon`).
+   */
+  sin_formato: boolean;
+  /**
+   * Las cantidades TAL COMO LAS PIDIÓ el cliente, sin interpretar. Mati (17/09/2026) pidió
+   * poder ver el pedido crudo al lado del desglose: mientras falte el kilaje es lo único con
+   * lo que el sector puede armar el paquete a mano, y cuando está sirve para controlar.
+   */
+  pedidos: number[];
 }
 
 /** Kilo en cualquiera de las formas en que IM lo escribe. */
@@ -139,8 +150,11 @@ export function seFracciona(
 
 export type PaquetesRenglon =
   | { fracciona: false; bolsas: number; formato: number }
-  /** Con `bolsas`, el renglón es MIXTO: bolsas cerradas del depósito + el resto a pesar. */
-  | { fracciona: true; paquetes: number[]; bolsas?: number; formato?: number };
+  /**
+   * Con `bolsas`, el renglón es MIXTO: bolsas cerradas del depósito + el resto a pesar.
+   * Con `sin_formato`, no se sabe cuánto trae la bolsa y la cantidad va entera, sin partir.
+   */
+  | { fracciona: true; paquetes: number[]; bolsas?: number; formato?: number; sin_formato?: true };
 
 /**
  * En cuántos paquetes se parte un renglón.
@@ -172,15 +186,28 @@ export function paquetesDelRenglon(cantidad: number, formatoBolsa: number | null
      */
     enteras = Math.floor(bolsas + 1e-9);
   }
+  /**
+   * 🔴 SIN KILAJE DE BOLSA NO SE INVENTA NADA.
+   *
+   * Mati (17/09/2026): *"el sorgo no se está contemplando la bolsa... quizás acá sea mejor que
+   * directamente se ponga las cantidades textual como está en el pedido"*.
+   *
+   * Partir en paquetes de 10 a un producto del que no sabemos el formato no es decir "no sé":
+   * es afirmar que hay que abrir la bolsa y pesar. Con el sorgo —bolsa de 40— eran cuatro
+   * paquetes de trabajo sobre mercadería que ya venía preparada. La cantidad va como vino y la
+   * pantalla pide que le carguen el kilaje, que es lo único que resuelve el caso de verdad.
+   */
+  if (!(formatoBolsa && formatoBolsa > 0)) return { fracciona: true, paquetes: [q], sin_formato: true };
+
   const paquetes: number[] = [];
-  let resta = enteras > 0 && formatoBolsa ? dos(q - enteras * formatoBolsa) : q;
+  let resta = enteras > 0 ? dos(q - enteras * formatoBolsa) : q;
   while (resta > MAX_FRACCION_KG + 1e-9) {
     paquetes.push(MAX_FRACCION_KG);
     resta = dos(resta - MAX_FRACCION_KG);
   }
   // 🪤 Sin el redondeo aparecían paquetes de 0.00000001 al final de una resta con decimales.
   if (resta > 1e-9) paquetes.push(dos(resta));
-  return enteras > 0 && formatoBolsa
+  return enteras > 0
     ? { fracciona: true, paquetes, bolsas: enteras, formato: formatoBolsa }
     : { fracciona: true, paquetes };
 }
@@ -191,7 +218,7 @@ export function armarFraccionado(
   /** El formato de bolsa de cada producto a granel, deducido de los pedidos (formatosBolsa.ts). */
   formatos?: Map<number, number>,
 ): LineaFraccionado[] {
-  const porProducto = new Map<number, { descripcion: string; paquetes: number[]; bolsas: number; formato: number | null }>();
+  const porProducto = new Map<number, { descripcion: string; paquetes: number[]; bolsas: number; formato: number | null; pedidos: number[] }>();
   for (const r of renglones ?? []) {
     const cod = Number(r.cod_articulo);
     const art = catalogo.get(cod);
@@ -200,9 +227,10 @@ export function armarFraccionado(
     const formato = formatos?.get(cod) ?? null;
     if (!seFracciona(art, formato)) continue;
 
-    if (!porProducto.has(cod)) porProducto.set(cod, { descripcion: art.descripcion, paquetes: [], bolsas: 0, formato });
+    if (!porProducto.has(cod)) porProducto.set(cod, { descripcion: art.descripcion, paquetes: [], bolsas: 0, formato, pedidos: [] });
     const acc = porProducto.get(cod)!;
     if (acc.formato == null && formato != null) acc.formato = formato;
+    acc.pedidos.push(dos(cant));
 
     /**
      * 🔑 Cada renglón se parte según la regla del sector: si la cantidad es un múltiplo exacto
@@ -226,6 +254,8 @@ export function armarFraccionado(
         kg: dos(l.reduce((s, x) => s + x, 0)),
         bolsas_enteras: acc.bolsas,
         formato_bolsa: acc.formato,
+        sin_formato: acc.formato == null,
+        pedidos: acc.pedidos.slice().sort((a, b) => b - a),
       };
     })
     .filter(l => l.paquetes > 0 || l.bolsas_enteras > 0);

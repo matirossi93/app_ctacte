@@ -414,7 +414,7 @@ export async function fraccionadoDelRango(req: Request & { user?: JwtPayload }, 
     const sinItems = [...ids].filter(id => !detalle.items.some(it => String(it.id_comprobante) === id));
     // 🔑 Los formatos de bolsa: sin ellos no se puede saber si 60 kg son 2 bolsas cerradas o
     // 6 paquetes de 10 (Mati, 09/09/2026). Se usa lo que haya cacheado, sin esperar.
-    const fraccionado = armarFraccionado(renglones, cat, formatosDeBolsa());
+    const fraccionado = armarFraccionado(renglones, cat, await formatosDeBolsa());
     /**
      * 🔑 Y lo que hay que PRODUCIR: balanceados propios y maíz quebrado. Son bolsas cerradas, así
      * que el fraccionado las deja afuera con razón —no hay nada que pesar— pero el sector de

@@ -222,10 +222,43 @@ describe('el formato de bolsa conocido', () => {
     expect(r[0]).toMatchObject({ descripcion: 'MIJO', cantidades: [5], paquetes: 1, bolsas_enteras: 1, formato_bolsa: 25 });
   });
 
-  it('🪤 sin el formato, 25 kg se partían en paquetes de 10: eso era el problema', async () => {
+  it('🔄 sin el formato, 25 kg van como vinieron: partirlos en 10 era el problema', async () => {
+    // 18/09/2026: antes esto comprobaba lo contrario —que se partiera igual— y era justo lo que
+    // arruinaba al que no tiene kilaje cargado. Ahora sale entero y marcado.
     const { paquetesDelRenglon } = await import('./fraccionado.js');
-    const r = paquetesDelRenglon(25, null) as any;
-    expect(r.fracciona).toBe(true);
-    expect(r.paquetes.length).toBeGreaterThan(1);
+    expect(paquetesDelRenglon(25, null)).toEqual({ fracciona: true, paquetes: [25], sin_formato: true });
+  });
+});
+
+/**
+ * La línea que llega a la pantalla cuando el producto no tiene kilaje de bolsa cargado.
+ *
+ * Mati (17/09/2026): *"la avena instantánea que está por 20 kg, y el sorgo que no se está
+ * contemplando la bolsa"*. El sector necesita ver DOS cosas: que el kilaje falta (para que
+ * alguien lo cargue) y cuánto pidió el cliente sin interpretar (para poder armarlo a mano
+ * mientras tanto).
+ */
+describe('una línea sin kilaje de bolsa', () => {
+  const cat = new Map([[403, { descripcion: 'SORGO', unidad_de_medida: 'Kilos' }]]) as any;
+
+  it('🔑 sale marcada y con las cantidades del pedido tal como vinieron', async () => {
+    const { armarFraccionado } = await import('./fraccionado.js');
+    const r = armarFraccionado(
+      [{ cod_articulo: 403, cantidad: 40 }, { cod_articulo: 403, cantidad: 80 }], cat, new Map());
+    expect(r[0]).toMatchObject({
+      descripcion: 'SORGO', cantidades: [80, 40], paquetes: 2,
+      sin_formato: true, formato_bolsa: null, pedidos: [80, 40],
+    });
+  });
+
+  it('🔑 con el kilaje cargado deja de estar marcada y el pedido se sigue viendo', async () => {
+    const { armarFraccionado } = await import('./fraccionado.js');
+    // 40 con bolsa de 40 es UNA bolsa cerrada; 80 son dos. Nada que fraccionar.
+    const r = armarFraccionado(
+      [{ cod_articulo: 403, cantidad: 40 }, { cod_articulo: 403, cantidad: 80 }], cat, new Map([[403, 40]]));
+    expect(r[0]).toMatchObject({
+      descripcion: 'SORGO', cantidades: [], bolsas_enteras: 3,
+      sin_formato: false, formato_bolsa: 40, pedidos: [80, 40],
+    });
   });
 });

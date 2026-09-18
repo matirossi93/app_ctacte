@@ -222,9 +222,13 @@ describe('el listado de fraccionado', () => {
 
     expect(r.body.comprobantes).toBe(1);
     expect(r.body.estado).toBe('pendientes');
-    // 🔄 Desde el 09/09/2026 cada renglón se parte en paquetes de 10 kg como máximo (Mati: "no
-    // se fracciona más de 10 kilos"). Sin formato de bolsa conocido, 30 kg son tres paquetes.
-    expect(r.body.fraccionado[0]).toMatchObject({ descripcion: 'MEZCLA FINA', cantidades: [10, 10, 10] });
+    // 🔄 18/09/2026: sin kilaje de bolsa cargado la cantidad va ENTERA. Antes se partía en
+    // paquetes de 10 (Mati, 09/09/2026: "no se fracciona más de 10 kilos") —esa regla sigue, pero
+    // sólo cuando se sabe cuánto trae la bolsa; si no, se inventaba trabajo. El listado lo marca
+    // con `sin_formato` y la pantalla pide que lo carguen.
+    expect(r.body.fraccionado[0]).toMatchObject({
+      descripcion: 'MEZCLA FINA', cantidades: [30], sin_formato: true, pedidos: [30],
+    });
   });
 
   /** 🔑 Lo que decide es la factura, no la revisión: un pedido sin aprobar hay que prepararlo igual. */
@@ -243,7 +247,7 @@ describe('el listado de fraccionado', () => {
     ]);
     const r = await llamar(fraccionadoDelRango, { query: { estado: 'facturados' } });
     expect(r.body.comprobantes).toBe(1);
-    expect(r.body.fraccionado[0].cantidades).toEqual([10, 10]);   // los 20 kg del facturado
+    expect(r.body.fraccionado[0].cantidades).toEqual([20]);   // los 20 kg del facturado, sin partir
   });
 
   it('y todo junto con ?todos=1, que es el enlace que ya estaba en uso', async () => {
@@ -254,7 +258,8 @@ describe('el listado de fraccionado', () => {
     ]);
     const r = await llamar(fraccionadoDelRango, { query: { todos: '1' } });
     expect(r.body.comprobantes).toBe(2);
-    expect(r.body.fraccionado[0].cantidades).toEqual([10, 10, 10, 10, 10]);
+    // Los dos renglones juntos: 30 y 20, cada uno entero porque no hay kilaje cargado.
+    expect(r.body.fraccionado[0].cantidades).toEqual([30, 20]);
   });
 
   it('dice cuántos hay de cada lado, para poder elegir sin volver a consultar', async () => {

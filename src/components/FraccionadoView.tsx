@@ -25,6 +25,13 @@ interface Linea {
      */
     bolsas_enteras: number;
     formato_bolsa: number | null;
+    /**
+     * 🔴 No hay kilaje de bolsa cargado para este producto: las cantidades van como vinieron
+     * del pedido, sin partir. Mati (17/09/2026): *"el sorgo no se está contemplando la bolsa"*.
+     */
+    sin_formato: boolean;
+    /** Lo que pidió el cliente, sin interpretar. Va al lado del desglose para poder controlarlo. */
+    pedidos: number[];
 }
 
 /** Lo que se fabrica acá: balanceados propios y maíz quebrado. No se fracciona, se produce. */
@@ -34,6 +41,21 @@ interface LineaProduccion {
 }
 
 const num = (n: number) => n.toLocaleString('es-AR', { maximumFractionDigits: 2 });
+
+/**
+ * 🪤 La misma trampa que tiró abajo el consolidado la mañana del 18/09/2026: un campo nuevo
+ * usado derecho en el render —`l.pedidos.map(...)`— no rompe su columna, rompe la PANTALLA
+ * ENTERA, porque el error sube hasta el ErrorBoundary. Se normaliza una vez, al recibir.
+ *
+ * `sin_formato` se deduce del kilaje si no vino: así una respuesta anterior al cambio sigue
+ * mostrando bien la fila en lugar de dar por sentado que tiene bolsa cargada.
+ */
+const normalizarLinea = (l: any): Linea => ({
+    ...l,
+    cantidades: l?.cantidades ?? [],
+    pedidos: l?.pedidos ?? [],
+    sin_formato: l?.sin_formato ?? (l?.formato_bolsa == null),
+});
 const fechaCorta = (iso: string) => (iso ? iso.slice(0, 10).split('-').reverse().join('/') : '');
 
 export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string }) {
@@ -58,13 +80,18 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
     const clave = `${desde}|${hasta}|${estado}`;
     const [snapshot, setSnapshot] = useState<string | null>(null);
     const { iniciar } = useLecturaVigente(clave);
-    const cargar = useCallback(async (forzar = false) => {
+    /**
+     * `refrescarIM` va aparte de `forzar`: cuando cambia el kilaje de una bolsa hay que rearmar
+     * el listado, pero los renglones de InfoManager son los mismos de hace un segundo. Pedirle a
+     * IM que los baje de nuevo serían segundos de espera por un dato que no cambió.
+     */
+    const cargar = useCallback(async (forzar = false, refrescarIM = forzar) => {
         const lectura = iniciar(forzar); if (!lectura) return;
         setSnapshot(null);
         setCargando(true); setError(null);
         try {
             const r = await fetch(
-                `/api/presupuestos/fraccionado?desde=${desde}&hasta=${hasta}&estado=${estado}${forzar ? '&refrescar=1' : ''}`,
+                `/api/presupuestos/fraccionado?desde=${desde}&hasta=${hasta}&estado=${estado}${refrescarIM ? '&refrescar=1' : ''}`,
                 { headers: authHeaders(), signal: lectura.signal });
             const d = await r.json().catch(() => null);
             if (!lectura.vigente()) return;
@@ -72,7 +99,7 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
             if (d.completo === false || d.dias_faltantes?.length || d.comprobantes_sin_items?.length || d.dias_sin_items?.length || d.controles_incompletos?.length || d.parcial) throw new Error('El listado está incompleto. Actualizá antes de imprimir.');
             if ((d.desde && d.desde !== desde) || (d.hasta && d.hasta !== hasta)) throw new Error('El servidor respondió otro rango. Ajustá las fechas antes de imprimir.');
             setSnapshot(clave); lectura.confirmar();
-            setLineas(d.fraccionado ?? []);
+            setLineas((d.fraccionado ?? []).map(normalizarLinea));
             setTotales(d.totales ?? null);
             setComprobantes(d.comprobantes ?? 0);
             setCuenta(d.cuenta ?? null);
@@ -86,6 +113,40 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
             if (lectura.vigente()) setCargando(false);
         }
     }, [desde, hasta, estado, clave, iniciar]);
+
+    /**
+     * 🔑 EL KILAJE DE LA BOLSA SE CARGA ACÁ MISMO.
+     *
+     * Mati (17/09/2026): *"van cambiando los kilajes de las bolsas, no son siempre iguales...
+     * instantánea ahora tiene 20, arrollada por 30 y el sorgo por 40"*. Hasta hoy el número vivía
+     * en el código: cambiarlo pedía un despliegue, y mientras tanto el sector fraccionaba mal.
+     *
+     * Se guarda al salir del campo y el listado se rearma en el acto —sin volver a pedirle los
+     * renglones a InfoManager, que no cambiaron— para que se vea el efecto del número recién
+     * escrito: es la única forma de saber si era el correcto.
+     */
+    const [guardandoKilaje, setGuardandoKilaje] = useState<number | null>(null);
+    const [errorKilaje, setErrorKilaje] = useState<string | null>(null);
+    async function guardarKilaje(cod: number, texto: string) {
+        // Coma o punto: en la oficina se escribe 22,5.
+        const limpio = texto.trim().replace(',', '.');
+        const kg = limpio === '' ? null : Number(limpio);
+        if (kg !== null && !(Number.isFinite(kg) && kg > 0)) {
+            setErrorKilaje('El kilaje de la bolsa tiene que ser un número mayor que cero.'); return;
+        }
+        setGuardandoKilaje(cod); setErrorKilaje(null);
+        try {
+            const r = await fetch(`/api/presupuestos/fraccionado/kilaje/${cod}`, {
+                method: 'PUT', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({ kg }),
+            });
+            const d = await r.json().catch(() => null);
+            if (!r.ok || d?.ok === false) throw new Error(d?.error ?? 'No se pudo guardar el kilaje');
+            await cargar(true, false);
+        } catch (e: any) {
+            setErrorKilaje(e?.message ?? 'No se pudo guardar el kilaje');
+        } finally { setGuardandoKilaje(null); }
+    }
 
     useEffect(() => { void cargar(); }, [cargar]);
 
@@ -116,6 +177,7 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
             </div>
 
             {error && <div className="fr-aviso fr-no-print"><AlertTriangle size={15} /><span>{error}</span></div>}
+            {errorKilaje && <div className="fr-aviso fr-no-print"><AlertTriangle size={15} /><span>{errorKilaje}</span></div>}
             {cargando && <div className="fr-cargando fr-no-print"><Loader2 className="spin" size={20} /> Armando el listado…</div>}
             {!cargando && !lineas.length && !error && (
                 <div className="fr-vacio fr-no-print">
@@ -150,16 +212,56 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
                         <span><b>Pedidos</b> {comprobantes}</span>
                     </div>
 
+                    {/**
+                      * 🔴 Por qué algunas cantidades van enteras. Sin este renglón, el sector ve un
+                      * paquete de 40 kg y no sabe si es un error del listado o la bolsa entera.
+                      * Va también en el papel: el que fracciona es quien puede decir el kilaje.
+                      */}
+                    {lineas.some(l => l.sin_formato) && (
+                        <div className="fr-nota-kilaje">
+                            <AlertTriangle size={14} />
+                            <span>
+                                {lineas.filter(l => l.sin_formato).length} producto{lineas.filter(l => l.sin_formato).length === 1 ? '' : 's'} sin
+                                kilaje de bolsa cargado: su cantidad va como vino en el pedido, sin partir.
+                                Cargalo en la columna <b>Bolsa</b> y el listado se rehace solo.
+                            </span>
+                        </div>
+                    )}
+
                     {/* Cada cantidad en su cajita: se tilda al preparar el paquete. */}
                     <div className="fr-tabla-scroll"><table className="fr-tabla">
                         <thead>
-                            <tr><th>Código</th><th>Producto</th><th>Paquetes</th><th className="n">Cant.</th><th className="n">Kilos</th></tr>
+                            <tr><th>Código</th><th>Producto</th><th>Bolsa</th><th>Pedido</th><th>Paquetes</th><th className="n">Cant.</th><th className="n">Kilos</th></tr>
                         </thead>
                         <tbody>
                             {lineas.map(l => (
-                                <tr key={l.cod_articulo}>
+                                <tr key={l.cod_articulo} className={l.sin_formato ? 'fr-sin-formato' : undefined}>
                                     <td>{l.cod_articulo || '—'}</td>
                                     <td className="fr-prod">{l.descripcion}</td>
+                                    {/* El kilaje de la bolsa, editable. Se escribe y el listado se rearma solo. */}
+                                    <td className="fr-kilaje">
+                                        <label>
+                                            <input
+                                                type="text" inputMode="decimal" defaultValue={l.formato_bolsa ?? ''}
+                                                placeholder="—" aria-label={`Kilos por bolsa de ${l.descripcion}`}
+                                                disabled={guardandoKilaje != null}
+                                                onBlur={e => {
+                                                    const antes = l.formato_bolsa == null ? '' : String(l.formato_bolsa);
+                                                    if (e.target.value.trim().replace(',', '.') !== antes) void guardarKilaje(l.cod_articulo, e.target.value);
+                                                }}
+                                                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                            />
+                                            <span>kg</span>
+                                        </label>
+                                        {l.sin_formato && <small className="fr-falta-kilaje">cargá el kilaje</small>}
+                                    </td>
+                                    {/* 🔑 Lo que pidió el cliente, sin interpretar. Mientras falte el kilaje es lo
+                                        único con lo que el sector puede armar el paquete a mano. */}
+                                    <td>
+                                        <div className="fr-cajitas fr-pedido">
+                                            {l.pedidos.map((c, i) => <span className="fr-crudo" key={i}>{num(c)}</span>)}
+                                        </div>
+                                    </td>
                                     <td>
                                         <div className="fr-cajitas">
                                             {l.cantidades.map((c, i) => <span className="fr-cajita" key={i}>{num(c)}</span>)}

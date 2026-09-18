@@ -21,6 +21,7 @@
  */
 import { fetchVentas, fetchVentasItems, fetchArticulosCatalogo, fechaArgentina } from './infomanager.js';
 import { esKilo } from './fraccionado.js';
+import { sb, TENANT_ID, hasSupabase } from './supabase.js';
 
 /** Días de historia que se miran. Un mes da volumen suficiente sin irse de tiempo. */
 const DIAS_HISTORIA = 30;
@@ -47,10 +48,15 @@ const MIN_REPETICIONES = 3;
  * alpiste es 30 kg y la bolsa es de 25 porque *"veníamos facturando esos kg extra fraccionados"*
  * (Mati, 16/09/2026) — o sea que el 30 es una bolsa más 5 sueltos, no el formato.
  *
- * 🔴 ESTO NO ALCANZA Y SE SABE. Mati (17/09/2026): *"van cambiando los kilajes de las bolsas, no
- * son siempre iguales"*. Un formato escrito en el código envejece en silencio: el 16/09 acá decía
- * que la AVENA INSTANTANEA venía por 30 y venía por 20, y el SORGO no estaba. Mientras el kilaje
- * no se pueda cambiar desde la pantalla, cada cambio de proveedor necesita un deploy.
+ * 🔄 18/09/2026: YA NO SE TOCA ESTA LISTA. Mati: *"van cambiando los kilajes de las bolsas, no
+ * son siempre iguales"*, y un formato escrito en el código envejecía en silencio —el 16/09 acá
+ * decía que la AVENA INSTANTANEA venía por 30 y venía por 20—. Ahora el kilaje se carga desde la
+ * pantalla de fraccionado y vive en la tabla `formatos_bolsa` (migración 048), que sembró estos
+ * mismos ocho valores.
+ *
+ * Queda como RESPALDO y nada más: si la tabla no responde —Supabase caído, o un despliegue que
+ * llegó antes que la migración— es mejor tener ocho formatos viejos que ninguno, porque sin
+ * ninguno medio listado sale a fraccionarse a mano. Los cambios van a la tabla, no acá.
  */
 export const FORMATOS_CONOCIDOS = new Map<number, number>([
   [459, 25],   // GIRASOL PELADO
@@ -62,6 +68,45 @@ export const FORMATOS_CONOCIDOS = new Map<number, number>([
   [704, 20],   // AVENA INSTANTANEA
   [403, 40],   // SORGO
 ]);
+
+/**
+ * Los cargados a mano. TTL corto a propósito: se corrigen desde la pantalla y el que acaba de
+ * escribir 40 tiene que ver el listado rearmado, no el de hace media hora.
+ */
+const MANUALES_TTL_MS = 30_000;
+let _manuales: Map<number, number> | null = null;
+let _manualesAt = 0;
+let _leyendoManuales: Promise<Map<number, number> | null> | null = null;
+
+/** Lo que la oficina cargó a mano. `null` = no se pudo leer (distinto de "no hay ninguno"). */
+async function leerManuales(): Promise<Map<number, number> | null> {
+  if (!hasSupabase()) return null;
+  const { data, error } = await sb()
+    .from('formatos_bolsa').select('cod_articulo, kg').eq('tenant_id', TENANT_ID);
+  if (error) {
+    console.warn('[formatosBolsa] no pude leer los kilajes cargados:', error.message);
+    return null;
+  }
+  const m = new Map<number, number>();
+  for (const f of data ?? []) {
+    const cod = Number((f as any).cod_articulo);
+    const kg = Number((f as any).kg);
+    if (Number.isFinite(cod) && kg > 0) m.set(cod, kg);
+  }
+  return m;
+}
+
+/** Vuelve a leer la tabla en la próxima consulta. La llama el endpoint que guarda un kilaje. */
+export function invalidarFormatosManuales(): void { _manuales = null; _manualesAt = 0; }
+
+async function manualesVigentes(): Promise<Map<number, number> | null> {
+  if (_manuales && Date.now() - _manualesAt < MANUALES_TTL_MS) return _manuales;
+  _leyendoManuales ??= leerManuales()
+    .then(m => { if (m) { _manuales = m; _manualesAt = Date.now(); } return m ?? _manuales; })
+    .catch(e => { console.warn('[formatosBolsa] kilajes cargados:', e?.message); return _manuales; })
+    .finally(() => { _leyendoManuales = null; });
+  return _leyendoManuales;
+}
 
 let _formatos: Map<number, number> = new Map();
 let _at = 0;
@@ -121,7 +166,7 @@ async function calcular(): Promise<Map<number, number>> {
  * Devuelve el mapa cacheado (vacío la primera vez) y dispara el recálculo en segundo plano si
  * está vencido. Un formato viejo sigue sirviendo: las bolsas no cambian de tamaño.
  */
-export function formatosDeBolsa(): Map<number, number> {
+export async function formatosDeBolsa(): Promise<Map<number, number>> {
   if (!_calculando && Date.now() - _at > TTL_MS && Date.now() - _ultimoIntento > 60_000) {
     _ultimoIntento = Date.now();
     _calculando = calcular()
@@ -129,8 +174,22 @@ export function formatosDeBolsa(): Map<number, number> {
       .catch((e: any) => { console.warn('[formatosBolsa] no pude calcular los formatos:', e?.message); })
       .finally(() => { _calculando = null; });
   }
-  // Lo que sabemos pisa lo deducido: la muestra puede estar incompleta, el dato de la oficina no.
-  return FORMATOS_CONOCIDOS.size ? new Map([..._formatos, ...FORMATOS_CONOCIDOS]) : _formatos;
+  /**
+   * 🔑 LA ESCALERA, de menos a más confiable —cada uno pisa al anterior:
+   *
+   *   deducido de los pedidos  <  respaldo del código  <  cargado a mano
+   *
+   * La muestra de 30 días puede estar incompleta o mentir (lo más pedido de alpiste es 30 y la
+   * bolsa es de 25). El que abrió la bolsa y escribió el número en la pantalla, no.
+   *
+   * 🪤 El respaldo del código entra SÓLO si la tabla no se pudo leer: si se leyó y el
+   * artículo no está, es porque alguien lo borró a propósito, y volver a meter el valor viejo
+   * haría que borrarlo no sirva de nada.
+   */
+  const manuales = await manualesVigentes();
+  return manuales
+    ? new Map([..._formatos, ...manuales])
+    : new Map([..._formatos, ...FORMATOS_CONOCIDOS]);
 }
 
 /** Para los tests y para forzar un recálculo después de tocar el catálogo. */
@@ -139,4 +198,5 @@ export function _resetFormatos(valores?: Map<number, number>) {
   _at = valores ? Date.now() : 0;
   _ultimoIntento = 0;
   _calculando = null;
+  invalidarFormatosManuales();
 }

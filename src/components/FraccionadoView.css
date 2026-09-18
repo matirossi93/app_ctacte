@@ -92,6 +92,14 @@
     .fr-empresa { font-size: 11pt !important; }
     .fr-datos { margin-bottom: 2.5mm !important; font-size: 8pt !important; }
     .fr-bolsas { font-size: 7.5pt !important; }
+    /* 🪤 Un <input> impreso sale con su recuadro de formulario y ocupa el ancho fijo del campo.
+       En el papel es un dato más: sin borde y del ancho de su contenido. */
+    .fr-kilaje input {
+        border: none !important; width: 2.6rem !important; padding: 0 !important;
+        font-size: 9.5pt !important; text-align: right !important;
+    }
+    .fr-falta-kilaje, .fr-nota-kilaje { font-size: 7.5pt !important; }
+    .fr-crudo { font-size: 8pt !important; }
     .fr-tabla tr { page-break-inside: avoid; }
     .fr-tabla thead { display: table-header-group; }
     /**
@@ -114,6 +122,32 @@
     display: inline-block; margin: 0.1rem 0 0.1rem 0.3rem; padding: 0.1rem 0.4rem;
     border: 1px dashed #8a5a00; border-radius: 3px;
     color: #8a5a00; font-size: 0.78rem; font-weight: 600;
+}
+
+/* ── El kilaje de la bolsa, editable en la misma fila ──────────────────────────
+   Mati (17/09/2026): *"van cambiando los kilajes de las bolsas, no son siempre iguales"*. El
+   número se escribe acá y el listado se rehace: sin eso, cada cambio de proveedor era un deploy. */
+.fr-kilaje label { display: inline-flex; align-items: baseline; gap: 0.2rem; }
+.fr-kilaje input {
+    width: 3.4rem; font: inherit; font-weight: 700; text-align: right;
+    padding: 0.1rem 0.25rem; border: 1px solid #b9a894; border-radius: 3px; background: #fff;
+    color: inherit;
+}
+.fr-kilaje input:focus { outline: 2px solid #06652F; outline-offset: 1px; }
+.fr-kilaje input:disabled { opacity: 0.5; }
+.fr-kilaje span { font-size: 0.72rem; color: #8a7f6f; }
+.fr-falta-kilaje { display: block; margin-top: 0.1rem; font-size: 0.68rem; color: #8a5a00; }
+/* Una fila sin kilaje se distingue de un vistazo: su cantidad NO está partida en paquetes. */
+.fr-sin-formato td { background: #fffaf0; }
+/* La cantidad tal como la pidió el cliente: se lee, no se tilda, así que va sin caja. */
+.fr-crudo {
+    display: inline-block; margin: 0.1rem 0.35rem 0.1rem 0;
+    font-family: 'Courier New', monospace; font-size: 0.82rem; color: #6b5a45;
+}
+.fr-nota-kilaje {
+    display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.7rem;
+    padding: 0.4rem 0.6rem; border: 1px dashed #8a5a00; border-radius: var(--radius-sm);
+    color: #8a5a00; font-size: 0.78rem;
 }
 
 .fr-tabla-scroll { max-width: 100%; overflow-x: auto; }

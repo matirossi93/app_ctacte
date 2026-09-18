@@ -52,6 +52,7 @@ import { normalizarInvoices, resolverSinVendedor } from './server-lib/invoicesIM
 import { cruceCarpetaHandler, exportCruceHandler } from './server-lib/cruceCarpeta.js';
 import { listRebotes, listRecargos, syncRebotesNow, syncRebotes } from './server-lib/rebotes.js';
 import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos, hermanosDeFamilia } from './server-lib/productGoals.js';
+import { guardarKilajeDeBolsa } from './server-lib/kilajeDeBolsa.js';
 import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, precioArticulo, catalogoPedido, validarListasPedido, editarPedido } from './server-lib/pedidos.js';
 import { pendientesDelDia, arrastreDelDia, impresionHoja, sugerenciaDelDia, listarHojas, listarCamiones, crearHoja, editarHoja, borrarHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
 import { tableroFacturacion, previsualizarFacturacion, facturarSeleccion, liberarReclamo, habilitarRemitoPendiente, registrarRemitoExistente } from './server-lib/facturarPresupuestos.js';
@@ -709,6 +710,9 @@ app.post('/api/facturacion/nota-financiera', requireJwt, (req: any, res) => nota
 app.put('/api/facturacion/:idFactura/fecha', requireJwt, (req: any, res) => moverFechaFactura(req, res));
 
 app.get('/api/presupuestos/fraccionado', requireJwt, (req: any, res) => fraccionadoDelRango(req, res));
+// El kilaje de la bolsa, que se carga desde esa misma pantalla. ANTES de '/:comprobanteId',
+// que si no captura "fraccionado" como si fuera el id de un presupuesto.
+app.put('/api/presupuestos/fraccionado/kilaje/:cod', requireJwt, (req: any, res) => guardarKilajeDeBolsa(req, res));
 // 🪤 Antes de `/:comprobanteId`: si no, la ruta con parámetro se come "consolidado".
 app.get('/api/presupuestos/consolidado', requireJwt, (req: any, res) => consolidadoDelRango(req, res));
 app.get('/api/presupuestos', requireJwt, (req: any, res) => listarPresupuestos(req, res));

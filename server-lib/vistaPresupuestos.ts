@@ -145,8 +145,8 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false, ven
      */
     const clientesPendientes = fetchClientesIMCon(ventas.map((v: any) => v.cod_cliente)).catch(() => []);
 
-    // El formato de bolsa de cada producto a granel: lo que haya cacheado, sin esperar.
-    const formatos = formatosDeBolsa();
+    // El formato de bolsa de cada producto a granel: lo deducido más lo que cargó la oficina.
+    const formatos = await formatosDeBolsa();
 
     /**
      * 🔴 SÓLO CASA CENTRAL: es la única que despacha con hoja de ruta (Mati, 09/09/2026). Hoy
