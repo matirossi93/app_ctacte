@@ -1065,3 +1065,39 @@ describe('el número devuelto por IM se normaliza', () => {
     if (r.ok) expect(r.numero).toBe(30079);
   });
 });
+
+/**
+ * 🔴 18/09/2026, TORRES FERNANDO. La factura salió y el remito rebotó con
+ *
+ *   Duplicate entry 'RE-5889054-1' for key 'ventas.cod_emp_compatibilidad'
+ *
+ * InfoManager le antepone `RE-` al `cod_compatibilidad` que le mandamos y corta el resultado en
+ * 10 caracteres, así que del id del presupuesto sólo sobreviven 7 dígitos:
+ *
+ *   PR 58813 · id 5889054**3** → RE-5889054   ← el remito que salió a las 15:52
+ *   PR 58814 · id 5889054**5** → RE-5889054   ← el de Torres, rechazado por repetido
+ *
+ * Los ids de dos presupuestos que difieren sólo en el último dígito colisionan siempre. Medido
+ * ese día en producción: de 2.673 remitos del rango, los 65 con `cod_compatibilidad` son los
+ * nuestros; los 2.608 de InfoManager van sin ninguno.
+ *
+ * 🔑 Y no lo usamos para nada: el remito se relaciona con su factura por la marca
+ * `[Remito Automático -FA:<id>]` de las observaciones (ver `resolverSinRespuesta`), no por este
+ * campo. Es exactamente el mismo motivo por el que la nota de crédito ya iba sin él.
+ */
+describe('el cod_compatibilidad del remito', () => {
+    it('🔴 va VACÍO: con el id del presupuesto, dos pedidos consecutivos chocan', async () => {
+        const post = mockIM({ isCreated: true, venta: { id: 999, numero: 77300 } });
+        await emitirRemito({ ...DATOS, origen_id: '58890545' } as any);
+        const [url, payload]: any = post.mock.calls[0];
+        expect(url).toBe('/remitos');
+        expect(payload.cod_compatibilidad).toBe('');
+    });
+
+    it('🔑 la FACTURA lo sigue llevando: es como se la encuentra si IM no contesta', async () => {
+        // `resolverSinRespuesta` busca la factura perdida justo por este campo.
+        const post = mockIM({ isCreated: true, venta: { id: 999, numero: 50360 } });
+        await emitirFactura({ ...DATOS, origen_id: '58890545' } as any);
+        expect((post.mock.calls[0] as any[])[1].cod_compatibilidad).toBe('58890545');
+    });
+});

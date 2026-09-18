@@ -439,6 +439,21 @@ export async function emitirRemito(d: DatosComprobante): Promise<ResultadoEmisio
     fecha_entrega: fecha,
     tipo_comprobante: 'RE',
     tipo_factura: 'X',
+    /**
+     * 🔴 VACÍO, y NO el id del presupuesto. 18/09/2026, TORRES FERNANDO: la factura salió y el
+     * remito rebotó con `Duplicate entry 'RE-5889054-1' for key 'ventas.cod_emp_compatibilidad'`.
+     *
+     * InfoManager le antepone `RE-` a lo que le mandamos y corta en 10 caracteres, así que del id
+     * sobreviven 7 dígitos: el PR 58813 (id 5889054**3**) y el PR 58814 (id 5889054**5**) quedan
+     * los dos en `RE-5889054`. Dos presupuestos que difieren en el último dígito no pueden tener
+     * remito los dos, y el segundo se queda con la factura emitida y sin remito.
+     *
+     * No se pierde nada: el remito se relaciona con su factura por la marca
+     * `[Remito Automático -FA:<id>]` de las observaciones (ver `resolverSinRespuesta`), no por
+     * este campo. Es el mismo motivo por el que la nota de crédito ya iba sin él. Medido ese día:
+     * de 2.673 remitos del rango, los 2.608 emitidos por InfoManager van sin `cod_compatibilidad`.
+     */
+    cod_compatibilidad: '',
     punto_de_venta: PTO_VENTA_REMITO,
     // 🪤 En remitos sólo vale 'A' (automático) o 'M'. Con 'N' —lo que usan los presupuestos—
     // IM contesta "Talonario manual no válido".
