@@ -101,7 +101,19 @@ function comoErrorV2(e: any): ErrorV2 {
   const cuerpo = e?.response?.data?.error;
   const code = cuerpo?.code ?? null;
   const traceId = cuerpo?.traceId ?? null;
-  const detalle = cuerpo?.message ?? e?.response?.data?.mensaje ?? e?.message ?? 'sin detalle';
+  /**
+   * 🔴 EL MOTIVO REAL VIVE EN VARIOS LADOS Y SE JUNTAN TODOS. El 21/09/2026 la primera
+   * emisión de prueba devolvió sólo "Ocurrió un error al grabar información" y hubo que repetir
+   * la llamada a mano para ver el cuerpo: la causa estaba en `detalles` —"el usuario
+   * 'api_servicio' no tiene un depósito predeterminado asignado"— que este parseo descartaba.
+   * Un rechazo que no dice qué rechazó obliga a adivinar sobre lo único irreversible que hay.
+   */
+  const d = e?.response?.data ?? {};
+  const listado = Array.isArray(d?.errores)
+    ? d.errores.map((x: any) => `${x?.campo ?? ''}: ${(x?.mensajes ?? []).join(' ')}`.trim()).join(' · ')
+    : '';
+  const detalle = [cuerpo?.message, d?.mensaje, d?.detalles, listado]
+    .map(x => String(x ?? '').trim()).filter(Boolean).join(' — ') || e?.message || 'sin detalle';
   // El traceId va EN el mensaje: es lo primero que pide el soporte de IM y, si sólo viviera en
   // una propiedad, se perdería en cuanto el error se loguee como texto.
   return new ErrorV2(

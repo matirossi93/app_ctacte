@@ -84,6 +84,13 @@ export type ResultadoNotaV2 =
  */
 const PTO_VENTA = 777;
 const ID_DESTINO = 1;
+/**
+ * 🪤 El spec marca `cod_deposito` como opcional —"en 0 toma el predeterminado del usuario"—
+ * pero el usuario con el que entra la API NO tiene uno: la primera emisión de prueba del
+ * 21/09/2026 rebotó con *"El usuario 'api_servicio' no tiene un depósito predeterminado
+ * asignado"*. Así que para nosotros es obligatorio. Va el Depósito General, igual que el emisor v1.
+ */
+const DEPOSITO = Number(process.env.PEDIDO_DEPOSITO || 1);
 
 const entero = (v: unknown): number | null => {
   const n = Number(v);
@@ -146,7 +153,7 @@ export async function emitirNotaV2(input: NotaV2Input): Promise<ResultadoNotaV2>
     tipo_comp_asoc: 'FA',
     ...(input.fecha ? { fecha: input.fecha } : {}),
     ...(input.cod_vendedor != null ? { cod_vendedor: input.cod_vendedor } : {}),
-    ...(input.cod_deposito != null ? { cod_deposito: input.cod_deposito } : {}),
+    cod_deposito: input.cod_deposito ?? DEPOSITO,
     ...(input.cod_lista_precios != null ? { cod_lista_precios: input.cod_lista_precios } : {}),
     ...(input.tipo_nc ? { tipo_nc: input.tipo_nc } : {}),
     ...(input.cod_control ? { cod_control: input.cod_control } : {}),

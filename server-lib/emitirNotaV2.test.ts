@@ -129,3 +129,21 @@ describe('la respuesta', () => {
     expect(r.error).toMatch(/el cliente no existe/);
   });
 });
+
+/**
+ * 🪤 21/09/2026: la primera emisión de prueba rebotó con *"El usuario 'api_servicio' no tiene un
+ * depósito predeterminado asignado. Ingrese un cod_deposito válido."* — el usuario con el que
+ * entra la API no tiene depósito, así que el campo no es opcional para nosotros aunque el spec
+ * lo marque así. Va el Depósito General, el mismo que usa el emisor v1.
+ */
+describe('el depósito', () => {
+  it('🔴 siempre viaja: el usuario de la API no tiene uno predeterminado', async () => {
+    await emitirNotaV2(BASE);
+    expect(cuerpo().cod_deposito).toBe(1);
+  });
+
+  it('se puede pedir otro', async () => {
+    await emitirNotaV2({ ...BASE, cod_deposito: 3 });
+    expect(cuerpo().cod_deposito).toBe(3);
+  });
+});

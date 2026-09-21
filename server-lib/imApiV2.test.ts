@@ -155,3 +155,40 @@ describe('el POST', () => {
     expect(r).toEqual({ id: 7 });
   });
 });
+
+/**
+ * 🔴 21/09/2026, primera emisión de prueba. El emisor devolvió sólo *"InfoManager v2 400:
+ * Ocurrió un error al grabar información"* y hubo que repetir la llamada a mano para ver el
+ * cuerpo crudo. Ahí estaba la causa, en un campo que este cliente descartaba:
+ *
+ *   "detalles": "Validaciones: \n• El usuario 'api_servicio' no tiene un depósito
+ *                predeterminado asignado. Ingrese un cod_deposito válido."
+ *
+ * Un rechazo que no dice qué rechazó obliga a adivinar sobre lo único irreversible del circuito.
+ * InfoManager pone el motivo en `detalles` (v1) o en `error.message` (v2): van los dos.
+ */
+describe('el mensaje de error', () => {
+  it('🔴 conserva `detalles`, que es donde InfoManager pone la validación que falló', async () => {
+    mockToken();
+    vi.mocked(axios.get).mockRejectedValue({
+      response: { status: 400, data: {
+        mensaje: 'Ocurrió un error al grabar información.',
+        detalles: "Validaciones: \n• El usuario 'api_servicio' no tiene un depósito predeterminado asignado.",
+      } },
+    });
+    const e: any = await getV2('/api/v2/notas-credito').catch((x: any) => x);
+    expect(e.message).toContain('depósito predeterminado');
+  });
+
+  it('también sirve cuando el detalle viene como lista de campos', async () => {
+    mockToken();
+    vi.mocked(axios.get).mockRejectedValue({
+      response: { status: 400, data: {
+        mensaje: 'Parámetros inválidos.',
+        errores: [{ campo: 'fechaDesde', mensajes: ['The fechaDesde field is required.'] }],
+      } },
+    });
+    const e: any = await getV2('/api/v2/x').catch((x: any) => x);
+    expect(e.message).toContain('fechaDesde');
+  });
+});
