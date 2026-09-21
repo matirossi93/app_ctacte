@@ -218,7 +218,7 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
                       * Va también en el papel: el que fracciona es quien puede decir el kilaje.
                       */}
                     {lineas.some(l => l.sin_formato) && (
-                        <div className="fr-nota-kilaje">
+                        <div className="fr-nota-kilaje fr-no-print">
                             <AlertTriangle size={14} />
                             <span>
                                 {lineas.filter(l => l.sin_formato).length} producto{lineas.filter(l => l.sin_formato).length === 1 ? '' : 's'} sin
@@ -231,7 +231,7 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
                     {/* Cada cantidad en su cajita: se tilda al preparar el paquete. */}
                     <div className="fr-tabla-scroll"><table className="fr-tabla">
                         <thead>
-                            <tr><th>Código</th><th>Producto</th><th>Bolsa</th><th>Pedido</th><th>Paquetes</th><th className="n">Cant.</th><th className="n">Kilos</th></tr>
+                            <tr><th>Código</th><th>Producto</th><th className="fr-no-print">Bolsa</th><th className="fr-no-print">Pedido</th><th>Paquetes</th><th className="n">Cant.</th><th className="n">Kilos</th></tr>
                         </thead>
                         <tbody>
                             {lineas.map(l => (
@@ -239,7 +239,7 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
                                     <td>{l.cod_articulo || '—'}</td>
                                     <td className="fr-prod">{l.descripcion}</td>
                                     {/* El kilaje de la bolsa, editable. Se escribe y el listado se rearma solo. */}
-                                    <td className="fr-kilaje">
+                                    <td className="fr-kilaje fr-no-print">
                                         <label>
                                             <input
                                                 type="text" inputMode="decimal" defaultValue={l.formato_bolsa ?? ''}
@@ -257,7 +257,7 @@ export function FraccionadoView({ desde, hasta }: { desde: string; hasta: string
                                     </td>
                                     {/* 🔑 Lo que pidió el cliente, sin interpretar. Mientras falte el kilaje es lo
                                         único con lo que el sector puede armar el paquete a mano. */}
-                                    <td>
+                                    <td className="fr-no-print">
                                         <div className="fr-cajitas fr-pedido">
                                             {l.pedidos.map((c, i) => <span className="fr-crudo" key={i}>{num(c)}</span>)}
                                         </div>

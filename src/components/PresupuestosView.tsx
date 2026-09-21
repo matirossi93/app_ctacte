@@ -213,7 +213,23 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
         if (filtro === 'sin_revisar') return p.revision?.estado !== 'observado';
         if (filtro === 'aprobados') return p.revision?.estado === 'aprobado';   // enlaces viejos
         return p.revision?.estado === 'observado';
-    }), [filas, filtro, busqueda]);
+    })
+        /**
+         * 🔑 ALFABÉTICO POR CLIENTE. Mati (21/09/2026): *"necesito que los presupuestos, a medida
+         * que van llegando, se ordenen alfabéticamente"*.
+         *
+         * Antes salían en el orden en que InfoManager los devuelve, que es el de carga: los
+         * pedidos de un mismo cliente quedaban desparramados por la lista. Y eso importa más de
+         * lo que parece —un cliente con sucursales manda tres pedidos por separado y hay que
+         * mirarlos juntos para saber qué lista le corresponde—.
+         *
+         * 🪤 `localeCompare` con locale y `numeric`: sin eso "ÁLVAREZ" cae después de "ZAPATA"
+         * (los acentos ordenan por código) y "SUCURSAL 10" antes que "SUCURSAL 2".
+         */
+        .sort((a, b) =>
+            String(a.cliente_nombre ?? '').localeCompare(String(b.cliente_nombre ?? ''), 'es-AR', { sensitivity: 'base', numeric: true })
+            || Number(a.im_numero ?? 0) - Number(b.im_numero ?? 0)),
+    [filas, filtro, busqueda]);
 
     /** Marca la revisión en la pantalla sin volver a pedir todo a InfoManager (son segundos). */
     function pintarRevision(id: string, revision: Revision | null) {
