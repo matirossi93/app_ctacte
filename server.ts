@@ -894,6 +894,42 @@ app.post('/api/articulos/refrescar', requireJwt, async (_req: any, res) => {
     }
 });
 
+/**
+ * GET /api/im-v2/estado — ¿la API nueva de InfoManager está lista para usarse?
+ *
+ * Sirve para verificar el despliegue sin entrar por SSH: dice si faltan variables, si el token
+ * OAuth sale y si una lectura real contesta. Es de sólo lectura y no emite nada.
+ *
+ * 🔒 Admin: expone qué credenciales están cargadas (no sus valores) y consume una lectura
+ * contra InfoManager.
+ */
+app.get('/api/im-v2/estado', requireJwt, requireAdmin, async (_req: any, res) => {
+    const { imV2Configurada, tokenV2, VARIABLES_V2 } = await import('./server-lib/imApiV2.js');
+    const faltan = VARIABLES_V2.filter(v => v !== 'IM_V2_BASE_URL' && !process.env[v]);
+    if (!imV2Configurada()) { res.json({ ok: false, configurada: false, faltan }); return; }
+    const salida: any = { ok: false, configurada: true, faltan: [] };
+    try {
+        await tokenV2();
+        salida.token = 'ok';
+        const { fetchNotasConFacturas } = await import('./server-lib/notasConFacturas.js');
+        const hasta = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        const desde = new Date(Date.now() - 3 * 60 * 60 * 1000 - 7 * 864e5).toISOString().slice(0, 10);
+        const notas = await fetchNotasConFacturas(desde, hasta);
+        salida.ok = true;
+        salida.lectura = {
+            rango: `${desde}..${hasta}`,
+            notas: notas.length,
+            con_factura: notas.filter(n => n.facturas.length > 0).length,
+            anuladas: notas.filter(n => !n.vigente).length,
+        };
+    } catch (err: any) {
+        salida.error = err?.message ?? String(err);
+        salida.code = err?.code ?? null;
+        salida.traceId = err?.traceId ?? null;
+    }
+    res.json(salida);
+});
+
 // Debug admin-only: probar endpoints no documentados de edición de recibo IM.
 // Swagger v1 solo lista POST /recibo, pero el cliente desktop SÍ edita las
 // fechas Fec.Em./Fec.Pago de un recibo creado → debe haber un endpoint oculto.
