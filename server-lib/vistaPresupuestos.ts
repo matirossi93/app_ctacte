@@ -23,7 +23,7 @@ import { revisarCantidades } from './controlCantidades.js';
 import { formatosDeBolsa } from './formatosBolsa.js';
 import { armarConsolidado } from './consolidadoArticulos.js';
 import { buscarFacturasYaEmitidas } from './facturaYaEmitida.js';
-import { evaluarPedido } from './listas.js';
+import { avisosDeListaPorPedido } from './listasPorCliente.js';
 import { reglasActivas, descuentosActivos, catalogoParaListas } from './pedidos.js';
 import { esPedidoInternoDeSucursal } from './pedidosInternos.js';
 import { EVIDENCIA, proyectarEvidencia } from './evidenciaComprobantes.js';
@@ -274,45 +274,26 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false, ven
      * No cuesta ninguna llamada más a IM: los renglones ya se trajeron acá arriba, y las reglas y
      * el catálogo están cacheados.
      */
-    const avisosPorPedido = new Map<string, string[]>();
-    const gravedadPorPedido = new Map<string, { pierde_margen: number; cobra_de_mas: number }>();
+    let avisosPorPedido = new Map<string, string[]>();
+    let gravedadPorPedido = new Map<string, { pierde_margen: number; cobra_de_mas: number }>();
     try {
       const [reglas, descuentos, catListas] = await Promise.all([
         reglasActivas(), descuentosActivos(), catalogoParaListas(),
       ]);
-      for (const p of presupuestos) {
-        const rs = renglones.get(String(p.id)) ?? [];
-        if (!rs.length) continue;
-        const r = evaluarPedido(
-          rs.map(x => ({
-            cod_articulo: x.cod_articulo, cantidad: Number(x.cantidad),
-            cod_lista: x.cod_lista_precios, descuento: x.descuento_porc,
-          })),
-          catListas, reglas, descuentos);
-        const g = { pierde_margen: 0, cobra_de_mas: 0 };
-        const textos: string[] = [];
-        for (const a of r.avisos) {
-          /**
-           * 🪤 "Tiene derecho a L2 y está en L1" es un FALSO POSITIVO cuando el renglón lleva
-           * descuento: un descuento y una lista mejor son dos caminos al mismo precio y el
-           * vendedor elige cuál usar (Mati, 27/08/2026 — L1 con 25% da exactamente L2). El
-           * control en vivo lo resuelve comparando precios contra IM; acá eso serían dos
-           * llamadas por renglón para toda la pantalla, así que se silencia directamente. Se
-           * silencia sólo hacia el lado seguro: acusar de más a un vendedor que hizo bien las
-           * cosas hace que después nadie mire ningún cartel.
-           */
-          const conDescuento = (rs[a.idx]?.descuento_porc ?? 0) > 0;
-          if (a.severidad === 'margen') g.pierde_margen += 1;
-          else if (a.severidad === 'cliente' && !conDescuento) g.cobra_de_mas += 1;
-          // Las oportunidades de mejor precio son comentarios para el vendedor, no
-          // tareas de revisión para oficina. El descuento se controla de todos modos.
-          if (a.severidad === 'margen' && a.mensaje) textos.push(a.mensaje);
-          // El descuento fuera de tope es otro problema, y ese no depende de la lista.
-          if (a.mensaje_descuento) textos.push(a.mensaje_descuento);
-        }
-        if (textos.length) avisosPorPedido.set(String(p.id), textos);
-        if (g.pierde_margen || g.cobra_de_mas) gravedadPorPedido.set(String(p.id), g);
-      }
+      /**
+       * 🔄 21/09/2026: LAS CANTIDADES SE CUENTAN POR CLIENTE, no por presupuesto.
+       *
+       * Mati: *"si un cliente tiene tres presupuestos, las cantidades para acceder a esas listas
+       * de precio hay que considerar las tres, porque es el mismo cliente"*. Evaluado pedido por
+       * pedido, un cliente que parte su compra en tres —una por sucursal— perdía el derecho a la
+       * lista que le corresponde y la pantalla lo acusaba de estar en la lista equivocada.
+       *
+       * El agrupado vive en `listasPorCliente.ts` para poder testearlo sin toda esta pantalla.
+       */
+      const r = avisosDeListaPorPedido(
+        presupuestos as any, renglones as any, catListas, reglas, descuentos);
+      avisosPorPedido = r.avisos;
+      gravedadPorPedido = r.gravedad;
     } catch (e: any) {
       // Sin reglas la pantalla sirve igual: muestra los pedidos sin los carteles de lista. Lo que
       // no puede es no abrir por esto.
