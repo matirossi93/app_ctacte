@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { clasificarArticulo, evaluarPedido, type ReglaLista } from './listas.js';
 
 const regla = (cod_lista: number, condicion: ReglaLista['condicion'], umbral: number | null = null): ReglaLista => ({ nombre: 'LINEA FLECKY + FULLCAT', match_tipo: 'subrubro', match_valor: 'Flecky', cod_lista, condicion, umbral, unidad: condicion === 'promo_general' ? 'bulto' : 'unidad', ambito: condicion === 'promo_general' ? 'pedido' : 'linea' });
+/**
+ * 🪤 Los umbrales de acá son ESCENARIO, no la regla vigente: lo que se prueba es CÓMO se
+ * cuenta (unidades de la línea entera, no kilos ni renglones), y para eso da igual el número.
+ * La regla viva está en `listas_reglas` y Mati la cambia sin tocar el código —el 21/09/2026 pasó
+ * a L3 desde 10 bolsas y L4 desde 20 (migración 049)—, así que no la busques acá.
+ */
 const reglas = [regla(12, 'libre'), regla(13, 'promo_general', 10), regla(14, 'min', 20), regla(15, 'min', 30)];
 const catalogo = new Map([
   [163, clasificarArticulo({ cod_articulo: 163, descripcion: 'FLECKY ADULTO MIX X 15 KG', subrubro: 'Flecky', unidad_de_medida: 'Bolsa', equivalencia_um: 15 })],
