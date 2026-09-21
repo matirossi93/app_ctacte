@@ -91,6 +91,7 @@ const PEDIDO_LISTA_FALLBACK = Number(process.env.PEDIDO_LISTA_FALLBACK || 12);
 /** Tope de días de renglones que se piden de una vez. Cada día es una consulta a IM. */
 const MAX_DIAS_FACTURA = 6;
 /** Ventana explícita para adelantos: se limita emisión y se verifica el mismo horizonte. */
+import { hastaConAdelanto, recortarHasta } from './rangoConAdelanto.js';
 const MAX_ADELANTO_DIAS = Math.max(0, Math.min(31, Number(process.env.IM_MAX_ADELANTO_FACTURA_DIAS ?? 7) || 0));
 const fechaMaximaEmision = () => fechaArgentina(Date.now() + MAX_ADELANTO_DIAS * 864e5);
 /** El depósito del que sale la mercadería: es contra el que el remito valida stock. */
@@ -1380,7 +1381,29 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
      *
      * Si falla, no se corta nada: cada uno vuelve a su camino de siempre y decide qué hacer.
      */
-    const ventasPendientes = fetchVentas(desde, hasta, { actualizar: refrescar }).catch(() => undefined);
+    /**
+     * 🔑 EL LISTADO SE PIDE ESTIRADO HACIA ADELANTE, Y LA VISTA RECIBE EL RECORTE.
+     *
+     * 22/09/2026, Mati: *"la velocidad de la sección de facturación es lentísima, nos está
+     * haciendo perder mucho tiempo"*. Medido ese día: de 160 comprobantes que la pantalla tiene
+     * que verificar, 26 no estaban en el listado del día y se leían **de a uno** — 7,8 s, el
+     * grueso de la carga. Los 26 eran del día siguiente: facturas y remitos emitidos por
+     * adelantado, que por definición caen fuera del rango de la pantalla.
+     *
+     * Traerlos sale gratis: el rango de 8 días son 106 filas más y el mismo tiempo (medido: 653
+     * ms contra 1.010 ms del día suelto).
+     *
+     * 🪤 Sigue siendo UNA sola lectura de `/ventas` por pantalla —que el tablero no lo pida
+     * tres veces fue un arreglo anterior y no se pierde—: de ese único listado, la vista recibe
+     * el recorte al rango que pidió el usuario y la búsqueda por id usa el listado entero.
+     * Verificado contra producción: recortar por fecha devuelve exactamente las mismas 1.873
+     * filas que pedir el día suelto.
+     */
+    const hastaBusqueda = hastaConAdelanto(hasta, MAX_ADELANTO_DIAS);
+    const ventasParaBuscar = fetchVentas(desde, hastaBusqueda, { actualizar: refrescar }).catch(() => undefined);
+    const ventasPendientes = hastaBusqueda === hasta
+      ? ventasParaBuscar
+      : ventasParaBuscar.then(v => v && recortarHasta(v, hasta));
     // Una sola lectura de cada cabecera en esta petición: las FA fuera del rango las piden tanto
     // el control de vigencia como la actualización de importes.
     const leerCabecera = cabecerasCompartidas();
@@ -1388,6 +1411,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
     // Acá sí se espera: los dos usos que siguen la necesitan resuelta. Ya está en vuelo desde
     // arriba, así que normalmente no cuesta nada.
     const ventasDelRango = await ventasPendientes;
+    const ventasBusqueda = (await ventasParaBuscar) ?? ventasDelRango;
     medir('vista');
     const todos = [...vista.pendientes, ...vista.asignados];
     /**
@@ -1420,7 +1444,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
       conId,
       // Las facturas del rango que se está mirando salen del listado, sin un GET por cada una.
       // `actualizar`: con Actualizar apretado, la vigencia sale de IM y no de lo guardado.
-      { desde, hasta, ventas: ventasDelRango, actualizar: refrescar },
+      { desde, hasta: hastaBusqueda, ventas: ventasBusqueda, actualizar: refrescar },
       leerCabecera,
     ).catch((err: any) => {
       console.warn('[tableroFacturacion] no pude chequear anulados:', err?.message);
@@ -1430,7 +1454,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
      * 🔑 Y lo que quedó en duda por un timeout de IM: si el comprobante está, se registra y el
      * pedido se destraba solo. Usa el MISMO listado que se acaba de leer.
      */
-    const avisosEnDuda = await conciliarEmisionesEnDuda(conId, ventasDelRango).catch((err: any) => {
+    const avisosEnDuda = await conciliarEmisionesEnDuda(conId, ventasBusqueda).catch((err: any) => {
       console.warn('[tableroFacturacion] no pude conciliar las emisiones en duda:', err?.message);
       return new Map<string, string>();
     });
@@ -1442,7 +1466,7 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
           .in('im_comprobante_id', emitidos.map((e: any) => String(e.im_comprobante_id)))
       : { data: emitidos, error: null };
     if (errAlDia) { res.status(502).json({ error: `No pude releer las facturas actualizadas: ${errAlDia.message}` }); return; }
-    const actuales = await actualizarImportesFacturas(alDia ?? [], { ventas: ventasDelRango ?? await fetchVentas(desde, hasta), actualizar: refrescar, leerCabecera });
+    const actuales = await actualizarImportesFacturas(alDia ?? [], { ventas: ventasBusqueda ?? await fetchVentas(desde, hastaBusqueda), actualizar: refrescar, leerCabecera });
     medir('importes');
     const porId = new Map(actuales.map((e: any) => [String(e.im_comprobante_id), e]));
 
