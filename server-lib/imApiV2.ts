@@ -127,5 +127,37 @@ export async function getV2<T = any>(ruta: string, params?: Record<string, unkno
   });
 }
 
+/**
+ * Un POST a la API nueva. 🔴 ES LO IRREVERSIBLE: emite comprobantes fiscales.
+ *
+ * 🔑 `Idempotency-Key` es obligatoria acá y no tiene default: es lo único que impide que un
+ * corte de red emita DOS notas por la misma corrección. Si el reintento llega con la misma
+ * clave, InfoManager devuelve la nota que ya creó en vez de crear otra. La API vieja no lo
+ * tiene, y por eso el emisor v1 nunca reintenta una emisión que se quedó sin respuesta.
+ *
+ * 🪤 NO pasa por `lecturaLimitada`. Ese pool acota los GET para no fundir la cuota, pero
+ * encolar ahí una emisión significaría que una nota puede fallar con "InfoManager está ocupado"
+ * cuando la corrección ya arrancó. Una emisión espera lo que haga falta; una pantalla no.
+ */
+export async function postV2<T = any>(ruta: string, cuerpo: unknown, idempotencyKey: string): Promise<T> {
+  if (!String(idempotencyKey ?? '').trim()) {
+    throw new ErrorV2('Falta la clave de idempotencia: sin ella una emisión cortada puede duplicar la nota. No se envió nada.', null, 'SIN_IDEMPOTENCIA', null);
+  }
+  const c = conf();
+  const jwt = await tokenV2();
+  try {
+    const r = await axios.post(`${c.base}${ruta}`, cuerpo, {
+      timeout: 40000,
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        'X-Api-Key': c.key,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': String(idempotencyKey).trim(),
+      },
+    });
+    return r.data as T;
+  } catch (e) { throw comoErrorV2(e); }
+}
+
 /** Las variables que hay que cargar en el servidor. Las usa el diagnóstico para decir cuál falta. */
 export const VARIABLES_V2 = VARIABLES;

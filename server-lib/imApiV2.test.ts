@@ -25,7 +25,7 @@ const CONF = {
 };
 for (const [k, v] of Object.entries(CONF)) process.env[k] = v;
 
-const { tokenV2, _resetV2, imV2Configurada, getV2, ErrorV2 } = await import('./imApiV2.js');
+const { tokenV2, _resetV2, imV2Configurada, getV2, postV2, ErrorV2 } = await import('./imApiV2.js');
 
 /** Simula el /oauth/token: cada llamada devuelve un token distinto para poder distinguirlos. */
 let emitidos = 0;
@@ -110,5 +110,48 @@ describe('sin configurar', () => {
     process.env.IM_V2_API_KEY = guardado;
     _resetV2();
     expect(imV2Configurada()).toBe(true);
+  });
+});
+
+/**
+ * EL POST — lo único irreversible de este cliente.
+ *
+ * `Idempotency-Key` es lo que impide que un corte de red emita DOS notas por la misma
+ * corrección: si el reintento llega con la misma clave, InfoManager devuelve la nota que ya
+ * creó en vez de crear otra. La API vieja no lo tiene, y por eso el emisor de la app nunca
+ * reintenta una emisión sin respuesta.
+ */
+describe('el POST', () => {
+  it('🔴 va con Idempotency-Key, que es lo que evita emitir dos veces por un corte', async () => {
+    mockToken();
+    vi.mocked(axios.post).mockImplementation(async (url: string) => {
+      if (String(url).endsWith('/oauth/token')) { emitidos += 1; return { data: { access_token: `tok-${emitidos}`, expires_in: 900 } } as any; }
+      return { data: { id: 99 } } as any;
+    });
+    await postV2('/api/v2/notas-credito', { fecha: '2026-09-21' }, 'clave-unica-123');
+    const llamada = vi.mocked(axios.post).mock.calls.find(c => String(c[0]).includes('/notas-credito'))!;
+    const cfg: any = llamada[2];
+    expect(cfg.headers['Idempotency-Key']).toBe('clave-unica-123');
+    expect(cfg.headers['X-Api-Key']).toBe(CONF.IM_V2_API_KEY);
+    expect(cfg.headers.Authorization).toBe('Bearer tok-1');
+    expect(llamada[1]).toEqual({ fecha: '2026-09-21' });
+  });
+
+  it('🔴 sin clave de idempotencia NO se envía: una nota duplicada es plata real', async () => {
+    mockToken();
+    await expect(postV2('/api/v2/notas-credito', {}, '')).rejects.toThrow(/idempotencia/i);
+    expect(vi.mocked(axios.post).mock.calls.filter(c => String(c[0]).includes('/notas-credito'))).toHaveLength(0);
+  });
+
+  it('🪤 el POST NO pasa por el pool de lecturas: una emisión no espera detrás de una pantalla', async () => {
+    // El pool acota los GET para no fundir la cuota. Encolar ahí una emisión significaría que
+    // una nota puede fallar por "InfoManager está ocupado" con la factura ya corregida a medias.
+    mockToken();
+    vi.mocked(axios.post).mockImplementation(async (url: string) => {
+      if (String(url).endsWith('/oauth/token')) { emitidos += 1; return { data: { access_token: `tok-${emitidos}`, expires_in: 900 } } as any; }
+      return { data: { id: 7 } } as any;
+    });
+    const r = await postV2('/api/v2/notas-credito', {}, 'k1');
+    expect(r).toEqual({ id: 7 });
   });
 });
