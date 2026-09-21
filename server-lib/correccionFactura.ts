@@ -1,6 +1,7 @@
 import { ivaExplicita } from './identidadIM.js';
 import { conIVAConfiable, identidadFiscal, exigirIdentidadFiscal, ErrorFiscal } from './fiscalRenglones.js';
 import { invalidarIM } from './infomanager.js';
+import { subtipoDeCorreccion, type SubtipoCorreccion } from './subtipoNota.js';
 /**
  * CORREGIR UNA FACTURA YA EMITIDA, con notas de crédito y de débito.
  *
@@ -522,8 +523,18 @@ async function tramitarCorreccion(req: Request & { user?: JwtPayload }, res: Res
       usuario: await usuarioIM(req.user), observaciones: `SEGUN FACTURA ${cab.numero ?? id} [FA:${id}] - ${motivo}`.slice(0, 500),
       fecha: fechaArgentina(), cod_deposito: 1, numero: null,
     };
-    const componentes: Array<{ tipo: 'NC' | 'ND'; datos: any }> = [];
-    if (correccion.nc.length) componentes.push({ tipo: 'NC', datos: { ...base, observaciones: `${base.observaciones} [OP:${operacionId}:NC]`, total: correccion.total_nc, items: correccion.nc } });
+    /**
+     * 🔑 EL SUBTIPO DE LA NOTA DE CRÉDITO, que la API v2 exige. Mati (21/09/2026): *"DE es hay
+     * que cambiar la cantidad o algún producto... financiera si es sólo por un tema de precios"*.
+     * Sale del propio diff, así que nadie tiene que tildarlo — ver `subtipoNota.ts`.
+     *
+     * 🪤 El fallback a `FI` es para un caso que no debería pasar (hay nota pero el diff no
+     * detecta cambios): se elige la financiera porque es la que NO mueve stock.
+     */
+    const subtipo: SubtipoCorreccion =
+      clase === 'financiera' ? 'FI' : (subtipoDeCorreccion(originales as any, finales as any) ?? 'FI');
+    const componentes: Array<{ tipo: 'NC' | 'ND'; datos: any; subtipo?: SubtipoCorreccion }> = [];
+    if (correccion.nc.length) componentes.push({ tipo: 'NC', subtipo, datos: { ...base, observaciones: `${base.observaciones} [OP:${operacionId}:NC]`, total: correccion.total_nc, items: correccion.nc } });
     if (correccion.nd.length) componentes.push({ tipo: 'ND', datos: { ...base, observaciones: `${base.observaciones} [OP:${operacionId}:ND]`, total: correccion.total_nd, items: correccion.nd } });
     const o = await iniciarOperacion({ id: operacionId!, factura: id, version: estado.version, clase,
       peticion: { entrada, motivo, numero_factura: cab.numero ?? null, origen: identidadFiscal(cab) }, componentes,

@@ -1,7 +1,8 @@
 import { idIM } from './identidadIM.js';
 import { randomUUID } from 'node:crypto';
 import { sb, TENANT_ID } from './supabase.js';
-import { emitirNotaCredito, emitirNotaDebito } from './facturarIM.js';
+import { emitirComponente } from './emisorNotas.js';
+import type { SubtipoCorreccion } from './subtipoNota.js';
 import type { DatosComprobante, ResultadoEmision } from './facturarIM.js';
 import type { RenglonCorreccion } from './correccionFactura.js';
 
@@ -11,7 +12,13 @@ export class ErrorOperacion extends Error {
 export interface OperacionFactura {
   id: string; im_factura_id: string; clase: 'productos' | 'financiera';
   peticion: { motivo: string; numero_factura: number | null; entrada: unknown; origen?: unknown };
-  componentes: Array<{ tipo: 'NC' | 'ND'; datos: DatosComprobante }>;
+  /**
+   * `subtipo` lo exige la API v2 para la NC y se calcula al crear la operación
+   * (ver `subtipoNota.ts`). 🪤 Falta en las operaciones anteriores a ese cambio: ésas siguen
+   * saliendo por la API vieja, porque adivinarle el subtipo a una corrección ya en curso sería
+   * inventar qué pasó.
+   */
+  componentes: Array<{ tipo: 'NC' | 'ND'; datos: DatosComprobante; subtipo?: SubtipoCorreccion }>;
   finales: RenglonCorreccion[];
   indice: number; estado: 'listo' | 'emitiendo' | 'incierto' | 'completo' | 'cancelado';
   resultados: Array<{ id: string; numero: number | null; tipo: string; total: number }>;
@@ -163,7 +170,7 @@ async function ejecutarOperacionReclamada(operacion: OperacionFactura) {
     o = tomada as OperacionFactura;
     const c = o.componentes[o.indice];
     let r: ResultadoEmision;
-    try { r = await (c.tipo === 'NC' ? emitirNotaCredito(c.datos) : emitirNotaDebito(c.datos)); }
+    try { r = await emitirComponente(o, c); }
     catch (e) { r = { ok: false, sinRespuesta: true, error: e instanceof Error ? e.message : 'Se perdió la respuesta de InfoManager' }; }
     if (r.ok && !idIM(r.id)) r = { ok: false, sinRespuesta: true, error: 'InfoManager confirmó una emisión sin identificarla.' };
     const resultado = r.ok ? { id: r.id, numero: r.numero, tipo: r.tipo, total: c.datos.total } : null;
