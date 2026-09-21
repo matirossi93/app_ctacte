@@ -147,3 +147,34 @@ describe('el depósito', () => {
     expect(cuerpo().cod_deposito).toBe(3);
   });
 });
+
+/**
+ * 🔴 22/09/2026 — LO QUE LE FALTÓ A LA PRIMERA NOTA EMITIDA POR v2.
+ *
+ * Mati: *"al emitir, querer imprimir esa NC en IM te llevaba a la impresora fiscal cuando en
+ * realidad era una NC manual no fiscal"*. Comparada la NC B 30117 (emitida por v2 el 21/09)
+ * contra la NC B 30116 (de la oficina, misma serie), la diferencia eran los campos de AFIP:
+ *
+ *     afip_comprobantes_fe   null  vs  ""
+ *     afip_conceptos_fe      0     vs  1
+ *
+ * El emisor v1 ya los mandaba, con este comentario al lado: *"🔴 LOS CAMPOS AFIP DE LA NOTA. Sin
+ * ellos IM la manda al CONTROLADOR FISCAL"* — el mismo problema que Mati reportó el 10/09/2026 y
+ * que se había resuelto ahí. El emisor v2 nació sin ellos y lo repitió.
+ */
+describe('los campos de AFIP', () => {
+  it('🔴 van SIEMPRE: sin ellos InfoManager manda la nota al controlador fiscal', async () => {
+    await emitirNotaV2(BASE);
+    expect(cuerpo()).toMatchObject({
+      afip_comprobantes_fe: '', afip_tipdoc_fe: 0, afip_cond_vta: 0,
+    });
+  });
+
+  it('🔑 conceptos_fe es 1 en la NC y 0 en la ND, como las que emite la oficina', async () => {
+    await emitirNotaV2(BASE);
+    expect(cuerpo().afip_conceptos_fe).toBe(1);
+    vi.clearAllMocks(); m.post.mockResolvedValue(okIM);
+    await emitirNotaV2({ ...BASE, tipo: 'ND', tipo_nc: undefined });
+    expect(cuerpo().afip_conceptos_fe).toBe(0);
+  });
+});

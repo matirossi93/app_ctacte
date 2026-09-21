@@ -1,4 +1,5 @@
 import { postV2 } from './imApiV2.js';
+import { camposAfipNota } from './camposAfipNota.js';
 
 /**
  * EMITIR UNA NOTA DE CRÉDITO O DÉBITO POR LA API NUEVA DE INFOMANAGER.
@@ -150,6 +151,21 @@ export async function emitirNotaV2(input: NotaV2Input): Promise<ResultadoNotaV2>
     observaciones: input.observaciones ?? '',
     // Cuenta corriente: es lo que viene mandando el emisor v1 y lo que corresponde al circuito.
     condicion_venta_tipo: 2,
+    /**
+     * 🔴 SIN ESTO LA NOTA SALE POR EL CONTROLADOR FISCAL.
+     *
+     * Mati (22/09/2026): *"al emitir, querer imprimir esa NC en IM te llevaba a la impresora
+     * fiscal cuando en realidad era una NC manual no fiscal"*. Es el MISMO problema que ya había
+     * reportado el 10/09 sobre el emisor v1 —*"debería seguir la misma suerte de todo el otro
+     * circuito, que no involucre a AFIP, es interno"*— y que ahí se resolvió con estos campos.
+     * Este emisor nació sin ellos y lo repitió: la NC B 30117 del 21/09 salió con
+     * `afip_comprobantes_fe: null` y `afip_conceptos_fe: 0`, contra `""` y `1` de las que hace
+     * la oficina.
+     *
+     * 🔑 Se reusa la función del emisor v1 a propósito: son la misma regla fiscal y tener dos
+     * copias garantiza que un día queden distintas.
+     */
+    ...camposAfipNota(input.tipo),
     tipo_comp_asoc: 'FA',
     ...(input.fecha ? { fecha: input.fecha } : {}),
     ...(input.cod_vendedor != null ? { cod_vendedor: input.cod_vendedor } : {}),
