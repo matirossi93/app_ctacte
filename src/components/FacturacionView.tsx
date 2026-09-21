@@ -246,7 +246,17 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
 
     // 🔴 La más sensible de las tres: emitir sobre datos viejos factura lo que ya no es.
 
-    const avisarRecarga = useRecargarAlVolver(() => { void cargar(true); });
+    /**
+     * 🔄 22/09/2026 — EL REFRESCO AL VOLVER ES SILENCIOSO. Mati: *"se reinicia muy seguido esta
+     * pantalla, no sé por qué"*, con la captura del cartel "Trayendo lo que hay para facturar…".
+     *
+     * Era esto: al volver el foco a la ventana —trabajando con la app y InfoManager lado a lado,
+     * cada clic en la app la trae— se recargaba, y la recarga VACIABA la lista y tapaba todo con
+     * el cartel. Lo que hay que actualizar son los datos, no la pantalla: con `conservar` la
+     * lista se queda donde está y se reemplaza recién cuando llegan los nuevos. El único aviso
+     * es el ícono de Actualizar girando.
+     */
+    const avisarRecarga = useRecargarAlVolver(() => { void cargar(true, true); });
 
     /**
      * 🔴 EL REMITO QUE QUEDÓ COLGADO. La factura salió y el remito no se pudo registrar, así que
@@ -382,7 +392,9 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
             )}
             {error && <div className="fc-aviso error"><AlertTriangle size={15} /><span>{error}</span></div>}
 
-            {cargando && <div className="fc-cargando"><Loader2 className="spin" size={20} /> Trayendo lo que hay para facturar…</div>}
+            {/* 🪤 Sólo cuando NO hay nada que mostrar: con la lista en pantalla, taparla con un
+                cartel es lo que se siente como que se reinicia sola. */}
+            {cargando && !pendientes.length && !facturados.length && <div className="fc-cargando"><Loader2 className="spin" size={20} /> Trayendo lo que hay para facturar…</div>}
             {!cargando && !error && !pendientes.length && (
                 <div className="fc-vacio">
                     <CheckCircle2 size={26} />

@@ -167,9 +167,11 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
     const [motivo, setMotivo] = useState('');
 
     const { iniciar: iniciarLectura } = useLecturaVigente(`${desde}|${hasta}`);
-    const cargar = useCallback(async (refrescar = false) => {
+    const cargar = useCallback(async (refrescar = false, conservar = false) => {
         const lectura = iniciarLectura(refrescar); if (!lectura) return;
-        setFilas([]); setResumen(null);
+        // 🔄 Con `conservar` la lista se queda en pantalla hasta que llegan los datos nuevos:
+        // vaciarla en cada refresco es lo que se siente como que la pantalla se reinicia sola.
+        if (!conservar) { setFilas([]); setResumen(null); }
         avisarRecarga();
         setCargando(true); setError(null);
         try {
@@ -203,7 +205,7 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
 
      */
 
-    const avisarRecarga = useRecargarAlVolver(() => { if (reparto.puedeNavegar()) void cargar(true); });
+    const avisarRecarga = useRecargarAlVolver(() => { if (reparto.puedeNavegar()) void cargar(true, true); });
 
     const visibles = useMemo(() => filas.filter(p => {
         if (!coincide(busqueda, [p.cliente_nombre, p.im_numero, p.cod_cliente])) return false;
@@ -426,7 +428,7 @@ export function PresupuestosView({ desde, hasta }: { desde: string; hasta: strin
             {aviso && <div className="pr-aviso"><AlertTriangle size={15} /><span>{aviso}</span><button onClick={() => setAviso(null)}><X size={14} /></button></div>}
             {error && <div className="pr-aviso error"><AlertTriangle size={15} /><span>{error}</span></div>}
 
-            {cargando && <div className="pr-cargando"><Loader2 className="spin" size={20} /> Trayendo los presupuestos de InfoManager…</div>}
+            {cargando && !filas.length && <div className="pr-cargando"><Loader2 className="spin" size={20} /> Trayendo los presupuestos de InfoManager…</div>}
             {!cargando && !error && !visibles.length && (
                 <div className="pr-vacio"><Package size={26} /><span>
                     {busqueda ? `Ningún presupuesto coincide con "${busqueda}".` : 'No hay presupuestos en este filtro.'}

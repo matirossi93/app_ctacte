@@ -1638,6 +1638,55 @@ if (PREWARM_BOOT) setTimeout(() => enSegundoPlano(async () => {
 else console.log('Pre-warm de boot DESACTIVADO (PREWARM_BOOT=off)');
 console.log('Cron pre-warm /api/data: */8 * * * *');
 
+/**
+ * 🔑 MANTENER CALIENTE LO CARO DE LA PANTALLA DE PRESUPUESTOS.
+ *
+ * Mati (22/09/2026): *"revisá también la carga de los presupuestos"*. Medido ese día dentro del
+ * contenedor, con los cachés fríos contra calientes:
+ *
+ *     catálogo de artículos   13.306 ms  →  0 ms
+ *     stock por depósito       6.560 ms  →  0 ms
+ *     clientes de IM           4.006 ms  →  0 ms
+ *     listado de ventas          953 ms  →  0 ms
+ *
+ * Todo el peso de una carga lenta es cache frío. Había pre-warm al ARRANCAR, pero nada que los
+ * mantuviera calientes después: cuando vence el TTL, el próximo que abre la pantalla paga los 13
+ * segundos. Y desde que el catálogo bajó a 15 minutos (22/09, para que las descripciones
+ * corregidas en IM se vean rápido) eso pasa 4 veces por hora en vez de 1.
+ *
+ * 🪤 Van SIN forzar: `fetchArticulosCatalogo(false)` respeta su TTL, así que esto no baja nada
+ * que siga vigente. Cada 5 minutos sólo mira si venció; si no, cuesta 0 ms y no toca InfoManager.
+ * Por eso puede correr seguido sin gastar cuota.
+ *
+ * Y en segundo plano: un refresco que nadie está esperando usa UN cupo de los cuatro y deja tres
+ * para quien sí tiene una pantalla abierta (ver `enSegundoPlano`).
+ */
+let calentandoVista = false;
+cron.schedule('3-59/5 * * * *', async () => {
+    if (calentandoVista) return;
+    calentandoVista = true;
+    try {
+        await enSegundoPlano(async () => {
+            const { fetchClientesIMCached } = await import('./server-lib/infomanager.js');
+            const medido: string[] = [];
+            const paso = async (nombre: string, fn: () => Promise<unknown>) => {
+                const t0 = Date.now();
+                try { await fn(); } catch (e: any) { medido.push(`${nombre} falló (${e?.message ?? e})`); return; }
+                const ms = Date.now() - t0;
+                // Sólo se anota lo que de verdad se bajó: si estaba vigente son 0 ms y no es noticia.
+                if (ms > 200) medido.push(`${nombre} ${ms} ms`);
+            };
+            await paso('catálogo', () => fetchArticulosCatalogo(false));
+            await paso('stock', () => fetchStockPorDeposito(Number(process.env.PEDIDO_DEPOSITO || 1), false));
+            await paso('clientes', () => fetchClientesIMCached());
+            if (medido.length) console.log(`[cron vista caliente] ${medido.join(' · ')}`);
+        });
+    } catch (err: any) {
+        console.warn('[cron vista caliente] fallo:', err?.message ?? err);
+    } finally { calentandoVista = false; }
+});
+console.log('Cron vista caliente (catálogo/stock/clientes): 3-59/5 * * * *');
+
 // Pre-warm del snapshotCache: trae las ventas crudas de los últimos 3 meses
 // a RAM para que el primer corte intra-mes que solicite el usuario sea
 // instantáneo (sin esperar 3-5s por el fetch a InfoManager).
