@@ -92,7 +92,10 @@ try {
   await test('Plegada, el rótulo es lo que identifica la hoja', async () => {
     const { page, ctx } = await pantalla(1440, { h: hoja({ nombre: 'Banda del Río Salí' }) });
     try {
-      await page.locator('.hr-plegar').first().click();
+      // 🔑 Desde el 22/09/2026 ya arranca plegada (Mati: "hojas plegadas por defecto"), así que
+      // no hay que plegarla: se comprueba que efectivamente arrancó así.
+      assert(await page.locator('.hr-plegar').first().getAttribute('title') === 'Desplegar',
+        'La hoja no arrancó plegada');
       const resumen = page.locator('.hr-plegada-resumen').first();
       await resumen.waitFor();
       assert((await resumen.innerText()).includes('Banda del Río Salí'), `El resumen no lo muestra: "${await resumen.innerText()}"`);

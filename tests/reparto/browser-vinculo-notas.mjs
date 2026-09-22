@@ -44,10 +44,18 @@ async function abrirModal(page, { ajustes = AJUSTES, candidatas = [CANDIDATA], a
 }
 // 🪤 `hoja=h1` en la URL: en 390 las columnas quedan una abajo de la otra y la hoja arranca
 // oculta hasta que se la abre. Sin esto el test de móvil no llega ni a ver el botón.
-const pantalla = (width = 1440) => setup(width, {
-  url: '/reparto?etapa=hojas&desde=2026-09-10&hasta=2026-09-10&hoja=h1', ready: '.hr-hoja',
-  beforeGoto: p => p.route('**/api/hojas-ruta?**', r => reply(r, { hojas: [hoja] })),
-});
+const pantalla = async (width = 1440) => {
+  const r = await setup(width, {
+    url: '/reparto?etapa=hojas&desde=2026-09-10&hasta=2026-09-10&hoja=h1', ready: '.hr-hoja',
+    beforeGoto: p => p.route('**/api/hojas-ruta?**', r2 => reply(r2, { hojas: [hoja] })),
+  });
+  // 🔑 Desde el 22/09/2026 las hojas arrancan PLEGADAS (Mati: "hojas plegadas por defecto"), y
+  // el pie con "Vincular NC/ND" vive en el cuerpo. Se despliega, que es lo que hace una persona
+  // para trabajar la hoja.
+  await r.page.locator('.hr-hoja .hr-plegar').first().click();
+  await r.page.locator('.hr-hoja-pie').first().waitFor();
+  return r;
+};
 
 try {
   await test('El botón dice qué hace y el total no afirma una entrega física', async () => {

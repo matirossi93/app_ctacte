@@ -200,6 +200,30 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
      * abierta: así una hoja nueva aparece abierta, que es lo que uno quiere al crearla.
      */
     const [plegadas, setPlegadas] = useState<Set<string>>(new Set());
+    /**
+     * 🔑 Y ARRANCAN PLEGADAS. Mati (22/09/2026): *"botón para plegar todas las hojas... hojas
+     * plegadas por defecto!!!"*. Con cinco hojas abiertas y 27 pedidos en una, llegar a la de
+     * abajo es scrollear toda la pantalla.
+     *
+     * 🪤 Se pliega cada hoja UNA sola vez, la primera vez que aparece — para eso está `vistas`.
+     * Plegar "todas las que hay" en cada render volvería a cerrar la que el operador acaba de
+     * abrir cada vez que cambia un camión, que es justo lo contrario de lo que pidió.
+     */
+    const vistas = useRef<Set<string>>(new Set());
+    useEffect(() => {
+        const nuevas = hojas.filter(h => !vistas.current.has(h.id));
+        if (!nuevas.length) return;
+        for (const h of nuevas) vistas.current.add(h.id);
+        /**
+         * 🔴 LA HOJA QUE TIENE ALGO QUE MIRAR NO SE PLIEGA. El aviso de "importe por verificar"
+         * y el detalle del sobrepeso viven en el cuerpo de la hoja: plegarla los esconde, y esa
+         * es justo la que no hay que perder de vista — con el importe sin verificar ni siquiera
+         * se puede imprimir ni cerrar.
+         */
+        const aPlegar = nuevas.filter(h => !h.carga.excedido && !h.pedidos.some(p => p.importe_error)).map(h => h.id);
+        if (!aPlegar.length) return;
+        setPlegadas(p => new Set([...p, ...aPlegar]));
+    }, [hojas]);
     /** Lo tipeado que todavía no se guardó, por hoja. Se suelta al confirmar o al desistir. */
     const [nombres, setNombres] = useState<Record<string, string>>({});
     /**
@@ -218,7 +242,11 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
      * (Mati, 07/09/2026: "revisar y pulir la velocidad al interactuar con la página").
      */
     const { iniciar: iniciarHojas } = useLecturaVigente(`${desde}|${hasta}|${historico}`);
+    /** De qué rango son las hojas que están pintadas: decide si hay que vaciar al recargar. */
+    const alcancePintado = useRef<string | null>(null);
     const { iniciar: iniciarPendientes } = useLecturaVigente(`${desde}|${hasta}`);
+    /** De qué rango son los pendientes pintados: decide si hay que vaciar al recargar. */
+    const alcancePendientes = useRef<string | null>(null);
     const { iniciar: iniciarArrastre } = useLecturaVigente(`${desde}|${hasta}`);
     const { iniciar: iniciarChoferes } = useLecturaVigente('choferes');
     const [conflictosAsignacion, setConflictosAsignacion] = useState<any[]>([]);
@@ -227,7 +255,25 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
     const cargarHojas = useCallback(async (antes?: number, forzar = true) => {
         const lectura = iniciarHojas(forzar); if (!lectura) return;
         setCargandoHojas(true); setErrorHojas(null);
-        if (!antes) setHojas([]);
+        /**
+         * 🔑 LA LISTA NO SE VACÍA PARA RECARGARLA. Mati (22/09/2026): *"con cada pequeño cambio
+         * en la hoja de ruta se actualiza toda la página, se debería poder trabajar sin que se
+         * esté refrescando todo el tiempo"*.
+         *
+         * Cambiar un camión o un turno llamaba a esta recarga, y el `setHojas([])` dejaba la
+         * columna en blanco hasta que volvía la consulta: se perdía el lugar donde uno estaba
+         * mirando y parecía que la pantalla se hubiera reiniciado. Lo que sigue reemplaza la
+         * lista cuando llegan los datos nuevos, sin borrarla antes — el mismo criterio que ya se
+         * usa en Facturación.
+         *
+         * 🪤 Vaciar SÍ hace falta cuando cambia de qué se está hablando (otro rango de fechas, o
+         * entrar/salir del histórico): ahí lo que hay en pantalla no es una versión vieja de lo
+         * mismo, son otras hojas. `iniciarHojas` lleva esa clave; acá se compara contra la
+         * última que se pintó.
+         */
+        const alcance = `${desde}|${hasta}|${historico}`;
+        if (!antes && alcancePintado.current !== alcance) setHojas([]);
+        alcancePintado.current = alcance;
         try {
             const url = historico ? `/api/hojas-ruta?todas=1${antes ? `&antes=${antes}` : ''}` : `/api/hojas-ruta?desde=${desde}&hasta=${hasta}`;
             const h = await fetch(`${url}${forzar ? '&refrescar=1' : ''}`, { headers: authHeaders(), signal: lectura.signal });
@@ -259,7 +305,18 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
      */
     const cargar = useCallback(async (refrescar = false) => {
         const lectura = iniciarPendientes(refrescar); if (!lectura) return;
-        setPendientes([]); setConflictosAsignacion([]);
+        /**
+         * 🔑 Mismo criterio que las hojas: la lista NO se vacía para recargarla. Acá pesa más
+         * todavía, porque esta consulta va a InfoManager y tarda segundos — sacar un pedido de
+         * una hoja dejaba la columna de pendientes en blanco todo ese rato.
+         *
+         * 🪤 Cuando cambia el rango de fechas sí se vacía: lo que hay en pantalla son pedidos de
+         * otros días, no una versión vieja de los mismos.
+         */
+        const alcance = `${desde}|${hasta}`;
+        if (alcancePendientes.current !== alcance) setPendientes([]);
+        alcancePendientes.current = alcance;
+        setConflictosAsignacion([]);
         avisarRecarga();
         setCargando(true); setError(null);
         // Lo rápido primero, sin await: la pantalla se dibuja mientras IM contesta.
@@ -404,6 +461,9 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
             });
             const d = await r.json().catch(() => null);
             if (d?.hoja?.id) versionesHoja.current.set(d.hoja.id, d.hoja.version);
+            // 🔑 La hoja que se acaba de crear aparece ABIERTA: se la marca como vista antes de
+            // que llegue, así el plegado inicial no la alcanza. Es la que se va a trabajar.
+            if (d?.hoja?.id) vistas.current.add(String(d.hoja.id));
             if (!r.ok) { setAviso(d?.error ?? 'No se pudo crear la hoja'); return; }
             if (paraMeter.length && d?.hoja?.id) {
                 const ok = await mandarAHoja(d.hoja.id, paraMeter);

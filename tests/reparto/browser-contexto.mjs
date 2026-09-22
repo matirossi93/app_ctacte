@@ -84,6 +84,11 @@ try{
    assert(await afectada.getByRole('button',{name:'Cerrar hoja',exact:true}).isDisabled(),'Permite cerrar importe desconocido');
    assert(await afectada.getByTitle('Verificá los importes pendientes antes de imprimir').isDisabled(),'Permite imprimir importe desconocido');
    const sana=page.locator('.hr-hoja').filter({hasNotText:'CLIENTE POR VERIFICAR'});
+   // 🔑 Las hojas arrancan PLEGADAS (22/09/2026) y los botones del cuerpo no se ven hasta
+   // desplegarlas. La afectada NO se pliega —su aviso tiene que quedar a la vista—, así que
+   // acá sólo hay que abrir la sana, que es lo que hace una persona para trabajarla.
+   assert(await sana.locator('.hr-plegar').getAttribute('title')==='Desplegar','La hoja sana no arrancó plegada');
+   await sana.locator('.hr-plegar').click();
    assert(await sana.getByRole('button',{name:'Cerrar hoja',exact:true}).isEnabled(),'Bloqueó una hoja sana');
   }finally{await ctx.close();}
  });
@@ -97,6 +102,8 @@ try{
   try{
    let calls=0,sent;const gate=new Promise(r=>release=r);
    await page.route('**/api/hojas-ruta/h1/ajustes/vincular',async r=>{calls++;sent=r.request().postDataJSON();await gate;await reply(r,{ok:true,advertencia:'VÍNCULO CONFIRMADO'}).catch(()=>{});});
+   // Las hojas arrancan plegadas: se despliega la que se va a trabajar (22/09/2026).
+   await page.locator('.hr-hoja .hr-plegar').first().click();
    await page.getByRole('button',{name:'Vincular NC/ND',exact:true}).click();
    await page.locator('.aj-modal').getByRole('button',{name:'Buscar',exact:true}).click();
    await page.locator('.aj-modal').getByRole('button',{name:'Vincular',exact:true}).click();await until(()=>calls===1);
