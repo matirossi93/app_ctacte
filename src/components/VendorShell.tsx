@@ -506,11 +506,13 @@ export const VendorShell = ({ onLogout }: Props) => {
     };
 
     /**
-     * Vuelve a bajar el catálogo de artículos de InfoManager (descripciones, IVA, precios).
+     * Vuelve a bajar de InfoManager el catálogo de artículos (descripciones, IVA, precios) y el
+     * maestro de clientes.
      *
      * Mati (18/09/2026): cambiaron la descripción de un artículo en IM y el buscador seguía
-     * mostrando la vieja. El catálogo se cachea 15 minutos para no consultar IM en cada tecla;
-     * esto es para el que no puede esperarlos.
+     * mostrando la vieja. Y el 22/09/2026: un cliente recién creado en IM no aparecía para
+     * elegirlo. Se cachean 15 y 30 minutos para no consultar IM en cada tecla; esto es para el
+     * que no puede esperarlos.
      */
     const refrescarCatalogo = async () => {
         setRefrescandoCatalogo(true); setFlash(null);
@@ -519,7 +521,9 @@ export const VendorShell = ({ onLogout }: Props) => {
             if (res.status === 401) { onLogout(); return; }
             const d = await res.json();
             if (!res.ok || d.error || d.ok === false) throw new Error(d.error || 'No se pudo actualizar el catálogo');
-            setFlash({ ok: true, text: `Productos actualizados desde InfoManager (${d.articulos} artículos).` });
+            setFlash({ ok: true, text: d.clientes == null
+                ? `Productos actualizados (${d.articulos}). Los clientes no se pudieron actualizar.`
+                : `Actualizado desde InfoManager: ${d.articulos} productos y ${d.clientes} clientes.` });
         } catch (e: any) {
             setFlash({ ok: false, text: e.message || 'No se pudo actualizar el catálogo.' });
         } finally {
@@ -672,7 +676,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                                         <Lock size={14} /> Cambiar mi contraseña
                                     </button>
                                     <button onClick={() => { setAvatarMenu(false); refrescarCatalogo(); }} disabled={refrescandoCatalogo}>
-                                        <RefreshCw size={14} /> Actualizar productos (descripciones y precios)
+                                        <RefreshCw size={14} /> Actualizar productos y clientes
                                     </button>
                                     {isAdmin && (
                                         <button onClick={() => { setAvatarMenu(false); setShowImportSheet(true); }}>

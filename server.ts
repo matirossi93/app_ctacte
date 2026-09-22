@@ -23,7 +23,7 @@ import {
 import { hasSupabase, sb, TENANT_ID } from './server-lib/supabase.js';
 import { syncVentasMesActual, syncVentasMeses } from './server-lib/syncVentas.js';
 import { getMonthlyVentasRaw, getMonthlyItemsRaw, snapshotCacheStats } from './server-lib/snapshotCache.js';
-import { fetchArticulosCatalogo, fetchStockPorDeposito, imGetRetry, fetchVendedores, imClient, invalidarPreciosDeArticulos } from './server-lib/infomanager.js';
+import { fetchArticulosCatalogo, fetchStockPorDeposito, imGetRetry, fetchVendedores, imClient, invalidarPreciosDeArticulos, fetchClientesIMCached } from './server-lib/infomanager.js';
 import { enSegundoPlano } from './server-lib/lecturasCompartidas.js';
 import {
   uploadRecibo, listRecibos, getReciboById, facturasCandidatas, aprobarRecibo, rechazarRecibo, editarRecibo, cuentasDebug, cuentasRefresh, cuentasEfectivo,
@@ -878,12 +878,24 @@ app.post('/api/clientes/refresh-contactos', requireJwt, requireAdmin, async (_re
 });
 
 /**
- * POST /api/articulos/refrescar — vuelve a bajar el catálogo de InfoManager AHORA.
+ * POST /api/articulos/refrescar — vuelve a bajar de InfoManager AHORA lo que el pedido necesita:
+ * el catálogo de artículos Y el maestro de clientes.
  *
  * Mati (18/09/2026): *"cambiamos la descrip de un articulo y lo quisimos presupuestar en la app
  * y seguia saliendo con la desc vieja"*. El catálogo se cachea 15 minutos (ver ARTICULOS_TTL_MS)
  * porque el buscador de productos lo consulta en cada tecla. Esto es la salida para el que no
  * puede esperar esos minutos.
+ *
+ * 🔑 LOS CLIENTES ENTRARON DESPUÉS, POR EL MISMO MOTIVO. Mati (22/09/2026): *"Jo quiso cambiar
+ * el nombre del cliente en un presupuesto y no le apareció el cliente que buscaba, es uno nuevo
+ * que creó ahora en IM"*. El maestro se cachea **30 minutos** (`CLIENTES_IM_TTL_MS`) y no había
+ * NADA que lo bajara a pedido: el único botón de la app refrescaba artículos y nada más.
+ *
+ * 🪤 Va con `force`, sin invalidar antes: `fetchClientesIMCached` sólo reemplaza el cache si la
+ * bajada salió bien, así que un InfoManager caído deja la lista que había en vez de vaciarla.
+ *
+ * 🪤 Si los clientes fallan, los artículos igual se actualizan: son dos lecturas independientes
+ * y media respuesta es mejor que ninguna. La respuesta dice cuál de las dos no pudo.
  *
  * 🔑 Sin requireAdmin a propósito: el que ve el nombre viejo es el que está cargando el
  * pedido, no el admin. El costo está acotado solo — `LecturasCompartidas` deduplica las lecturas
@@ -892,8 +904,18 @@ app.post('/api/clientes/refresh-contactos', requireJwt, requireAdmin, async (_re
 app.post('/api/articulos/refrescar', requireJwt, async (_req: any, res) => {
     try {
         invalidarPreciosDeArticulos();
-        const cat = await fetchArticulosCatalogo(true);
-        res.json({ ok: true, articulos: cat.size, refreshedAt: new Date().toISOString() });
+        const [cat, clientes] = await Promise.all([
+            fetchArticulosCatalogo(true),
+            fetchClientesIMCached(true).catch((e: any) => {
+                console.warn('[articulos/refrescar] no pude refrescar los clientes:', e?.message ?? e);
+                return null;
+            }),
+        ]);
+        res.json({
+            ok: true, articulos: cat.size,
+            clientes: clientes ? clientes.length : null,
+            refreshedAt: new Date().toISOString(),
+        });
     } catch (err: any) {
         console.error('[articulos/refrescar]', err?.message ?? err);
         res.status(502).json({ error: `No pude traer el catálogo de InfoManager: ${err?.message ?? 'sin respuesta'}` });

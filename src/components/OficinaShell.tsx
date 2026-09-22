@@ -39,21 +39,24 @@ function OficinaContenido() {
     const [tab, setTab] = useState<Tab>(inicial.etapa);
     const [menuAbierto, setMenuAbierto] = useState(false);
     /**
-     * "Actualizar productos": vuelve a bajar el catálogo de InfoManager sin esperar los 15
-     * minutos del cache. Mati (18/09/2026) corrigió la descripción de un artículo en IM y el
-     * presupuesto seguía saliendo con la anterior.
+     * "Actualizar productos y clientes": vuelve a bajar de InfoManager sin esperar el cache.
+     * Mati (18/09/2026) corrigió la descripción de un artículo en IM y el presupuesto seguía
+     * saliendo con la anterior; y el 22/09/2026 Jo creó un cliente en IM y no le aparecía al
+     * cambiarle el cliente a un presupuesto. Son 15 y 30 minutos de cache respectivamente.
      *
      * El aviso va en el texto del propio botón: es una acción de dos segundos y el menú se
      * queda abierto mirándola, no hace falta una barra de mensajes para esto.
      */
-    const [catalogo, setCatalogo] = useState<'listo' | 'yendo' | { error: string } | { ok: number }>('listo');
+    const [catalogo, setCatalogo] = useState<'listo' | 'yendo' | { error: string } | { ok: number; clientes: number | null }>('listo');
     async function actualizarCatalogo() {
         setCatalogo('yendo');
         try {
             const r = await fetch('/api/articulos/refrescar', { method: 'POST', headers: authHeaders() });
             const d = await r.json().catch(() => ({}));
             if (!r.ok || d?.ok === false) throw new Error(d?.error || 'No pude actualizar los productos');
-            setCatalogo({ ok: Number(d.articulos) || 0 });
+            // 🪤 `clientes: null` = los artículos se actualizaron y los clientes no. Se dice, no
+            // se esconde: quien apretó el botón lo hizo buscando a alguien que no le aparecía.
+            setCatalogo({ ok: Number(d.articulos) || 0, clientes: d.clientes == null ? null : Number(d.clientes) });
         } catch (e: any) {
             setCatalogo({ error: e?.message || 'No pude actualizar los productos' });
         }
@@ -127,10 +130,13 @@ function OficinaContenido() {
                         <div className="of-user-menu" role="menu">
                             <button disabled={catalogo === 'yendo'} onClick={() => void actualizarCatalogo()}>
                                 <RefreshCw size={15} className={catalogo === 'yendo' ? 'spin' : undefined} />
-                                {catalogo === 'yendo' ? 'Actualizando productos…'
-                                    : typeof catalogo === 'object' && 'ok' in catalogo ? `Productos al día (${catalogo.ok})`
+                                {catalogo === 'yendo' ? 'Actualizando…'
+                                    : typeof catalogo === 'object' && 'ok' in catalogo
+                                        ? (catalogo.clientes == null
+                                            ? `Productos al día (${catalogo.ok}) · clientes no`
+                                            : `Al día: ${catalogo.ok} productos, ${catalogo.clientes} clientes`)
                                         : typeof catalogo === 'object' ? catalogo.error
-                                            : 'Actualizar productos'}
+                                            : 'Actualizar productos y clientes'}
                             </button>
                             <button disabled={ocupado} onClick={() => { if (!puedeNavegar()) return; borradores.clear(); for (const k of Object.keys(sessionStorage)) if (k.startsWith('reparto:') || k.startsWith('correccion:') || k.startsWith('correccion-pendiente-')) sessionStorage.removeItem(k); clearToken(); location.reload(); }}>
                                 <LogOut size={15} /> Cerrar sesión
