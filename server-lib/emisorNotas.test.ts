@@ -10,11 +10,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * para tener dos caminos para siempre. Cuando lleve un par de semanas sin sobresaltos se saca.
  */
 const m = vi.hoisted(() => ({ v2: vi.fn(), nc: vi.fn(), nd: vi.fn(), configurada: vi.fn(() => true) }));
+/** Lo que la base sabe de la factura que se está acreditando. `null` = no salió de la app. */
+let filaFacturada: any = { im_remito_id: 're-1' };
+let errorAlLeer: any = null;
 vi.mock('./emitirNotaV2.js', () => ({ emitirNotaV2: m.v2 }));
 vi.mock('./facturarIM.js', () => ({ emitirNotaCredito: m.nc, emitirNotaDebito: m.nd, letraDeFactura: (c: string) => (c === 'RI' ? 'A' : 'B') }));
 // `claveIdempotente` va de VERDAD: es la regla de formato que InfoManager impone, y lo que
 // se quiere probar acá es que la clave que manda el emisor la cumpla.
 vi.mock('./imApiV2.js', async original => ({ ...(await original<any>()), imV2Configurada: m.configurada }));
+vi.mock('./supabase.js', () => ({
+  TENANT_ID: 't',
+  sb: () => ({ from: () => { const q: any = {}; for (const k of ['select','eq']) q[k] = () => q;
+    q.maybeSingle = async () => ({ data: errorAlLeer ? null : filaFacturada, error: errorAlLeer }); return q; } }),
+}));
 
 const { emitirComponente } = await import('./emisorNotas.js');
 
@@ -29,6 +37,7 @@ const comp = (extra: any = {}) => ({ tipo: 'NC' as const, datos: DATOS as any, .
 
 beforeEach(() => {
   vi.clearAllMocks();
+  filaFacturada = { im_remito_id: 're-1' }; errorAlLeer = null;
   process.env.IM_NOTAS_V2 = '1';
   m.configurada.mockReturnValue(true);
   m.v2.mockResolvedValue({ ok: true, im_id: '58924169', numero: 30117 });
@@ -79,6 +88,67 @@ describe('cuándo sale por la API nueva', () => {
     for (const c of m.v2.mock.calls) {
       expect(c[0].idempotencyKey).toMatch(/^[A-Za-z0-9_-]{8,128}$/);
     }
+  });
+
+  /**
+   * 🔴 22/09/2026, la segunda cosa que rechazó InfoManager en la primera NC real por v2:
+   * *"Elegí los ítems de la factura con «Ítems remitidos» o «Ítems sin remitir» antes de grabar"*.
+   * Es `cod_control`, y el spec avisa que no tiene default: *"Decide contra qué disponible se
+   * controla cada cantidad, así que no se asume"*.
+   */
+  it('🔴 la NC de devolución dice de qué cubeta salen los ítems', async () => {
+    filaFacturada = { im_remito_id: 're-1' };          // la factura tiene su remito
+    await emitirComponente(OP as any, comp({ subtipo: 'DE' }) as any);
+    expect(m.v2.mock.calls[0][0]).toMatchObject({ tipo_nc: 'DE', cod_control: 'C_RE' });
+  });
+
+  it('🔴 sin remito la cubeta es "sin remitir", no la otra', async () => {
+    filaFacturada = { im_remito_id: null };            // factura emitida sin remito
+    await emitirComponente(OP as any, comp({ subtipo: 'DE' }) as any);
+    expect(m.v2.mock.calls[0][0]).toMatchObject({ cod_control: 'S_RE' });
+  });
+
+  /**
+   * 🪤 Sin registro nuestro de esa factura no hay con qué decidir la cubeta, y mandar la
+   * equivocada hace que IM controle las cantidades contra un disponible que no es el de esta
+   * mercadería. Se va por v1, que no la pide.
+   */
+  it('🪤 si la factura no salió de la app, la NC se va por la API vieja', async () => {
+    filaFacturada = null;
+    const r = await emitirComponente(OP as any, comp({ subtipo: 'DE' }) as any);
+    expect(m.v2).not.toHaveBeenCalled();
+    expect(m.nc).toHaveBeenCalledTimes(1);
+    expect(r).toMatchObject({ ok: true, tipo: 'NC B' });
+  });
+
+  it('🪤 y tampoco adivina si la base no contestó', async () => {
+    errorAlLeer = { message: 'timeout' };
+    await emitirComponente(OP as any, comp({ subtipo: 'DE' }) as any);
+    expect(m.v2).not.toHaveBeenCalled();
+    expect(m.nc).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 🔑 Mati (22/09/2026): *"lo ideal es que esa nc sí reingrese stock, sería lo correcto"*. El
+   * remito ya lo descontó; la devolución dice que esa mercadería no salió.
+   */
+  it('🔑 la devolución de mercadería remitida REINGRESA el stock', async () => {
+    filaFacturada = { im_remito_id: 're-1' };
+    await emitirComponente(OP as any, comp({ subtipo: 'DE' }) as any);
+    expect(m.v2.mock.calls[0][0]).toMatchObject({ cod_control: 'C_RE', genero_re_auto: true });
+  });
+
+  it('🪤 pero sin remito no reingresa nada: nunca se descontó', async () => {
+    filaFacturada = { im_remito_id: null };
+    await emitirComponente(OP as any, comp({ subtipo: 'DE' }) as any);
+    expect(m.v2.mock.calls[0][0].genero_re_auto).toBeUndefined();
+  });
+
+  it('🪤 la financiera no lleva cubeta ni toca stock: no mueve mercadería', async () => {
+    await emitirComponente(OP as any, comp({ subtipo: 'FI' }) as any);
+    const payload = m.v2.mock.calls[0][0];
+    expect(payload.cod_control).toBeUndefined();
+    expect(payload.genero_re_auto).toBeUndefined();
   });
 
   it('una nota de débito no lleva subtipo: es sólo de la NC', async () => {
