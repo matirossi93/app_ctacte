@@ -598,6 +598,26 @@ const RECLAMO_VENCE_MS = 5 * 60_000;
  * autoriza una persona** —después de mirar InfoManager— con "Liberar" en la pantalla.
  */
 async function reclamar(f: PresupuestoAFacturar, base: Record<string, any>): Promise<{ ok: boolean; error?: string }> {
+  /**
+   * 🔑 LA FACTURA QUE SE REHACE SOBRE UN REMITO VIVO tiene su propio reclamo. Acá la fila YA
+   * existe —es la que guarda el remito— así que el `insert` de abajo no aplica y `tiene_fila`
+   * la rechazaría. `tomar_factura` es el espejo exacto de `tomar_remito`: un update condicionado
+   * al estado, que frena igual a la segunda persona que apriete Facturar.
+   */
+  if (f.estado_emision === 'factura_pendiente') {
+    const { data, error } = await sb().rpc('tomar_factura', {
+      p_tenant: TENANT_ID, p_id: String(f.im_comprobante_id), p_token: f.claim_token,
+    });
+    // 🪤 Sin la migración aplicada la función no existe, y el mensaje genérico mandaría a la
+    // oficina a buscar un conflicto que no hay.
+    if (error && ['PGRST202', '42883', '42703'].includes(String((error as any).code))) {
+      return { ok: false, error: 'falta aplicar la migración 051 para rehacer una factura sobre un remito vivo. No se emitió nada.' };
+    }
+    if (error || data !== true) {
+      return { ok: false, error: `la factura está en curso o ya la rehizo alguien${error ? ` (${error.message})` : ''}. Actualizá la pantalla.` };
+    }
+    return { ok: true };
+  }
   if (f.tiene_fila) {
     const edad = Date.now() - new Date(f.reclamado_at ?? 0).getTime();
     if (Number.isFinite(edad) && edad < RECLAMO_VENCE_MS) {
@@ -955,6 +975,61 @@ async function soltarReclamo(f: PresupuestoAFacturar): Promise<void> {
 }
 
 /**
+ * Lo que pasa DESPUÉS de que salieron los comprobantes, salgan por el camino que salgan: el
+ * presupuesto se saca de la ventana de la oficina y el pedido del vendedor queda facturado.
+ *
+ * Ninguna de las dos frena nada si falla: los comprobantes ya están emitidos y registrados, y
+ * dejar el presupuesto confirmado es un problema de pantalla, no de plata.
+ */
+async function cerrarCircuito(f: PresupuestoAFacturar): Promise<void> {
+  const desc = await desconfirmarPresupuesto(f.im_comprobante_id);
+  if (!desc.ok) console.warn(`[facturarSeleccion] no pude desconfirmar el PR ${f.im_numero}:`, desc.error);
+  /**
+   * 🪤 El cron `marcarFacturados` NO lo cubre: pregunta por `/presupuestos/obtener_facturas`, y
+   * facturar por API no crea ese vínculo en IM — el pedido quedaría "enviado" para siempre.
+   */
+  if (f.pedido_id) {
+    const { error } = await sb().from('pedidos_vendedor').update({ estado: 'facturado' }).eq('id', f.pedido_id);
+    if (error) console.warn(`[facturarSeleccion] no pude marcar el pedido ${f.pedido_id}:`, error.message);
+  }
+}
+
+/**
+ * 🔑 LA FACTURA SE REHIZO SOBRE UN REMITO QUE YA EXISTÍA: se registra y se cierra, sin emitir
+ * ningún remito. Es el final del camino `factura_pendiente` (ver conciliarEmision.ts).
+ *
+ * 🔴 La hoja de ruta se actualiza acá y no es un detalle: su renglón guarda el número de factura
+ * con el que el repartidor cobra y con el que se verifica el importe. Dejándolo apuntando a la
+ * factura anulada, la hoja queda mostrando un comprobante que ya no existe — que es exactamente
+ * lo que se vio el 18/09/2026 en la hoja 3419 ("No pude verificar el importe actual de la
+ * factura 58879767").
+ */
+async function cerrarSobreRemitoExistente(
+  f: PresupuestoAFacturar,
+  fa: { facturaId: string | null; facturaNumero: number | null; tipoFactura: string },
+): Promise<{ ok: true; aviso: string | null } | { ok: false; error: string }> {
+  const { data, error } = await sb().from('presupuestos_facturados').update({
+    im_factura_id: fa.facturaId, im_factura_numero: fa.facturaNumero, im_factura_tipo: fa.tipoFactura,
+    facturado_at: new Date().toISOString(), estado_emision: 'completo', claim_token: null,
+  }).eq('tenant_id', TENANT_ID).eq('im_comprobante_id', String(f.im_comprobante_id))
+    .eq('claim_token', f.claim_token!).eq('estado_emision', 'remito_pendiente')
+    .select('im_comprobante_id');
+  // Mismo criterio que el resto: un comprobante emitido y no registrado se vuelve a emitir.
+  if (error || !data?.length) {
+    return { ok: false, error: `se emitió la FACTURA ${fa.facturaNumero ?? ''} sobre el remito ${f.im_remito_numero ?? ''} pero NO se pudo registrar (${error?.message ?? 'se perdió el reclamo'}). ANOTALA.` };
+  }
+  const { error: errHoja } = await sb().from('hojas_ruta_pedidos')
+    .update({ im_factura_id: fa.facturaId, im_factura_numero: fa.facturaNumero })
+    .eq('im_remito_id', String(f.im_remito_id));
+  return {
+    ok: true,
+    aviso: errHoja
+      ? `salió la factura ${fa.facturaNumero ?? ''} sobre el remito ${f.im_remito_numero ?? ''}, pero la hoja de ruta quedó con el número de factura viejo (${errHoja.message}). Corregilo antes de cerrarla.`
+      : null,
+  };
+}
+
+/**
  * POST /api/facturacion — emite factura y remito de los presupuestos elegidos.
  *
  * 🔴 Acá se emiten comprobantes REALES. Ver la cabecera del archivo.
@@ -1058,6 +1133,21 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
         control = await bloquearPresupuesto(String(f.im_comprobante_id), 'facturar');
       } catch (e: any) { fallados.push(`${quien}: ${e.message}`); continue; }
       try {
+      /**
+       * 🔴 EL REMITO SOBRE EL QUE SE VA A REHACER LA FACTURA TIENE QUE SEGUIR VIVO.
+       *
+       * Se lee acá, lo más cerca posible de la emisión: entre que alguien apretó "el remito está
+       * bien" y este momento pueden pasar horas, y en el medio se puede anular en InfoManager.
+       * Facturar sobre un remito muerto deja una factura sin mercadería que la respalde y cierra
+       * el pedido como si estuviera completo.
+       */
+      if (f.estado_emision === 'factura_pendiente' && f.im_remito_id) {
+        const cabRe = await cabeceraComprobante(f.im_remito_id);
+        if (cabRe.existe !== true || cabRe.anulada !== false) {
+          fallados.push(`${quien}: el remito ${f.im_remito_numero ?? ''} ya no está vigente en InfoManager, o no pude verificarlo. NO se emitió la factura.`);
+          continue;
+        }
+      }
       // La fila existe desde antes de emitir: si algo se corta, queda el rastro de qué se intentó.
       const base = {
         tenant_id: TENANT_ID,
@@ -1152,6 +1242,24 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
         facturaNumero = fa.numero;
         tipoFactura = fa.tipo;
         facturaId = fa.id;
+      }
+
+      /**
+       * 2·bis) EL PEDIDO YA TIENE REMITO: NO SE EMITE OTRO.
+       *
+       * Es el camino `factura_pendiente` (ver conciliarEmision.ts): se anuló la factura, el
+       * remito quedó vivo y alguien de la oficina confirmó que corresponde. La mercadería ya
+       * salió con ese remito — emitir uno nuevo la descontaría dos veces, que es exactamente el
+       * agujero que dejó el RE 77809 de BUSTOS descontando 9 artículos por segunda vez durante
+       * cuatro días.
+       */
+      if (f.im_remito_id) {
+        const cerrado = await cerrarSobreRemitoExistente(f, { facturaId, facturaNumero, tipoFactura });
+        if (!cerrado.ok) { fallados.push(`${quien}: ${cerrado.error}`); cortado = `${quien}: ${cerrado.error} Se frenó el resto.`; continue; }
+        if (cerrado.aviso) fallados.push(`⚠️ ${quien}: ${cerrado.aviso}`);
+        await cerrarCircuito(f);
+        hechos.push({ cliente: f.cliente_nombre, factura: facturaNumero, remito: f.im_remito_numero, tipo: tipoFactura });
+        continue;
       }
 
       // 2) REMITO
@@ -1314,18 +1422,8 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
         fallados.push(`${quien}: salieron la factura ${facturaNumero} y el remito ${re.numero}. Ojo que quedó stock en negativo: ${remitoForzado}.`);
       }
 
-      // 3) El presupuesto sale de la ventana de facturación de la oficina.
-      const desc = await desconfirmarPresupuesto(f.im_comprobante_id);
-      if (!desc.ok) console.warn(`[facturarSeleccion] no pude desconfirmar el PR ${f.im_numero}:`, desc.error);
-
-      // 4) Si el pedido vino de la app, el vendedor tiene que verlo facturado.
-      // 🪤 El cron `marcarFacturados` NO lo cubre: pregunta por `/presupuestos/obtener_facturas`,
-      // y facturar por API no crea ese vínculo en IM — el pedido quedaría "enviado" para siempre.
-      if (f.pedido_id) {
-        const { error: errPed } = await sb().from('pedidos_vendedor')
-          .update({ estado: 'facturado' }).eq('id', f.pedido_id);
-        if (errPed) console.warn(`[facturarSeleccion] no pude marcar el pedido ${f.pedido_id}:`, errPed.message);
-      }
+      // 3) El presupuesto sale de la ventana de la oficina y el pedido del vendedor se marca.
+      await cerrarCircuito(f);
 
       hechos.push({ cliente: f.cliente_nombre, factura: facturaNumero, remito: re.numero, tipo: tipoFactura });
       } finally { if (control) await desbloquearPresupuesto(String(f.im_comprobante_id), control); }
@@ -1522,6 +1620,8 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
         facturado_at: e?.facturado_at ?? null,
         // Con la factura emitida y sin remito: el reintento hace SÓLO el remito.
         falta_remito: !!e?.im_factura_id && !e?.facturado_at && e?.estado_emision === 'remito_pendiente',
+        // Y el espejo: el remito vivo esperando que se rehaga su factura (ver conciliarEmision.ts).
+        falta_factura: !!e?.im_remito_id && !e?.facturado_at && e?.estado_emision === 'factura_pendiente',
         estado_emision: e?.estado_emision ?? null,
         // Lo que se anuló en InfoManager desde la última vez que se miró esta pantalla.
         aviso_anulado: avisosAnulados.get(String(p.im_comprobante_id)) ?? null,

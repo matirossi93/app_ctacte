@@ -331,6 +331,86 @@ describe('no emitir dos veces lo mismo', () => {
     expect(r.body.facturados).toBe(1);
   });
 
+  /**
+   * 🔴 EL ESPEJO: SE ANULÓ LA FACTURA Y EL REMITO QUEDÓ VIVO.
+   *
+   * BUSTOS, 18/09/2026. El pedido era de Roberto (124) y se cargó a Rafael (522); borraron la
+   * factura en IM y el RE 77809 quedó cuatro días descontando la misma mercadería por segunda
+   * vez. Lo único que podía hacer la oficina desde la app era rehacer el pedido — y facturar un
+   * pedido nuevo emite factura **y remito**, o sea un tercer remito por lo mismo.
+   *
+   * Con `factura_pendiente` (lo habilita una persona desde conciliarEmision.ts) sale SÓLO la
+   * factura, enganchada al remito que ya existe.
+   */
+  it('🔴 con el remito ya emitido hace SÓLO la factura: no sale un segundo remito', async () => {
+    tablas['presupuestos_facturados'] = {
+      data: [{ estado_emision: 'factura_pendiente', im_comprobante_id: '10', im_factura_id: null,
+               im_remito_id: 'r9', im_remito_numero: 77809, facturado_at: null, cod_cliente: 1093, cod_empresa: 1 }],
+      error: null,
+    };
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(r.status).toBe(200);
+    expect(m.emitirFactura).toHaveBeenCalledTimes(1);
+    expect(m.emitirRemito).not.toHaveBeenCalled();
+    expect(m.emitirRemitoMasivo).not.toHaveBeenCalled();
+    // El remito que se informa es el que ya estaba, no uno nuevo.
+    expect(r.body.hechos[0]).toMatchObject({ factura: 50360, remito: 77809 });
+  });
+
+  it('🔴 el reclamo va por `tomar_factura`: dos personas no rehacen la misma factura', async () => {
+    tablas['presupuestos_facturados'] = {
+      data: [{ estado_emision: 'factura_pendiente', im_comprobante_id: '10', im_factura_id: null,
+               im_remito_id: 'r9', im_remito_numero: 77809, facturado_at: null, cod_cliente: 1093, cod_empresa: 1 }],
+      error: null,
+    };
+    // La fila YA existe (es la que guarda el remito), así que el insert del alta normal no sirve.
+    // 🪤 Sólo `tomar_factura` dice que no: el lock del presupuesto es otra rpc y tiene que pasar,
+    // si no el test estaría probando ese freno y no éste.
+    m.rpc.mockImplementation(async (nombre: string) => ({ data: nombre !== 'tomar_factura', error: null }));
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(m.emitirFactura).not.toHaveBeenCalled();
+    expect(r.body.fallados[0]).toMatch(/en curso o ya la rehizo alguien/i);
+  });
+
+  /**
+   * 🔴 La hoja de ruta guarda el número de factura con el que el repartidor cobra. Dejándolo
+   * apuntando a la anulada, la hoja muestra un comprobante que ya no existe — exactamente el
+   * "No pude verificar el importe actual de la factura 58879767" de la hoja 3419.
+   */
+  it('🔴 y la hoja de ruta queda con la factura NUEVA', async () => {
+    tablas['presupuestos_facturados'] = {
+      data: [{ estado_emision: 'factura_pendiente', im_comprobante_id: '10', im_factura_id: null,
+               im_remito_id: 'r9', im_remito_numero: 77809, facturado_at: null, cod_cliente: 1093, cod_empresa: 1 }],
+      error: null,
+    };
+    await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    const enHoja = escrituras.find(e => e.tabla === 'hojas_ruta_pedidos' && e.op === 'update');
+    expect(enHoja?.valor).toMatchObject({ im_factura_id: 'f1', im_factura_numero: 50360 });
+  });
+
+  /**
+   * 🔴 Entre que alguien apretó "el remito está bien" y este momento pueden pasar horas. Emitir
+   * sobre un remito anulado deja una factura sin mercadería que la respalde, y encima cierra el
+   * pedido como si estuviera completo.
+   */
+  it('🔴 si el remito se anuló mientras tanto, NO emite la factura', async () => {
+    tablas['presupuestos_facturados'] = {
+      data: [{ estado_emision: 'factura_pendiente', im_comprobante_id: '10', im_factura_id: null,
+               im_remito_id: 'r9', im_remito_numero: 77809, facturado_at: null, cod_cliente: 1093, cod_empresa: 1 }],
+      error: null,
+    };
+    // 🪤 En producción `sincronizarAnulados` no toca las filas en `factura_pendiente` (su update
+    // sólo alcanza a 'completo'/'remito_pendiente'), así que el update no encuentra nada.
+    filasDelUpdate = [];
+    m.cabeceraComprobante.mockImplementation(async (id: string) => String(id) === 'r9'
+      ? { existe: true, anulada: true, cod_vendedor: '3', fecha: '2026-09-08' }
+      : { cod_vendedor: '3', fecha: '2026-09-08', anulada: false, existe: true });
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(m.emitirFactura).not.toHaveBeenCalled();
+    expect(m.emitirRemito).not.toHaveBeenCalled();
+    expect(r.body.fallados[0]).toMatch(/77809 ya no está vigente/i);
+  });
+
   it('🔴 lo ya facturado del todo no se vuelve a tocar', async () => {
     tablas['presupuestos_facturados'] = {
       data: [{ estado_emision:'remito_pendiente', im_comprobante_id: '10', im_factura_id: 'f1', im_factura_numero: 50360, im_remito_id: 'r1', facturado_at: '2026-09-08T12:00:00Z' }],

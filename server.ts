@@ -56,6 +56,7 @@ import { guardarKilajeDeBolsa } from './server-lib/kilajeDeBolsa.js';
 import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, precioArticulo, catalogoPedido, validarListasPedido, editarPedido } from './server-lib/pedidos.js';
 import { pendientesDelDia, arrastreDelDia, impresionHoja, sugerenciaDelDia, listarHojas, listarCamiones, crearHoja, editarHoja, borrarHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
 import { tableroFacturacion, previsualizarFacturacion, facturarSeleccion, liberarReclamo, habilitarRemitoPendiente, registrarRemitoExistente } from './server-lib/facturarPresupuestos.js';
+import { descartarRemitoSobrante, habilitarFacturaPendiente } from './server-lib/conciliarEmision.js';
 // Corregir una factura ya emitida, con notas de crédito y de débito.
 import { verFacturaParaCorregir, corregirFactura, historialCorrecciones, notaFinanciera, moverFechaFactura, cancelarCorreccion } from './server-lib/correccionFactura.js';
 import { compararFacturaConRemito } from './server-lib/compararComprobantes.js';
@@ -697,6 +698,11 @@ app.delete('/api/facturacion/reclamo/:comprobanteId', requireJwt, (req: any, res
 app.post('/api/facturacion/remito-pendiente/:comprobanteId', requireJwt, (req: any, res) => habilitarRemitoPendiente(req, res));
 // El remito se hizo a mano en IM: se verifica contra InfoManager y se registra (no emite nada).
 app.post('/api/facturacion/remito-existente/:comprobanteId', requireJwt, (req: any, res) => registrarRemitoExistente(req, res));
+// 🔴 Se anuló la factura y el remito quedó vivo. Las dos salidas, y las decide una persona.
+// El remito NO corresponde: SE ANULA EN INFOMANAGER (devuelve stock), sale de la hoja y libera el pedido.
+app.post('/api/facturacion/remito-sobrante/:comprobanteId', requireJwt, (req: any, res) => descartarRemitoSobrante(req, res));
+// El remito SÍ corresponde: Facturar va a emitir sólo la factura y engancharla (no emite nada acá).
+app.post('/api/facturacion/factura-pendiente/:comprobanteId', requireJwt, (req: any, res) => habilitarFacturaPendiente(req, res));
 // 🔴 Corregir una factura EMITE comprobantes reales. Sin `emitir: true` sólo previsualiza.
 app.get('/api/facturacion/corregir/:idFactura', requireJwt, (req: any, res) => verFacturaParaCorregir(req, res));
 // Comparar UN par factura/remito a pedido: sólo lectura, para los que el tablero no alcanzó a ver.

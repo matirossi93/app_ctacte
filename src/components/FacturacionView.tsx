@@ -60,6 +60,8 @@ interface Fila {
     aviso_anulado?: string | null;
     /** La factura salió y el remito no: el reintento hace SÓLO el remito. */
     falta_remito: boolean;
+    /** El espejo: el remito está vivo y hay que rehacerle la factura. Facturar hace SÓLO la factura. */
+    falta_factura?: boolean;
     estado_emision?: string | null;
 }
 
@@ -295,6 +297,38 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
         void destrabarRemito(p, `/api/facturacion/remito-existente/${encodeURIComponent(p.im_comprobante_id)}`, { numero });
     };
 
+    /**
+     * 🔴 SE ANULÓ LA FACTURA Y EL REMITO QUEDÓ VIVO. Hay UNA pregunta que decide todo y la app no
+     * la puede contestar: ¿ese remito corresponde o no?
+     *
+     * Pasó con BUSTOS el 18/09/2026 — el pedido era de Roberto y se cargó a Rafael. Borraron la
+     * factura en IM, rehicieron el pedido para el cliente correcto, y el remito del equivocado
+     * quedó cuatro días descontando la misma mercadería por segunda vez y figurando en la hoja de
+     * ruta. La app lo detectaba y decía "conciliá también el remito": un cartel sin salida.
+     */
+    const facturaAnuladaConRemito = (p: Fila) =>
+        p.estado_emision === 'anulado' && !!p.im_remito_numero;
+
+    const descartarRemito = (p: Fila) => {
+        if (!window.confirm(
+            `El remito ${p.im_remito_numero} de ${p.cliente_nombre} SE VA A ANULAR en InfoManager.\n\n`
+            + 'Aceptá sólo si esa mercadería NO salió con ese remito: por ejemplo si el pedido estaba a nombre '
+            + 'del cliente equivocado y se rehízo por otro lado.\n\n'
+            + 'Al anularlo, InfoManager DEVUELVE EL STOCK, el remito sale de la hoja de ruta y el pedido vuelve '
+            + 'a estar libre para facturar.\n\n'
+            + 'Si la mercadería SÍ salió con ese remito, cancelá y usá "Falta sólo la factura".')) return;
+        void destrabarRemito(p, `/api/facturacion/remito-sobrante/${encodeURIComponent(p.im_comprobante_id)}`);
+    };
+
+    const rehacerFactura = (p: Fila) => {
+        if (!window.confirm(
+            `El remito ${p.im_remito_numero} de ${p.cliente_nombre} queda como está, y se le va a rehacer la factura.\n\n`
+            + 'Aceptá sólo si esa mercadería SÍ salió con ese remito y lo que estaba mal era la factura.\n\n'
+            + 'No se emite nada ahora: el pedido vuelve a la lista y, al apretar Facturar, sale SÓLO la factura '
+            + 'nueva enganchada a ese remito. No se emite un segundo remito.')) return;
+        void destrabarRemito(p, `/api/facturacion/factura-pendiente/${encodeURIComponent(p.im_comprobante_id)}`);
+    };
+
     const marcarRemitoFaltante = (p: Fila) => {
         if (!window.confirm(
             `La factura ${p.im_factura_numero} de ${p.cliente_nombre} YA SE EMITIÓ. Sólo falta el remito.\n\n`
@@ -448,9 +482,25 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                                     </button>
                                                 </span>
                                             )}
+                                            {facturaAnuladaConRemito(p) && (
+                                                <span className="fc-destrabar">
+                                                    <button disabled={destrabando === p.im_comprobante_id}
+                                                            onClick={() => descartarRemito(p)}
+                                                            title={`El remito ${p.im_remito_numero} no corresponde: se anula en InfoManager (devuelve el stock), sale de la hoja de ruta y el pedido vuelve a estar libre.`}>
+                                                        El remito no corresponde
+                                                    </button>
+                                                    <button disabled={destrabando === p.im_comprobante_id}
+                                                            onClick={() => rehacerFactura(p)}
+                                                            title={`La mercadería salió con el remito ${p.im_remito_numero}: Facturar va a emitir sólo la factura nueva y engancharla a ese remito.`}>
+                                                        Falta sólo la factura
+                                                    </button>
+                                                </span>
+                                            )}
                                         </>
                                         : p.falta_remito
                                         ? <span className="fc-badge grave">falta el remito (FA {p.im_factura_numero})</span>
+                                        : p.falta_factura
+                                        ? <span className="fc-badge grave">falta la factura (RE {p.im_remito_numero})</span>
                                         : <span className="fc-badge">listo</span>}
                                 </td>
                                 {/* 🔑 Imprimir desde acá también: el circuito entero tiene que poder
