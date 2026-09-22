@@ -37,6 +37,10 @@ vi.mock('./facturarPresupuestos.js', async original => await original<any>());
 
 /** Lo que contesta cada tabla. `single` es lo que devuelve `maybeSingle`. */
 let filas: Record<string, { single?: any; error?: any }> = {};
+/** Los campos con los que se pidió cada select, en orden. */
+let selects: string[] = [];
+/** Si está, el primer select que pida esa columna falla como lo hace Postgres sin la migración. */
+let columnaQueFalta: string | null = null;
 let escrituras: Array<{ tabla: string; op: string; valor: any; filtros: any[][] }> = [];
 /** Lo que el update/delete dice haber tocado: `[]` = ninguna fila cumplió las condiciones. */
 let filasTocadas: any[] = [{ im_comprobante_id: '10' }];
@@ -50,8 +54,13 @@ vi.mock('./supabase.js', () => ({
       const q: any = {};
       const filtros: any[][] = [];
       const encadena = (k: string) => (...args: any[]) => { filtros.push([k, ...args]); return q; };
-      for (const k of ['select', 'eq', 'in', 'is', 'not', 'limit', 'order']) q[k] = encadena(k);
-      q.maybeSingle = async () => ({ data: filas[tabla]?.single ?? null, error: filas[tabla]?.error ?? null });
+      for (const k of ['eq', 'in', 'is', 'not', 'limit', 'order']) q[k] = encadena(k);
+      q.select = (campos: string) => { selects.push(String(campos ?? '')); return encadena('select')(campos); };
+      q.maybeSingle = async () => {
+        const pidioLaColumna = columnaQueFalta && selects[selects.length - 1]?.includes(columnaQueFalta);
+        if (pidioLaColumna) return { data: null, error: { code: '42703', message: `column ${columnaQueFalta} does not exist` } };
+        return { data: filas[tabla]?.single ?? null, error: filas[tabla]?.error ?? null };
+      };
       q.single = q.maybeSingle;
       q.update = (valor: any) => {
         const w: any = { select: async () => ({ data: errorAlEscribir ? null : filasTocadas, error: errorAlEscribir }) };
@@ -106,6 +115,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   filas = { presupuestos_facturados: { single: { ...FILA } }, hojas_ruta_pedidos: { single: null } };
   escrituras = []; filasTocadas = [{ im_comprobante_id: '10' }]; errorAlEscribir = null;
+  selects = []; columnaQueFalta = null;
   enIM();
   m.anularComprobante.mockResolvedValue({ ok: true, raw: {} });
   m.mutarReparto.mockResolvedValue({ ok: true, version: 8 });
@@ -272,6 +282,28 @@ describe('qué filas admite', () => {
       expect(r.status).toBe(409);
     }
     expect(m.anularComprobante).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🪤 LA VENTANA ENTRE EL DEPLOY Y LA MIGRACIÓN. Verificado contra la base de producción el
+   * 22/09/2026: con la 051 sin aplicar, el select con `historial_facturas` devuelve 42703 y el
+   * mismo select sin ella trae la fila. Sin la relectura, descartar un remito —que ni usa esa
+   * columna— fallaba con un error de Postgres.
+   */
+  it('🪤 sin la migración 051 todavía se puede descartar un remito', async () => {
+    columnaQueFalta = 'historial_facturas';
+    filas.hojas_ruta_pedidos = { single: null };
+    let vecesRemito = 0;
+    m.cabeceraComprobante.mockImplementation(async (id: string) => {
+      if (String(id) === 'fa-muerta') return BORRADA;
+      return ++vecesRemito === 1 ? REMITO_VIVO : { ...REMITO_VIVO, anulada: true };
+    });
+    const r = await llamar(descartarRemitoSobrante);
+    expect(r.status).toBe(200);
+    expect(m.anularComprobante).toHaveBeenCalled();
+    // Pidió los campos completos, se topó con la columna que falta y releyó sin ella.
+    expect(selects[0]).toContain('historial_facturas');
+    expect(selects[1]).not.toContain('historial_facturas');
   });
 
   it('sin remito registrado no hay nada que conciliar', async () => {
