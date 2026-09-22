@@ -1,6 +1,6 @@
 import { emitirNotaV2 } from './emitirNotaV2.js';
 import { emitirNotaCredito, emitirNotaDebito, letraDeFactura, type ResultadoEmision } from './facturarIM.js';
-import { imV2Configurada } from './imApiV2.js';
+import { imV2Configurada, claveIdempotente } from './imApiV2.js';
 import type { SubtipoCorreccion } from './subtipoNota.js';
 
 /**
@@ -80,7 +80,7 @@ export async function emitirComponente(o: OperacionMinima, c: ComponenteNota): P
         precio: it.precio != null ? Number(it.precio) : null,
         descuento_porc: it.descuento_porc != null ? Number(it.descuento_porc) : null,
       })),
-      idempotencyKey: `${o.id}:${o.indice}`,
+      idempotencyKey: claveIdempotente(o.id, o.indice),
     });
     if (!r.ok) return { ok: false, error: r.error };
     return { ok: true, id: r.im_id, numero: r.numero, tipo: `${c.tipo} ${letra}` };

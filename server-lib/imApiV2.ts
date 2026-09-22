@@ -140,6 +140,48 @@ export async function getV2<T = any>(ruta: string, params?: Record<string, unkno
 }
 
 /**
+ * Lo que InfoManager acepta como `Idempotency-Key`, dicho por él mismo el 22/09/2026:
+ * *"Idempotency-Key inválida: usar 8 a 128 caracteres [A-Za-z0-9_-]"*.
+ */
+const FORMATO_IDEMPOTENCIA = /^[A-Za-z0-9_-]{8,128}$/;
+
+/**
+ * La clave de idempotencia de una emisión, armada con partes que identifican LA OPERACIÓN.
+ *
+ * 🔴 TIENE QUE SER ESTABLE ENTRE REINTENTOS: es lo único que impide que un corte de red emita
+ * dos notas por la misma corrección. Por eso todo acá es determinístico —se sanea y se rellena
+ * siempre igual— y por eso no hay ningún `randomUUID()` de respaldo: una clave nueva por intento
+ * es exactamente lo contrario de lo que se necesita.
+ *
+ * 🪤 Los dos puntos NO entran, y era el separador que usaba el emisor de notas: la primera NC
+ * que salió por este camino murió con `IDEMPOTENCY_KEY_INVALID` sin llegar a InfoManager.
+ */
+export function claveIdempotente(...partes: Array<string | number>): string {
+  if (!partes.length) throw new Error('No hay con qué armar la clave de idempotencia de la emisión.');
+  const saneadas = partes.map(p => String(p ?? '').replace(/[^A-Za-z0-9_-]/g, '-'));
+  /**
+   * 🪤 Una parte vacía NO se saltea: saltearla hace que `('op', 1)` y `('op-1', '')` den la misma
+   * clave, y dos emisiones distintas con la misma clave significa que la segunda nunca sale —
+   * InfoManager devuelve la primera. Si una parte vino vacía, el que llama tiene un problema y
+   * hay que enterarse antes de emitir, no después.
+   */
+  if (saneadas.some(p => !p.replace(/-/g, ''))) {
+    throw new Error('No hay con qué armar la clave de idempotencia de la emisión.');
+  }
+  const limpia = saneadas.join('-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
+  if (!limpia) throw new Error('No hay con qué armar la clave de idempotencia de la emisión.');
+  /**
+   * 🪤 Corta es tan inválida como larga, y el relleno NO puede ser cualquiera: rellenar con `0`
+   * haría que `op-7` + `0` y `op-70` + `0` terminen en la misma clave, y dos operaciones
+   * distintas con la misma clave significa que la segunda nota no se emite nunca.
+   *
+   * El guión sí sirve: arriba se recortan los de los extremos, así que **ninguna clave natural
+   * termina en guión** y el relleno queda distinguible de lo que se armó de verdad.
+   */
+  return limpia.length < 8 ? limpia.padEnd(8, '-') : limpia.slice(0, 128);
+}
+
+/**
  * Un POST a la API nueva. 🔴 ES LO IRREVERSIBLE: emite comprobantes fiscales.
  *
  * 🔑 `Idempotency-Key` es obligatoria acá y no tiene default: es lo único que impide que un
@@ -154,6 +196,14 @@ export async function getV2<T = any>(ruta: string, params?: Record<string, unkno
 export async function postV2<T = any>(ruta: string, cuerpo: unknown, idempotencyKey: string): Promise<T> {
   if (!String(idempotencyKey ?? '').trim()) {
     throw new ErrorV2('Falta la clave de idempotencia: sin ella una emisión cortada puede duplicar la nota. No se envió nada.', null, 'SIN_IDEMPOTENCIA', null);
+  }
+  // 🪤 El formato lo valida InfoManager y se verifica ACÁ primero: mandarla mal gasta el viaje y
+  // vuelve como `IDEMPOTENCY_KEY_INVALID`, un error que no dice nada de la corrección que se
+  // estaba haciendo. Pasó el 22/09/2026 con la NC de ARRIETA: la clave llevaba `:`.
+  if (!FORMATO_IDEMPOTENCIA.test(String(idempotencyKey).trim())) {
+    throw new ErrorV2(
+      `La clave de idempotencia "${idempotencyKey}" no tiene el formato que acepta InfoManager (8 a 128 caracteres, sólo letras, números, guión y guión bajo). No se envió nada.`,
+      null, 'IDEMPOTENCIA_MAL_FORMADA', null);
   }
   const c = conf();
   const jwt = await tokenV2();

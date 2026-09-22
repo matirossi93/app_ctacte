@@ -25,7 +25,7 @@ const CONF = {
 };
 for (const [k, v] of Object.entries(CONF)) process.env[k] = v;
 
-const { tokenV2, _resetV2, imV2Configurada, getV2, postV2, ErrorV2 } = await import('./imApiV2.js');
+const { tokenV2, _resetV2, imV2Configurada, getV2, postV2, ErrorV2, claveIdempotente } = await import('./imApiV2.js');
 
 /** Simula el /oauth/token: cada llamada devuelve un token distinto para poder distinguirlos. */
 let emitidos = 0;
@@ -151,8 +151,64 @@ describe('el POST', () => {
       if (String(url).endsWith('/oauth/token')) { emitidos += 1; return { data: { access_token: `tok-${emitidos}`, expires_in: 900 } } as any; }
       return { data: { id: 7 } } as any;
     });
-    const r = await postV2('/api/v2/notas-credito', {}, 'k1');
+    const r = await postV2('/api/v2/notas-credito', {}, 'clave-del-pool-1');
     expect(r).toEqual({ id: 7 });
+  });
+
+  /**
+   * 🔴 22/09/2026, primera NC real que se quiso emitir desde la pantalla de corrección (ARRIETA,
+   * factura B 50844). InfoManager la rechazó antes de mirar nada:
+   *
+   *   IDEMPOTENCY_KEY_INVALID: Idempotency-Key inválida: usar 8 a 128 caracteres [A-Za-z0-9_-]
+   *
+   * La clave la armaba el emisor como `${operacion}:${indice}`, y los dos puntos NO están en ese
+   * conjunto. El viaje se gastaba entero para volver con un error que no habla de la corrección.
+   */
+  it('🔴 una clave con caracteres que IM no acepta NO se manda: el error sería ilegible', async () => {
+    mockToken();
+    await expect(postV2('/api/v2/notas-credito', {}, 'a1b2c3d4-e5f6:0')).rejects.toThrow(/formato que acepta InfoManager/i);
+    expect(vi.mocked(axios.post).mock.calls.filter(c => String(c[0]).includes('/notas-credito'))).toHaveLength(0);
+  });
+
+  it('🪤 y una demasiado corta tampoco: IM pide 8 caracteres como mínimo', async () => {
+    mockToken();
+    await expect(postV2('/api/v2/notas-credito', {}, 'k1')).rejects.toThrow(/formato que acepta InfoManager/i);
+    expect(vi.mocked(axios.post).mock.calls.filter(c => String(c[0]).includes('/notas-credito'))).toHaveLength(0);
+  });
+});
+
+/**
+ * La clave se arma con lo que identifica LA OPERACIÓN, no con azar: si la primera llamada emitió
+ * y se perdió la respuesta, el reintento con la misma clave devuelve esa nota en vez de crear
+ * otra. Un `randomUUID()` por intento sería exactamente lo contrario.
+ */
+describe('la clave de idempotencia', () => {
+  it('🔴 es la MISMA para las mismas partes: de eso depende que un reintento no duplique', () => {
+    const a = claveIdempotente('7f3a9c21-0b64-4a1e-9d55-2c8e1f4b7a90', 0);
+    const b = claveIdempotente('7f3a9c21-0b64-4a1e-9d55-2c8e1f4b7a90', 0);
+    expect(a).toBe(b);
+    expect(a).not.toBe(claveIdempotente('7f3a9c21-0b64-4a1e-9d55-2c8e1f4b7a90', 1));
+  });
+
+  it('🔴 lo que sale siempre cumple el formato de InfoManager', () => {
+    for (const partes of [['op:1', 0], ['a', 0], ['con espacios y acentós', 12], ['x'.repeat(300), 7]] as Array<[string, number]>) {
+      expect(claveIdempotente(...partes)).toMatch(/^[A-Za-z0-9_-]{8,128}$/);
+    }
+  });
+
+  it('🪤 sin nada con qué armarla no inventa una: emitir sin clave puede duplicar la nota', () => {
+    expect(() => claveIdempotente('', '')).toThrow(/clave de idempotencia/i);
+  });
+
+  /**
+   * 🔴 Dos operaciones distintas NO pueden terminar en la misma clave: InfoManager devolvería la
+   * nota de la primera y la segunda corrección no se emitiría nunca. Con relleno de `0` pasaba:
+   * `op-7` + `0` y `op-70` + `0` daban las dos `op-7-000`.
+   */
+  it('🔴 dos claves cortas distintas NO colisionan al rellenarse', () => {
+    expect(claveIdempotente('op-7', 0)).not.toBe(claveIdempotente('op-70', 0));
+    // Y una parte vacía no se saltea en silencio: saltearla es justamente cómo colisionaban.
+    expect(() => claveIdempotente('op-1', '')).toThrow(/clave de idempotencia/i);
   });
 });
 

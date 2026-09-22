@@ -12,7 +12,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const m = vi.hoisted(() => ({ v2: vi.fn(), nc: vi.fn(), nd: vi.fn(), configurada: vi.fn(() => true) }));
 vi.mock('./emitirNotaV2.js', () => ({ emitirNotaV2: m.v2 }));
 vi.mock('./facturarIM.js', () => ({ emitirNotaCredito: m.nc, emitirNotaDebito: m.nd, letraDeFactura: (c: string) => (c === 'RI' ? 'A' : 'B') }));
-vi.mock('./imApiV2.js', () => ({ imV2Configurada: m.configurada }));
+// `claveIdempotente` va de VERDAD: es la regla de formato que InfoManager impone, y lo que
+// se quiere probar acá es que la clave que manda el emisor la cumpla.
+vi.mock('./imApiV2.js', async original => ({ ...(await original<any>()), imV2Configurada: m.configurada }));
 
 const { emitirComponente } = await import('./emisorNotas.js');
 
@@ -54,14 +56,29 @@ describe('cuándo sale por la API nueva', () => {
     await emitirComponente(OP as any, comp({ subtipo: 'FI' }) as any);
     await emitirComponente(OP as any, comp({ subtipo: 'FI' }) as any);
     const claves = m.v2.mock.calls.map(c => c[0].idempotencyKey);
-    expect(claves[0]).toBe('op-77:0');
+    expect(claves[0]).toBe('op-77-0-');   // el guión final es el relleno hasta los 8 que pide IM
     expect(claves[1]).toBe(claves[0]);
   });
 
+  /**
+   * 🔴 22/09/2026, la primera NC real desde la pantalla de corrección (ARRIETA, factura B 50844).
+   * Esta prueba decía `'op-77:1'` — o sea afirmaba el formato ROTO— y por eso el bug llegó a
+   * producción: InfoManager acepta 8 a 128 caracteres `[A-Za-z0-9_-]` y los dos puntos no entran.
+   * El rechazo volvía como `IDEMPOTENCY_KEY_INVALID`, que no dice nada de la corrección.
+   */
   it('🔴 y cambia con el paso: dos notas de la misma operación no comparten clave', async () => {
     await emitirComponente(OP as any, comp({ subtipo: 'FI' }) as any);
     await emitirComponente({ ...OP, indice: 1 } as any, { tipo: 'ND', datos: DATOS } as any);
-    expect(m.v2.mock.calls[1][0].idempotencyKey).toBe('op-77:1');
+    expect(m.v2.mock.calls[1][0].idempotencyKey).toBe('op-77-1-');
+  });
+
+  it('🔴 y sale SIEMPRE con el formato que acepta InfoManager, venga como venga el id', async () => {
+    for (const id of ['op:77', 'a', 'operación con acentos y espacios']) {
+      await emitirComponente({ ...OP, id } as any, comp({ subtipo: 'FI' }) as any);
+    }
+    for (const c of m.v2.mock.calls) {
+      expect(c[0].idempotencyKey).toMatch(/^[A-Za-z0-9_-]{8,128}$/);
+    }
   });
 
   it('una nota de débito no lleva subtipo: es sólo de la NC', async () => {
