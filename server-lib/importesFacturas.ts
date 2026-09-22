@@ -54,8 +54,17 @@ export async function actualizarImportesFacturas<T extends Record<string, any>>(
        * quedaría leída de la cabecera nueva y el importe de una vieja, que es justo lo contrario
        * de compartir una sola lectura. Las rutas que no inyectan lector conservan su cache.
        */
+      /**
+       * 🔴 EL AVISO TIENE QUE DECIR QUÉ PASÓ. Hasta el 22/09/2026 las tres situaciones daban
+       * el mismo texto —"no pude verificar el importe, actualizá"— y Mati mandó la captura de una
+       * hoja con ese cartel sobre la factura 58879767: estaba ANULADA y borrada de InfoManager,
+       * con su remito todavía vivo en la hoja. Actualizar no iba a cambiar nada, y el mensaje
+       * mandaba justo a eso.
+       */
       const normalizar = (cab: any) => {
-        if (cab.existe !== true || cab.anulada !== false || cab.total == null) throw new Error(`No pude verificar el importe actual de la factura ${id} en InfoManager. Actualizá antes de continuar.`);
+        if (cab.existe === false) throw new Error(`La factura ${id} ya no está en InfoManager: se anuló y se borró. El remito sigue en la hoja, así que hay que decidir qué hacer con ese pedido.`);
+        if (cab.anulada === true) throw new Error(`La factura ${id} está ANULADA en InfoManager. El remito sigue en la hoja, así que hay que decidir qué hacer con ese pedido.`);
+        if (cab.existe !== true || cab.anulada !== false || cab.total == null) throw new Error(`No pude leer la factura ${id} en InfoManager (no contestó o vino incompleta). Actualizá antes de continuar.`);
         return { ...cab, id, anulada: 'N' };
       };
       const c = opciones.leerCabecera
@@ -82,7 +91,24 @@ export async function actualizarImportesFacturas<T extends Record<string, any>>(
       if (!opciones.tolerarErrores) throw new Error(mensaje);
       return { ...f, total_snapshot: f.total_snapshot ?? f.total, total: null, importe_fuente: 'no_verificado', importe_error: mensaje };
     }
-    return { ...f, cod_empresa: Number(v.cod_empresa), empresa_fuente: f.cod_empresa == null ? 'factura_im' : f.empresa_fuente,
+    /**
+     * 🔴 LA FACTURA CAMBIÓ DE TALONARIO. 22/09/2026: dos de 389 facturas emitidas por la app
+     * aparecieron en InfoManager con otro número y otro punto de venta —reasignadas al talonario
+     * del controlador fiscal (el 15) al imprimirlas—. Se descubrió porque Mati notó una impresión
+     * rara, dos semanas después de la primera.
+     *
+     * 🪤 Va por un campo PROPIO y no por `importe_error`: la factura existe y su total es
+     * bueno, así que invalidarla bloquearía armar la hoja por algo que no impide despacharla. Es
+     * un aviso para que alguien mire, no un freno.
+     */
+    const numeroIM = Number(v.numero);
+    const pvIM = Number(v.punto_de_venta);
+    const registrado = Number(f.im_factura_numero);
+    const cambio = Number.isFinite(registrado) && registrado > 0 && Number.isFinite(numeroIM) && numeroIM !== registrado;
+    const aviso = cambio
+      ? { aviso_comprobante: `Esta factura salió como ${registrado} y en InfoManager figura como ${numeroIM}${Number.isFinite(pvIM) ? ` (punto de venta ${pvIM})` : ''}: la movieron de talonario. Verificala antes de seguir.` }
+      : {};
+    return { ...f, ...aviso, cod_empresa: Number(v.cod_empresa), empresa_fuente: f.cod_empresa == null ? 'factura_im' : f.empresa_fuente,
       total_snapshot: f.total_snapshot ?? f.total, total: Number(v.total), importe_fuente: 'factura_im', importe_error: null };
   });
 }

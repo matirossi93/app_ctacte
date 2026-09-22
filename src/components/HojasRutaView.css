@@ -334,3 +334,15 @@ button.hr-badge { cursor: pointer; font-family: inherit; }
 .hr-hoja-nombre:hover:not(:disabled) { border-color: #d9c9ae; }
 .hr-hoja-nombre:focus { border-color: #06652F; background: #fff; outline: none; }
 .hr-hoja-nombre:disabled { background: transparent; border-color: transparent; }
+
+/* Aviso de que la factura cambió de talonario. Distinto de `hr-sinpeso`, que marca lo que NO se
+   puede elegir: esto se puede despachar igual, pero alguien tiene que mirarlo. */
+.hr-aviso-talonario {
+    margin-top: 0.25rem;
+    padding: 0.3rem 0.5rem;
+    border-left: 3px solid #8a5a00;
+    background: #fffaf0;
+    color: #8a5a00;
+    font-size: 0.78rem;
+    line-height: 1.3;
+}

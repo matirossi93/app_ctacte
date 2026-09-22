@@ -160,7 +160,7 @@ describe('el camino de asignar no acepta un importe sin acreditar', () => {
     m.fetchVentas.mockResolvedValue([]);
     await expect(enriquecerEntregas([
       { im_comprobante_id: '2', im_factura_id: '901', cod_cliente: 350, cod_empresa: 1, total: 563780.91, fecha: '2026-09-12' },
-    ] as any)).rejects.toThrow(/No pude verificar/i);
+    ] as any)).rejects.toThrow(/ya no está en InfoManager/i);
   });
 
   it('🪤 y con tolerancia explícita devuelve la fila marcada, sin importe', async () => {

@@ -44,6 +44,8 @@ interface Pendiente {
     /** 🪤 `null` cuando no se pudo verificar contra InfoManager: NO es cero. */
     total: number | null;
     importe_error?: string | null;
+    /** La factura figura en InfoManager con otro número o punto de venta: avisa, no bloquea. */
+    aviso_comprobante?: string | null;
     bultos: number;
     kg: number;
     renglones_sin_peso: number; peso_completo?: boolean;
@@ -63,6 +65,8 @@ interface Pendiente {
 
 interface HojaPedido {
     importe_error?: string | null;
+    /** La factura figura en InfoManager con otro número o punto de venta: avisa, no bloquea. */
+    aviso_comprobante?: string | null;
     tipo_comprobante?: string; peso_completo?: boolean;
     im_comprobante_id: string;
     im_numero: number | null;
@@ -745,6 +749,14 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
                                         </div>
                                         {/* 🔑 Por qué no se puede elegir. Se lee, no se adivina de un tooltip. */}
                                         {p.importe_error && <div className="hr-sinpeso" role="status">{p.importe_error}</div>}
+                                        {/**
+                                          * 🔴 La factura apareció en otro talonario. NO impide elegir el pedido: la
+                                          * factura existe y su importe es bueno, sólo que la movieron. Bloquear acá
+                                          * frenaría un despacho por algo que no lo impide (Mati, 22/09/2026: dos
+                                          * facturas terminaron en el talonario del controlador fiscal al imprimirlas,
+                                          * y nos enteramos dos semanas después).
+                                          */}
+                                        {p.aviso_comprobante && <div className="hr-aviso-talonario" role="status">{p.aviso_comprobante}</div>}
                                         {/* 🔑 Lo que escribió el vendedor. Acá decide en qué camión va y en
                                             qué orden, y ahí puede decir "entregar el jueves temprano" o
                                             "avisar antes de ir" (Mati, 08/09/2026). */}
