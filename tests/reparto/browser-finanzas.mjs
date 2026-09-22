@@ -20,6 +20,12 @@ try {
    await page.getByRole('button',{name:'Corregir',exact:true}).click();
    await page.locator('.cf-tabla').waitFor();
    assert(await page.locator('.cf-modal').getByText(/50424/).count()>0,'No abre la factura correcta');
+   // 🔑 Mati (22/09/2026): "en la parte de emisión de la NC estaría bueno que aparezcan los
+   // códigos de los productos". Es lo único que distingue MAIZ QUEBRADO FINO de MEDIANO.
+   const fila = page.locator('.cf-tabla tbody tr').first();
+   assert((await fila.innerText()).includes('PRODUCTO A'),'La fila no muestra la descripción');
+   assert(/C[oó]d\.\s*11\b/.test(await fila.innerText()),
+     `La fila no muestra el código del artículo: "${await fila.innerText()}"`);
   } finally {await ctx.close();}
  });
  await test('Corrección detecta cambio de productos con el mismo importe total', async()=>{

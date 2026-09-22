@@ -445,7 +445,16 @@ export function CorregirFacturaModal(
                   return (
                     <tr key={f.cod_articulo} className={cambio ? 'cambiado' : ''}>
                       <td>{f.descripcion ?? `Artículo ${f.cod_articulo}`}
-                        <div className="cf-lista"><select aria-label={`Lista de ${f.descripcion}`} value={f.cod_lista_precios ?? ''}
+                        {/**
+                          * 🔑 EL CÓDIGO A LA VISTA. Mati (22/09/2026): *"en la parte de emisión de
+                          * la NC estaría bueno que aparezcan los códigos de los productos"*. Es lo
+                          * que se busca en InfoManager, y es lo único que distingue descripciones
+                          * que se parecen: MAIZ QUEBRADO FINO / MEDIANO / GRUESO x 30 KG.
+                          *
+                          * Dice "Cód." igual que el buscador de abajo, que ya lo mostraba así.
+                          */}
+                        <div className="cf-lista"><span className="cf-cod">Cód. {f.cod_articulo}</span>
+                          <select aria-label={`Lista de ${f.descripcion}`} value={f.cod_lista_precios ?? ''}
                           onChange={e => cambiarLista(f.cod_articulo, Number(e.target.value))}>
                           {!LISTAS.some(([cod]) => cod === f.cod_lista_precios) && <option value={f.cod_lista_precios ?? ''} disabled>{f.cod_lista_precios ? `Lista IM ${f.cod_lista_precios}` : 'Precio original'}</option>}
                           {LISTAS.map(([cod, nombre]) => <option key={cod} value={cod}>{nombre}</option>)}
