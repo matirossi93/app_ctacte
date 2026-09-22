@@ -41,6 +41,8 @@ export function avisosDeListaPorPedido(
   catalogo: Map<number, ArticuloInfo>,
   reglas: ReglaLista[],
   descuentos: ReglaDescuento[],
+  /** Kilos por bolsa de cada granel: define cuántos bultos aporta un renglón a granel. */
+  formatos?: Map<number, number>,
 ): { avisos: Map<string, string[]>; gravedad: Map<string, Gravedad> } {
   const avisos = new Map<string, string[]>();
   const gravedad = new Map<string, Gravedad>();
@@ -78,7 +80,7 @@ export function avisosDeListaPorPedido(
       }
     }
 
-    const r = evaluarPedido(items as any, catalogo, reglas, descuentos);
+    const r = evaluarPedido(items as any, catalogo, reglas, descuentos, formatos);
     const textos = new Map<string, string[]>();
     for (const a of r.avisos) {
       const id = duenio[a.idx];

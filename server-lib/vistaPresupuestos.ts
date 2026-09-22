@@ -291,7 +291,7 @@ async function armarVistaRango(desde: string, hasta: string, forzar = false, ven
        * El agrupado vive en `listasPorCliente.ts` para poder testearlo sin toda esta pantalla.
        */
       const r = avisosDeListaPorPedido(
-        presupuestos as any, renglones as any, catListas, reglas, descuentos);
+        presupuestos as any, renglones as any, catListas, reglas, descuentos, await formatosDeBolsa());
       avisosPorPedido = r.avisos;
       gravedadPorPedido = r.gravedad;
     } catch (e: any) {

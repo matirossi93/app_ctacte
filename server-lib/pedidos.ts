@@ -14,6 +14,7 @@ import {
   buscarPresupuestoPorCompatibilidad, leerComprobante,
 } from './infomanager.js';
 import type { JwtPayload } from './auth.js';
+import { formatosDeBolsa } from './formatosBolsa.js';
 import {
   clasificarArticulo, evaluarPedido,
   type ArticuloInfo, type ReglaLista, type ReglaDescuento, type ResultadoPedido,
@@ -168,7 +169,11 @@ async function controlarListas(
     // Las dos salen de Supabase (no de IM), así que en paralelo no rompe la regla de oro.
     const [reglas, descuentos] = await Promise.all([reglasActivas(), descuentosActivos()]);
     const catalogo = await catalogoParaListas();
-    const r = evaluarPedido(items, catalogo, reglas, descuentos);
+    // 🔑 Los kilajes de bolsa: definen cuántos bultos aporta un renglón a granel (300 kg de un
+    // producto con bolsa de 30 son 10 bultos, no 1). Salen de cache; si fallan no se frena la
+    // validación, el granel vuelve a contar como antes y el vendedor igual puede cargar.
+    const formatos = await formatosDeBolsa().catch(() => undefined);
+    const r = evaluarPedido(items, catalogo, reglas, descuentos, formatos);
     // Silenciar el falso positivo cuesta hasta 2 GETs a IM por renglón, EN SERIE. Vale la
     // pena mientras el vendedor arma el carrito y va a leer los carteles; no vale nada al
     // confirmar, donde el resultado se guarda pero ya nadie lo mira.

@@ -250,6 +250,8 @@ function medirRenglon(r: RenglonPedido, art: ArticuloInfo | undefined) {
 function medirPorArticulo(
   renglones: RenglonPedido[],
   catalogo: Map<number, ArticuloInfo>,
+  /** Kilos por bolsa de cada granel (`formatos_bolsa`). Sin él se usa el mínimo de siempre. */
+  formatos?: Map<number, number>,
 ): Map<number, { bultos: number; kilos: number; unidades: number }> {
   const kilosPorArt = new Map<number, number>();
   const bultosPorArt = new Map<number, number>();
@@ -267,19 +269,34 @@ function medirPorArticulo(
   const out = new Map<number, { bultos: number; kilos: number; unidades: number }>();
   for (const [cod, kilos] of kilosPorArt) {
     const art = catalogo.get(cod);
-    // El granel suma UN bulto a partir de 20 kg y no acumula (Mati: "60 kg siguen siendo 1").
+    /**
+     * 🔄 22/09/2026 — EL GRANEL CUENTA BOLSAS. Antes sumaba UN bulto desde 20 kg y no
+     * acumulaba ("60 kg siguen siendo 1"), así que 300 kg y 25 kg pesaban igual para la promo
+     * general. Mati, sobre el pedido de CASTILLO: *"no está reconociendo que tiene 10 bultos el
+     * cliente"* — llevaba 300 kg de maíz molido, que son 10 bolsas de 30.
+     *
+     * Ahora son `kilos ÷ kilaje de su bolsa`, con el kilaje de `formatos_bolsa` (el mismo que
+     * carga la oficina en la pantalla de fraccionado). Sin kilaje cargado se usan los 20 kg de
+     * siempre, que para 25 kg da lo mismo que antes y para 300 ya no.
+     *
+     * 🪤 Sin el mapa de formatos se comporta exactamente como antes: las rutas que todavía no
+     * lo pasan no pueden cambiar de precio sin que nadie lo note.
+     */
+    const porBolsa = Math.max(1, Number(formatos?.get(cod)) || KG_PARA_CONTAR_BULTO);
     const bultos = art?.es_bulto
       ? (bultosPorArt.get(cod) ?? 0)
-      : (kilos >= KG_PARA_CONTAR_BULTO ? 1 : 0);
+      : (formatos ? Math.floor(kilos / porBolsa) : (kilos >= KG_PARA_CONTAR_BULTO ? 1 : 0));
     out.set(cod, { bultos, kilos, unidades: unidadesPorArt.get(cod) ?? 0 });
   }
   return out;
 }
 
 /** Bultos surtidos de todo el pedido — lo que define si entra la promo general. */
-export function bultosDelPedido(renglones: RenglonPedido[], catalogo: Map<number, ArticuloInfo>): number {
+export function bultosDelPedido(
+  renglones: RenglonPedido[], catalogo: Map<number, ArticuloInfo>, formatos?: Map<number, number>,
+): number {
   let n = 0;
-  for (const m of medirPorArticulo(renglones, catalogo).values()) n += m.bultos;
+  for (const m of medirPorArticulo(renglones, catalogo, formatos).values()) n += m.bultos;
   return n;
 }
 
@@ -370,8 +387,10 @@ export function evaluarPedido(
   catalogo: Map<number, ArticuloInfo>,
   reglas: ReglaLista[],
   reglasDescuento: ReglaDescuento[] = [],
+  /** Kilos por bolsa de cada granel. Sin él, el granel cuenta como antes del 22/09/2026. */
+  formatos?: Map<number, number>,
 ): ResultadoPedido {
-  const bultos = bultosDelPedido(renglones, catalogo);
+  const bultos = bultosDelPedido(renglones, catalogo, formatos);
   const promoGeneral = bultos >= BULTOS_PROMO_GENERAL;
 
   // 🪤 Una línea comercial puede estar partida en VARIOS subrubros de IM: "Tiernito"
@@ -382,7 +401,7 @@ export function evaluarPedido(
   // La línea es el `nombre` de la regla, que es el mismo para todos sus subrubros.
   // Se mide por artículo y no por renglón: ver medirPorArticulo. Si el vendedor parte la
   // cantidad de un producto en dos renglones, el cliente igual se lleva la suma.
-  const porArticulo = medirPorArticulo(renglones, catalogo);
+  const porArticulo = medirPorArticulo(renglones, catalogo, formatos);
   const reglasPorArticulo = new Map<number, ReglaLista[]>();
   const porLineaDescuento = new Map<string, { bultos: number; kilos: number }>();
   const porLinea = new Map<string, { bultos: number; kilos: number; unidades: number }>();

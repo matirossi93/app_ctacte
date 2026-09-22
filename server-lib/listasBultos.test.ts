@@ -70,3 +70,53 @@ describe('bultos comerciales confirmados el 11/09',()=>{
     expect(evaluarPedido([renglon(921,20)],cat,[porUnidad[0],{...porUnidad[1],unidad:'kg'}]).avisos[0].lista_sugerida).toBe(12);
   });
 });
+
+/**
+ * 🔄 22/09/2026 — EL GRANEL CUENTA BOLSAS, NO "UNA Y LISTA".
+ *
+ * Mati, sobre el pedido de CASTILLO (PR 58967): *"acá no está reconociendo que tiene 10 bultos
+ * el cliente como para que al maíz quebrado le corresponda precio de lista 2"*. Llevaba 300 kg
+ * de maíz molido + 30 de alubia + 25 de molido blanco + 1 bolsa cerrada, y la app contaba
+ * **4 bultos**: la regla vieja daba 1 bulto por granel desde 20 kg y no escalaba, así que 300 kg
+ * y 25 kg pesaban igual.
+ *
+ * 🔴 ESTO REVIERTE una definición anterior del propio Mati —"60 kg siguen siendo 1"— y se hizo
+ * con el impacto medido a la vista: sobre 162 pedidos vivos, 5 (3%) pasan a alcanzar la promo
+ * general. Si algún día el número se dispara, mirar acá primero.
+ */
+describe('los bultos de un granel salen de su bolsa', () => {
+  const art = (cod: number, descripcion: string, um = 'Kilos') =>
+    [cod, clasificarArticulo({ cod_articulo: cod, descripcion, subrubro: 'x', unidad_de_medida: um, equivalencia_um: 1 })] as const;
+  const CAT = new Map([art(719, 'MAIZ MOLIDO AMARILLO'), art(723, 'POROTO ALUBIA'), art(613, 'PASAS CON SEMILLA')]);
+  const FORMATOS = new Map([[719, 30], [723, 30]]);
+  const r = (cod: number, cantidad: number) => ({ cod_articulo: cod, cantidad, cod_lista: 12 });
+
+  it('🔑 300 kg con bolsa de 30 son 10 bultos, no 1', () => {
+    expect(bultosDelPedido([r(719, 300)], CAT as any, FORMATOS)).toBe(10);
+  });
+
+  it('🔑 una bolsa justa es un bulto', () => {
+    expect(bultosDelPedido([r(723, 30)], CAT as any, FORMATOS)).toBe(1);
+  });
+
+  it('🪤 sin kilaje cargado se usan 20 kg, que es la regla de siempre', () => {
+    expect(bultosDelPedido([r(613, 100)], CAT as any, FORMATOS)).toBe(5);
+    expect(bultosDelPedido([r(613, 25)], CAT as any, FORMATOS)).toBe(1);
+  });
+
+  it('🔴 lo que no llega a una bolsa sigue sin contar', () => {
+    expect(bultosDelPedido([r(719, 29)], CAT as any, FORMATOS)).toBe(0);
+    expect(bultosDelPedido([r(613, 5)], CAT as any, FORMATOS)).toBe(0);
+  });
+
+  it('🪤 sin el mapa de formatos se comporta como antes de este cambio', () => {
+    // Las rutas que todavía no lo pasan no pueden cambiar de resultado sin que nadie lo note.
+    expect(bultosDelPedido([r(719, 300)], CAT as any)).toBe(1);
+  });
+
+  it('🔑 el pedido de CASTILLO: 300 + 30 + 25 kg pasan de 3 bultos a 12', () => {
+    const pedido = [r(719, 300), r(723, 30), r(613, 25)];
+    expect(bultosDelPedido(pedido, CAT as any)).toBe(3);
+    expect(bultosDelPedido(pedido, CAT as any, FORMATOS)).toBe(12);
+  });
+});
