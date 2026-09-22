@@ -1140,8 +1140,12 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
        * bien" y este momento pueden pasar horas, y en el medio se puede anular en InfoManager.
        * Facturar sobre un remito muerto deja una factura sin mercadería que la respalde y cierra
        * el pedido como si estuviera completo.
+       *
+       * 🪤 La condición es la MISMA que la del paso 2·bis (`f.im_remito_id`) y no la del estado:
+       * cualquier fila que llegue con un remito registrado se cierra sobre él, así que cualquiera
+       * tiene que pasar por esta verificación. Atarlo a `factura_pendiente` dejaba un hueco.
        */
-      if (f.estado_emision === 'factura_pendiente' && f.im_remito_id) {
+      if (f.im_remito_id) {
         const cabRe = await cabeceraComprobante(f.im_remito_id);
         if (cabRe.existe !== true || cabRe.anulada !== false) {
           fallados.push(`${quien}: el remito ${f.im_remito_numero ?? ''} ya no está vigente en InfoManager, o no pude verificarlo. NO se emitió la factura.`);
