@@ -70,7 +70,7 @@ vi.mock('./supabase.js', () => ({ sb: m.sbMock, TENANT_ID: 'test-tenant', hasSup
 
 vi.mock('./versionPresupuesto.js', async original => ({ ...(await original<any>()), exigirHuella: vi.fn() }));
 
-const { facturarSeleccion, previsualizarFacturacion, tableroFacturacion, liberarReclamo, habilitarRemitoPendiente, registrarRemitoExistente, prepararFacturacion, articulosSinStockDelError, hayQueVerificarVigencia } = await import('./facturarPresupuestos.js');
+const { facturarSeleccion, previsualizarFacturacion, tableroFacturacion, liberarReclamo, habilitarRemitoPendiente, registrarRemitoExistente, registrarFacturaExistente, prepararFacturacion, articulosSinStockDelError, hayQueVerificarVigencia } = await import('./facturarPresupuestos.js');
 
 let tablas: Record<string, any> = {};
 /** Lo que contesta `maybeSingle`, que lee UNA fila: sin esto choca con las lecturas de lista. */
@@ -860,6 +860,89 @@ describe('no facturar dos veces lo mismo', () => {
     expect(r[0].estado).toBe('no_se_puede');
     expect(r[0].motivo).toMatch(/YA ESTÁ FACTURADO/i);
     expect(r[0].motivo).toMatch(/50370/);
+    // 🔑 Y la factura que encontró viaja con el pedido, para poder decir "sí, es ésa" (23/09/2026).
+    expect(r[0].ya_facturada).toMatchObject({ im_factura_id: 'f-vieja', numero: 50370 });
+  });
+
+  /**
+   * 🔑 LA SALIDA DEL AVISO. Mati (23/09/2026), con OTTONELLI: *"aparece como que está pendiente de
+   * facturar; cuando lo queremos hacer nos sale que está facturado, pero no lo asocia con la
+   * factura y remito hechos como para habilitarnos a hacer la NC"*. Eran 386 pedidos así.
+   */
+  describe('registrar la factura que ya estaba en InfoManager', () => {
+    const PR = '58725627', FA = '58747098', RE = '58747140';
+    const remito = (over: Record<string, any> = {}) => ({ id: RE, numero: 77207, tipo_comprobante: 'RE', cod_cliente: 1093,
+      cod_empresa: 1, anulada: 'N', fecha: '2026-09-08', observaciones: ` [Remito Automático -FA:${FA}]`, ...over });
+    const enIM = (fa: Record<string, any> = {}) => m.cabeceraComprobante.mockImplementation(async (id: string) => String(id) === FA
+      ? { tipo_comprobante: 'FA', tipo_factura: 'B', numero: 50319, existe: true, anulada: false, total: 553389.21, fecha: '2026-09-08', ...fa }
+      : { tipo_comprobante: 'PR', numero: 58153, existe: true, anulada: false, total: 553389.21, fecha: '2026-09-08' });
+    const registrar = () => llamar(registrarFacturaExistente, { params: { comprobanteId: PR }, body: { im_factura_id: FA } });
+
+    beforeEach(() => {
+      tablasSingle['presupuestos_facturados'] = { data: null, error: null };
+      tablas['presupuestos_facturados'] = { data: [], error: null };
+      m.fetchVentas.mockResolvedValue([remito()]);
+      enIM();
+    });
+
+    it('🔑 la registra con su factura y su remito, y no emite nada', async () => {
+      const r = await registrar();
+      expect(r.status).toBe(200);
+      expect(r.body).toMatchObject({ ok: true, factura: 50319, remito: 77207 });
+      const alta = escrituras.find(e => e.op === 'insert' && e.tabla === 'presupuestos_facturados');
+      expect(alta?.valor).toMatchObject({ im_comprobante_id: PR, im_factura_id: FA, im_factura_numero: 50319,
+        im_factura_tipo: 'FA B', im_remito_id: RE, im_remito_numero: 77207, estado_emision: 'completo' });
+      expect(m.emitirFactura).not.toHaveBeenCalled();
+      expect(m.emitirRemito).not.toHaveBeenCalled();
+    });
+
+    it('🔴 no la registra si es de otro cliente', async () => {
+      enIM({ cod_cliente: 999 });
+      const r = await registrar();
+      expect(r.status).toBe(409);
+      expect(escrituras.some(e => e.op === 'insert')).toBe(false);
+    });
+
+    it('🔴 ni si no vale lo mismo al centavo', async () => {
+      enIM({ total: 553389.2 });
+      const r = await registrar();
+      expect(r.status).toBe(409);
+      expect(r.body.error).toMatch(/no valen lo mismo/i);
+      expect(escrituras.some(e => e.op === 'insert')).toBe(false);
+    });
+
+    it('🔴 ni si está anulada', async () => {
+      enIM({ anulada: true });
+      const r = await registrar();
+      expect(r.status).toBe(409);
+      expect(escrituras.some(e => e.op === 'insert')).toBe(false);
+    });
+
+    /** Registrada sin remito, el pedido figuraría entregado sin nada que lo respalde. */
+    it('🔴 ni sin su remito', async () => {
+      m.fetchVentas.mockResolvedValue([remito({ observaciones: 'otro remito cualquiera' })]);
+      const r = await registrar();
+      expect(r.status).toBe(404);
+      expect(r.body.error).toMatch(/remito/i);
+      expect(escrituras.some(e => e.op === 'insert')).toBe(false);
+    });
+
+    it('🔴 ni si esa factura ya es de otro pedido: sería contar la venta dos veces', async () => {
+      tablas['presupuestos_facturados'] = { data: [{ im_numero: 58999 }], error: null };
+      const r = await registrar();
+      expect(r.status).toBe(409);
+      // 🪤 El motivo exacto: el control del remito lee la misma tabla y frenaría igual, así que
+      // sólo con el texto se sabe que frenó el de la FACTURA (verificado rompiéndolo).
+      expect(r.body.error).toMatch(/esa factura ya está registrada en el pedido PR 58999/i);
+      expect(escrituras.some(e => e.op === 'insert')).toBe(false);
+    });
+
+    it('🪤 ni si el pedido ya tiene su facturación registrada', async () => {
+      tablasSingle['presupuestos_facturados'] = { data: { estado_emision: 'completo' }, error: null };
+      const r = await registrar();
+      expect(r.status).toBe(409);
+      expect(escrituras.some(e => e.op === 'insert')).toBe(false);
+    });
   });
 
   it('sin factura que le calce, se factura normalmente', async () => {

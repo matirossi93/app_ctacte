@@ -44,7 +44,7 @@ import {
 } from './infomanager.js';
 import { buscarFacturasYaEmitidas } from './facturaYaEmitida.js';
 import { emitirFactura, emitirRemito, emitirRemitoMasivo, letraDeFactura, proximoNumeroFactura,
-  claveDeSerie, ID_DESTINO as ID_DESTINO_FACTURA, type SerieComprobante } from './facturarIM.js';
+  claveDeSerie, ID_DESTINO as ID_DESTINO_FACTURA, type SerieComprobante, marcaDeFactura } from './facturarIM.js';
 import type { DatosComprobante } from './facturarIM.js';
 import { usuarioIM } from './pedidos.js';
 import { vistaDeRango, invalidarVista } from './vistaPresupuestos.js';
@@ -147,6 +147,13 @@ export interface Preparado {
    * facturar: avisa antes de que la factura salga y el remito no.
    */
   sin_stock?: Array<{ cod_articulo: number; descripcion: string; pedido: number; disponible: number | null }>;
+  /**
+   * 🔑 La factura de InfoManager que ya cubre este pedido, cuando se la encontró deduciendo
+   * (mismo cliente, mismo importe). Antes se usaba sólo para armar el texto del aviso y se tiraba:
+   * la oficina leía "parece que ya está facturado" y no tenía cómo decir "sí, es ésa". Viaja para
+   * que la pantalla ofrezca registrarla (ver `registrarFacturaExistente`).
+   */
+  ya_facturada?: { im_factura_id: string; numero: number | null; tipo: string; fecha: string | null } | null;
 }
 
 /**
@@ -296,9 +303,14 @@ export async function prepararFacturacion(
      */
     const ya = f.im_factura_id ? null : yaEmitidas.get(String(f.im_comprobante_id));
     if (ya) {
-      return no(ya.origen === 'nuestra'
+      const frenado = no(ya.origen === 'nuestra'
         ? `${quien}: ya se facturó desde el panel (${ya.tipo} ${ya.numero ?? ''}). No se factura de nuevo.`
         : `${quien}: parece que YA ESTÁ FACTURADO en InfoManager — hay una ${ya.tipo} ${ya.numero ?? ''} del mismo cliente por el mismo importe${ya.fecha ? ` del ${ya.fecha}` : ''}. Verificalo antes de emitir: si facturás igual, el cliente queda con dos facturas.`);
+      // Sólo la deducida se ofrece registrar: la "nuestra" ya está registrada en otro pedido.
+      if (ya.origen === 'deducida') {
+        frenado.ya_facturada = { im_factura_id: String(ya.im_factura_id), numero: ya.numero ?? null, tipo: ya.tipo, fecha: ya.fecha ?? null };
+      }
+      return frenado;
     }
 
     const todos = renglonesPorComp.get(String(f.im_comprobante_id)) ?? [];
@@ -558,6 +570,7 @@ export async function previsualizarFacturacion(req: Request & { user?: JwtPayloa
          * diferencia de inventario que alguien tiene que corregir.
          */
         sin_stock: p.sin_stock ?? [],
+        ya_facturada: p.ya_facturada ?? null,
       })),
       a_emitir: {
         facturas: listos.length,
@@ -781,6 +794,115 @@ export async function registrarRemitoExistente(req: Request & { user?: JwtPayloa
   // La pantalla de hojas de ruta tiene que ver el remito ya mismo.
   invalidarRemitos();
   res.json({ ok: true, comprobante: id, remito: numero, remito_id: remitoId });
+}
+
+/**
+ * POST /api/facturacion/factura-existente/:comprobanteId — body { im_factura_id }
+ *
+ * 🔑 EL PEDIDO YA SE FACTURÓ EN INFOMANAGER, Y LA APP NO LO SABÍA.
+ *
+ * Mati (23/09/2026), con la pantalla de OTTONELLI abierta: *"estamos queriendo hacer una NC de
+ * este cliente, de una factura de la semana anterior, pero aparece como que está pendiente de
+ * facturar. Cuando lo queremos hacer nos sale que está facturado, pero no lo asocia con la
+ * factura y remito hechos como para habilitarnos a hacer la NC"*.
+ *
+ * La app lo DETECTABA — `buscarFacturasYaEmitidas` encontraba la FA B 50319 del mismo cliente
+ * por el mismo importe— y frenaba la emisión, que es lo correcto. Pero ahí se terminaba: sin
+ * vínculo el pedido seguía "pendiente" para siempre, y sin factura registrada no había botón
+ * Corregir para hacerle la nota. Medido ese día: **386 pedidos** en esa situación, los que se
+ * facturaron con el circuito viejo (antes del 09/09) y los de las sucursales, que se facturan
+ * directo en IM.
+ *
+ * Esto es la salida: la persona que ve el aviso confirma que ES esa factura, y se registra. No
+ * se hace solo, a propósito: un cliente puede comprar dos veces lo mismo el mismo día, y el
+ * segundo pedido ser legítimo (ver `facturaYaEmitida.ts`).
+ *
+ * 🔴 No se registra a ciegas aunque lo pidan: todo se relee de InfoManager ahora. El pedido y la
+ * factura tienen que estar vigentes, ser del mismo cliente y la misma empresa, y valer lo mismo al
+ * centavo. La factura no puede estar ya atada a otro pedido. Y tiene que aparecer SU remito, por
+ * la marca `[Remito Automático -FA:<id>]` que deja InfoManager: un pedido registrado con la
+ * factura y sin remito quedaría como entregado sin nada que lo respalde.
+ */
+export async function registrarFacturaExistente(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  const id = String(req.params.comprobanteId ?? '').trim();
+  const idFactura = String(req.body?.im_factura_id ?? '').trim();
+  if (!/^\d+$/.test(id) || !/^\d+$/.test(idFactura)) {
+    res.status(400).json({ error: 'Falta el pedido o la factura.' }); return;
+  }
+  try {
+    // El pedido no puede tener ya una facturación registrada: sería pisarla.
+    const { data: yaEsta, error: errYa } = await sb().from('presupuestos_facturados')
+      .select('estado_emision').eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id).maybeSingle();
+    if (errYa) { res.status(500).json({ error: errYa.message }); return; }
+    if (yaEsta) { res.status(409).json({ error: 'Ese pedido ya tiene una facturación registrada. Actualizá la pantalla.' }); return; }
+
+    // 🔴 Una factura es de UN pedido: atarla a dos es contar la misma venta dos veces.
+    const { data: enOtro, error: errOtro } = await sb().from('presupuestos_facturados')
+      .select('im_numero').eq('tenant_id', TENANT_ID).eq('im_factura_id', idFactura).limit(1);
+    if (errOtro) { res.status(500).json({ error: errOtro.message }); return; }
+    if ((enOtro ?? []).length) {
+      res.status(409).json({ error: `Esa factura ya está registrada en el pedido PR ${(enOtro as any)[0].im_numero ?? ''}.` }); return;
+    }
+
+    const [pr, fa] = await Promise.all([cabeceraComprobante(id), cabeceraComprobante(idFactura)]);
+    if (pr.existe !== true || pr.anulada !== false || pr.tipo_comprobante !== 'PR') {
+      res.status(409).json({ error: 'No pude confirmar en InfoManager que el pedido siga vigente.' }); return;
+    }
+    if (fa.existe !== true || fa.anulada !== false || fa.tipo_comprobante !== 'FA') {
+      res.status(409).json({ error: 'No pude confirmar en InfoManager que la factura siga vigente.' }); return;
+    }
+    const centavos = (x: unknown) => Math.round(Number(x) * 100);
+    if (Number(fa.cod_cliente) !== Number(pr.cod_cliente) || Number(fa.cod_empresa) !== Number(pr.cod_empresa)) {
+      res.status(409).json({ error: `La factura ${fa.numero ?? ''} es de otro cliente o de otra empresa que el pedido. No se registra.` }); return;
+    }
+    if (pr.total == null || fa.total == null || centavos(fa.total) !== centavos(pr.total)) {
+      res.status(409).json({ error: `La factura ${fa.numero ?? ''} y el pedido no valen lo mismo. No se registra.` }); return;
+    }
+
+    // Su remito, por la marca que lleva. Mismo día que la factura, con un día de aire.
+    const dia = fa.fecha ?? fechaArgentina();
+    const corrida = (f: string, d: number) => new Date(Date.parse(`${f}T12:00:00Z`) + d * 864e5).toISOString().slice(0, 10);
+    let ventas: any[];
+    try { ventas = await fetchVentas(corrida(dia, -1), corrida(dia, 1), { sinCache: true }); }
+    catch (e: any) { res.status(502).json({ error: `No pude buscar el remito en InfoManager: ${e?.message ?? e}` }); return; }
+    const marca = marcaDeFactura(idFactura).trim();
+    const remitos = ventas.filter(v => String(v.tipo_comprobante ?? '').trim().toUpperCase() === 'RE'
+      && esDeLaEntrega(v, { im_comprobante_id: id, cod_cliente: Number(pr.cod_cliente), cod_empresa: Number(pr.cod_empresa) })
+      && String(v.observaciones ?? '').includes(marca));
+    if (!remitos.length) {
+      res.status(404).json({ error: `No encontré el remito de la factura ${fa.numero ?? ''} en InfoManager. Sin remito el pedido quedaría como entregado sin nada que lo respalde: no se registra.` });
+      return;
+    }
+    if (remitos.length > 1) {
+      res.status(409).json({ error: `La factura ${fa.numero ?? ''} tiene ${remitos.length} remitos en InfoManager. Resolvelo ahí antes de registrarla.` }); return;
+    }
+    const re = remitos[0];
+    const { data: reEnOtro, error: errRe } = await sb().from('presupuestos_facturados')
+      .select('im_numero').eq('tenant_id', TENANT_ID).eq('im_remito_id', String(re.id)).limit(1);
+    if (errRe) { res.status(500).json({ error: errRe.message }); return; }
+    if ((reEnOtro ?? []).length) {
+      res.status(409).json({ error: `El remito ${re.numero} ya está registrado en el pedido PR ${(reEnOtro as any)[0].im_numero ?? ''}.` }); return;
+    }
+
+    const { error } = await sb().from('presupuestos_facturados').insert({
+      tenant_id: TENANT_ID, im_comprobante_id: id, im_numero: pr.numero ?? null,
+      cod_cliente: Number(pr.cod_cliente), cod_empresa: Number(pr.cod_empresa) || PEDIDO_EMPRESA_DEFAULT,
+      fecha: pr.fecha ?? null, total: Number(pr.total),
+      im_factura_id: idFactura, im_factura_numero: fa.numero ?? null, im_factura_tipo: `FA ${fa.tipo_factura ?? ''}`.trim(),
+      im_remito_id: String(re.id), im_remito_numero: Number(re.numero) || null,
+      facturado_at: new Date(`${dia}T12:00:00Z`).toISOString(), facturado_por: req.user?.sub ?? null,
+      estado_emision: 'completo',
+    });
+    // El índice único frena a la segunda persona que lo registre a la vez.
+    if (error) { res.status(409).json({ error: 'Alguien lo registró mientras tanto. Actualizá la pantalla.' }); return; }
+
+    invalidarVista(); invalidarRemitos();
+    res.json({ ok: true, comprobante: id, factura: fa.numero ?? null, remito: Number(re.numero) || null });
+  } catch (err: any) {
+    console.error('[registrarFacturaExistente]', err?.message);
+    res.status(502).json({ error: err?.message ?? 'No se pudo registrar la factura.' });
+  }
 }
 
 /**

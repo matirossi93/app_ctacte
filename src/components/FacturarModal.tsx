@@ -44,6 +44,8 @@ interface PedidoPrevio {
      * igual. Casi siempre es una diferencia de inventario que hay que corregir.
      */
     sin_stock: Array<{ cod_articulo: number; descripcion: string; pedido: number; disponible: number | null }>;
+    /** La factura de InfoManager que ya cubre este pedido, si se la encontró. Se ofrece registrarla. */
+    ya_facturada?: { im_factura_id: string; numero: number | null; tipo: string; fecha: string | null } | null;
 }
 
 interface Previa {
@@ -105,6 +107,33 @@ export function FacturarModal(
      * factura tiene que llevar esa fecha, no la de hoy.
      */
     const [fechaEmision, setFechaEmision] = useState(hoyISO);
+    /** Sube cuando hay que volver a pedir la previa: después de registrar una factura existente. */
+    const [vueltaPrevia, setVueltaPrevia] = useState(0);
+    const [registrando, setRegistrando] = useState<string | null>(null);
+    /** Se registró algo desde acá: al cerrar, la pantalla de atrás tiene que recargarse. */
+    const [registroAlgo, setRegistroAlgo] = useState(false);
+
+    /**
+     * 🔑 "ES ESA FACTURA". Mati (23/09/2026): la app decía *"parece que ya está facturado en
+     * InfoManager"* y ahí se terminaba — el pedido quedaba pendiente para siempre y sin botón
+     * Corregir para hacerle una nota. El server vuelve a verificar todo contra InfoManager antes
+     * de registrar, así que el botón no puede atar la factura equivocada.
+     */
+    async function registrarFactura(p: PedidoPrevio) {
+        if (!p.ya_facturada) return;
+        setRegistrando(p.im_comprobante_id); setError(null);
+        try {
+            const r = await fetch(`/api/facturacion/factura-existente/${encodeURIComponent(p.im_comprobante_id)}`, {
+                method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify({ im_factura_id: p.ya_facturada.im_factura_id }),
+            });
+            const d = await r.json().catch(() => null);
+            if (!r.ok || !d?.ok) throw new Error(d?.error ?? `No se pudo registrar (HTTP ${r.status})`);
+            setRegistroAlgo(true);
+            setVueltaPrevia(n => n + 1);
+        } catch (e: any) { setError(e?.message ?? 'Error de conexión'); }
+        finally { setRegistrando(null); }
+    }
 
     useEffect(() => {
         const controller = new AbortController(); let vivo = true;
@@ -117,7 +146,7 @@ export function FacturarModal(
             })
             .catch(e => { if (vivo) setError(e?.message ?? 'Error de conexión'); });
         return () => { vivo = false; controller.abort(); };
-    }, [query]);
+    }, [query, vueltaPrevia]);
 
     // Mientras se está emitiendo, cerrar la pestaña deja comprobantes emitidos a medias y sin
     // que nadie vea dónde quedó. El navegador pregunta antes de irse.
@@ -156,7 +185,7 @@ export function FacturarModal(
     const enNegativo = (previa?.pedidos ?? []).filter(p => p.estado !== 'no_se_puede' && p.sin_stock?.length);
     // Si se intentó emitir, al cerrar SIEMPRE se recarga: aunque la respuesta no haya llegado,
     // del otro lado puede haber comprobantes nuevos.
-    const cerrar = () => { if (!operacionGlobal.enCurso.current) onClose(intentado || !!resultado); };
+    const cerrar = () => { if (!operacionGlobal.enCurso.current) onClose(intentado || !!resultado || registroAlgo); };
 
     const dialogo = useDialogoReparto(cerrar);
     return createPortal(
@@ -261,7 +290,19 @@ export function FacturarModal(
                                 <AlertTriangle size={16} />
                                 <div>
                                     <b>{noSePuede.length} pedido(s) NO se van a facturar</b> y quedan en la hoja:
-                                    <ul>{noSePuede.map(p => <li key={p.im_comprobante_id}>{p.motivo}</li>)}</ul>
+                                    <ul>{noSePuede.map(p => (
+                                        <li key={p.im_comprobante_id}>{p.motivo}
+                                            {p.ya_facturada && (
+                                                <button className="fac-btn ghost fac-registrar" disabled={!!registrando || emitiendo}
+                                                        onClick={() => void registrarFactura(p)}
+                                                        title="La registra como la factura de este pedido, con su remito. Antes vuelve a verificar en InfoManager que sea del mismo cliente y por el mismo importe.">
+                                                    {registrando === p.im_comprobante_id
+                                                        ? <><Loader2 className="spin" size={13} /> Registrando…</>
+                                                        : <>Es esa: registrar la {p.ya_facturada.tipo} {p.ya_facturada.numero ?? ''}</>}
+                                                </button>
+                                            )}
+                                        </li>
+                                    ))}</ul>
                                 </div>
                             </div>
                         )}

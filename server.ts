@@ -55,7 +55,7 @@ import { listProductGoals, upsertProductGoal, deleteProductGoal, searchArticulos
 import { guardarKilajeDeBolsa } from './server-lib/kilajeDeBolsa.js';
 import { crearPedido, listPedidos, getPedidoById, anularPedido, creditoCliente, precioArticulo, catalogoPedido, validarListasPedido, editarPedido } from './server-lib/pedidos.js';
 import { pendientesDelDia, arrastreDelDia, impresionHoja, sugerenciaDelDia, listarHojas, listarCamiones, crearHoja, editarHoja, borrarHoja, asignarPedidos, quitarPedido } from './server-lib/hojasRuta.js';
-import { tableroFacturacion, previsualizarFacturacion, facturarSeleccion, liberarReclamo, habilitarRemitoPendiente, registrarRemitoExistente } from './server-lib/facturarPresupuestos.js';
+import { tableroFacturacion, previsualizarFacturacion, facturarSeleccion, liberarReclamo, habilitarRemitoPendiente, registrarRemitoExistente, registrarFacturaExistente } from './server-lib/facturarPresupuestos.js';
 import { descartarRemitoSobrante, habilitarFacturaPendiente } from './server-lib/conciliarEmision.js';
 // Corregir una factura ya emitida, con notas de crédito y de débito.
 import { verFacturaParaCorregir, corregirFactura, historialCorrecciones, notaFinanciera, moverFechaFactura, cancelarCorreccion } from './server-lib/correccionFactura.js';
@@ -698,6 +698,8 @@ app.delete('/api/facturacion/reclamo/:comprobanteId', requireJwt, (req: any, res
 app.post('/api/facturacion/remito-pendiente/:comprobanteId', requireJwt, (req: any, res) => habilitarRemitoPendiente(req, res));
 // El remito se hizo a mano en IM: se verifica contra InfoManager y se registra (no emite nada).
 app.post('/api/facturacion/remito-existente/:comprobanteId', requireJwt, (req: any, res) => registrarRemitoExistente(req, res));
+// El pedido ya se facturó en IM y la app no lo sabía: se confirma y se registra (no emite nada).
+app.post('/api/facturacion/factura-existente/:comprobanteId', requireJwt, (req: any, res) => registrarFacturaExistente(req, res));
 // 🔴 Se anuló la factura y el remito quedó vivo. Las dos salidas, y las decide una persona.
 // El remito NO corresponde: SE ANULA EN INFOMANAGER (devuelve stock), sale de la hoja y libera el pedido.
 app.post('/api/facturacion/remito-sobrante/:comprobanteId', requireJwt, (req: any, res) => descartarRemitoSobrante(req, res));

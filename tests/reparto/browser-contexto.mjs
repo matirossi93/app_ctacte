@@ -154,6 +154,39 @@ try{
   }finally{release();await ctx.close();}
  });
 
+ /**
+  * 🔑 Mati (23/09/2026), con OTTONELLI: la app decía "parece que ya está facturado en IM" y ahí se
+  * terminaba — el pedido quedaba pendiente para siempre y sin botón Corregir para hacerle una NC.
+  */
+ await test('Un pedido ya facturado en IM se registra con un clic y deja de figurar pendiente',async()=>{
+  const {page,ctx}=await setup();
+  try{
+   let vuelta=0,registro=null;
+   const base={fecha_maxima_emision:'2026-09-30',max_adelanto_dias:7,punto_de_venta:777,a_emitir:{facturas:0,remitos:0,clientes:0,total:0,letras:{A:0,B:0}}};
+   await page.route('**/api/facturacion/previa?**',r=>{
+    vuelta++;
+    const p=vuelta===1
+     ?{...rows[0],estado:'no_se_puede',letra:'B',renglones:1,sin_stock:[],motivo:'CLIENTE ALFA (PR 101): parece que YA ESTÁ FACTURADO en InfoManager — hay una FA B 50319 del mismo cliente por el mismo importe.',
+       ya_facturada:{im_factura_id:'58747098',numero:50319,tipo:'FA B',fecha:'2026-09-08'}}
+     :{...rows[0],estado:'facturado',letra:'B',renglones:1,sin_stock:[],motivo:null,im_factura_numero:50319,im_remito_numero:77207,ya_facturada:null};
+    return reply(r,{...base,no_se_puede:vuelta===1?1:0,ya_facturados:vuelta===1?0:1,pedidos:[p]});
+   });
+   await page.route('**/api/facturacion/factura-existente/**',r=>{registro={url:r.request().url(),body:r.request().postDataJSON()};return reply(r,{ok:true,factura:50319,remito:77207});});
+   await page.locator('.of-tabs').getByRole('button',{name:'Facturación',exact:true}).click();
+   await page.locator('.fc-tabla tbody input[type=checkbox]').first().check();
+   await page.getByRole('button',{name:'Facturar 1',exact:true}).click();
+   const boton=page.locator('.fac-registrar');
+   await boton.waitFor();
+   assert(/FA B 50319/.test(await boton.innerText()),`El botón no nombra la factura: "${await boton.innerText()}"`);
+   await boton.click();
+   await page.locator('.fac-hecho').waitFor();
+   assert(registro&&/factura-existente\/101$/.test(registro.url),'No pidió registrar el pedido correcto');
+   assert(registro.body.im_factura_id==='58747098','Mandó otra factura');
+   assert((await page.locator('.fac-hecho').innerText()).includes('50319'),'No muestra la factura registrada');
+   assert(await page.locator('.fac-registrar').count()===0,'Sigue ofreciendo registrar algo ya registrado');
+  }finally{await ctx.close();}
+ });
+
  for(const etapa of ['Presupuestos','Facturación','Hojas de ruta'])await test(etapa+': error de carga no se presenta como lista vacía',async()=>{
   const {page,ctx}=await setup();
   try{
