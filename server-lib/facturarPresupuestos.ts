@@ -1740,6 +1740,8 @@ export async function tableroFacturacion(req: Request & { user?: JwtPayload }, r
         im_factura_numero: e?.im_factura_numero ?? null,
         im_factura_tipo: e?.im_factura_tipo ?? null,
         im_remito_numero: e?.im_remito_numero ?? null,
+        // La fecha que tiene la factura en InfoManager (ver `actualizarImportesFacturas`).
+        fecha_factura: e?.fecha_factura ?? null,
         // Los ids son lo que necesita el botón de imprimir de esta pantalla.
         im_factura_id: e?.im_factura_id ?? null,
         im_remito_id: e?.im_remito_id ?? null,

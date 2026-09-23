@@ -28,6 +28,31 @@ try {
      `La fila no muestra el código del artículo: "${await fila.innerText()}"`);
   } finally {await ctx.close();}
  });
+ /**
+  * 🔑 Mati (23/09/2026): "en la parte de facturas emitidas, que aparezca la fecha de la factura
+  * también como dato". Es la de InfoManager, no la del pedido: acá valen distinto a propósito.
+  */
+ await test('Las facturas emitidas muestran la fecha de la factura, no la del pedido', async()=>{
+  const {page,ctx}=await setup();
+  try {
+   await page.route('**/api/facturacion?**',r=>reply(r,{pendientes:[],facturados:[
+     {...rows[0],fecha:'2026-09-10',im_factura_id:'501',im_factura_numero:50842,im_factura_tipo:'FA B',im_remito_numero:78028,fecha_factura:'2026-09-14',notas:[]},
+     {...rows[1],fecha:'2026-09-10',im_factura_id:'502',im_factura_numero:50843,im_factura_tipo:'FA B',im_remito_numero:78029,fecha_factura:null,notas:[]},
+   ],totales:{pendientes:0,facturados:2}}));
+   await page.locator('.of-tabs button').filter({hasText:'Facturación'}).click();
+   await page.locator('.fc-facturados summary').click();
+   const encabezado = await page.locator('.fc-facturados thead').innerText();
+   // En mayúsculas: el CSS de la tabla las transforma y `innerText` devuelve lo que se ve.
+   assert(/fecha fa/i.test(encabezado),`No está la columna: "${encabezado}"`);
+   const filas = page.locator('.fc-facturados tbody tr');
+   const primera = await filas.nth(0).innerText();
+   assert(primera.includes('14/09'),`No muestra la fecha de la factura: "${primera}"`);
+   assert(!primera.includes('10/09'),`Muestra la del pedido en vez de la de la factura: "${primera}"`);
+   // Sin fecha de IM no se completa con la del pedido: se ve "—".
+   const segunda = await filas.nth(1).innerText();
+   assert(!segunda.includes('10/09') && segunda.includes('—'),`Inventó una fecha: "${segunda}"`);
+  } finally {await ctx.close();}
+ });
  await test('Corrección detecta cambio de productos con el mismo importe total', async()=>{
   const {page,ctx}=await setup();
   try {

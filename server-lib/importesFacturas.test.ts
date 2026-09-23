@@ -160,3 +160,23 @@ describe('cuando la factura aparece en otro talonario', () => {
     expect(r[0].aviso_comprobante).toBeUndefined();
   });
 });
+
+/**
+ * 🔑 LA FECHA DE LA FACTURA. Mati (23/09/2026): "en la parte de facturas emitidas, que aparezca la
+ * fecha de la factura también como dato". No es la del pedido: se elige al emitir (hasta 7 días
+ * adelante) y se puede mover con el botón Fecha. Sale de InfoManager, sin pedirle nada más.
+ */
+it('🔑 devuelve la fecha que la factura tiene en IM, no la del pedido',async()=>{
+ const [r]=await actualizarImportesFacturas([original],{ventas:[{...actual,fecha:'2026-09-14T00:00:00'}]});
+ expect(r).toMatchObject({ fecha_factura: '2026-09-14', fecha: '2026-09-11' });   // la del pedido queda como estaba
+ expect(m.cabecera).not.toHaveBeenCalled();
+});
+it('🔑 también cuando la factura se leyó por su cabecera (fuera del listado)',async()=>{
+ m.cabecera.mockResolvedValue({...actual,anulada:false,existe:true,fecha:'2026-09-19'});
+ const [r]=await actualizarImportesFacturas([original],{ventas:[]});
+ expect(r).toMatchObject({ fecha_factura: '2026-09-19' });
+});
+it('🪤 sin fecha legible no inventa una',async()=>{
+ const [r]=await actualizarImportesFacturas([original],{ventas:[{...actual,fecha:null} as any]});
+ expect(r).toMatchObject({ fecha_factura: null });
+});

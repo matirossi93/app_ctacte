@@ -48,6 +48,11 @@ interface Fila {
     /** ¿La factura y el remito dicen lo mismo? Informativo: no habla de entrega ni de stock. */
     control_fa_re?: { estado: 'coinciden' | 'diferencias' | 'no_verificado'; texto: string; diferencias: Array<{ cod_articulo: number; factura: number; remito: number }>; checked_at: string | null } | null;
     im_factura_tipo: string | null;
+    /**
+     * La fecha de la factura como la tiene InfoManager. No es la del pedido: se elige al emitir
+     * y se puede mover con el botón Fecha. Mati (23/09/2026) la pidió a la vista.
+     */
+    fecha_factura?: string | null;
     im_remito_numero: number | null;
     /** Los ids de InfoManager: es lo que hace falta para imprimir cada comprobante. */
     im_factura_id: string | null;
@@ -535,7 +540,7 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                 <details className="fc-facturados">
                     <summary>{facturadosVisibles.length} ya facturados en estos días</summary>
                     <div className="fc-tabla-scroll" role="region" aria-label="Comprobantes" tabIndex={0}><table className="fc-tabla">
-                        <thead><tr><th>Cliente</th><th>Pedido</th><th>Factura</th><th>Remito</th><th className="n">Importe</th><th /></tr></thead>
+                        <thead><tr><th>Cliente</th><th>Pedido</th><th>Factura</th><th>Fecha FA</th><th>Remito</th><th className="n">Importe</th><th /></tr></thead>
                         <tbody>
                             {facturadosVisibles.map(p => (
                                 <React.Fragment key={p.im_comprobante_id}>
@@ -543,6 +548,11 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                     <td>{p.cliente_nombre}</td>
                                     <td className="fc-pr">PR {p.im_numero ?? '—'}</td>
                                     <td><CheckCircle2 size={12} /> {p.im_factura_tipo ?? 'FA'} {p.im_factura_numero ?? '—'}</td>
+                                    {/* 🪤 "—" cuando InfoManager no la dio: nunca se completa con la del pedido,
+                                        que puede ser otra y es justo el dato que se quiere ver. */}
+                                    <td className="fc-pr" title={p.fecha_factura ? `Fecha de la factura en InfoManager: ${p.fecha_factura}` : 'No pude leer la fecha de esta factura en InfoManager'}>
+                                        {dia(p.fecha_factura ?? null)}
+                                    </td>
                                     <td>RE {p.im_remito_numero ?? '—'}</td>
                                     <td className="n">
                                         {money(p.total + ajusteNotas(p.notas))}

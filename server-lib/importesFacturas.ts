@@ -108,7 +108,18 @@ export async function actualizarImportesFacturas<T extends Record<string, any>>(
     const aviso = cambio
       ? { aviso_comprobante: `Esta factura salió como ${registrado} y en InfoManager figura como ${numeroIM}${Number.isFinite(pvIM) ? ` (punto de venta ${pvIM})` : ''}: la movieron de talonario. Verificala antes de seguir.` }
       : {};
+    /**
+     * 🔑 LA FECHA DE LA FACTURA, como la tiene InfoManager. Mati (23/09/2026): *"en la parte de
+     * facturas emitidas, que aparezca la fecha de la factura también como dato"*.
+     *
+     * 🪤 No es la del pedido ni `facturado_at`: la oficina elige con qué fecha se emite (hasta 7
+     * días adelante) y después la puede mover con el botón Fecha. La única que vale es la que dice
+     * la factura — y acá ya se la tenía en la mano, del listado o de su cabecera, sin pedir nada
+     * más a InfoManager.
+     */
+    const fechaIM = typeof v.fecha === 'string' && v.fecha.length >= 10 ? v.fecha.slice(0, 10) : null;
     return { ...f, ...aviso, cod_empresa: Number(v.cod_empresa), empresa_fuente: f.cod_empresa == null ? 'factura_im' : f.empresa_fuente,
-      total_snapshot: f.total_snapshot ?? f.total, total: Number(v.total), importe_fuente: 'factura_im', importe_error: null };
+      total_snapshot: f.total_snapshot ?? f.total, total: Number(v.total), importe_fuente: 'factura_im', importe_error: null,
+      fecha_factura: fechaIM };
   });
 }
