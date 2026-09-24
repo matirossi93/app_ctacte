@@ -110,6 +110,10 @@
    porque emite comprobantes reales: no es lo mismo apretarlo por error. */
 .fc-imprimir.fc-corregir { border-color: #EEC045; color: #8a5a00; background: #fdf0d5; }
 .fc-imprimir.fc-corregir:hover { background: #f8e6bd; }
+/* Anular: rojo apagado, para que se distinga de Corregir sin gritar en cada fila. */
+.fc-imprimir.fc-anular { border-color: #e3b1a8; color: #8a2a1a; }
+.fc-imprimir.fc-anular:hover:not(:disabled) { background: #fbe9e5; }
+.fc-imprimir.fc-anular:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* El buscador de las dos listas (pendientes y ya facturados). */
 .fc-buscador {

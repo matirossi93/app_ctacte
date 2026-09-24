@@ -111,3 +111,23 @@ export function cuerpoParaMoverFecha(cab: CabeceraCruda, fechaNueva: string) {
     fecha_cae: cab.fecha_cae ?? null,
   };
 }
+
+/**
+ * El cuerpo para ANULAR un comprobante sin tocarle nada más: la cabecera que ya tiene, con su
+ * misma fecha, `anulada: 'S'` y el motivo al final de las observaciones.
+ *
+ * 🔴 Es un PUT que REEMPLAZA (ver `cuerpoParaMoverFecha`): la letra, el número, el punto de venta y
+ * los campos AFIP viajan tal como vinieron. `anularComprobante`, el de los presupuestos, fuerza
+ * `tipo_factura: 'X'` — sobre una factura, la FA B 50845 quedaría "FA X".
+ */
+export function cuerpoParaAnular(cab: CabeceraCruda, motivo: string) {
+  const fecha = typeof (cab as any).fecha === 'string' ? String((cab as any).fecha).slice(0, 10) : '';
+  const cuerpo = cuerpoParaMoverFecha(cab, fecha);
+  const nota = ` ANULADA: ${String(motivo ?? '').replace(/\s+/g, ' ').trim() || 'desde la app'}`;
+  return {
+    ...cuerpo,
+    anulada: 'S' as const,
+    // El motivo SIEMPRE entra: se recorta lo anterior, no la nota.
+    observaciones: (String(cab.observaciones ?? '').slice(0, Math.max(0, 500 - nota.length)) + nota).slice(0, 500),
+  };
+}

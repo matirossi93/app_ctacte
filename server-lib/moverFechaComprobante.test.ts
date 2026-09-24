@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cuerpoParaMoverFecha } from './moverFechaComprobante.js';
+import { cuerpoParaMoverFecha, cuerpoParaAnular } from './moverFechaComprobante.js';
 
 /**
  * MOVER LA FECHA DE UNA FACTURA YA EMITIDA.
@@ -142,5 +142,41 @@ describe('cabecera incompleta: no se inventa nada', () => {
       fecha: '2026-09-12', tipo_comprobante: 'RE', tipo_factura: 'X',
       numero: 77442, punto_de_venta: 3, anulada: 'N',
     });
+  });
+});
+
+/**
+ * 🔴 ANULAR UNA FACTURA. Mati (24/09/2026): anular desde la app. El PUT reemplaza la cabecera
+ * entera: lo único que puede cambiar es `anulada` y el motivo al final de las observaciones.
+ */
+describe('cuerpoParaAnular', () => {
+  it('🔴 la factura B sigue siendo B: no la convierte en "FA X"', () => {
+    const b = cuerpoParaAnular(FACTURA, 'el cliente rechazó el pedido');
+    expect(b.tipo_factura).toBe('B');
+    expect(b.tipo_comprobante).toBe('FA');
+    expect(b.numero).toBe(50451);
+    expect(b.punto_de_venta).toBe(777);
+  });
+  it('🔴 queda anulada, con su misma fecha', () => {
+    const b = cuerpoParaAnular(FACTURA, 'x');
+    expect(b.anulada).toBe('S');
+    expect(b.fecha).toBe('2026-09-11');
+  });
+  it('🔴 conserva los campos AFIP: sin ellos se imprime como fiscal', () => {
+    const b = cuerpoParaAnular(FACTURA, 'x');
+    expect(b.afip_comprobantes_fe).toBe('6');
+    expect(b.afip_tipdoc_fe).toBe(96);
+  });
+  it('el motivo va al final de las observaciones', () => {
+    const b = cuerpoParaAnular(FACTURA, 'el cliente rechazó el pedido');
+    expect(b.observaciones).toBe('Pedido 58362 - entregar el jueves ANULADA: el cliente rechazó el pedido');
+  });
+  it('🪤 con observaciones largas se recorta lo anterior, nunca el motivo', () => {
+    const b = cuerpoParaAnular({ ...FACTURA, observaciones: 'x'.repeat(600) }, 'error de cliente');
+    expect(b.observaciones.length).toBe(500);
+    expect(b.observaciones.endsWith(' ANULADA: error de cliente')).toBe(true);
+  });
+  it('🔴 sin número no arma el cuerpo: el PUT lo dejaría en 0', () => {
+    expect(() => cuerpoParaAnular({ ...FACTURA, numero: null } as any, 'x')).toThrow(/número/);
   });
 });

@@ -277,6 +277,24 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
         ['remito_emitiendo', 'incierto'].includes(p.estado_emision ?? '')
         && !!p.im_factura_numero && !p.im_remito_numero && !p.facturado_at;
 
+    /**
+     * 🔴 ANULAR LA FACTURA Y SU REMITO. Mati (24/09/2026): *"poder anular facturas desde la app...
+     * y al mismo tiempo que haya reingreso de esa mercadería"*. El server frena si tiene notas,
+     * pagos imputados o el remito está en una hoja cerrada, y vuelve a leer todo de InfoManager.
+     */
+    const anularFactura = (p: Fila) => {
+        const motivo = window.prompt(
+            `Se van a ANULAR en InfoManager la factura ${p.im_factura_tipo ?? 'FA'} ${p.im_factura_numero} y el remito ${p.im_remito_numero} de ${p.cliente_nombre}.\n\n`
+            + `· La mercadería vuelve al stock (se anula el remito).\n`
+            + `· El remito sale de la hoja de ruta, si estaba en una abierta.\n`
+            + `· El pedido vuelve a quedar para facturar. Si ya no va, anulalo desde Presupuestos.\n\n`
+            + `No se puede si la factura tiene notas de crédito o débito, o pagos imputados.\n\n`
+            + `¿Por qué se anula? (queda escrito en la factura y en el remito)`);
+        if (motivo == null) return;
+        if (!motivo.trim()) { setError('Hay que escribir el motivo de la anulación.'); return; }
+        void destrabarRemito(p, `/api/facturacion/anular/${encodeURIComponent(p.im_comprobante_id)}`, { motivo: motivo.trim() });
+    };
+
     const destrabarRemito = async (p: Fila, url: string, body?: unknown) => {
         setDestrabando(p.im_comprobante_id); setError(null);
         try {
@@ -624,6 +642,16 @@ export function FacturacionView({ desde, hasta }: { desde: string; hasta: string
                                                     title="Cambiar la fecha de la factura y su remito"
                                                     onClick={() => { olvidarComparados(); setMoviendoFecha(String(p.im_factura_id)); }}>
                                                 <CalendarDays size={14} /> Fecha
+                                            </button>
+                                        )}
+                                        {p.im_factura_id && p.im_remito_id && (
+                                            <button className="fc-imprimir fc-anular"
+                                                    disabled={destrabando === p.im_comprobante_id || !!p.notas?.length}
+                                                    title={p.notas?.length
+                                                        ? 'Tiene notas de crédito o débito: anularla las dejaría colgando'
+                                                        : 'Anular la factura y su remito en InfoManager. La mercadería vuelve al stock.'}
+                                                    onClick={() => { olvidarComparados(); anularFactura(p); }}>
+                                                {destrabando === p.im_comprobante_id ? <Loader2 size={14} className="spin" /> : <X size={14} />} Anular
                                             </button>
                                         )}
                                         {/* 🔑 Diferencia CONFIRMADA entre la factura y el remito: se ve

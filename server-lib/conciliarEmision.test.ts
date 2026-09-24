@@ -21,11 +21,15 @@ const m = vi.hoisted(() => ({
   cabeceraComprobante: vi.fn(),
   anularComprobante: vi.fn(),
   mutarReparto: vi.fn(),
+  anularConservandoCabecera: vi.fn(),
+  comprobantesPendientesCliente: vi.fn(),
 }));
 
 vi.mock('./infomanager.js', () => ({
   cabeceraComprobante: m.cabeceraComprobante,
   anularComprobante: m.anularComprobante,
+  anularConservandoCabecera: m.anularConservandoCabecera,
+  comprobantesPendientesCliente: m.comprobantesPendientesCliente,
   fechaArgentina: () => '2026-09-22',
   invalidarIM: vi.fn(),
 }));
@@ -36,7 +40,9 @@ vi.mock('./repartoDatos.js', () => ({ mutarReparto: m.mutarReparto }));
 vi.mock('./facturarPresupuestos.js', async original => await original<any>());
 
 /** Lo que contesta cada tabla. `single` es lo que devuelve `maybeSingle`. */
-let filas: Record<string, { single?: any; error?: any }> = {};
+let filas: Record<string, { single?: any; error?: any; lista?: any[] }> = {};
+/** Si está, los update sobre la fila única se le aplican: para seguir un cambio de estado. */
+let aplicarUpdates = false;
 /** Los campos con los que se pidió cada select, en orden. */
 let selects: string[] = [];
 /** Si está, el primer select que pida esa columna falla como lo hace Postgres sin la migración. */
@@ -62,7 +68,10 @@ vi.mock('./supabase.js', () => ({
         return { data: filas[tabla]?.single ?? null, error: filas[tabla]?.error ?? null };
       };
       q.single = q.maybeSingle;
+      // Las lecturas de lista (`.limit()` y se espera directo).
+      q.then = (r: any, j: any) => Promise.resolve({ data: filas[tabla]?.lista ?? [], error: null }).then(r, j);
       q.update = (valor: any) => {
+        if (aplicarUpdates && filas[tabla]?.single) Object.assign(filas[tabla].single, valor);
         const w: any = { select: async () => ({ data: errorAlEscribir ? null : filasTocadas, error: errorAlEscribir }) };
         for (const k of ['eq', 'in', 'is', 'not']) w[k] = (...args: any[]) => { filtros.push([k, ...args]); return w; };
         escrituras.push({ tabla, op: 'update', valor, filtros });
@@ -83,11 +92,11 @@ vi.mock('./supabase.js', () => ({
   }),
 }));
 
-const { descartarRemitoSobrante, habilitarFacturaPendiente } = await import('./conciliarEmision.js');
+const { descartarRemitoSobrante, habilitarFacturaPendiente, anularFacturaEmitida } = await import('./conciliarEmision.js');
 
-function llamar(fn: any, { rol = 'administrativo', id = '10' } = {}) {
+function llamar(fn: any, { rol = 'administrativo', id = '10', body = {} as any } = {}) {
   let status = 200; let out: any;
-  const req: any = { params: { comprobanteId: id }, user: { rol, sub: 'u1' }, body: {} };
+  const req: any = { params: { comprobanteId: id }, user: { rol, sub: 'u1' }, body };
   const res: any = { status: (s: number) => { status = s; return res; }, json: (b: any) => { out = b; } };
   return fn(req, res).then(() => ({ status, body: out }));
 }
@@ -115,7 +124,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   filas = { presupuestos_facturados: { single: { ...FILA } }, hojas_ruta_pedidos: { single: null } };
   escrituras = []; filasTocadas = [{ im_comprobante_id: '10' }]; errorAlEscribir = null;
-  selects = []; columnaQueFalta = null;
+  selects = []; columnaQueFalta = null; aplicarUpdates = false;
   enIM();
   m.anularComprobante.mockResolvedValue({ ok: true, raw: {} });
   m.mutarReparto.mockResolvedValue({ ok: true, version: 8 });
@@ -324,5 +333,107 @@ describe('qué filas admite', () => {
     const r = await llamar(descartarRemitoSobrante);
     expect(r.status).toBe(200);
     expect(r.body.ya_estaba_anulado).toBe(true);
+  });
+});
+
+/**
+ * 🔴 ANULAR UNA FACTURA DESDE LA APP. Mati (24/09/2026): *"poder anular facturas desde la app... y
+ * al mismo tiempo que haya reingreso de esa mercadería"*. Hasta hoy se anulaba la factura en IM y
+ * el remito quedaba vivo descontando stock: BUSTOS, GONZALEZ, CHAHLE y ELIAS en una sola auditoría.
+ */
+describe('anular una factura emitida', () => {
+  const EMITIDA = {
+    im_comprobante_id: '10', im_numero: 58845, cliente_nombre: 'GOMEZ, Angel', cod_cliente: 157, cod_empresa: 1,
+    im_factura_id: 'fa-viva', im_factura_numero: 50845, im_factura_tipo: 'FA B',
+    im_remito_id: 're-vivo', im_remito_numero: 78031, facturado_at: 'x', estado_emision: 'completo',
+    historial_remitos: [], historial_facturas: [],
+  };
+  let faAnulada = false, lecturasRemito = 0;
+  const anular = (body: any = { motivo: 'el cliente rechazó el pedido' }) => llamar(anularFacturaEmitida, { body });
+
+  beforeEach(() => {
+    faAnulada = false; lecturasRemito = 0; aplicarUpdates = true;
+    filas = { presupuestos_facturados: { single: { ...EMITIDA } }, hojas_ruta_pedidos: { single: null },
+      facturas_correcciones: { lista: [] }, hojas_ruta_ajustes: { lista: [] } };
+    m.cabeceraComprobante.mockImplementation(async (id: string) => {
+      if (String(id) === 'fa-viva') return { existe: true, anulada: faAnulada, tipo_comprobante: 'FA', numero: 50845, total: 1000, cod_cliente: 157 };
+      // El remito: vivo hasta que se lo anula (la relectura posterior ya lo ve anulado).
+      return m.anularComprobante.mock.calls.length ? { ...REMITO_VIVO, anulada: true } : { ...REMITO_VIVO, numero: 78031, cod_cliente: 157, anulada: false, existe: true, ...(++lecturasRemito && {}) };
+    });
+    m.anularConservandoCabecera.mockImplementation(async () => { faAnulada = true; return { ok: true }; });
+    m.comprobantesPendientesCliente.mockResolvedValue([{ id: 'fa-viva', saldo: 1000 }]);
+  });
+
+  it('🔴 anula la factura, después el remito (el stock vuelve) y libera el pedido', async () => {
+    const r = await anular();
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ ok: true, factura: 50845, remito: 78031 });
+    expect(m.anularConservandoCabecera).toHaveBeenCalledWith('fa-viva', 'el cliente rechazó el pedido');
+    expect(m.anularComprobante).toHaveBeenCalledWith(expect.objectContaining({ id: 're-vivo', tipo_comprobante: 'RE' }));
+    // Primero la factura: si se corta, queda el estado que la tarjeta de conciliación ya resuelve.
+    expect(m.anularConservandoCabecera.mock.invocationCallOrder[0]).toBeLessThan(m.anularComprobante.mock.invocationCallOrder[0]);
+    expect(escrituras.some(e => e.op === 'delete' && e.tabla === 'presupuestos_facturados')).toBe(true);
+  });
+
+  it('🔴 no anula nada si la factura tiene notas de crédito o débito', async () => {
+    filas.facturas_correcciones = { lista: [{ tipo: 'NC B', numero: 30124 }] };
+    const r = await anular();
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/30124/);
+    expect(m.anularConservandoCabecera).not.toHaveBeenCalled();
+    expect(m.anularComprobante).not.toHaveBeenCalled();
+  });
+
+  it('🔴 ni si tiene pagos imputados: el recibo quedaría sin factura', async () => {
+    m.comprobantesPendientesCliente.mockResolvedValue([{ id: 'fa-viva', saldo: 400 }]);
+    const r = await anular();
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/\$600 cobrados/);
+    expect(m.anularConservandoCabecera).not.toHaveBeenCalled();
+  });
+
+  it('🔴 ni si está cobrada entera (ya no figura entre lo pendiente)', async () => {
+    m.comprobantesPendientesCliente.mockResolvedValue([]);
+    const r = await anular();
+    expect(r.status).toBe(409);
+    expect(m.anularConservandoCabecera).not.toHaveBeenCalled();
+  });
+
+  it('🔴 ni si el remito está en una hoja de ruta cerrada', async () => {
+    filas.hojas_ruta_pedidos = { single: { hoja_id: 'h1', im_comprobante_id: 're-vivo', hojas_ruta: { numero: 3419, estado: 'cerrada', version: 9 } } };
+    const r = await anular();
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/CERRADA/);
+    expect(m.anularConservandoCabecera).not.toHaveBeenCalled();
+  });
+
+  it('pide el motivo: queda escrito en la factura y en el remito', async () => {
+    const r = await anular({ motivo: '   ' });
+    expect(r.status).toBe(400);
+    expect(m.anularConservandoCabecera).not.toHaveBeenCalled();
+  });
+
+  it('🔴 si IM no anula la factura, el remito no se toca', async () => {
+    m.anularConservandoCabecera.mockResolvedValue({ ok: false, error: 'IM rechazó' });
+    const r = await anular();
+    expect(r.status).toBe(502);
+    expect(m.anularComprobante).not.toHaveBeenCalled();
+    expect(escrituras.some(e => e.op === 'delete')).toBe(false);
+  });
+
+  it('🪤 si la factura se anuló y el remito no, lo dice y deja la tarjeta para terminarlo', async () => {
+    m.anularComprobante.mockResolvedValue({ ok: false, error: 'IM caído' });
+    const r = await anular();
+    expect(r.status).toBe(502);
+    expect(r.body.error).toMatch(/quedó ANULADA/);
+    expect(r.body.error).toMatch(/El remito no corresponde/);
+    // El pedido queda marcado como factura anulada: el estado que la tarjeta resuelve.
+    expect(filas.presupuestos_facturados.single.estado_emision).toBe('anulado');
+  });
+
+  it('un vendedor no puede anular', async () => {
+    const r = await llamar(anularFacturaEmitida, { rol: 'vendedor', body: { motivo: 'x' } });
+    expect(r.status).toBe(403);
+    expect(m.anularConservandoCabecera).not.toHaveBeenCalled();
   });
 });

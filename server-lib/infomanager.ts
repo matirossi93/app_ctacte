@@ -6,7 +6,7 @@ import axios, { AxiosInstance } from 'axios';
 import { idIM, ivaExplicita } from './identidadIM.js';
 import { interpretarActualizacionIM } from './respuestaActualizacionIM.js';
 import type { ComprobantePendiente } from './saldoCliente.js';
-import { cuerpoParaMoverFecha } from './moverFechaComprobante.js';
+import { cuerpoParaMoverFecha, cuerpoParaAnular } from './moverFechaComprobante.js';
 import { comprobanteNoExiste, esComprobanteBorrado } from './comprobanteBorrado.js';
 import { parsearAnulada, vigenciaDeCabecera, vigenciaSegunAnulada } from './vigenciaComprobante.js';
 
@@ -1160,6 +1160,66 @@ export async function moverFechaComprobante(
   } catch {
     // El cambio salió; sólo no se pudo confirmar. No se dice que falló algo que probablemente anduvo.
     return { ok: true, fecha: cuerpo.fecha, aviso: 'Se mandó el cambio pero no pude releer el comprobante para confirmarlo. Verificalo en InfoManager.' };
+  }
+}
+
+/**
+ * ANULAR UNA FACTURA SIN TOCARLE NADA MÁS.
+ *
+ * Mati (24/09/2026): *"necesito que veamos la forma de poder anular facturas desde la app"*.
+ *
+ * 🔴 NO usa `anularComprobante`: ése es para presupuestos y remitos, y fuerza
+ * `tipo_factura: 'X'` y ningún campo AFIP. Sobre una factura le borraría la letra —la FA B 50845
+ * quedaría "FA X"— y los campos que evitan que IM la imprima como comprobante fiscal. Acá la
+ * cabecera sale de la que el comprobante YA tiene (`cuerpoParaMoverFecha`, con su misma fecha),
+ * y lo único que cambia es `anulada` y el motivo al final de las observaciones.
+ *
+ * Y se relee: `PUT /ventas/{id}` contesta "actualizado correctamente" aunque haya pisado número,
+ * tipo o punto de venta (Astra lo midió el 11/09/2026). Que quedó anulada, y que sigue siendo el
+ * mismo comprobante, lo dice la relectura.
+ */
+export async function anularConservandoCabecera(
+  idComprobante: string | number, motivo: string,
+): Promise<{ ok: true } | { ok: false; error: string; incierto?: boolean }> {
+  const cli = await imClient();
+  let previa: any;
+  try {
+    const { data } = await imGetRetry(() => cli.get(`/ventas/${idComprobante}`), `ventas/${idComprobante} para anular`);
+    previa = data?.results ?? data?.venta ?? data ?? {};
+  } catch (err: any) {
+    return { ok: false, error: `No pude leer el comprobante en InfoManager: ${err?.message ?? 'sin respuesta'}. No se anuló.` };
+  }
+  if (String(previa.anulada ?? '').trim().toUpperCase() === 'S') return { ok: true };
+  let cuerpo: ReturnType<typeof cuerpoParaAnular>;
+  try { cuerpo = cuerpoParaAnular(previa, motivo); }
+  catch (e: any) { return { ok: false, error: `${e?.message ?? 'Cabecera incompleta'} No se anuló.` }; }
+
+  try {
+    const { data } = await cli.put(`/ventas/${idComprobante}`, cuerpo);
+    if (data?.error != null && Number(data.error) !== 0) {
+      return { ok: false, error: String(data.detalles ?? data.mensaje ?? 'InfoManager rechazó la anulación') };
+    }
+  } catch (err: any) {
+    if (err?.response?.status === 401) invalidateImToken();
+    const raw = err?.response?.data;
+    // Sin respuesta no se sabe si se anuló: quien llama no puede seguir como si nada.
+    return { ok: false, incierto: !err?.response, error: String(raw?.detalles ?? raw?.mensaje ?? err?.message ?? 'InfoManager rechazó la anulación') };
+  }
+
+  try {
+    const { data } = await imGetRetry(() => cli.get(`/ventas/${idComprobante}`), `ventas/${idComprobante} verificación de anulación`);
+    const dsp = data?.results ?? data?.venta ?? data ?? {};
+    const cambiado = ([['número', 'numero'], ['tipo', 'tipo_comprobante'], ['letra', 'tipo_factura'], ['punto de venta', 'punto_de_venta']] as const)
+      .filter(([, k]) => String(dsp[k] ?? '').trim() !== String(previa[k] ?? '').trim());
+    if (cambiado.length) {
+      return { ok: false, error: `🔴 InfoManager le cambió ${cambiado.map(([n]) => n).join(', ')} al comprobante ${previa.numero} al anularlo. Revisalo en InfoManager AHORA.` };
+    }
+    if (String(dsp.anulada ?? '').trim().toUpperCase() !== 'S') {
+      return { ok: false, error: `InfoManager aceptó la anulación del comprobante ${previa.numero} pero sigue figurando vigente.` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, incierto: true, error: `Se mandó la anulación del comprobante ${previa.numero} pero no pude confirmarla. Verificalo en InfoManager.` };
   }
 }
 

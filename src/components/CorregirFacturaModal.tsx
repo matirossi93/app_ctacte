@@ -239,6 +239,23 @@ export function CorregirFacturaModal(
 
   const sacar = (i: number) => setFilas(fs => fs.filter((_, j) => j !== i));
 
+  /**
+   * 🔑 DEVOLVER TODO DE UN CLIC. Mati (24/09/2026): *"agregar un botón en las NC para poder
+   * seleccionar todos los productos de una sola vez"*. Para una devolución total había que apretar
+   * el tacho renglón por renglón.
+   *
+   * Pone las cantidades en 0 en vez de sacar los renglones: siguen a la vista, se puede volver a
+   * subir uno solo si algo sí quedó, y el server ya toma el 0 como "sale entero". La nota sale como
+   * devolución, así que la mercadería reingresa al stock.
+   */
+  const todoEnCero = filas.length > 0 && filas.every(f => !(Number(f.cantidad) > 0));
+  const devolverTodo = () => {
+    setVista(null);
+    setFilas(fs => todoEnCero
+      ? fs.map(f => ({ ...f, cantidad: originales.find(o => o.cod_articulo === f.cod_articulo)?.cantidad ?? f.cantidad }))
+      : fs.map(f => ({ ...f, cantidad: 0 })));
+  };
+
   const agregar = (a: any) => {
     const cod = Number(a.cod_articulo);
     if (filas.some(f => f.cod_articulo === cod)) { setBuscando(''); setCandidatos([]); return; }
@@ -429,6 +446,12 @@ export function CorregirFacturaModal(
               </div>
             )}
 
+            <div className="cf-herramientas">
+              <button type="button" className="cf-btn cf-devolver-todo" onClick={devolverTodo} disabled={!filas.length}
+                      title={todoEnCero ? 'Volver a las cantidades de la factura' : 'Pone todas las cantidades en 0: la nota acredita la factura entera y la mercadería vuelve al stock'}>
+                {todoEnCero ? 'Restaurar cantidades' : 'Devolver todo'}
+              </button>
+            </div>
             <div className="cf-tabla-scroll"><table className="cf-tabla">
               <thead>
                 <tr>

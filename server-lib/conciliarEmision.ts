@@ -31,7 +31,7 @@ import type { Request, Response } from 'express';
 import type { JwtPayload } from './auth.js';
 import { sb, TENANT_ID } from './supabase.js';
 import { frenaSiNoPuede } from './facturarPresupuestos.js';
-import { anularComprobante, cabeceraComprobante, fechaArgentina, invalidarIM } from './infomanager.js';
+import { anularComprobante, anularConservandoCabecera, cabeceraComprobante, comprobantesPendientesCliente, fechaArgentina, invalidarIM } from './infomanager.js';
 import { invalidarVista } from './vistaPresupuestos.js';
 import { invalidarRemitos } from './vistaRemitos.js';
 import { mutarReparto } from './repartoDatos.js';
@@ -143,32 +143,40 @@ async function hojaDelRemito(remitoId: string) {
 export async function descartarRemitoSobrante(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
   const id = String(req.params.comprobanteId ?? '').trim();
-  if (!/^\d+$/.test(id)) { res.status(400).json({ error: 'Falta el pedido.' }); return; }
+  if (!/^\d+$/.test(id)) { return { status: 400, body: { error: 'Falta el pedido.' } }; }
+  const r = await descartarRemito(id, req.user?.sub, 'no corresponde');
+  res.status(r.status).json(r.body);
+}
 
+/**
+ * El trabajo de "el remito no corresponde", separado del pedido HTTP: lo usa también
+ * `anularFacturaEmitida`, que después de anular la factura deja el pedido exactamente en este
+ * estado (factura muerta, remito vivo) y termina por acá. Un solo camino para anular el remito,
+ * sacarlo de la hoja y liberar el pedido.
+ */
+async function descartarRemito(id: string, actor: string | undefined, motivo: string): Promise<{ status: number; body: any }> {
   try {
     const base = await filaParaConciliar(id);
-    if (!base.ok) { res.status(base.status).json({ error: base.error }); return; }
+    if (!base.ok) { return { status: base.status, body: { error: base.error } }; }
     const fila = base.fila;
 
     const viva = await facturaMuerta(fila.im_factura_id);
-    if (!viva.ok) { res.status(409).json({ error: viva.error }); return; }
+    if (!viva.ok) { return { status: 409, body: { error: viva.error } }; }
 
     // El remito, leído ahora. Si ya está anulado no se vuelve a anular: sólo se limpia acá.
     const cabRe = await cabeceraComprobante(fila.im_remito_id!);
     if (cabRe.existe !== false && cabRe.anulada !== true
         && (cabRe.existe !== true || cabRe.anulada !== false)) {
-      res.status(502).json({ error: 'No pude verificar en InfoManager si el remito sigue vigente. Probá de nuevo en un rato: no se tocó nada.' });
-      return;
+      return { status: 502, body: { error: 'No pude verificar en InfoManager si el remito sigue vigente. Probá de nuevo en un rato: no se tocó nada.' } };
     }
     const seguiaVivo = cabRe.existe === true && cabRe.anulada === false;
 
     // 🔴 ANTES de anular: una hoja cerrada ya se liquidó y sacarle un remito descuadra el cierre.
     const enHoja = await hojaDelRemito(fila.im_remito_id!);
     if (enHoja && String(enHoja.hojas_ruta?.estado ?? '') === 'cerrada') {
-      res.status(409).json({
+      return { status: 409, body: {
         error: `El remito ${fila.im_remito_numero ?? ''} está en la hoja ${enHoja.hojas_ruta?.numero ?? ''}, que ya está CERRADA y liquidada. Reabrila antes de descartarlo.`,
-      });
-      return;
+      } };
     }
 
     if (seguiaVivo) {
@@ -178,25 +186,23 @@ export async function descartarRemitoSobrante(req: Request & { user?: JwtPayload
         punto_de_venta: Number(cabRe.punto_de_venta) || 0,
         fecha: cabRe.fecha ?? fechaArgentina(),
         tipo_comprobante: 'RE',
-        observaciones: `ANULADO: no corresponde. La factura ${fila.im_factura_numero ?? ''} de este pedido se anulo en InfoManager.`.slice(0, 500),
+        observaciones: `ANULADO: ${motivo}. La factura ${fila.im_factura_numero ?? ''} de este pedido se anulo en InfoManager.`.slice(0, 500),
       });
       if (!anulado.ok) {
         console.error(`[descartarRemitoSobrante] RE ${fila.im_remito_numero}: ${anulado.error}`);
-        res.status(502).json({ error: `InfoManager no anuló el remito ${fila.im_remito_numero ?? ''}: ${anulado.error}. No se tocó nada más.` });
-        return;
+        return { status: 502, body: { error: `InfoManager no anuló el remito ${fila.im_remito_numero ?? ''}: ${anulado.error}. No se tocó nada más.` } };
       }
       // Que haya quedado anulado lo dice IM, no la respuesta del PUT (regla de oro de esta API).
       const post = await cabeceraComprobante(fila.im_remito_id!);
       if (post.existe === true && post.anulada === false) {
-        res.status(502).json({ error: `InfoManager aceptó la anulación del remito ${fila.im_remito_numero ?? ''} pero sigue figurando vigente. Verificalo en InfoManager.` });
-        return;
+        return { status: 502, body: { error: `InfoManager aceptó la anulación del remito ${fila.im_remito_numero ?? ''} pero sigue figurando vigente. Verificalo en InfoManager.` } };
       }
     }
 
     // Sale de la hoja de ruta. Va por la misma RPC que el botón de la pantalla de reparto, así
     // la versión de la hoja avanza y el cambio queda atado a quien lo pidió.
     if (enHoja) {
-      await mutarReparto(req.user?.sub, 'quitar', {
+      await mutarReparto(actor, 'quitar', {
         hoja_id: enHoja.hoja_id,
         im_comprobante_id: String(enHoja.im_comprobante_id),
         version_esperada: enHoja.hojas_ruta?.version,
@@ -215,20 +221,19 @@ export async function descartarRemitoSobrante(req: Request & { user?: JwtPayload
       .delete().eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id)
       .in('estado_emision', ['anulado', 'factura_pendiente']);
     if (errBorrar) {
-      res.status(500).json({ error: `Anulé el remito ${fila.im_remito_numero ?? ''} en InfoManager pero no pude liberar el pedido acá: ${errBorrar.message}` });
-      return;
+      return { status: 500, body: { error: `Anulé el remito ${fila.im_remito_numero ?? ''} en InfoManager pero no pude liberar el pedido acá: ${errBorrar.message}` } };
     }
 
     invalidarIM(); invalidarVista(); invalidarRemitos();
-    res.json({
+    return { status: 200, body: {
       ok: true, comprobante: id,
       remito: fila.im_remito_numero ?? null,
       ya_estaba_anulado: !seguiaVivo,
       hoja: enHoja?.hojas_ruta?.numero ?? null,
-    });
+    } };
   } catch (err: any) {
     console.error('[descartarRemitoSobrante]', err?.message);
-    res.status(err?.status ?? 502).json({ error: err?.message ?? 'No se pudo descartar el remito.' });
+    return { status: err?.status ?? 502, body: { error: err?.message ?? 'No se pudo descartar el remito.' } };
   }
 }
 
@@ -308,5 +313,110 @@ export async function habilitarFacturaPendiente(req: Request & { user?: JwtPaylo
   } catch (err: any) {
     console.error('[habilitarFacturaPendiente]', err?.message);
     res.status(502).json({ error: err?.message ?? 'No se pudo habilitar la factura.' });
+  }
+}
+
+/**
+ * POST /api/facturacion/anular/:comprobanteId — body { motivo }
+ *
+ * 🔴 ANULA LA FACTURA Y SU REMITO EN INFOMANAGER, Y LA MERCADERÍA VUELVE AL STOCK.
+ *
+ * Mati (24/09/2026): *"necesito que veamos la forma de poder anular facturas desde la app... y
+ * al mismo tiempo que haya reingreso de esa mercadería claro!"*.
+ *
+ * Hasta hoy se anulaba la factura a mano en IM y el remito quedaba vivo: BUSTOS, GONZALEZ,
+ * CHAHLE y ELIAS, cuatro remitos descontando stock por mercadería sin factura, encontrados en la
+ * auditoría del 22/09. El stock lo mueve el REMITO, no la factura: anularlo es lo que la devuelve
+ * (medido ese día: 30 de 31 artículos volvieron al número exacto).
+ *
+ * 🔑 EL ORDEN: primero la factura, después el remito. Si se corta a mitad de camino queda
+ * "factura anulada con remito vivo", que es el estado que la tarjeta de conciliación ya sabe
+ * resolver ("El remito no corresponde"). Al revés quedaría "factura viva sin remito", y ahí
+ * apretar Facturar emitiría un remito NUEVO por mercadería que ya volvió.
+ *
+ * 🔴 Se frena ANTES de tocar InfoManager si:
+ *  · la factura tiene notas de crédito o débito: anularla las dejaría colgando de nada;
+ *  · tiene pagos imputados: el recibo quedaría sin factura (hay que desimputarlo primero);
+ *  · el remito está en una hoja de ruta CERRADA: ya se liquidó.
+ *
+ * El pedido queda LIBRE: se puede volver a facturar, o anularlo desde Presupuestos si ya no va.
+ */
+export async function anularFacturaEmitida(req: Request & { user?: JwtPayload }, res: Response) {
+  if (frenaSiNoPuede(req, res)) return;
+  const id = String(req.params.comprobanteId ?? '').trim();
+  const motivo = String(req.body?.motivo ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (!/^\d+$/.test(id)) { res.status(400).json({ error: 'Falta el pedido.' }); return; }
+  if (!motivo) { res.status(400).json({ error: 'Escribí por qué se anula: queda en la factura y en el remito.' }); return; }
+
+  try {
+    const { data: fila, error } = await sb().from('presupuestos_facturados')
+      .select('im_comprobante_id, cod_cliente, cod_empresa, im_factura_id, im_factura_numero, im_remito_id, im_remito_numero, estado_emision')
+      .eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id).maybeSingle();
+    if (error) { res.status(500).json({ error: error.message }); return; }
+    if (!fila || fila.estado_emision !== 'completo' || !fila.im_factura_id || !fila.im_remito_id) {
+      res.status(409).json({ error: 'Ese pedido no tiene una factura y un remito emitidos y completos. Actualizá la pantalla.' }); return;
+    }
+
+    const [{ data: notas, error: errNotas }, { data: ajustes, error: errAj }] = await Promise.all([
+      sb().from('facturas_correcciones').select('tipo, numero').eq('tenant_id', TENANT_ID).eq('im_factura_id', String(fila.im_factura_id)).limit(5),
+      sb().from('hojas_ruta_ajustes').select('im_ajuste_tipo, im_ajuste_numero').eq('tenant_id', TENANT_ID)
+        .eq('im_comprobante_id', String(fila.im_remito_id)).not('emitido_at', 'is', null).limit(5),
+    ]);
+    if (errNotas || errAj) { res.status(500).json({ error: `No pude verificar si tiene notas: ${(errNotas ?? errAj)!.message}` }); return; }
+    const todas = [...(notas ?? []).map((n: any) => `${n.tipo} ${n.numero ?? ''}`), ...(ajustes ?? []).map((a: any) => `${a.im_ajuste_tipo ?? 'NC'} ${a.im_ajuste_numero ?? ''}`)];
+    if (todas.length) {
+      res.status(409).json({ error: `La factura ${fila.im_factura_numero} tiene ${todas.join(', ')}. Anularla dejaría esas notas colgando: no se anula.` }); return;
+    }
+
+    const [fa, re] = await Promise.all([cabeceraComprobante(String(fila.im_factura_id)), cabeceraComprobante(String(fila.im_remito_id))]);
+    if (fa.existe !== true || fa.anulada !== false || fa.tipo_comprobante !== 'FA') {
+      res.status(409).json({ error: `No pude confirmar en InfoManager que la factura ${fila.im_factura_numero} siga vigente. No se anuló nada.` }); return;
+    }
+    if (re.existe !== true || re.anulada !== false) {
+      res.status(409).json({ error: `El remito ${fila.im_remito_numero} ya no está vigente en InfoManager. Actualizá la pantalla: no se anuló nada.` }); return;
+    }
+
+    // 🔴 Pagos: la factura tiene que figurar entre lo pendiente del cliente con su saldo entero.
+    let pendientes;
+    try { pendientes = await comprobantesPendientesCliente(Number(fila.cod_cliente), Number(fila.cod_empresa) || 1); }
+    catch (e: any) { res.status(502).json({ error: `No pude verificar si la factura tiene pagos: ${e?.message ?? 'sin respuesta'}. No se anuló nada.` }); return; }
+    const pend = pendientes.find(p => String(p.id) === String(fila.im_factura_id));
+    if (!pend || Math.abs(Number(pend.saldo) - Number(fa.total)) > 0.5) {
+      const pagado = pend ? Number(fa.total) - Number(pend.saldo) : Number(fa.total);
+      res.status(409).json({ error: `La factura ${fila.im_factura_numero} tiene $${Math.round(pagado).toLocaleString('es-AR')} cobrados. Desimputá el recibo en InfoManager antes de anularla: no se anuló nada.` });
+      return;
+    }
+
+    const enHoja = await hojaDelRemito(String(fila.im_remito_id));
+    if (enHoja && String(enHoja.hojas_ruta?.estado ?? '') === 'cerrada') {
+      res.status(409).json({ error: `El remito ${fila.im_remito_numero} está en la hoja ${enHoja.hojas_ruta?.numero ?? ''}, que ya está CERRADA. Reabrila antes de anular: no se anuló nada.` });
+      return;
+    }
+
+    // 1) La factura.
+    const anulada = await anularConservandoCabecera(String(fila.im_factura_id), motivo);
+    if (!anulada.ok) {
+      console.error(`[anularFacturaEmitida] FA ${fila.im_factura_numero}: ${anulada.error}`);
+      res.status(502).json({ error: `${anulada.error}${anulada.incierto ? '' : ' No se tocó el remito.'}` }); return;
+    }
+    // Queda en el estado de "factura anulada con remito vivo": el que la tarjeta sabe cerrar.
+    const { error: errMarca } = await sb().from('presupuestos_facturados')
+      .update({ estado_emision: 'anulado', facturado_at: null })
+      .eq('tenant_id', TENANT_ID).eq('im_comprobante_id', id).eq('estado_emision', 'completo');
+    if (errMarca) {
+      res.status(500).json({ error: `Se anuló la factura ${fila.im_factura_numero} pero no pude registrarlo acá (${errMarca.message}). El remito sigue vivo: usá "El remito no corresponde".` });
+      return;
+    }
+
+    // 2) El remito: se anula (vuelve el stock), sale de la hoja y el pedido queda libre.
+    const r = await descartarRemito(id, req.user?.sub, `factura ${fila.im_factura_numero} anulada desde la app (${motivo})`);
+    if (r.status !== 200) {
+      res.status(r.status).json({ error: `La factura ${fila.im_factura_numero} quedó ANULADA, pero el remito no: ${r.body?.error ?? 'error'}. En Facturación el pedido tiene el botón "El remito no corresponde" para terminarlo.` });
+      return;
+    }
+    res.json({ ok: true, factura: fila.im_factura_numero, remito: fila.im_remito_numero, hoja: r.body?.hoja ?? null });
+  } catch (err: any) {
+    console.error('[anularFacturaEmitida]', err?.message);
+    res.status(502).json({ error: err?.message ?? 'No se pudo anular la factura.' });
   }
 }
