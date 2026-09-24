@@ -417,7 +417,9 @@ export async function impresionHoja(req: Request & { user?: JwtPayload }, res: R
         c.saldo_anterior = saldoAnteriorDeLaHoja(pendientes, excluir);
         c.saldo_fuente = 'en_vivo'; c.saldo_actualizado = true; c.saldo_consultado_at = consultado_at;
         nuevosSaldos.push({ cod_empresa: c.cod_empresa, cod_cliente: c.cod_cliente, consultado_at, pendientes: pendientes.map(p => ({ id: p.id, saldo: p.saldo })) });
-      } catch {
+      } catch (e: any) {
+        // 24/09/2026, BUSTOS Sebastián en la hoja 3430: salió sin saldo y no quedó rastro de por qué.
+        console.warn(`[hoja ${hoja.numero ?? req.params.id}] saldo de ${c.cliente_nombre ?? c.cod_cliente} no disponible: ${e?.message ?? e}`);
         const respaldo = (respaldos ?? []).find((r: any) => Number(r.cod_empresa) === c.cod_empresa && Number(r.cod_cliente) === c.cod_cliente);
         if (respaldo) {
           c.saldo_anterior = saldoAnteriorDeLaHoja(respaldo.pendientes, excluir);
