@@ -14,4 +14,16 @@ describe('el cuerpo de pendientes confirma datos, no sólo HTTP200', () => {
     expect(parsearPendientesCliente({results:[{id:1,saldo:'-10.25'},{id:2,saldo:0}]}).map(f => f.saldo)).toEqual([-10.25,0]);
     expect(() => parsearPendientesCliente({results:[{id:1,saldo:10},{id:'1',saldo:10}]})).toThrow();
   });
+  /**
+   * 🔑 24/09/2026, BUSTOS Sebastián (125) en la hoja 3430: IM devuelve un renglón "ASH" de 2024
+   * con id 0 y saldo −0,0047. Por esa fracción de centavo se descartaba el saldo entero y la hoja
+   * salió en blanco, con $1.368.965 de deuda real.
+   */
+  it('un renglón sin id por menos de un centavo no tira abajo el saldo', () => {
+    const r = parsearPendientesCliente([{id:0,tipo_comprobante:'ASH',numero:'',fecha_factura:'2024-07-02',saldo:-0.004727},{id:58783725,tipo_comprobante:'FA',saldo:1368965.37}]);
+    expect(r.map(f => f.id)).toEqual(['58783725']);
+  });
+  it('pero sin id y con plata de verdad, sigue rechazando', () => {
+    expect(() => parsearPendientesCliente([{id:0,tipo_comprobante:'ASH',saldo:-150}])).toThrow();
+  });
 });

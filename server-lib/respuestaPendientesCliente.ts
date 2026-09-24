@@ -9,7 +9,13 @@ export function parsearPendientesCliente(data: any): ComprobantePendiente[] {
   const filas = Array.isArray(data) ? data : data?.results ?? data?.comprobantes;
   if (!Array.isArray(filas)) throw new Error('InfoManager no devolvió una lista de saldos pendientes válida.');
   const ids = new Set<string>();
-  return filas.map(f => {
+  /**
+   * 🪤 IM devuelve renglones "ASH" de 2024 con id 0 y saldo de fracciones de centavo (BUSTOS
+   * Sebastián, 24/09/2026: −0,0047). No suman plata y tiraban abajo el saldo entero. Con importe
+   * real, en cambio, se sigue rechazando: no se puede saltear deuda.
+   */
+  const residuoSinId = (f: any) => Number(f?.id) === 0 && Math.abs(Number(f?.saldo)) < 0.005;
+  return filas.filter(f => !residuoSinId(f)).map(f => {
     const id = typeof f?.id === 'string' || typeof f?.id === 'number' ? String(f.id).trim() : '';
     const saldoRaw = f?.saldo;
     const saldo = Number(saldoRaw);
