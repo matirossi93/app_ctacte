@@ -11,8 +11,9 @@ import {
   fetchClientesIMCached, fetchArticulosCatalogo, fetchArticulosDeDeposito,
   getItemsComprobante, presupuestoFacturado, actualizarPresupuestoCantidades, desconfirmarPresupuesto,
   fechaComprobante, cabeceraComprobante, fechaArgentina, fetchVendedores, fetchPreciosDeLista,
-  buscarPresupuestoPorCompatibilidad, leerComprobante,
+  buscarPresupuestoPorCompatibilidad, leerComprobante, fetchStockPorDeposito,
 } from './infomanager.js';
+import { ausentesADudar, corregirConStockPuntual } from './stockCatalogo.js';
 import type { JwtPayload } from './auth.js';
 import { formatosDeBolsa } from './formatosBolsa.js';
 import {
@@ -1326,9 +1327,11 @@ export async function catalogoPedido(req: Request & { user?: JwtPayload }, res: 
     // corresponde es que el vendedor lo vea marcado y lo confirme con Casa Central, no que
     // la venta se pierda en silencio.
     let deDeposito: Set<number> | null = null;
+    let codDeposito: number | null = null;
     try {
       // El depósito de la unidad del usuario: al de BRS le importa el stock de BRS.
       const suc = await sucursalDelUsuario(req.user);
+      codDeposito = suc.cod_deposito;
       deDeposito = await fetchArticulosDeDeposito(suc.cod_deposito);
     } catch (e: any) {
       // 🔑 Si IM no contesta queda en null, que es "no sé", y NO en "no hay": marcar todo
@@ -1359,6 +1362,16 @@ export async function catalogoPedido(req: Request & { user?: JwtPayload }, res: 
     let precios = new Map<number, number>();
     try { precios = await fetchPreciosDeLista(codLista); } catch { /* va sin precio */ }
 
+    // El listado del depósito tiene agujeros (ver stockCatalogo.ts): antes de marcar
+    // "sin stock" un artículo vendible, se le pregunta a IM por ese artículo puntual.
+    let paginaFinal = pagina;
+    const dudosos = deDeposito && codDeposito != null ? ausentesADudar(pagina, precios) : [];
+    if (dudosos.length) {
+      try {
+        paginaFinal = corregirConStockPuntual(pagina, await fetchStockPorDeposito(codDeposito!, false, dudosos));
+      } catch { /* queda lo del listado */ }
+    }
+
     res.json({
       ok: true,
       cod_lista: codLista,
@@ -1367,7 +1380,7 @@ export async function catalogoPedido(req: Request & { user?: JwtPayload }, res: 
       // son dos cosas y el vendedor decide distinto en cada caso.
       hay_precios: precios.size > 0,
       // null y no 0: el front tiene que poder distinguir "no sé el precio" de "vale cero".
-      articulos: pagina.map((a) => ({ ...a, precio_venta: precios.get(a.cod_articulo) ?? null })),
+      articulos: paginaFinal.map((a) => ({ ...a, precio_venta: precios.get(a.cod_articulo) ?? null })),
       // Si no se pudo consultar el stock, el front no muestra ninguna marca (ver hay_stock).
       hay_stock_conocido: !!deDeposito,
     });
