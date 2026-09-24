@@ -61,6 +61,13 @@ export function enSegundoPlano<T>(correr: () => Promise<T>): Promise<T> {
 const hayLugar = (fondo: boolean) => activas < LIMITE && (!fondo || activasDeFondo < LIMITE_FONDO);
 
 /**
+ * La hora de acá, redondeada al minuto SIGUIENTE: "hasta las 11:36" nunca es antes de tiempo.
+ * 24/09/2026: la pantalla de facturar decía "hasta 2026-09-24T14:35:25.498Z" (UTC).
+ */
+const horaLocal = (ms: number) => new Date(Math.ceil(ms / 60_000) * 60_000)
+  .toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' });
+
+/**
  * Despierta al PRIMERO DE LA COLA QUE PUEDA entrar. 🪤 No al primero a secas: un warm esperando
  * lugar de fondo taparía al usuario que está detrás y sí tiene lugar.
  */
@@ -87,7 +94,7 @@ export async function lecturaLimitada<T>(leer: () => Promise<T>): Promise<T> {
       if (terminado) return;
       if (Date.now() < pausaHasta) {
         terminado = true; clearTimeout(reloj);
-        reject(new LecturaNoEnviada(`InfoManager pidió una pausa hasta ${new Date(pausaHasta).toISOString()}. No se consultó de nuevo.`)); return;
+        reject(new LecturaNoEnviada(`InfoManager pidió una pausa hasta las ${horaLocal(pausaHasta)}. No se consultó de nuevo.`)); return;
       }
       if (Date.now() >= vence) return;
       if (!hayLugar(fondo)) { esperando.push(cola); return; }

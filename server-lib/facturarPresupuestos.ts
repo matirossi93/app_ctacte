@@ -268,7 +268,7 @@ export async function prepararFacturacion(
     } catch (e: any) {
       // 🪤 No poder chequear no puede bloquear la facturación del día entero, pero tampoco puede
       // pasar callado: se avisa por log y la pantalla sigue con el resto de los controles.
-      throw new Error(`No pude descartar facturas previas en InfoManager: ${e?.message ?? 'sin respuesta'}. No se emitió nada.`);
+      throw new Error(`No pude revisar en InfoManager si ya estaban facturados: ${String(e?.message ?? 'sin respuesta').replace(/\.\s*$/, '')}.`);
     }
   }
 
@@ -1158,12 +1158,20 @@ async function cerrarSobreRemitoExistente(
  */
 export async function facturarSeleccion(req: Request & { user?: JwtPayload }, res: Response) {
   if (frenaSiNoPuede(req, res)) return;
+  /**
+   * 🔑 Todo lo que corta ANTES del primer comprobante lo dice con `nada_emitido`: es lo único que
+   * le permite a la pantalla afirmar "no se emitió nada" y dejar reintentar. 24/09/2026: InfoManager
+   * pidió una pausa antes de emitir y la pantalla decía a la vez "no se emitió nada" y "no se sabe
+   * qué llegó a emitirse".
+   */
+  let empezoAEmitir = false;
+  const sinEmitir = (status: number, error: string) => { res.status(status).json({ error, nada_emitido: true }); };
   try {
     const ids = idsDe(req);
     const huellasVistas = huellasDe(req);
-    if (!ids.length) { res.status(400).json({ error: 'No elegiste ningún presupuesto.' }); return; }
+    if (!ids.length) { sinEmitir(400, 'No elegiste ningún presupuesto.'); return; }
     if (ids.length > MAX_POR_TANDA) {
-      res.status(400).json({ error: `Elegiste ${ids.length} pedidos y el máximo por tanda es ${MAX_POR_TANDA}. Hacelo en varias tandas.` });
+      sinEmitir(400, `Elegiste ${ids.length} pedidos y el máximo por tanda es ${MAX_POR_TANDA}. Hacelo en varias tandas.`);
       return;
     }
     const { desde, hasta } = rango(req);
@@ -1172,7 +1180,7 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
       filas = await filasDe(ids, desde, hasta);
     } catch (e: any) {
       // Sin saber qué se emitió ya, no se emite NADA.
-      res.status(502).json({ error: `No pude preparar la facturación: ${e?.message ?? 'sin respuesta'}` });
+      sinEmitir(502, `No pude preparar la facturación: ${e?.message ?? 'sin respuesta'}`);
       return;
     }
 
@@ -1186,9 +1194,7 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
      */
     const observados = filas.filter((f: any) => !f.facturado_at && f._revision?.estado === 'observado');
     if (observados.length) {
-      res.status(409).json({
-        error: `Hay ${observados.length} presupuesto(s) marcados con un problema: ${observados.map((f: any) => f.im_numero ?? f.im_comprobante_id).join(', ')}. Resolvelos en Presupuestos o sacales la marca antes de facturar.`,
-      });
+      sinEmitir(409, `Hay ${observados.length} presupuesto(s) marcados con un problema: ${observados.map((f: any) => f.im_numero ?? f.im_comprobante_id).join(', ')}. Resolvelos en Presupuestos o sacales la marca antes de facturar.`);
       return;
     }
 
@@ -1202,16 +1208,16 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
      */
     let fechaEmision: string | null;
     try { fechaEmision = req.body?.fecha_emision ? diaValido(req.body.fecha_emision) : null; }
-    catch (e: any) { res.status(400).json({ error: e.message }); return; }
+    catch (e: any) { sinEmitir(400, e.message); return; }
     if (fechaEmision && fechaEmision > fechaMaximaEmision()) {
-      res.status(400).json({ error: `Se puede emitir hasta ${fechaMaximaEmision()} (${MAX_ADELANTO_DIAS} días de adelanto). Es la ventana que se verifica para evitar duplicados.` }); return;
+      sinEmitir(400, `Se puede emitir hasta ${fechaMaximaEmision()} (${MAX_ADELANTO_DIAS} días de adelanto). Es la ventana que se verifica para evitar duplicados.`); return;
     }
 
     const usuario = await usuarioIM(req.user);
     const preparados = (await prepararFacturacion(filas, usuario, fechaEmision)).filter(p => p.estado !== 'facturado');
     // La fecha elegida viaja a los tres comprobantes (factura, remito y su reintento).
     for (const p of preparados) if (p.datos) p.datos.fecha = fechaEmision;
-    if (!preparados.length) { res.status(409).json({ error: 'No hay nada para facturar en lo que elegiste.' }); return; }
+    if (!preparados.length) { sinEmitir(409, 'No hay nada para facturar en lo que elegiste.'); return; }
 
     const hechos: any[] = [];
     const fallados: string[] = [];
@@ -1244,6 +1250,7 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
       numeros.set(clave, await proximoNumeroFactura(p.letra, PV_FACTURA, 30, 'FA', serie));
     }
 
+    empezoAEmitir = true;
     for (const p of preparados) {
       if (cortado) break;
       if (p.estado === 'no_se_puede' || !p.datos) { fallados.push(p.motivo ?? 'no se pudo facturar'); continue; }
@@ -1564,6 +1571,7 @@ export async function facturarSeleccion(req: Request & { user?: JwtPayload }, re
   } catch (err: any) {
     invalidarIM(); invalidarVista(); invalidarRemitos();
     console.error('[facturarSeleccion]', err?.message);
+    if (!empezoAEmitir) { sinEmitir(500, `${String(err?.message ?? 'error').replace(/\.\s*$/, '')}. No se emitió nada: podés volver a intentar.`); return; }
     res.status(500).json({ error: err?.message ?? 'error' });
   }
 }

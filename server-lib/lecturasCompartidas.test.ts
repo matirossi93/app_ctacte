@@ -25,6 +25,18 @@ describe('pool global de GET',()=>{
     pausarLecturas(3600_000); await expect(lecturaLimitada(leer)).rejects.toMatchObject({retryable:false});
     await vi.advanceTimersByTimeAsync(60_000); await expect(lecturaLimitada(leer)).rejects.toMatchObject({retryable:false}); expect(leer).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
   });
+  /**
+   * 🔑 24/09/2026: la pantalla de facturar mostró "pausa hasta 2026-09-24T14:35:25.498Z". Es UTC,
+   * tres horas corrida, en un formato que nadie en la oficina lee.
+   */
+  it('la pausa se informa en hora de Argentina, sin adelantarse',async()=>{
+    vi.setSystemTime(new Date('2026-09-24T14:32:30.498Z'));
+    const {pausarLecturas,lecturaLimitada}=await import('./lecturasCompartidas.js');
+    pausarLecturas(175_000);   // hasta las 14:35:25 UTC: las 11:35:25 acá
+    const error:any=await lecturaLimitada(vi.fn()).catch(e=>e);
+    expect(error.message).toMatch(/hasta las 11:36\b/);
+    expect(error.message).not.toMatch(/2026-09-24T|Z\b/);
+  });
   it('cuatro slots y plazo de cola; un request vencido nunca se envía después',async()=>{
     const {lecturaLimitada}=await import('./lecturasCompartidas.js'); const pendientes=Array.from({length:4},()=>diferido<number>());
     const activas=pendientes.map(d=>lecturaLimitada(()=>d.promesa)); const leer=vi.fn(async()=>5);

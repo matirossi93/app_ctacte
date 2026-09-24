@@ -93,7 +93,15 @@ export async function imGetRetry<T>(fn: () => Promise<T>, label: string, attempt
       const rawPausa = err?.response?.headers?.['retry-after'];
       const segundos = Number(rawPausa);
       const espera = Number.isFinite(segundos) && segundos >= 0 ? segundos * 1000 : Date.parse(String(rawPausa)) - Date.now();
-      if (status === 429) { pausarLecturas(Number.isFinite(espera) && espera > 0 ? espera : 30_000); break; }
+      if (status === 429) {
+        // 🔑 Sin Retry-After, IM dice cuánto esperar en el cuerpo (`reintentarEnSegundos`, 31/07/2026).
+        const cuerpo = err?.response?.data;
+        const delCuerpo = Number(cuerpo?.reintentarEnSegundos) * 1000;
+        const pausa = Number.isFinite(espera) && espera > 0 ? espera : Number.isFinite(delCuerpo) && delCuerpo > 0 ? delCuerpo : 30_000;
+        // 24/09/2026: cortó en plena facturación y no quedó rastro de qué consulta chocó.
+        console.warn(`[IM 429] ${label}: pausa de ${Math.round(pausa / 1000)} s (Retry-After=${rawPausa ?? '—'} · ${JSON.stringify(cuerpo ?? null).slice(0, 200)})`);
+        pausarLecturas(pausa); break;
+      }
       const transitorio = !esComprobanteBorrado(err)
         && (status === undefined || status >= 500 || status === 429 || status === 401
         || ['ECONNABORTED', 'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN'].includes(err?.code));

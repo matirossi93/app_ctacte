@@ -687,6 +687,7 @@ describe('cuando la base no contesta', () => {
     tablas['presupuestos_facturados'] = { data: null, error: { message: 'timeout' } };
     const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
     expect(r.status).toBe(502);
+    expect(r.body.nada_emitido).toBe(true);
     expect(m.emitirFactura).not.toHaveBeenCalled();
     expect(m.emitirRemito).not.toHaveBeenCalled();
   });
@@ -718,6 +719,39 @@ describe('cuando la base no contesta', () => {
 
     expect(r.body.cortado).toMatch(/77291|remito/i);
     expect(r.body.ok).toBe(false);
+  });
+});
+
+/**
+ * 🔑 24/09/2026, RIVAS / BUSTOS / DECIMA: InfoManager pidió una pausa mientras se revisaba si los
+ * pedidos ya estaban facturados. El server cortó ANTES de emitir y lo dijo, pero la pantalla le
+ * pegó atrás "No se sabe qué llegó a emitirse": dos frases que se contradicen justo cuando la
+ * oficina tiene que decidir si reintenta. La pantalla sólo puede callarse eso si el server se lo
+ * dice explícitamente.
+ */
+describe('cuando se corta antes del primer comprobante', () => {
+  it('🔴 la respuesta dice que no se emitió nada, en una sola frase', async () => {
+    m.fetchVentas.mockRejectedValueOnce(new Error('InfoManager pidió una pausa hasta las 11:36. No se consultó de nuevo.'));
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(m.emitirFactura).not.toHaveBeenCalled();
+    expect(r.body.nada_emitido).toBe(true);
+    expect(r.body.error).toMatch(/11:36/);
+    expect(r.body.error).toMatch(/No se emitió nada/);
+    expect(r.body.error).not.toMatch(/\.\./);
+  });
+
+  it('🔴 si algo se rompe DESPUÉS de empezar a emitir, no lo dice: ahí sí puede haber salido algo', async () => {
+    m.emitirRemito.mockRejectedValueOnce(new Error('socket hang up'));
+    const r = await llamar(facturarSeleccion, { body: { ids: ['10'] } });
+    expect(m.emitirFactura).toHaveBeenCalled();
+    expect(r.status).toBe(500);
+    expect(r.body.nada_emitido).toBeUndefined();
+  });
+
+  it('los rechazos de antes de emitir también lo dicen', async () => {
+    const r = await llamar(facturarSeleccion, { body: { ids: [] } });
+    expect(r.status).toBe(400);
+    expect(r.body.nada_emitido).toBe(true);
   });
 });
 

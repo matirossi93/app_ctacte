@@ -167,12 +167,19 @@ export function FacturarModal(
                 body: JSON.stringify({ ids, huellas, desde, hasta, fecha_emision: fechaEmision }),
             });
             const d = await r.json().catch(() => null);
+            /**
+             * 🔑 Sólo el server puede afirmar que no salió nada, y lo dice con `nada_emitido`: cortó
+             * antes del primer comprobante. Ahí no hay nada que revisar y se puede reintentar.
+             * 24/09/2026: con una pausa de InfoManager, esta pantalla decía a la vez "no se emitió
+             * nada" y "no se sabe qué llegó a emitirse".
+             */
+            if (!r.ok && d?.nada_emitido === true) { setError(d.error ?? 'No se emitió nada.'); setIntentado(false); return; }
             if (!r.ok) throw new Error(d?.error ?? 'No se pudo facturar');
             setResultado(d);
         } catch (e: any) {
             // 🪤 Si se cortó la conexión con NUESTRO server, tampoco se sabe qué llegó a emitir:
             // el mensaje no puede decir "no se emitió nada".
-            setError(`${e?.message ?? 'Error de conexión'}. **No se sabe qué llegó a emitirse**: puede que el servidor haya seguido emitiendo. Cerrá esta ventana, actualizá la lista y fijate qué quedó facturado ANTES de reintentar.`);
+            setError(`${String(e?.message ?? 'Error de conexión').replace(/\.\s*$/, '')}. NO SE SABE QUÉ LLEGÓ A EMITIRSE: puede que el servidor haya seguido emitiendo. Cerrá esta ventana, actualizá la lista y fijate qué quedó facturado ANTES de reintentar.`);
         } finally {
             setEmitiendo(false); operacionGlobal.terminar();
         }

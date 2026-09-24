@@ -155,6 +155,56 @@ try{
  });
 
  /**
+  * 🔑 24/09/2026 (RIVAS, BUSTOS, DECIMA): InfoManager pidió una pausa y el server cortó ANTES de
+  * emitir. La pantalla decía a la vez "No se emitió nada" y "No se sabe qué llegó a emitirse", con
+  * los asteriscos a la vista, y obligaba a cerrar y volver a elegir los pedidos.
+  */
+ const previaLista={fecha_maxima_emision:'2026-09-30',max_adelanto_dias:7,punto_de_venta:777,no_se_puede:0,ya_facturados:0,pedidos:[{...rows[0],estado:'listo',letra:'B',renglones:1,sin_stock:[]}],a_emitir:{facturas:1,remitos:1,clientes:1,total:150000,letras:{A:0,B:1}}};
+ await test('Facturar: si no se emitió nada lo dice sin contradecirse y deja reintentar',async()=>{
+  const {page,ctx}=await setup();
+  try{
+   await page.route('**/api/facturacion/previa?**',r=>reply(r,previaLista));
+   let calls=0;
+   await page.route('**/api/facturacion',r=>{if(r.request().method()!=='POST')return r.fallback();calls++;
+    return calls===1
+     ?reply(r,{error:'No pude revisar en InfoManager si ya estaban facturados: InfoManager pidió una pausa hasta las 11:36. No se consultó de nuevo. No se emitió nada: podés volver a intentar.',nada_emitido:true},500)
+     :reply(r,{ok:true,facturados:1,hechos:[{cliente:'CLIENTE ALFA',factura:501,remito:601,tipo:'FA B'}],fallados:[],cortado:null,quedan_sin_facturar:0});});
+   await page.locator('.of-tabs').getByRole('button',{name:'Facturación',exact:true}).click();
+   await page.locator('.fc-tabla tbody input[type=checkbox]').first().check();
+   await page.getByRole('button',{name:'Facturar 1',exact:true}).click();
+   await page.locator('.fac-btn.emitir').click();
+   const alerta=page.locator('.fac-alerta.error');await alerta.waitFor();
+   const texto=await alerta.innerText();
+   assert(/11:36/.test(texto)&&/No se emitió nada/.test(texto),`No muestra lo que pasó: "${texto}"`);
+   assert(!/no se sabe/i.test(texto),`Se contradice: "${texto}"`);
+   for(let i=0;i<100&&await page.locator('.fac-btn.emitir').isDisabled();i++)await pause(25);
+   assert(await page.locator('.fac-btn.emitir').isEnabled(),'No deja reintentar algo que no se emitió');
+   await page.locator('.fac-btn.emitir').click();
+   await page.locator('.fac-modal').getByRole('button',{name:'Listo',exact:true}).waitFor();
+   assert(calls===2,`Mandó ${calls} pedidos de facturación`);
+  }finally{await ctx.close();}
+ });
+ await test('Facturar: si se corta la conexión avisa que no se sabe qué salió, sin asteriscos, y no deja reintentar',async()=>{
+  const {page,ctx}=await setup();
+  try{
+   await page.route('**/api/facturacion/previa?**',r=>reply(r,previaLista));
+   let calls=0;
+   await page.route('**/api/facturacion',r=>{if(r.request().method()!=='POST')return r.fallback();calls++;return r.abort('connectionreset');});
+   await page.locator('.of-tabs').getByRole('button',{name:'Facturación',exact:true}).click();
+   await page.locator('.fc-tabla tbody input[type=checkbox]').first().check();
+   await page.getByRole('button',{name:'Facturar 1',exact:true}).click();
+   await page.locator('.fac-btn.emitir').click();
+   const alerta=page.locator('.fac-alerta.error');await alerta.waitFor();
+   const texto=await alerta.innerText();
+   assert(/NO SE SABE QUÉ LLEGÓ A EMITIRSE/.test(texto),`No avisa que no se sabe qué salió: "${texto}"`);
+   assert(!/\*\*/.test(texto),`Muestra los asteriscos: "${texto}"`);
+   await pause(200);
+   assert(await page.locator('.fac-btn.emitir').isDisabled(),'Deja reintentar sin saber qué salió');
+   assert(calls===1,`Mandó ${calls} pedidos de facturación`);
+  }finally{await ctx.close();}
+ });
+
+ /**
   * 🔑 Mati (23/09/2026), con OTTONELLI: la app decía "parece que ya está facturado en IM" y ahí se
   * terminaba — el pedido quedaba pendiente para siempre y sin botón Corregir para hacerle una NC.
   */

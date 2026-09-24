@@ -183,3 +183,26 @@ it('429 respeta Retry-After segundos y fecha HTTP, sin repetir ni esperar una ho
     await vi.advanceTimersByTimeAsync(3600_000);
   }
 });
+
+/**
+ * 🔑 24/09/2026: InfoManager cortó con 429 en plena facturación y en el log no quedó NADA: ni qué
+ * consulta chocó ni cuánto pidió esperar. No hubo forma de saber quién gastó la cuota.
+ *
+ * 🪤 IM dice cuánto esperar en el CUERPO (`reintentarEnSegundos`, visto el 31/07/2026). Sin
+ * Retry-After se usaban 30 s, y a los 30 s se le volvía a preguntar en plena veda.
+ */
+it('429 sin Retry-After respeta el reintentarEnSegundos del cuerpo y queda en el log',async()=>{
+  // Después de la pausa que dejó el test anterior (11/09 12:00) y antes de cualquier reloj real.
+  vi.setSystemTime(new Date('2026-09-12T10:00:00Z'));
+  const aviso=vi.spyOn(console,'warn').mockImplementation(()=>{});
+  const error:any=httpError(429);
+  error.response.data={mensaje:'Se superó el límite de solicitudes por hora para este cliente',reintentarEnSegundos:1316};
+  await expect(imGetRetry(vi.fn().mockRejectedValue(error),'/ventas 2026-09')).rejects.toBe(error);
+  expect(aviso.mock.calls.flat().join(' ')).toMatch(/429.*\/ventas 2026-09.*1316/);
+  await vi.advanceTimersByTimeAsync(60_000);
+  const siguiente=vi.fn();
+  await expect(imGetRetry(siguiente,'durante pausa')).rejects.toMatchObject({retryable:false});
+  expect(siguiente).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1316_000);
+  aviso.mockRestore();
+});
