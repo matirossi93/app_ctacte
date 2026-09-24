@@ -347,6 +347,19 @@ async function resolverYControlar(
       if (p) { precio = p.precio_vta; iva = p.iva; descripcion = p.descripcion; }
     } catch (e: any) {
       console.warn(`[${etiqueta}] precio-ldp falló art=${it.cod_articulo} lista=${listaItem}:`, e?.message);
+      /**
+       * 🔴 QUE InfoManager NO CONTESTE NO ES QUE FALTE EL PRECIO. 24/09/2026 11:34: IM estaba en
+       * pausa por exceso de consultas y el vendedor leyó "no tiene precio cargado en la lista
+       * elegida", con los renglones en rojo: la salida obvia era cambiar de lista. Se corta acá,
+       * sin preguntar por el resto, y sin marcar renglones: el pedido no tiene nada mal.
+       */
+      const pausa = /pidió una pausa hasta las ([\d:]+)/.exec(String(e?.message ?? ''))?.[1];
+      return { ok: false, status: 503, body: {
+        ok: false,
+        error: pausa
+          ? `InfoManager pidió una pausa por exceso de consultas hasta las ${pausa} y no pude traer los precios. El pedido no se cargó: volvé a enviarlo después de esa hora.`
+          : 'InfoManager no contestó al pedirle los precios. El pedido no se cargó: volvé a enviarlo en unos minutos.',
+      } };
     }
     // El descuento se aplica al subtotal que guardamos, pero a IM se le manda aparte
     // (precio + descuento_porc) para que el comprobante lo muestre desglosado.

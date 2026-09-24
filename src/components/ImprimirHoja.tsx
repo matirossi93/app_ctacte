@@ -156,7 +156,9 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
                                             antes de que salga el camión. Uno por cliente, como el total. */}
                                         {i === 0 && (
                                             <td className="n saldo" rowSpan={filas}>
-                                                {c.saldo_anterior != null ? money(c.saldo_anterior) : '—'}
+                                                {/* 🪤 "—" en el papel se lee como "no debe nada". BUSTOS Sebastián,
+                                                    hoja 3430 (24/09/2026): salió así y debía $1.368.965. */}
+                                                {c.saldo_anterior != null ? money(c.saldo_anterior) : 'SIN DATO'}
                                             </td>
                                         )}
                                     </tr>
@@ -193,9 +195,10 @@ export function ImprimirHoja({ hojaId, onClose }: { hojaId: string; onClose: () 
 
                     {datos.clientes.some(c => c.comprobantes.some(p => p.factura_origen === "elegida")) && <p className="imp-nota">Hay facturas deducidas entre varias candidatas. Revisá la asociación antes de cobrar.</p>}
                     {!!datos.sin_actualizar_saldo && <p className="imp-nota">Saldo sin actualizar en {datos.sin_actualizar_saldo} cliente(s). Los importes disponibles usan la última consulta guardada.</p>}
+                    {/* Se imprime: el que tiene que saberlo es el repartidor, no quien imprime. */}
                     {datos.sin_saldo > 0 && (
-                        <p className="imp-nota imp-no-print">
-                            De {datos.sin_saldo} cliente(s) no se pudo traer el saldo: esa celda va en blanco.
+                        <p className="imp-nota">
+                            De {datos.sin_saldo} cliente(s) no se pudo traer el saldo anterior (dice SIN DATO). No quiere decir que no deba: consultalo con la oficina antes de cobrar.
                         </p>
                     )}
                 </div>

@@ -189,6 +189,33 @@ try {
     });
   }
 
+  /**
+   * 🔴 SALDO QUE NO SE PUDO TRAER. 24/09/2026, BUSTOS Sebastián en la hoja 3430: la celda salió
+   * con "—" y el aviso sólo se veía en pantalla, así que en el papel parecía que no debía nada.
+   * Tenía $1.368.965 de deuda. El repartidor tiene que leer en el papel que el dato falta.
+   */
+  await test('🔴 Un saldo que no se pudo traer se nota en el papel, no parece deuda cero', async () => {
+    const h = hoja({});
+    const { page, ctx } = await pantalla(1440, { h });
+    try {
+      const cli = (i, saldo) => ({ cod_empresa: 1, cod_cliente: i, cliente_nombre: ['BUSTOS', 'LOPEZ'][i - 1], saldo_anterior: saldo, total: 1000, bultos: 1, kg: 10,
+        comprobantes: [{ im_numero: 5000 + i, bultos: 1, kg: 10, total: 1000, facturado: true }] });
+      await page.route('**/api/hojas-ruta/h1/impresion', r => reply(r, {
+        hoja: h, clientes: [cli(1, null), cli(2, 0)], totales: { clientes: 2, comprobantes: 2, bultos: 2, kg: 20, total: 2000 },
+        fraccionado: [], fraccionado_completo: true, dias_faltantes: [], fraccionado_totales: { productos: 0, paquetes: 0, kg: 0 }, sin_saldo: 1,
+      }));
+      await page.getByTitle('Imprimir la hoja y el listado de fraccionado', { exact: true }).click();
+      await page.locator('.imp-grupo').nth(1).waitFor();
+      await page.emulateMedia({ media: 'print' });
+      const saldos = await page.locator('.imp-tabla tbody .saldo').allInnerTexts();
+      assert(/sin dato/i.test(saldos[0]), `El saldo que falta no lo dice: "${saldos[0]}"`);
+      assert(!/sin dato/i.test(saldos[1]), `Un saldo en cero aparece como faltante: "${saldos[1]}"`);
+      const aviso = page.getByText(/no se pudo traer el saldo/i);
+      assert(await aviso.isVisible(), 'El aviso de saldo faltante no sale en el papel');
+      assert(/no quiere decir que no deba/i.test(await aviso.innerText()), `El aviso no aclara que puede deber: "${await aviso.innerText()}"`);
+    } finally { await ctx.close(); }
+  });
+
   /** 🪤 60 caracteres es el tope: tiene que entrar en la cabecera impresa, no partirla. */
   await test('🔴 El rótulo más largo posible no rompe la cabecera impresa', async () => {
     const largo = 'BANDA DEL RIO SALI, CRUZ ALTA, LULES Y FAMAILLA — RECORRIDO';

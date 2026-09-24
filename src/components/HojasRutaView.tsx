@@ -500,7 +500,7 @@ export function HojasRutaView({ desde, hasta }: { desde: string; hasta: string }
             return false;
         }
         const partes: string[] = [];
-        if (d?.sin_saldo > 0) partes.push(`de ${d.sin_saldo} no se pudo traer el saldo del cliente (van en blanco en la hoja impresa)`);
+        if (d?.sin_saldo > 0) partes.push(`de ${d.sin_saldo} no se pudo traer el saldo del cliente (en la hoja impresa dice SIN DATO)`);
         if (d?.peso_recalculado === false) partes.push('hay pedidos sin peso verificado; la capacidad del camión está incompleta');
         if (partes.length) setAviso(`Se agregaron ${d.agregados}, pero ${partes.join('; ')}.`);
         return true;
