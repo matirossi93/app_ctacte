@@ -65,7 +65,7 @@ const hayLugar = (fondo: boolean) => activas < LIMITE && (!fondo || activasDeFon
  * 24/09/2026: la pantalla de facturar decía "hasta 2026-09-24T14:35:25.498Z" (UTC).
  */
 const horaLocal = (ms: number) => new Date(Math.ceil(ms / 60_000) * 60_000)
-  .toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' });
+  .toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'America/Argentina/Buenos_Aires' });
 
 /**
  * Despierta al PRIMERO DE LA COLA QUE PUEDA entrar. 🪤 No al primero a secas: un warm esperando

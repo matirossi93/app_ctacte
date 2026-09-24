@@ -38,7 +38,10 @@ interface CachedDataset {
 // Mes pasado: TTL largo. Sólo cambia ante NCs tardías que el cron 0 4 * * *
 //   regenera al re-syncear los últimos 6 meses; para el rango entre crons,
 //   el dataset es estable.
-const TTL_CURRENT_MS = 5 * 60 * 1000;        // 5 min mes actual
+// 30 min (era 5): Mati, 24/09/2026. Cada refresco son ~142k renglones de IM y se hacía cada
+// 6-10 min; fue lo más pesado el día del 429 en plena facturación. Objetivos/comisiones pueden
+// verse hasta 30 min atrasados.
+const TTL_CURRENT_MS = 30 * 60 * 1000;       // 30 min mes actual
 const TTL_HISTORIC_MS = 24 * 60 * 60 * 1000; // 24h meses pasados
 const cache = new Map<string, CachedDataset>();
 // Coalescing: si un fetch está en vuelo para una key, las requests

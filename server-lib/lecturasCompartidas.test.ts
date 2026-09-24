@@ -34,7 +34,12 @@ describe('pool global de GET',()=>{
     const {pausarLecturas,lecturaLimitada}=await import('./lecturasCompartidas.js');
     pausarLecturas(175_000);   // hasta las 14:35:25 UTC: las 11:35:25 acá
     const error:any=await lecturaLimitada(vi.fn()).catch(e=>e);
-    expect(error.message).toMatch(/hasta las 11:36\b/);
+    expect(error.message).toMatch(/hasta las 11:36\. /);
+    // 🪤 En el contenedor es-AR salió "12:36 p. m.." (12 h y doble punto): tiene que ser 24 h.
+    vi.setSystemTime(new Date('2026-09-24T15:34:00Z'));
+    pausarLecturas(60_000);
+    const tarde:any=await lecturaLimitada(vi.fn()).catch(e=>e);
+    expect(tarde.message).toMatch(/hasta las 12:35\. No se/);
     expect(error.message).not.toMatch(/2026-09-24T|Z\b/);
   });
   it('cuatro slots y plazo de cola; un request vencido nunca se envía después',async()=>{
