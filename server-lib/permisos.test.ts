@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { puedeTocarPedido, puedeTocarActividadAjena, veCobranzasDeTodos } from './permisos.js';
+import { puedeTocarPedido, puedeTocarActividadAjena, veCobranzasDeTodos, puedeRevisarRecibos } from './permisos.js';
 
 /**
  * Los 7 roles que existen de verdad en la base (01/09/2026):
@@ -98,5 +98,21 @@ describe('veCobranzasDeTodos — las cobranzas del equipo y la foto del comproba
         expect(veCobranzasDeTodos('cadete')).toBe(false);
         expect(puedeTocarActividadAjena('cadete')).toBe(false);
         expect(puedeTocarPedido({ rol: 'cadete', sub: 'x' }, { cod_vendedor: 2, created_by: 'y' })).toBe(false);
+    });
+});
+
+describe('puedeRevisarRecibos — imputar, aprobar y rechazar cobranzas', () => {
+    // 🔴 26/09: Anto quedó como `administrativo` y dejó de poder imputar, con 17 recibos
+    // esperando. Mati: "dejala como administrativo y cambiá el rol para que pueda usar la app".
+    it('admin, gerente y administrativo revisan: es el trabajo de la oficina', () => {
+        for (const rol of ['admin', 'gerente', 'administrativo']) {
+            expect(puedeRevisarRecibos(rol), rol).toBe(true);
+        }
+    });
+
+    it('el resto no: emitir un recibo escribe en InfoManager', () => {
+        for (const rol of ROLES.filter(r => !['admin', 'gerente', 'administrativo'].includes(r))) {
+            expect(puedeRevisarRecibos(rol), rol).toBe(false);
+        }
     });
 });

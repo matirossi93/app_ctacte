@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { veCobranzasDeTodos } from './permisos.js';
+import { veCobranzasDeTodos, puedeRevisarRecibos } from './permisos.js';
 import { filaUsuario } from './perfilUsuario.js';
 import { promises as fsp } from 'node:fs';
 import type { Request, Response } from 'express';
@@ -278,7 +278,7 @@ export async function caducarRecibosPendientes(diasMax = 30): Promise<{ caducado
 export async function mpConfig(req: Request & { user?: JwtPayload }, res: Response) {
   try {
     const user = req.user!;
-    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    if (!puedeRevisarRecibos(user.rol)) { res.status(403).json({ error: 'Requiere admin, gerente o administrativo' }); return; }
     const force = req.query.force === '1';
     const cuentas = await mpConfigStatus(force);
     const activas = cuentas.filter(c => c.valid === true).length;
@@ -374,7 +374,7 @@ export async function getReciboById(req: Request & { user?: JwtPayload }, res: R
 export async function facturasCandidatas(req: Request & { user?: JwtPayload }, res: Response) {
   try {
     const user = req.user!;
-    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    if (!puedeRevisarRecibos(user.rol)) { res.status(403).json({ error: 'Requiere admin, gerente o administrativo' }); return; }
     const { data: comp, error } = await sb().from('comprobantes_pago').select('*')
       .eq('id', req.params.id).eq('tenant_id', TENANT_ID).maybeSingle();
     if (error || !comp) { res.status(404).json({ error: 'Comprobante no encontrado' }); return; }
@@ -407,7 +407,7 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
   let claimed = false;
   try {
     const user = req.user!;
-    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    if (!puedeRevisarRecibos(user.rol)) { res.status(403).json({ error: 'Requiere admin, gerente o administrativo' }); return; }
 
     if (aprobacionesEnCurso.has(compId)) {
       res.status(409).json({ error: 'Este recibo ya se está aprobando en otra pestaña o sesión — esperá unos segundos y refrescá la lista.' });
@@ -703,7 +703,7 @@ export async function aprobarRecibo(req: Request & { user?: JwtPayload }, res: R
 export async function rechazarRecibo(req: Request & { user?: JwtPayload }, res: Response) {
   try {
     const user = req.user!;
-    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    if (!puedeRevisarRecibos(user.rol)) { res.status(403).json({ error: 'Requiere admin, gerente o administrativo' }); return; }
     const motivo = String(req.body?.motivo ?? '').trim();
     if (!motivo) { res.status(400).json({ error: 'motivo obligatorio' }); return; }
     // Guard: un recibo imputado ya tiene la plata registrada en IM — marcarlo
@@ -745,7 +745,7 @@ const CAMPOS_EDITABLES_TEXTO = ['banco_origen', 'referencia', 'observaciones'] a
 export async function editarRecibo(req: Request & { user?: JwtPayload }, res: Response) {
   try {
     const user = req.user!;
-    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    if (!puedeRevisarRecibos(user.rol)) { res.status(403).json({ error: 'Requiere admin, gerente o administrativo' }); return; }
 
     const { data: comp, error: fErr } = await sb().from('comprobantes_pago').select('*')
       .eq('id', req.params.id).eq('tenant_id', TENANT_ID).maybeSingle();
@@ -819,7 +819,7 @@ export async function editarRecibo(req: Request & { user?: JwtPayload }, res: Re
 export async function cuentasDebug(req: Request & { user?: JwtPayload }, res: Response) {
   try {
     const user = req.user!;
-    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    if (!puedeRevisarRecibos(user.rol)) { res.status(403).json({ error: 'Requiere admin, gerente o administrativo' }); return; }
     const mapping = await debugCuentasResolver();
     res.json({ ok: true, mapping });
   } catch (err: any) {
@@ -835,7 +835,7 @@ export async function cuentasDebug(req: Request & { user?: JwtPayload }, res: Re
 export async function cuentasEfectivo(req: Request & { user?: JwtPayload }, res: Response) {
   try {
     const user = req.user!;
-    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    if (!puedeRevisarRecibos(user.rol)) { res.status(403).json({ error: 'Requiere admin, gerente o administrativo' }); return; }
     const cuentas = await listCuentasEfectivo();
     res.json({ ok: true, cuentas });
   } catch (err: any) {
@@ -849,7 +849,7 @@ export async function cuentasEfectivo(req: Request & { user?: JwtPayload }, res:
 export async function cuentasRefresh(req: Request & { user?: JwtPayload }, res: Response) {
   try {
     const user = req.user!;
-    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    if (!puedeRevisarRecibos(user.rol)) { res.status(403).json({ error: 'Requiere admin, gerente o administrativo' }); return; }
     invalidateCuentasCache();
     const mapping = await debugCuentasResolver();
     res.json({ ok: true, mapping });
@@ -962,7 +962,7 @@ export async function procesarColaMP(limit: number = 20): Promise<{ procesados: 
 export async function reverificarMP(req: Request & { user?: JwtPayload }, res: Response) {
   try {
     const user = req.user!;
-    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    if (!puedeRevisarRecibos(user.rol)) { res.status(403).json({ error: 'Requiere admin, gerente o administrativo' }); return; }
     const id = String(req.params.id);
     const result = await verificarReciboMP(id);
     const { data } = await sb().from('comprobantes_pago').select('*').eq('id', id).maybeSingle();
@@ -979,7 +979,7 @@ export async function reverificarMP(req: Request & { user?: JwtPayload }, res: R
 export async function elegirMatchMP(req: Request & { user?: JwtPayload }, res: Response) {
   try {
     const user = req.user!;
-    if (user.rol !== 'admin' && user.rol !== 'gerente') { res.status(403).json({ error: 'Requiere admin/gerente' }); return; }
+    if (!puedeRevisarRecibos(user.rol)) { res.status(403).json({ error: 'Requiere admin, gerente o administrativo' }); return; }
     const id = String(req.params.id);
     const { payment_id, cuenta } = req.body ?? {};
     if (!payment_id || !cuenta) { res.status(400).json({ error: 'Faltan payment_id y cuenta' }); return; }

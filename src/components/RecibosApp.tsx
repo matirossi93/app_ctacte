@@ -73,7 +73,8 @@ interface FacturaCandidata {
 
 export const RecibosApp = ({ onClose, clients = [], fullPage = false, onLogout }: Props) => {
     const user = getUser();
-    const isBackoffice = user?.rol === 'admin' || user?.rol === 'gerente';
+    // Misma regla que `puedeRevisarRecibos` del servidor: administrativo imputa (Mati, 26/09).
+    const isBackoffice = user?.rol === 'admin' || user?.rol === 'gerente' || user?.rol === 'administrativo';
     const isRepartidor = user?.rol === 'repartidor';
     // viewAll: ve la lista completa de comprobantes (de todos los vendedores).
     // El backoffice la revisa/imputa; el repartidor solo la consulta para saber

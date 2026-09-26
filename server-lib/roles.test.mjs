@@ -14,7 +14,7 @@ import { describe, it, expect } from 'vitest';
 // sin levantar Express. Si cambian allá y no acá, este test queda mintiendo:
 // por eso cada una cita su archivo.
 const PUEDEN_VER_HISTORIAL = ['admin', 'socio', 'gerente', 'administrativo', 'vendedor']; // historialCompras.ts
-const EXIGEN_ADMIN_O_GERENTE = ['admin', 'gerente'];  // conciliacion.ts, recibos.ts, usuarios.ts, reportes.ts
+const EXIGEN_ADMIN_O_GERENTE = ['admin', 'gerente'];  // conciliacion.ts, usuarios.ts, reportes.ts (recibos: ver permisos.ts)
 const FILTRAN_POR_CARTERA = ['vendedor'];             // clientes.ts, pedidos.ts, goals.ts, recibos.ts
 
 const puedeHistorial = (rol) => PUEDEN_VER_HISTORIAL.includes(rol);

@@ -90,3 +90,16 @@ export function puedeTocarActividadAjena(rol: string): boolean {
 export function veCobranzasDeTodos(rol: string, veTodaLaEmpresa = false): boolean {
     return MANDO.has(rol) || rol === 'administrativo' || rol === 'repartidor' || veTodaLaEmpresa;
 }
+
+/**
+ * ¿Puede revisar las cobranzas: imputar a facturas, aprobar (emite el recibo en InfoManager),
+ * rechazar, editar y resolver el cruce con MercadoPago?
+ *
+ * `administrativo` está adentro por decisión de Mati el 26/09/2026: Anto imputaba como
+ * gerente (481 recibos en agosto, 462 en septiembre), la pasaron a `administrativo` y se frenó
+ * la cobranza. "Dejala como administrativo y cambiá el rol para que pueda usar la app".
+ * Conciliación, alta de usuarios y reportes siguen siendo sólo de mando.
+ */
+export function puedeRevisarRecibos(rol: string): boolean {
+    return MANDO.has(rol) || rol === 'administrativo';
+}
