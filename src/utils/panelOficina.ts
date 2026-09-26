@@ -27,3 +27,16 @@ export function pidePanelOficina(pathname: string): boolean {
     const p = String(pathname ?? '').replace(/\/+$/, '');   // sin la barra final
     return p === '/reparto' || p.startsWith('/reparto/');
 }
+
+/**
+ * ¿Ve el selector de vendedores del panel y puede filtrar la cartera, los objetivos y la
+ * actividad por vendedor? Es la misma gente que trabaja la oficina.
+ *
+ * 26/09/2026: Anto pasó de gerente a `administrativo` y seguía viendo la cartera de todos,
+ * pero sin poder elegir vendedor. Esto es sólo para MIRAR: editar objetivos, feriados y el
+ * menú de administración siguen siendo de admin/gerente (`isAdmin` en VendorShell).
+ * El backend ya acepta `cod_vendedor`/`cods` de cualquiera que no sea vendedor.
+ */
+export function filtraPorVendedor(rol: string | null | undefined): boolean {
+    return ROLES_OFICINA.has(String(rol ?? ''));
+}

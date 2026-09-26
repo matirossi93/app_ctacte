@@ -8,6 +8,7 @@ import {
 import { authHeaders, clearToken, getUser, type AuthUser } from '../utils/auth';
 import { formatCurrency } from '../utils/formatters';
 import { elegirObjetivo, modoObjetivo } from '../utils/vistaObjetivo';
+import { filtraPorVendedor } from '../utils/panelOficina';
 import { mesEnCursoArgentina, hoyArgentinaPartes } from '../utils/hoyArgentina';
 import { HistoricoObjetivos } from './HistoricoObjetivos';
 import { RecibosApp } from './RecibosApp';
@@ -249,6 +250,8 @@ interface Props {
 export const VendorShell = ({ onLogout }: Props) => {
     const user = getUser();
     const isAdmin = user?.rol === 'admin' || user?.rol === 'gerente';
+    // Elegir vendedor es para MIRAR (la oficina entera); `isAdmin` queda para editar.
+    const filtraVendedores = filtraPorVendedor(user?.rol);
     /**
      * Quién ve "cuánto hay en la calle" (el total de la cuenta corriente de toda la empresa).
      * Mati, 31/08/2026: administración y los socios. Un vendedor sigue viendo sólo lo suyo.
@@ -394,10 +397,10 @@ export const VendorShell = ({ onLogout }: Props) => {
     // Importante: la lista se manda SIEMPRE (no se colapsa a '' cuando están todos
     // los activos), para que los inactivos que no están tildados sigan quedando
     // FUERA del total, como en el comportamiento previo (no ensuciar "Todos").
-    const selectedVendor: number | null = !isAdmin
+    const selectedVendor: number | null = !filtraVendedores
         ? (user?.cod_vendedor ?? null)
         : (selectedCods.size === 1 ? [...selectedCods][0] : null);
-    const codsQs = (isAdmin && selectedVendor == null && selectedCods.size > 0) ? [...selectedCods].join(',') : '';
+    const codsQs = (filtraVendedores && selectedVendor == null && selectedCods.size > 0) ? [...selectedCods].join(',') : '';
     /**
      * El filtro de vendedores tal como lo tiene que ver la cartera.
      *
@@ -414,7 +417,7 @@ export const VendorShell = ({ onLogout }: Props) => {
         try {
             const params = new URLSearchParams();
             if (force) params.set('nocache', '1');
-            if (selectedVendor != null && isAdmin) params.set('cod_vendedor', String(selectedVendor));
+            if (selectedVendor != null && filtraVendedores) params.set('cod_vendedor', String(selectedVendor));
             else if (codsQs) params.set('cods', codsQs);
             const qs = params.toString() ? `?${params.toString()}` : '';
             const res = await fetch(`/api/data${qs}`, { headers: authHeaders() });
@@ -534,7 +537,7 @@ export const VendorShell = ({ onLogout }: Props) => {
 
     // Admin: traer lista de vendedores desde /api/goals (filtrada por activo según toggle)
     useEffect(() => {
-        if (!isAdmin) return;
+        if (!filtraVendedores) return;
         const qs = showInactivos ? '?incluir_inactivos=true' : '';
         fetch(`/api/goals${qs}`, { headers: authHeaders() })
             .then(r => r.json())
@@ -550,7 +553,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                 }
             })
             .catch(() => { });
-    }, [isAdmin, showInactivos, selCodsSeeded]);
+    }, [filtraVendedores, showInactivos, selCodsSeeded]);
 
     // Agrupar por cliente (solo saldo > 0)
     // Umbral $2000 para ignorar facturas con saldo despreciable (ajustes contables,
@@ -642,7 +645,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                     <div className="vs-brand-text">
                         <span className="eyebrow">SEMILLERO</span>
                         <span className="name">
-                            {isAdmin && vendedores.length > 0 ? (
+                            {filtraVendedores && vendedores.length > 0 ? (
                                 <VendorMultiSelect
                                     vendedores={vendedores}
                                     selected={selectedCods}
@@ -771,7 +774,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                     />
                 )}
 
-                {tab === 'objetivos' && <ObjetivosView user={user} selectedVendor={selectedVendor} cods={codsQs} isAdmin={isAdmin} showInactivos={showInactivos} reloadTick={reloadObjetivosTick} viewPeriod={viewPeriod} />}
+                {tab === 'objetivos' && <ObjetivosView user={user} selectedVendor={selectedVendor} cods={codsQs} isAdmin={isAdmin} filtraVendedores={filtraVendedores} showInactivos={showInactivos} reloadTick={reloadObjetivosTick} viewPeriod={viewPeriod} />}
 
                 {tab === 'comisiones' && <ComisionesView isAdmin={isAdmin} viewPeriod={viewPeriod} userCodVendedor={user?.cod_vendedor ?? null} />}
 
@@ -783,6 +786,7 @@ export const VendorShell = ({ onLogout }: Props) => {
                     selectedVendor={selectedVendor}
                     cods={codsQs}
                     isAdmin={isAdmin}
+                    filtraVendedores={filtraVendedores}
                     vendedoresList={vendedores}
                     pendingNew={pendingNewActivity}
                     onPendingConsumed={() => setPendingNewActivity(null)}
@@ -1382,7 +1386,7 @@ function ClientCard({ client, isOpen, onToggle, onUploadPago }: { client: Client
 // ═══════════════════════════════════════════════════════════════════════════
 // OBJETIVOS VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function ObjetivosView({ user, selectedVendor, cods, isAdmin, showInactivos, reloadTick, viewPeriod }: { user: AuthUser | null; selectedVendor: number | null; cods: string; isAdmin: boolean; showInactivos: boolean; reloadTick: number; viewPeriod: ViewPeriod }) {
+function ObjetivosView({ user, selectedVendor, cods, isAdmin, filtraVendedores, showInactivos, reloadTick, viewPeriod }: { user: AuthUser | null; selectedVendor: number | null; cods: string; isAdmin: boolean; filtraVendedores: boolean; showInactivos: boolean; reloadTick: number; viewPeriod: ViewPeriod }) {
     // `isAdmin` es "puede EDITAR" (targets, feriados, objetivos por producto).
     // Qué objetivo se MIRA es otra pregunta: un socio no edita nada pero ve el equipo.
     const modo = modoObjetivo(user, selectedVendor);
@@ -1522,9 +1526,9 @@ function ObjetivosView({ user, selectedVendor, cods, isAdmin, showInactivos, rel
                 sp.set('year', String(viewPeriod.year));
                 sp.set('month', String(viewPeriod.month));
                 sp.set('asOfDate', asOfDate);
-                if (showInactivos || (isAdmin && selectedVendor != null)) sp.set('incluir_inactivos', 'true');
-                if (isAdmin && selectedVendor != null) sp.set('cod_vendedor', String(selectedVendor));
-                else if (isAdmin && cods) sp.set('cods', cods);
+                if (showInactivos || (filtraVendedores && selectedVendor != null)) sp.set('incluir_inactivos', 'true');
+                if (filtraVendedores && selectedVendor != null) sp.set('cod_vendedor', String(selectedVendor));
+                else if (filtraVendedores && cods) sp.set('cods', cods);
                 const snap = await fetch(`/api/goals/snapshot?${sp.toString()}`, { headers: authHeaders(), signal: ctrl.signal }).then(r => r.json());
                 if (!snap.ok) throw new Error(snap.error);
                 // Adapta el response del snapshot al shape que usa el resto del componente.
@@ -1604,12 +1608,12 @@ function ObjetivosView({ user, selectedVendor, cods, isAdmin, showInactivos, rel
                 qs.set('year', String(viewPeriod.year));
                 qs.set('month', String(viewPeriod.month));
                 if (localidad) qs.set('localidad', localidad);
-                if (isAdmin && selectedVendor != null) qs.set('cod_vendedor', String(selectedVendor));
-                else if (isAdmin && cods) qs.set('cods', cods);
+                if (filtraVendedores && selectedVendor != null) qs.set('cod_vendedor', String(selectedVendor));
+                else if (filtraVendedores && cods) qs.set('cods', cods);
                 const goalsParams = new URLSearchParams();
                 goalsParams.set('year', String(viewPeriod.year));
                 goalsParams.set('month', String(viewPeriod.month));
-                if (showInactivos || (isAdmin && selectedVendor != null)) goalsParams.set('incluir_inactivos', 'true');
+                if (showInactivos || (filtraVendedores && selectedVendor != null)) goalsParams.set('incluir_inactivos', 'true');
                 [gr, cr] = await Promise.all([
                     fetch(`/api/goals?${goalsParams.toString()}`, { headers: authHeaders(), signal: ctrl.signal }).then(r => r.json()),
                     fetch(`/api/goals/clientes?${qs.toString()}`, { headers: authHeaders(), signal: ctrl.signal }).then(r => r.json()),
@@ -1826,7 +1830,7 @@ function ObjetivosView({ user, selectedVendor, cods, isAdmin, showInactivos, rel
                     <div>
                         <span className="eyebrow">
                             {isLocFilter ? 'OBJETIVO · LOCALIDAD'
-                                : (isAdmin && selectedVendor != null) ? 'OBJETIVO DEL VENDEDOR'
+                                : (filtraVendedores && selectedVendor != null) ? 'OBJETIVO DEL VENDEDOR'
                                     : modo === 'equipo' ? 'OBJETIVO DEL EQUIPO'
                                         : 'OBJETIVO DEL MES'}
                         </span>
@@ -2066,7 +2070,7 @@ function ObjetivosView({ user, selectedVendor, cods, isAdmin, showInactivos, rel
                             status: c.status,
                         }))}
                     filtroLabel={
-                        isAdmin && selectedVendor != null
+                        filtraVendedores && selectedVendor != null
                             ? `Vendedor cod ${selectedVendor}`
                             : (localidad ? `Localidad: ${localidad}` : null)
                     }
@@ -2306,10 +2310,10 @@ function RankingEquipo({ items }: { items: any[] }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // ACTIVIDAD VIEW
 // ═══════════════════════════════════════════════════════════════════════════
-function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendor, cods, isAdmin, vendedoresList, pendingNew, onPendingConsumed }:
+function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendor, cods, isAdmin, filtraVendedores, vendedoresList, pendingNew, onPendingConsumed }:
     {
         vendedorKey: string | null; clientNameMap: Record<string, any>;
-        selectedVendor: number | null; cods: string; isAdmin: boolean;
+        selectedVendor: number | null; cods: string; isAdmin: boolean; filtraVendedores: boolean;
         vendedoresList: Array<{ cod_vendedor: number; nombre: string; activo: boolean }>;
         pendingNew: { cod_cliente?: string; name?: string } | null;
         onPendingConsumed: () => void;
@@ -2326,8 +2330,8 @@ function ActividadView({ vendedorKey: _vendedorKey, clientNameMap, selectedVendo
         setLoading(true); setErr(null);
         try {
             const params = new URLSearchParams();
-            if (isAdmin && selectedVendor != null) params.set('cod_vendedor', String(selectedVendor));
-            else if (isAdmin && cods) params.set('cods', cods);
+            if (filtraVendedores && selectedVendor != null) params.set('cod_vendedor', String(selectedVendor));
+            else if (filtraVendedores && cods) params.set('cods', cods);
             const qs = params.toString() ? `?${params.toString()}` : '';
             const res = await fetch(`/api/activity${qs}`, { headers: authHeaders() });
             const j = await res.json();
